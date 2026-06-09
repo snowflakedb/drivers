@@ -38,6 +38,16 @@ pub struct Data {
     pub(crate) row_type: Option<Vec<RowType>>,
     #[serde(rename = "command")]
     pub command: Option<String>,
+    /// Original SQL text. Populated on responses from
+    /// `monitoring/queries/{queryId}/result` (the async-PUT/GET retrieval
+    /// path); also echoed back on some synchronous PUT/GET responses. Used
+    /// by `connection_get_query_result` to construct a
+    /// `StageInfoRefreshContext` so async PUT/GET transfers can recover
+    /// from stage-info expiry by re-issuing the original command. Absent
+    /// on most synchronous-execution responses where the caller already
+    /// knows the SQL.
+    #[serde(rename = "sqlText")]
+    pub sql_text: Option<String>,
 
     // file transfer response data
     #[serde(rename = "src_locations")]
@@ -306,18 +316,32 @@ pub struct EncryptionMaterial {
 }
 
 impl Data {
-    /// Returns the cloud credentials embedded in the response's `stageInfo`,
-    /// or `None` if the response carries no `stageInfo` block (non-PUT/GET).
-    /// Used by the stage-credentials refresh path, which only needs the
-    /// `creds` slice and not the full `UploadData`/`DownloadData`.
-    pub fn stage_info_creds(
+    /// Returns the full `StageInfoSnapshot` (creds + `presignedUrl` +
+    /// `presignedUrls[]`) embedded in the response's `stageInfo`, or `None`
+    /// if the response carries no `stageInfo` block (non-PUT/GET). Used by
+    /// the stage-info refresh path (`SnowflakeStageInfoRefresher`), which
+    /// writes the snapshot into the shared `StageInfoCache` after every
+    /// re-issue of the original PUT/GET SQL.
+    ///
+    /// S3 / Azure responses populate only `.creds`; both URL fields are
+    /// `None`. GCS responses populate `.creds`, `.presigned_url` (PUT-side
+    /// single slot) and/or `.presigned_urls` (GET-side per-file list)
+    /// according to whether the stage is in presigned mode and whether the
+    /// command is a PUT or GET.
+    pub fn stage_info_snapshot(
         &self,
-    ) -> Result<Option<file_manager::CloudCredentials>, QueryResponseError> {
+    ) -> Result<Option<file_manager::StageInfoSnapshot>, QueryResponseError> {
         let Some(stage_info) = self.stage_info.as_ref() else {
             return Ok(None);
         };
         let converted: file_manager::StageInfo = stage_info.try_into()?;
-        Ok(Some(converted.creds))
+        Ok(Some(file_manager::StageInfoSnapshot {
+            creds: converted.creds,
+            presigned_url: converted.presigned_url,
+            // `presigned_urls[]` lives at the `Data` level (it's aligned
+            // with `src_locations`), not on the inner `stageInfo` block.
+            presigned_urls: self.presigned_urls.clone(),
+        }))
     }
 
     /// Copies the fields necessary for file transfer.

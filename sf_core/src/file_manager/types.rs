@@ -193,6 +193,21 @@ pub struct StageInfo {
     pub storage_account: Option<String>,
 }
 
+impl StageInfo {
+    /// Returns a copy of `self` with `creds` and `presigned_url` overlaid
+    /// from `snapshot`. `presigned_url` is overlaid only when the snapshot
+    /// carries one — this keeps S3/Azure callers from clobbering an inherited
+    /// single-slot URL they received in the initial PUT response.
+    pub(super) fn with_snapshot(&self, snapshot: StageInfoSnapshot) -> StageInfo {
+        let mut info = self.clone();
+        info.creds = snapshot.creds;
+        if snapshot.presigned_url.is_some() {
+            info.presigned_url = snapshot.presigned_url;
+        }
+        info
+    }
+}
+
 /// Cloud storage credentials.
 #[derive(Debug, Clone)]
 pub enum CloudCredentials {
@@ -308,73 +323,150 @@ pub(super) fn percent_encode_path(s: &str) -> String {
     encoded
 }
 
-/// Shared, mutable view of the stage credentials in use for a PUT/GET command.
+/// Snapshot of the stage info pieces that GS re-emits on every PUT/GET
+/// re-issue: `creds`, `presigned_url` (PUT-side single slot), and
+/// `presigned_urls[]` (GET-side per-file list). All three are produced
+/// together by one `StatementExecuteQuery` round-trip, so the refresher
+/// stores them in a single cache slot to keep the read/write paths trivially
+/// atomic from the file-transfer layer's perspective.
 ///
-/// The refresher and the file-transfer layer both hold a clone of this cache;
-/// when the refresher fetches new credentials it writes them here, and every
-/// subsequent S3 call (in this and any other in-flight file in the same
-/// batch) reads the fresh value via `snapshot()`. The internal `Arc<RwLock>`
-/// lets a future parallel-upload implementation share the same cache across
-/// concurrent uploaders without API changes.
+/// `presigned_url` and `presigned_urls` are `None` for non-GCS stages and
+/// for the GET-with-token GCS path. S3 / Azure consumers project `creds`
+/// out of the snapshot and ignore the URL fields.
 #[derive(Debug, Clone)]
-pub struct StageCredsCache {
-    inner: Arc<RwLock<CloudCredentials>>,
+pub struct StageInfoSnapshot {
+    pub creds: CloudCredentials,
+    pub presigned_url: Option<String>,
+    pub presigned_urls: Option<Vec<Option<String>>>,
 }
 
-impl StageCredsCache {
-    pub fn new(creds: CloudCredentials) -> Self {
+impl StageInfoSnapshot {
+    /// Convenience constructor for the creds-only callers (S3, Azure).
+    /// Leaves both URL fields `None`.
+    pub fn creds_only(creds: CloudCredentials) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(creds)),
+            creds,
+            presigned_url: None,
+            presigned_urls: None,
+        }
+    }
+}
+
+/// Shared, mutable view of the stage info (creds + presigned URLs) in use
+/// for a PUT/GET command.
+///
+/// The refresher and the file-transfer layer both hold a clone of this cache;
+/// when the refresher re-issues the PUT/GET SQL it writes the resulting
+/// `StageInfoSnapshot` here, and every subsequent transfer attempt (in this
+/// and any other in-flight file in the same batch) reads the fresh value via
+/// `snapshot()`. The internal `Arc<RwLock>` lets a future parallel-upload
+/// implementation share the same cache across concurrent uploaders without
+/// API changes. S3 / Azure callers project `creds` out of the snapshot and
+/// ignore the GCS-only URL fields.
+#[derive(Debug, Clone)]
+pub struct StageInfoCache {
+    inner: Arc<RwLock<StageInfoSnapshot>>,
+}
+
+impl StageInfoCache {
+    pub fn new(snapshot: StageInfoSnapshot) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(snapshot)),
         }
     }
 
-    /// Returns a clone of the current credentials.
-    pub fn snapshot(&self) -> CloudCredentials {
+    /// Convenience constructor used by S3 / Azure callers that only ever
+    /// populate `creds`.
+    pub fn new_with_creds(creds: CloudCredentials) -> Self {
+        Self::new(StageInfoSnapshot::creds_only(creds))
+    }
+
+    /// Returns a clone of the current snapshot.
+    pub fn snapshot(&self) -> StageInfoSnapshot {
         self.inner
             .read()
-            .expect("stage creds cache poisoned")
+            .expect("stage info cache poisoned")
             .clone()
     }
 
-    /// Stores fresh credentials. Called by `StageCredsRefresher::refresh`.
-    pub fn store(&self, new: CloudCredentials) {
-        *self.inner.write().expect("stage creds cache poisoned") = new;
+    /// Replaces the full snapshot. Called by `StageInfoRefresher::refresh`
+    /// and `refresh_url` after a successful PUT/GET re-issue.
+    pub fn store(&self, new: StageInfoSnapshot) {
+        *self.inner.write().expect("stage info cache poisoned") = new;
     }
 }
 
 pub type RefreshFuture<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<(), StageCredsRefreshError>> + Send + 'a>,
+    Box<dyn std::future::Future<Output = Result<(), StageInfoRefreshError>> + Send + 'a>,
 >;
 
-/// Refreshes the stage credentials shared via `StageCredsCache` in response to
-/// an AWS STS `ExpiredToken`.
+/// Refreshes the stage info shared via `StageInfoCache` in response to a
+/// recoverable cloud-storage error.
 ///
-/// `refresh` may be called multiple times per PUT/GET command (e.g. a long
-/// batch upload where the *refreshed* token also expires). Implementations are
-/// expected to coalesce rapid-fire calls themselves — the production
-/// implementation in this driver caches a successful refresh for 10 minutes,
-/// matching ODBC's `m_lastRefreshTokenSec` gate. On success the refresher
-/// writes the new credentials into its `cache()`; the file-transfer layer
-/// reads them back via `StageCredsCache::snapshot()` on the next attempt.
+/// Two recovery paths fire through this trait, distinguished by the entry
+/// point — both re-issue the original PUT/GET SQL against GS and write the
+/// full `StageInfoSnapshot` (creds + presigned URLs) back into the cache:
+///
+/// - [`refresh`](Self::refresh) — used for `ExpiredToken`-class errors
+///   (S3 STS, GCS 401 bearer). May be called many times per PUT/GET command
+///   (long batch upload where the refreshed token also expires).
+///   Implementations are expected to coalesce rapid-fire calls themselves:
+///   the production implementation in this driver caches a successful
+///   refresh for 10 minutes, matching ODBC's `m_lastRefreshTokenSec` gate
+///   and Python's `StorageCredential.update` thread-lock.
+/// - [`refresh_url`](Self::refresh_url) — used for the GCS 400
+///   presigned-URL-expiry path. Each file in a multi-file GET may have its
+///   own per-object URL, so this entry point intentionally bypasses the
+///   coalescing window — refreshing for file N must produce a fresh
+///   `presignedUrls[]` even if file N-1 refreshed seconds ago. The
+///   call site enforces a two-strike guard (`GcsRequestError::PresignedUrlExpired`)
+///   to prevent looping when the refreshed URL also fails.
+///
+/// On success either method writes the new snapshot into its `cache()`;
+/// the file-transfer layer reads it back via `StageInfoCache::snapshot()`
+/// on the next attempt. S3 / Azure callers project `.creds` out of the
+/// snapshot; the GCS layer additionally reads `.presigned_url` /
+/// `.presigned_urls`.
 ///
 /// Callers that don't need refresh pass `None` and fall back to a single
-/// pre-fetched credential set with no retry on `ExpiredToken`.
-pub trait StageCredsRefresher: Send + Sync {
+/// pre-fetched snapshot with no retry on the recoverable errors.
+///
+/// # Encryption-material invariant
+///
+/// Neither `refresh` nor `refresh_url` may rotate `UploadData.encryption_material`
+/// (`file_manager/mod.rs`). CSE state belongs to the client and rotating it
+/// would corrupt in-flight encrypts. The cache only holds the three fields
+/// of `StageInfoSnapshot` — there is no encryption-material slot here.
+pub trait StageInfoRefresher: Send + Sync {
+    /// Coalesced refresh — used for `ExpiredToken`-class errors.
     fn refresh(&mut self) -> RefreshFuture<'_>;
 
-    /// The credential cache shared between the refresher and the file-transfer
-    /// layer. After `refresh` succeeds, callers read the new value from here.
-    fn cache(&self) -> &StageCredsCache;
+    /// Non-coalesced refresh — used for GCS 400 per-file presigned-URL
+    /// expiry. Each invocation re-issues the SQL even if a previous refresh
+    /// landed within the coalescing window.
+    fn refresh_url(&mut self) -> RefreshFuture<'_>;
+
+    /// The snapshot cache shared between the refresher and the file-transfer
+    /// layer. After either refresh method succeeds, callers read the new
+    /// value from here.
+    fn cache(&self) -> &StageInfoCache;
+
+    /// Informs the refresher of the destination object name of the file
+    /// currently being uploaded, so `refresh_url` can rewrite the PUT SQL to
+    /// fetch that file's presigned URL (multi-file glob PUT). Called per file
+    /// by the GCS upload path before a refresh. Default: no-op (GET callers
+    /// and non-refreshing paths).
+    fn notify_current_upload_file(&mut self, _dst_file_name: String) {}
 }
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(module, visibility(pub(crate)))]
-pub enum StageCredsRefreshError {
+pub enum StageInfoRefreshError {
     /// The Snowflake query that re-issues PUT/GET to obtain new stage
-    /// credentials failed. Carries the underlying `ApiError` straight from
+    /// info failed. Carries the underlying `ApiError` straight from
     /// `RefreshContext::execute_with_refresh` (or the connection lookup that
     /// precedes it) so error_trace keeps the full chain.
-    #[snafu(display("Failed to re-execute PUT/GET SQL during stage credentials refresh"))]
+    #[snafu(display("Failed to re-execute PUT/GET SQL during stage info refresh"))]
     QueryFailed {
         #[snafu(source(from(crate::apis::database_driver_v1::ApiError, Box::new)))]
         source: Box<crate::apis::database_driver_v1::ApiError>,
@@ -383,7 +475,7 @@ pub enum StageCredsRefreshError {
     },
     /// GS responded with `success: false` — the SQL ran but the server
     /// rejected it.
-    #[snafu(display("Stage credentials refresh query rejected by server: {message}"))]
+    #[snafu(display("Stage info refresh query rejected by server: {message}"))]
     ServerRejected {
         message: String,
         #[snafu(implicit)]
@@ -392,7 +484,7 @@ pub enum StageCredsRefreshError {
     /// The refresh response carried a `stageInfo` block but it failed to
     /// parse into the file-manager shape (missing fields, malformed location,
     /// unknown location_type, etc.).
-    #[snafu(display("Stage credentials refresh response has malformed stageInfo"))]
+    #[snafu(display("Stage info refresh response has malformed stageInfo"))]
     InvalidStageInfo {
         #[snafu(source(from(
             crate::rest::snowflake::query_response::QueryResponseError,
@@ -403,8 +495,21 @@ pub enum StageCredsRefreshError {
         location: Location,
     },
     /// The refresh response did not contain a usable `stageInfo` block.
-    #[snafu(display("Stage credentials refresh response missing stageInfo"))]
+    #[snafu(display("Stage info refresh response missing stageInfo"))]
     MissingStageInfo {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// A per-file PUT URL refresh could not be performed because the command
+    /// has no parseable `file://` local path to rewrite for the target file.
+    /// Re-issuing the unchanged SQL could return a different file's presigned
+    /// URL, so the GCS call site fails fast with `PresignedUrlExpired` rather
+    /// than misrouting the upload.
+    #[snafu(display(
+        "Presigned URL refresh skipped: PUT command has no parseable file:// local path \
+         to rewrite for the target file"
+    ))]
+    PresignedUrlRefreshSkipped {
         #[snafu(implicit)]
         location: Location,
     },
