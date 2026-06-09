@@ -52,7 +52,25 @@ EXCLUDED_PATHS = [
 # `close-imported-pr.yml` is the mirror-side half of the inbound loop: it
 # ships with a `github.repository ==` guard so the copy left on the
 # internal repo is a no-op.
-EXCLUDED_PATH_OVERRIDES = [".github/workflows/close-imported-pr.yml"]
+#
+# The pre-commit and validations workflows use only public runners and no
+# internal secrets, so they run on mirror PRs without modification. The
+# cargo-cache composite action is a local dependency of both.
+#
+# Mirror-only unit test workflows (mirror-test-*.yml) run only when
+# github.repository_owner == 'snowflakedb', so they are no-ops on the
+# internal repo.
+EXCLUDED_PATH_OVERRIDES = [
+    ".github/workflows/close-imported-pr.yml",
+    ".github/workflows/pre-commit.yml",
+    ".github/workflows/validations.yml",
+    ".github/actions/cargo-cache/action.yml",
+    # Mirror-only unit test workflows and their local action dependencies.
+    ".github/workflows/mirror-test-rust-core.yml",
+    ".github/workflows/mirror-test-odbc.yml",
+    ".github/workflows/mirror-test-python.yml",
+    ".github/actions/setup-odbc-build-env/action.yml",
+]
 
 
 # ┌─────────────────────────────────────────────────────────────────────┐

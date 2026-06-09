@@ -87,6 +87,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test-matrix:
+    if: github.repository_owner != 'snowflakedb'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -101,7 +102,10 @@ jobs:
         run: python -m unittest ci/test_matrix/test_generate_matrix.py
 
   test-coverage-report:
-    if: '!contains(github.event.pull_request.labels.*.name, ''ci:scope-merge-queue'') && github.event_name != ''merge_group'''
+    if: >-
+      github.repository_owner != 'snowflakedb' &&
+      !contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') &&
+      github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
