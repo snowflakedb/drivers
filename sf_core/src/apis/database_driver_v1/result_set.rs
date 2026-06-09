@@ -341,6 +341,20 @@ pub(super) async fn fetch_query_response_data(
     Ok(response.data)
 }
 
+/// Snapshots the inputs needed to lazily build a reader and releases the
+/// per-result-set lock, so the (possibly network-bound) build never holds the
+/// guard across an `.await`.
+async fn snapshot_reader_inputs(
+    rs_ptr: &Arc<Mutex<ResultSet>>,
+) -> (RowsetData, reqwest::Client, PrefetchConfig) {
+    let rs = rs_ptr.lock().await;
+    (
+        rs.data.clone(),
+        rs.reader_ctx.http_client.clone(),
+        rs.reader_ctx.prefetch_config.clone(),
+    )
+}
+
 // --- DatabaseDriverV1 impl ---
 
 impl DatabaseDriverV1 {
@@ -358,12 +372,12 @@ impl DatabaseDriverV1 {
             }
             .build()
         })?;
-        let rs = rs_ptr.lock().await;
+        let (data, http_client, prefetch_config) = snapshot_reader_inputs(&rs_ptr).await;
 
         let reader = build_reader_from_rowset_data(
-            &rs.data,
-            rs.reader_ctx.http_client.clone(),
-            &rs.reader_ctx.prefetch_config,
+            &data,
+            http_client,
+            &prefetch_config,
             &self.wrapper_presets,
         )
         .await
@@ -391,16 +405,11 @@ impl DatabaseDriverV1 {
             }
             .build()
         })?;
-        let rs = rs_ptr.lock().await;
+        let (data, http_client, prefetch_config) = snapshot_reader_inputs(&rs_ptr).await;
 
-        build_reader_from_rowset_data(
-            &rs.data,
-            rs.reader_ctx.http_client.clone(),
-            &rs.reader_ctx.prefetch_config,
-            &self.wrapper_presets,
-        )
-        .await
-        .context(QueryResponseProcessingSnafu)
+        build_reader_from_rowset_data(&data, http_client, &prefetch_config, &self.wrapper_presets)
+            .await
+            .context(QueryResponseProcessingSnafu)
     }
 
     /// Returns chunk metadata (inline data + remote chunk URLs) for this result set.
