@@ -165,6 +165,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.load-core-matrix.outputs.test_matrix) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:

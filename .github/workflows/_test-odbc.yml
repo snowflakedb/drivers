@@ -132,6 +132,7 @@ jobs:
         include: ${{ fromJSON(needs.load-odbc-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

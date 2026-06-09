@@ -32,6 +32,7 @@ jobs:
             driver_manager: iodbc
     runs-on: ${{ matrix.os }}
     name: odbc_reference_tests (${{ matrix.name }})
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

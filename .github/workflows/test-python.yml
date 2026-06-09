@@ -92,6 +92,7 @@ jobs:
     needs: [detect-changes]
     if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -197,6 +198,7 @@ jobs:
         include: ${{ fromJSON(needs.load-python-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
+    timeout-minutes: 30
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
     steps:
@@ -524,6 +526,7 @@ jobs:
             cloud_provider: aws
     runs-on: ${{ matrix.os }}
     name: python_tests_reference (${{ matrix.hatch_env }})
+    timeout-minutes: 15
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
@@ -574,6 +577,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     name: python_flaky_tests (ubuntu-latest, py3.13, aws)
+    timeout-minutes: 10
     continue-on-error: true
     env:
       MATRIX_KEY: flaky-ubuntu-latest-3.13-aws
