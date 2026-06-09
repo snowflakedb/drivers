@@ -20,6 +20,7 @@ pub enum PutGetResultsetFlavor {
     #[default]
     Python,
     Odbc,
+    Jdbc,
 }
 
 /// Immutable behavioural presets declared by each wrapper (Python, ODBC, JDBC)
