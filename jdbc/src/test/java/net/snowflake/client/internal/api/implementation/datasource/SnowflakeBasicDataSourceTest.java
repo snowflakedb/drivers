@@ -280,4 +280,26 @@ public class SnowflakeBasicDataSourceTest {
     assertEquals("false", props.getProperty("clientStoreTemporaryCredential"));
     assertNull(props.getProperty("authenticator"));
   }
+
+  @Test
+  public void testOauthSettersStoreSnakeCaseProperties() {
+    dataSource.setOauthClientId("client-id-value");
+    dataSource.setOauthClientSecret("client-secret-value");
+    dataSource.setOauthAuthorizationUrl("https://idp.example.com/oauth/authorize");
+    dataSource.setOauthTokenRequestUrl("https://idp.example.com/oauth/token");
+    dataSource.setOauthRedirectUri("http://127.0.0.1:8080/callback");
+    dataSource.setOauthScope("session:role:my_role");
+    dataSource.setOauthEnableSingleUseRefreshTokens(true);
+
+    Properties props = dataSource.getProperties();
+    assertEquals("client-id-value", props.getProperty("oauth_client_id"));
+    assertEquals("client-secret-value", props.getProperty("oauth_client_secret"));
+    assertEquals(
+        "https://idp.example.com/oauth/authorize", props.getProperty("oauth_authorization_url"));
+    assertEquals(
+        "https://idp.example.com/oauth/token", props.getProperty("oauth_token_request_url"));
+    assertEquals("http://127.0.0.1:8080/callback", props.getProperty("oauth_redirect_uri"));
+    assertEquals("session:role:my_role", props.getProperty("oauth_scope"));
+    assertEquals("true", props.getProperty("oauth_enable_single_use_refresh_tokens"));
+  }
 }

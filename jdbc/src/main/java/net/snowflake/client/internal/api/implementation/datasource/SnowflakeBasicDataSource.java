@@ -235,6 +235,48 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   }
 
   @Override
+  public void setOauthClientId(String oauthClientId) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OAUTH_CLIENT_ID.getPropertyKey(), oauthClientId);
+  }
+
+  @Override
+  public void setOauthClientSecret(String oauthClientSecret) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OAUTH_CLIENT_SECRET.getPropertyKey(), oauthClientSecret);
+  }
+
+  @Override
+  public void setOauthAuthorizationUrl(String oauthAuthorizationUrl) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OAUTH_AUTHORIZATION_URL.getPropertyKey(), oauthAuthorizationUrl);
+  }
+
+  @Override
+  public void setOauthTokenRequestUrl(String oauthTokenRequestUrl) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OAUTH_TOKEN_REQUEST_URL.getPropertyKey(), oauthTokenRequestUrl);
+  }
+
+  @Override
+  public void setOauthRedirectUri(String oauthRedirectUri) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OAUTH_REDIRECT_URI.getPropertyKey(), oauthRedirectUri);
+  }
+
+  @Override
+  public void setOauthScope(String oauthScope) {
+    this.properties.setProperty(SnowflakeSessionProperty.OAUTH_SCOPE.getPropertyKey(), oauthScope);
+  }
+
+  @Override
+  public void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.getPropertyKey(),
+        Boolean.toString(oauthEnableSingleUseRefreshTokens));
+  }
+
+  @Override
   public String getUrl() {
     return url;
   }
