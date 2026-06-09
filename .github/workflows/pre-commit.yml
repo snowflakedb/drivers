@@ -2,11 +2,14 @@ name: Pre-commit
 
 on:
   pull_request:
+  push:
+    branches: [ main ]
   merge_group:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs; fall back to github.ref for merge_group runs.
+  # Group by PR number for PRs; fall back to github.ref for push/merge_group
+  # (refs/heads/main for main pushes — cancels superseded runs, keeps latest).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
