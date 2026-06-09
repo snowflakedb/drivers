@@ -329,8 +329,10 @@ fn build_tls_config(settings: &ParamStore) -> TlsConfig {
     let custom_root_store_path = settings
         .get_string(CUSTOM_ROOT_STORE_PATH)
         .map(PathBuf::from);
-    let verify_hostname = settings.get_bool(VERIFY_HOSTNAME).unwrap_or(true);
-    let verify_certificates = settings.get_bool(VERIFY_CERTIFICATES).unwrap_or(true);
+    let skip_tls_verify = settings.get_bool(INSECURE_SKIP_TLS_VERIFY).unwrap_or(false);
+    let verify_hostname = !skip_tls_verify && settings.get_bool(VERIFY_HOSTNAME).unwrap_or(true);
+    let verify_certificates =
+        !skip_tls_verify && settings.get_bool(VERIFY_CERTIFICATES).unwrap_or(true);
 
     TlsConfig {
         crl_config,
@@ -1169,6 +1171,28 @@ mod tests {
         let config = ConnectionConfig::build(&settings).unwrap();
         assert!(!config.tls.verify_hostname);
         assert!(config.tls.verify_certificates);
+    }
+
+    #[test]
+    fn insecure_skip_tls_verify_disables_both_checks() {
+        let mut settings = minimal_password_settings();
+        settings.insert("insecure_skip_tls_verify".into(), Setting::Bool(true));
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(!config.tls.verify_hostname);
+        assert!(!config.tls.verify_certificates);
+    }
+
+    #[test]
+    fn insecure_skip_tls_verify_overrides_individual_verify_flags() {
+        let mut settings = minimal_password_settings();
+        settings.insert("insecure_skip_tls_verify".into(), Setting::Bool(true));
+        settings.insert("verify_hostname".into(), Setting::Bool(true));
+        settings.insert("verify_certificates".into(), Setting::Bool(true));
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(!config.tls.verify_hostname);
+        assert!(!config.tls.verify_certificates);
     }
 
     #[test]

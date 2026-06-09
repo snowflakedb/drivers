@@ -26,14 +26,20 @@ impl TlsConfig {
         let custom_root_store_path = settings
             .get_string("custom_root_store_path")
             .map(PathBuf::from);
-        let verify_hostname = settings
-            .get_string("verify_hostname")
+        let skip_tls_verify = settings
+            .get_string("insecure_skip_tls_verify")
             .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(true);
-        let verify_certificates = settings
-            .get_string("verify_certificates")
-            .map(|s| s.to_lowercase() == "true")
-            .unwrap_or(true);
+            .unwrap_or(false);
+        let verify_hostname = !skip_tls_verify
+            && settings
+                .get_string("verify_hostname")
+                .map(|s| s.to_lowercase() == "true")
+                .unwrap_or(true);
+        let verify_certificates = !skip_tls_verify
+            && settings
+                .get_string("verify_certificates")
+                .map(|s| s.to_lowercase() == "true")
+                .unwrap_or(true);
         Ok(Self {
             crl_config,
             custom_root_store_path,
