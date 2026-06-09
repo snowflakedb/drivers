@@ -494,7 +494,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // connection.
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
-        aliases: &["OAUTH_CLIENT_ID"],
+        aliases: &["OAUTH_CLIENT_ID", "oauthClientId"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -508,7 +508,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
-        aliases: &["OAUTH_CLIENT_SECRET"],
+        aliases: &["OAUTH_CLIENT_SECRET", "oauthClientSecret"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -522,7 +522,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
-        aliases: &["OAUTH_AUTHORIZATION_URL"],
+        aliases: &["OAUTH_AUTHORIZATION_URL", "oauthAuthorizationUrl"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -536,7 +536,11 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
-        aliases: &["OAUTH_TOKEN_REQUEST_URL", "OAUTH_TOKEN_URL"],
+        aliases: &[
+            "OAUTH_TOKEN_REQUEST_URL",
+            "OAUTH_TOKEN_URL",
+            "oauthTokenRequestUrl",
+        ],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
@@ -550,7 +554,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
-        aliases: &["OAUTH_REDIRECT_URI"],
+        aliases: &["OAUTH_REDIRECT_URI", "oauthRedirectUri"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -564,7 +568,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_SCOPE.as_str(),
-        aliases: &["OAUTH_SCOPE"],
+        aliases: &["OAUTH_SCOPE", "oauthScope"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -578,7 +582,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
-        aliases: &["OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS"],
+        aliases: &[
+            "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+            "oauthEnableSingleUseRefreshTokens",
+        ],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
@@ -1251,6 +1258,31 @@ mod tests {
             ("TOKEN", "token"),
             ("PASSCODE", "passcode"),
             ("PASSCODE_IN_PASSWORD", "passcodeInPassword"),
+            // OAuth: both SCREAMING_SNAKE (universal-driver canonical) and
+            // camelCase (legacy JDBC `SFSessionProperty` keys) aliases must
+            // resolve so applications migrating from snowflake-jdbc keep
+            // working without renaming their Properties keys.
+            ("OAUTH_CLIENT_ID", "oauth_client_id"),
+            ("oauthClientId", "oauth_client_id"),
+            ("OAUTH_CLIENT_SECRET", "oauth_client_secret"),
+            ("oauthClientSecret", "oauth_client_secret"),
+            ("OAUTH_AUTHORIZATION_URL", "oauth_authorization_url"),
+            ("oauthAuthorizationUrl", "oauth_authorization_url"),
+            ("OAUTH_TOKEN_REQUEST_URL", "oauth_token_request_url"),
+            ("OAUTH_TOKEN_URL", "oauth_token_request_url"),
+            ("oauthTokenRequestUrl", "oauth_token_request_url"),
+            ("OAUTH_REDIRECT_URI", "oauth_redirect_uri"),
+            ("oauthRedirectUri", "oauth_redirect_uri"),
+            ("OAUTH_SCOPE", "oauth_scope"),
+            ("oauthScope", "oauth_scope"),
+            (
+                "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+                "oauth_enable_single_use_refresh_tokens",
+            ),
+            (
+                "oauthEnableSingleUseRefreshTokens",
+                "oauth_enable_single_use_refresh_tokens",
+            ),
             (
                 "clientStoreTemporaryCredential",
                 "client_store_temporary_credential",
