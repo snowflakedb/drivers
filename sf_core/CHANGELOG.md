@@ -15,3 +15,5 @@ Changes:
 - Added HTTP proxy connection parameters (`proxy_host`, `proxy_port`, `proxy_user`, `proxy_password`, `no_proxy`) with ODBC aliases including legacy `PROXY` URL form; wired through `ProxyConfig` and `create_tls_client_with_proxy()`. Explicit `proxy_host` overrides env vars; otherwise reqwest env detection applies unless disabled. (snowflakedb/universal-driver#29)
 - GCS PUT: skip upload when remote `x-goog-meta-sfc-digest` matches local SHA-256. (snowflakedb/universal-driver#57)
 - CSE: compute the stored content digest over the plaintext (not the ciphertext) so it is stable across uploads, enables the content-match upload skip on client-side-encrypted stages, and is interoperable with other drivers. (snowflakedb/universal-driver#57)
+- GCS GET: fail when response body length differs from `Content-Length`. (snowflakedb/universal-driver#58)
+

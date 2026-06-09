@@ -186,19 +186,25 @@ pub async fn upload_to_gcs_or_skip(
 /// Downloads a file from GCS and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
 ///
+/// The body length is verified against the GCS `Content-Length` header when
+/// both are unambiguous (no `Content-Encoding` rewrite by the HTTP layer,
+/// no chunked transfer). When the header is absent or `Content-Encoding` is
+/// present the check is skipped.
+///
 /// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
 /// the object — taken from the collected body length, which equals the
-/// GCS `Content-Length` (i.e. the stored object size) for non-streamed
-/// responses. This is the wire byte count, not the decrypted/decoded
-/// size of the original file.
+/// GCS `Content-Length` for non-streamed responses. This is the wire byte
+/// count, not the decrypted/decoded size of the original file.
+///
+/// If this function ever switches to a streaming body reader, the
+/// Content-Length check must move into the byte-counting stream wrapper.
 ///
 /// `per_file_presigned_url` is the URL GS issued for this specific file via
 /// `data.presignedUrls[i]` on GCS GET in presigned-only mode. When `Some`,
 /// it takes precedence over `stage_info.presigned_url` (Strategy 0 in
 /// `resolve_url_and_token`); when `None`, the function falls back to the
 /// existing strategies (PUT-side single presigned URL, then bearer token,
-/// then `MissingGcsCredentials`). See
-/// `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`.
+/// then `MissingGcsCredentials`).
 ///
 /// `per_file_index` is the file's position in the GET batch — used after a
 /// 400-triggered URL refresh to re-pick `presigned_urls[per_file_index]`
@@ -352,6 +358,20 @@ pub async fn download_from_gcs(
     let headers = response.headers();
     let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
 
+    let expected_length: Option<u64> = match headers.get(reqwest::header::CONTENT_LENGTH) {
+        Some(val) => match val.to_str().ok().and_then(|s| s.parse::<u64>().ok()) {
+            Some(len) => Some(len),
+            None => {
+                tracing::warn!(
+                    "Malformed Content-Length header on GCS download response, skipping length check"
+                );
+                None
+            }
+        },
+        None => None,
+    };
+    let has_content_encoding = headers.get(reqwest::header::CONTENT_ENCODING).is_some();
+
     let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
             let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
@@ -393,7 +413,25 @@ pub async fn download_from_gcs(
         .await
         .map_err(|source| GcsRequestError::Http { source })?
         .to_vec();
-    let cloud_byte_count = data.len() as i64;
+    let actual_len = data.len() as u64;
+
+    if let Some(expected) = expected_length {
+        if has_content_encoding {
+            tracing::debug!(
+                "Content-Encoding present on GCS response, skipping Content-Length verification"
+            );
+        } else if expected != actual_len {
+            return gcs_download_error::ContentLengthMismatchSnafu {
+                expected,
+                actual: actual_len,
+            }
+            .fail();
+        }
+    } else {
+        tracing::debug!("No Content-Length header on GCS response, skipping length verification");
+    }
+
+    let cloud_byte_count = actual_len as i64;
 
     Ok(DownloadResponse {
         data,
@@ -1107,6 +1145,15 @@ pub enum GcsDownloadError {
     StageInfoRefreshFailed {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "GCS Content-Length mismatch: header announced {expected} bytes, received {actual}"
+    ))]
+    ContentLengthMismatch {
+        expected: u64,
+        actual: u64,
         #[snafu(implicit)]
         location: Location,
     },
