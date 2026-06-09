@@ -1,11 +1,15 @@
 use super::types::{
     CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
+    build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use crate::refresh::{Refresher, execute_with_refresh};
+use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode};
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
+use std::marker::PhantomData;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
@@ -16,25 +20,142 @@ const GCS_META_ENCRYPTIONDATA: &str = "x-goog-meta-encryptiondata";
 const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 
 /// Uploads a file to GCS, skipping if it already exists and `overwrite` is false.
+///
+/// `refresher` drives the reactive stage-info recovery introduced by gaps
+/// 2.1 (URL expiry) and 2.4 (token expiry):
+/// - On HTTP 401 (bearer expired): the `GcsTokenRefresher` adapter calls
+///   `refresher.refresh()` (coalesced, 10-min window) and retries with the
+///   rotated creds. A second consecutive 401 with the same bearer surfaces
+///   the existing `GcsUploadError::TokenExpired` — matching libsfclient's
+///   `m_lastRefreshTokenSec` gate (`FileTransferAgent.cpp:412`).
+/// - On HTTP 400 in presigned mode: an outer loop calls
+///   `refresher.refresh_url()` (no coalesce) and retries with the rotated
+///   `presignedUrl` from the cache. A second consecutive 400 surfaces the
+///   new `GcsUploadError::PresignedUrlExpired` — matching Python's two-strike
+///   guard in `gcs_storage_client.py`.
+///
+/// When `refresher` is `None`, neither recovery fires and the old shape is
+/// preserved (400 stays on the wire-level retry list via `gcs_retry_policy`;
+/// 401 surfaces as `TokenExpired` exactly as before).
 pub async fn upload_to_gcs_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
-    // PUT path: per-file URL list is GET-only, so we never pass one here.
-    let (url, token) = resolve_url_and_token(stage_info, &key, None)?;
+    let has_refresher = refresher.is_some();
 
-    if !overwrite && check_file_exists_gcs(&client, &url, token).await {
-        tracing::info!("File already exists in GCS: {key}");
-        return Ok(UploadStatus::Skipped);
+    // Tell the refresher which destination file is uploading so a per-file URL
+    // refresh re-issues the PUT SQL rewritten for *this* file (multi-file glob
+    // PUT). `filename` is the dst object name (incl. compression suffix).
+    if let Some(r) = refresher.as_deref_mut() {
+        r.notify_current_upload_file(filename.to_string());
+    }
+    // With a refresher, 400 is removed from the wire-level retry list — we
+    // handle it reactively here by rotating the URL. Without a refresher,
+    // keep the legacy 400-retry-with-same-URL fallback.
+    let wire_retry_400 = using_presigned_url && !has_refresher;
+
+    // Two-strike URL-refresh model. `make_attempt` is a factory that captures
+    // `base` (the stage-info for this strike) so the attempt body is written
+    // once and called twice with different bases. `Option<&mut dyn Trait>`
+    // reborrows prevent extracting the two-strike orchestration into a shared
+    // async helper across sequential awaits, so it stays inline here.
+    let make_attempt = |base: &StageInfo| {
+        let base = base.clone();
+        let prepared = prepared.clone();
+        let key = key.clone();
+        let client = client.clone();
+        move |snapshot: super::types::StageInfoSnapshot| {
+            let stage_info = base.with_snapshot(snapshot);
+            let prepared = prepared.clone();
+            let key = key.clone();
+            let client = client.clone();
+            async move {
+                let (url, token) = resolve_url_and_token(&stage_info, &key, None)
+                    .map_err(map_gcs_request_error_for_attempt)?;
+
+                if !overwrite && check_file_exists_gcs(&client, &url, token).await {
+                    tracing::info!("File already exists in GCS: {key}");
+                    return Ok(UploadStatus::Skipped);
+                }
+
+                upload_to_gcs(&client, &url, token, prepared, wire_retry_400)
+                    .await
+                    .map_err(map_gcs_request_error_for_attempt)?;
+                Ok(UploadStatus::Uploaded)
+            }
+        }
+    };
+
+    let first = run_gcs_with_token_refresh(
+        refresher.as_deref_mut(),
+        stage_info,
+        |e| gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e),
+        make_attempt(stage_info),
+    )
+    .await;
+
+    let needs_url_refresh = matches!(
+        first,
+        Err(GcsUploadError::GcsHttp {
+            status_code: 400,
+            ..
+        })
+    ) && using_presigned_url
+        && has_refresher;
+
+    if !needs_url_refresh {
+        return first;
     }
 
-    upload_to_gcs(&client, &url, token, prepared, using_presigned_url).await?;
-    Ok(UploadStatus::Uploaded)
+    tracing::warn!("GCS PUT returned 400 in presigned mode; refreshing per-file URL and retrying");
+    let refreshed_stage_info = {
+        let Some(r) = refresher.as_mut() else {
+            // Invariant: needs_url_refresh is only true when has_refresher
+            // is true, so refresher must be Some here.
+            unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
+        };
+        match r.refresh_url().await {
+            Ok(()) => {}
+            Err(StageInfoRefreshError::PresignedUrlRefreshSkipped { .. }) => {
+                // The PUT command had no parseable file:// path to rewrite for
+                // this file, so a per-file URL refresh wasn't possible. Fail
+                // fast rather than risk misrouting to another file's URL.
+                tracing::warn!(
+                    "GCS PUT 400 in presigned mode; per-file URL refresh not possible — \
+                     surfacing PresignedUrlExpired"
+                );
+                return gcs_upload_error::PresignedUrlExpiredSnafu.fail();
+            }
+            Err(e) => return Err(gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e)),
+        }
+        stage_info.with_snapshot(r.cache().snapshot())
+    };
+
+    let second = run_gcs_with_token_refresh(
+        refresher.as_deref_mut(),
+        &refreshed_stage_info,
+        |e| gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e),
+        make_attempt(&refreshed_stage_info),
+    )
+    .await;
+
+    match second {
+        Err(GcsUploadError::GcsHttp {
+            status_code: 400, ..
+        }) => {
+            tracing::warn!(
+                "GCS PUT returned 400 again after URL refresh; failing fast with PresignedUrlExpired"
+            );
+            gcs_upload_error::PresignedUrlExpiredSnafu.fail()
+        }
+        other => other,
+    }
 }
 
 /// Downloads a file from GCS and returns data with optional encryption metadata.
@@ -53,33 +174,155 @@ pub async fn upload_to_gcs_or_skip(
 /// existing strategies (PUT-side single presigned URL, then bearer token,
 /// then `MissingGcsCredentials`). See
 /// `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`.
+///
+/// `per_file_index` is the file's position in the GET batch — used after a
+/// 400-triggered URL refresh to re-pick `presigned_urls[per_file_index]`
+/// from the refresher cache (the refreshed snapshot carries a fresh
+/// `presignedUrls[]` array from GS).
+///
+/// `refresher` enables reactive stage-info recovery — see
+/// `upload_to_gcs_or_skip` for the 401/400 handling shape. Specifically for
+/// GET:
+/// - 401 → `refresher.refresh()` (coalesced) → retry with rotated bearer.
+/// - 400 in presigned mode → `refresher.refresh_url()` (no coalesce) →
+///   re-pick `presigned_urls[per_file_index]` from the new snapshot, retry.
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
+    per_file_index: usize,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
-    let (url, token) = resolve_url_and_token(stage_info, &key, per_file_presigned_url)?;
-    // Either presigned-URL source enables the 400-retry policy: the URL
-    // may have expired and reissuing it produces a fresh signature. The
+    // Either presigned-URL source enables the 400-handling: the URL may
+    // have expired and reissuing it produces a fresh signature. The
     // PUT-side single-slot URL and the per-file GET list are both signed
     // and both subject to the same expiry semantics.
     let using_presigned_url =
         per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
+    let has_refresher = refresher.is_some();
+    // With a refresher, 400 is removed from the wire-level retry list — we
+    // handle it reactively here. Without a refresher, keep the legacy
+    // 400-retry-with-same-URL fallback so today's tests keep passing.
+    let wire_retry_400 = using_presigned_url && !has_refresher;
+    let initial_per_file_url = per_file_presigned_url.map(str::to_string);
 
-    let response = gcs_request_with_retry(
-        || {
-            let mut req = client.get(&url);
-            if let Some(ref t) = token {
-                req = req.bearer_auth(t);
+    // Two-strike URL-refresh model. `make_attempt` is a factory that takes
+    // `base` (the stage-info for this strike) and `per_file_url`, returning
+    // the attempt closure for `run_gcs_with_token_refresh`. Writing the body
+    // once eliminates the duplication between first and second strikes.
+    // Per-file URL re-pick after a 400 stays outside the closure.
+    // `Option<&mut dyn Trait>` reborrows prevent extracting the two-strike
+    // orchestration itself into a shared async helper across sequential awaits.
+    let make_attempt = |base: &StageInfo, per_file_url: Option<String>| {
+        let base = base.clone();
+        let key = key.clone();
+        let client = client.clone();
+        move |snapshot: super::types::StageInfoSnapshot| {
+            let stage_info = base.with_snapshot(snapshot);
+            let key = key.clone();
+            let client = client.clone();
+            let per_file_url = per_file_url.clone();
+            async move {
+                let (url, token) =
+                    resolve_url_and_token(&stage_info, &key, per_file_url.as_deref())
+                        .map_err(map_gcs_request_error_for_attempt)?;
+
+                gcs_request_with_retry(
+                    || {
+                        let mut req = client.get(&url);
+                        if let Some(ref t) = token {
+                            req = req.bearer_auth(t);
+                        }
+                        req
+                    },
+                    Method::GET,
+                    wire_retry_400,
+                )
+                .await
+                .map_err(map_gcs_request_error_for_attempt)
             }
-            req
-        },
-        Method::GET,
-        using_presigned_url,
+        }
+    };
+
+    let first = run_gcs_with_token_refresh(
+        refresher.as_deref_mut(),
+        stage_info,
+        |e| gcs_download_error::StageInfoRefreshFailedSnafu.into_error(e),
+        make_attempt(stage_info, initial_per_file_url.clone()),
     )
-    .await?;
+    .await;
+
+    let needs_url_refresh = matches!(
+        first,
+        Err(GcsDownloadError::GcsHttp {
+            status_code: 400,
+            ..
+        })
+    ) && using_presigned_url
+        && has_refresher;
+
+    let response = if !needs_url_refresh {
+        first?
+    } else {
+        // GET-side presigned URL refresh is a deliberate enhancement beyond
+        // legacy drivers: Python's `_update_presigned_url` returns early for
+        // non-PUT statements, so a GET 400 would simply exhaust retries on the
+        // same URL and fail. The two-strike guard here is more conservative —
+        // fail rather than misroute — and aligns with the legacy "fail fast"
+        // stance.
+        tracing::warn!(
+            "GCS GET returned 400 in presigned mode; refreshing per-file URL and retrying"
+        );
+        let (refreshed_stage_info, refreshed_per_file_url) = {
+            let Some(r) = refresher.as_mut() else {
+                // Invariant: needs_url_refresh is only true when has_refresher
+                // is true, so refresher must be Some here.
+                unreachable!("refresher is Some: needs_url_refresh requires has_refresher");
+            };
+            r.refresh_url()
+                .await
+                .context(gcs_download_error::StageInfoRefreshFailedSnafu)?;
+            let snap = r.cache().snapshot();
+            let new_url = snap
+                .presigned_urls
+                .as_ref()
+                .and_then(|urls| urls.get(per_file_index))
+                .cloned()
+                .flatten();
+            // If the original request used a per-file presigned URL and the
+            // refreshed snapshot does not supply one for this index, refuse the
+            // fall-through to the single-slot presigned_url (PUT-side) or
+            // bearer token — routing to either would serve the wrong object.
+            if initial_per_file_url.is_some() && new_url.is_none() {
+                return gcs_download_error::PresignedUrlExpiredSnafu.fail();
+            }
+            let new_stage_info = stage_info.with_snapshot(snap);
+            (new_stage_info, new_url)
+        };
+
+        let second = run_gcs_with_token_refresh(
+            refresher.as_deref_mut(),
+            &refreshed_stage_info,
+            |e| gcs_download_error::StageInfoRefreshFailedSnafu.into_error(e),
+            make_attempt(&refreshed_stage_info, refreshed_per_file_url),
+        )
+        .await;
+
+        match second {
+            Ok(resp) => resp,
+            Err(GcsDownloadError::GcsHttp {
+                status_code: 400, ..
+            }) => {
+                tracing::warn!(
+                    "GCS GET returned 400 again after URL refresh; failing fast with PresignedUrlExpired"
+                );
+                return gcs_download_error::PresignedUrlExpiredSnafu.fail();
+            }
+            Err(e) => return Err(e),
+        }
+    };
 
     let headers = response.headers();
     let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
@@ -173,13 +416,17 @@ async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Optio
 
 /// Upload data to GCS with retry logic.
 /// Sets encryption metadata headers only when client-side encryption was used.
+///
+/// Returns the internal `GcsRequestError` so the attempt-error mapper can
+/// dispatch `TokenExpired` into `GcsAttemptError::TokenExpired` (handled by
+/// `run_gcs_with_token_refresh`) versus everything else into `Other`.
 async fn upload_to_gcs(
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
     prepared: PreparedUpload,
     using_presigned_url: bool,
-) -> Result<(), GcsUploadError> {
+) -> Result<(), GcsRequestError> {
     let encryption_data_str = prepared
         .encryption_metadata
         .as_ref()
@@ -188,14 +435,14 @@ async fn upload_to_gcs(
             serde_json::to_string(&encryption_data)
         })
         .transpose()
-        .context(gcs_upload_error::SerializationSnafu)?;
+        .context(SerializationSnafu)?;
 
     let mat_desc_str = prepared
         .encryption_metadata
         .as_ref()
         .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
         .transpose()
-        .context(gcs_upload_error::SerializationSnafu)?;
+        .context(SerializationSnafu)?;
 
     let data = prepared.data;
     let digest = prepared.digest;
@@ -234,6 +481,13 @@ async fn upload_to_gcs(
 ///
 /// GCS treats 403 as retryable (temporary credential issues), and 400 is
 /// retryable when using presigned URLs (URL may have expired).
+///
+/// When a refresher is wired in, 400 is removed from the
+/// wire-level retry list because the reactive recovery in
+/// `upload_to_gcs_or_skip` / `download_from_gcs` handles it by rotating the
+/// presigned URL — blind retry against the same dead URL would just burn
+/// the retry budget. The legacy no-refresher path keeps 400 retryable to
+/// preserve today's behavior for callers that don't pass a refresher.
 fn gcs_retry_policy(using_presigned_url: bool) -> RetryPolicy {
     let mut extra = vec![403];
     if using_presigned_url {
@@ -425,10 +679,173 @@ async fn read_error_body(response: reqwest::Response) -> String {
     }
 }
 
+// --- Reactive recovery scaffolding (mirror s3_transfer.rs) ---
+
+/// Internal error type for one attempt of a GCS operation. The `TokenExpired`
+/// arm is the recoverable signal `should_refresh` matches on in
+/// `GcsTokenRefresher`; everything else lives in `Other`. Mirrors
+/// `S3AttemptError` — stays internal so `GcsUploadError` / `GcsDownloadError`
+/// retain their public-API shape.
+#[derive(Debug)]
+enum GcsAttemptError<E> {
+    TokenExpired,
+    Other(E),
+}
+
+/// Maps the internal `GcsRequestError` into a per-attempt error so the token
+/// refresh loop can catch 401 separately from everything else. Anything that
+/// isn't 401 — including the new reactive 400 (presigned-URL expired) — goes
+/// through `Other`, so the outer 400-handling loop in
+/// `upload_to_gcs_or_skip` / `download_from_gcs` can match on it.
+fn map_gcs_request_error_for_attempt<E: From<GcsRequestError>>(
+    err: GcsRequestError,
+) -> GcsAttemptError<E> {
+    match err {
+        GcsRequestError::TokenExpired => GcsAttemptError::TokenExpired,
+        other => GcsAttemptError::Other(E::from(other)),
+    }
+}
+
+/// GCS token-refresh implementation of the generic [`Refresher`] trait.
+/// Mirrors `S3StsRefresher` in `s3_transfer.rs`: drives the retry loop in
+/// `execute_with_refresh` by reading creds from a `StageInfoRefresher`'s
+/// shared cache and asking it to rotate when GCS returns 401.
+///
+/// Tracks the last bearer token handed out so a refresh that doesn't
+/// actually rotate (refresher inside its 10-min coalescing window — bit-for-bit
+/// identical to libsfclient's `m_lastRefreshTokenSec` at
+/// `FileTransferAgent.cpp:412`) reports `Ok(false)` and the helper propagates
+/// the original error rather than spinning. The bearer comparison goes through
+/// `SensitiveString`'s `reveal` boundary only here; the comparison result is a
+/// plain `bool` and the strings themselves don't escape.
+struct GcsTokenRefresher<'a, E, W> {
+    refresher: &'a mut dyn StageInfoRefresher,
+    last_seen_token: Option<SensitiveString>,
+    map_refresh_err: W,
+    _marker: PhantomData<fn() -> E>,
+}
+
+impl<'a, E, W> GcsTokenRefresher<'a, E, W>
+where
+    W: Fn(StageInfoRefreshError) -> E,
+{
+    fn new(refresher: &'a mut dyn StageInfoRefresher, map_refresh_err: W) -> Self {
+        let last_seen_token =
+            gcs_bearer_token(&refresher.cache().snapshot().creds).map(SensitiveString::from);
+        Self {
+            refresher,
+            last_seen_token,
+            map_refresh_err,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, E, W> Refresher<super::types::StageInfoSnapshot, GcsAttemptError<E>>
+    for GcsTokenRefresher<'a, E, W>
+where
+    E: Send,
+    W: Fn(StageInfoRefreshError) -> E + Send,
+{
+    fn current(
+        &mut self,
+    ) -> crate::refresh::RefreshFuture<
+        '_,
+        Result<super::types::StageInfoSnapshot, GcsAttemptError<E>>,
+    > {
+        let snap = self.refresher.cache().snapshot();
+        Box::pin(async move { Ok(snap) })
+    }
+
+    fn should_refresh(&self, err: &GcsAttemptError<E>) -> bool {
+        matches!(err, GcsAttemptError::TokenExpired)
+    }
+
+    fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, GcsAttemptError<E>>> {
+        Box::pin(async move {
+            tracing::info!("GCS hit 401; refreshing stage info (creds)");
+            self.refresher
+                .refresh()
+                .await
+                .map_err(|e| GcsAttemptError::Other((self.map_refresh_err)(e)))?;
+            let new = self.refresher.cache().snapshot();
+            let new_token = gcs_bearer_token(&new.creds).map(SensitiveString::from);
+            if new_token.as_ref().map(|s| s.reveal().as_str())
+                == self.last_seen_token.as_ref().map(|s| s.reveal().as_str())
+            {
+                // Refresher coalesced or returned the same bearer — retrying
+                // would loop, so decline further rotations.
+                return Ok(false);
+            }
+            self.last_seen_token = new_token;
+            Ok(true)
+        })
+    }
+}
+
+/// Returns the bearer string from GCS credentials, or None for non-GCS
+/// variants. Used as the rotation marker; a different bearer implies a
+/// fresh GS rotation. Mirrors `aws_key_id` in `s3_transfer.rs`.
+fn gcs_bearer_token(creds: &CloudCredentials) -> Option<&str> {
+    match creds {
+        CloudCredentials::Gcs {
+            gcs_access_token: Some(t),
+        } => Some(t.reveal().as_str()),
+        _ => None,
+    }
+}
+
+/// Runs `attempt` once (no refresher) or in a refresh-retry loop (with
+/// refresher), folding `GcsAttemptError<E>` back to `E` at the boundary so
+/// callers see a uniform error type. With no refresher, a `TokenExpired`
+/// outcome surfaces as `E::from(GcsRequestError::TokenExpired)` — identical
+/// to today's pre-refresher behavior. Mirrors `run_s3_with_sts_refresh`.
+///
+/// `initial_stage_info` seeds the snapshot handed to the first `attempt`
+/// invocation in the no-refresher branch, so the legacy path keeps reading
+/// the caller's original creds and presigned_url.
+async fn run_gcs_with_token_refresh<'r, 'd, F, Fut, T, E>(
+    refresher: Option<&'r mut (dyn StageInfoRefresher + 'd)>,
+    initial_stage_info: &StageInfo,
+    map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
+    attempt: F,
+) -> Result<T, E>
+where
+    'd: 'r,
+    F: Fn(super::types::StageInfoSnapshot) -> Fut,
+    Fut: Future<Output = Result<T, GcsAttemptError<E>>>,
+    E: Send + From<GcsRequestError>,
+{
+    let outcome = match refresher {
+        Some(r) => {
+            let mut token_refresher = GcsTokenRefresher::new(r, map_refresh_err);
+            execute_with_refresh(&mut token_refresher, attempt).await
+        }
+        None => {
+            // No refresher: a `TokenExpired` from the attempt has no
+            // recovery path; surface it as today's `TokenExpired` (preserved
+            // by the post-loop mapper below). Seed the snapshot from the
+            // caller's stage_info so `with_snapshot` overlay is a no-op on
+            // the legacy path.
+            let snapshot = super::types::StageInfoSnapshot {
+                creds: initial_stage_info.creds.clone(),
+                presigned_url: initial_stage_info.presigned_url.clone(),
+                presigned_urls: None,
+            };
+            attempt(snapshot).await
+        }
+    };
+    outcome.map_err(|e| match e {
+        GcsAttemptError::Other(err) => err,
+        GcsAttemptError::TokenExpired => E::from(GcsRequestError::TokenExpired),
+    })
+}
+
 // --- Error types ---
 
-/// Internal error for shared helpers (retry, client creation, URL resolution).
-/// Converted into `GcsUploadError` or `GcsDownloadError` via `From` impls.
+/// Internal error for shared helpers (retry, client creation, URL resolution,
+/// upload-time metadata serialization). Converted into `GcsUploadError` or
+/// `GcsDownloadError` via `From` impls.
 #[derive(Debug, Snafu)]
 enum GcsRequestError {
     #[snafu(display("GCS HTTP error"))]
@@ -437,10 +854,14 @@ enum GcsRequestError {
     GcsHttp { status_code: u16, body: String },
     #[snafu(display("GCS access token expired"))]
     TokenExpired,
+    #[snafu(display("GCS presigned URL expired"))]
+    PresignedUrlExpired,
     #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials,
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted { detail: String },
+    #[snafu(display("Failed to serialize GCS metadata"))]
+    Serialization { source: serde_json::Error },
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -458,11 +879,18 @@ impl From<GcsRequestError> for GcsUploadError {
             GcsRequestError::TokenExpired => GcsUploadError::TokenExpired {
                 location: Location::default(),
             },
+            GcsRequestError::PresignedUrlExpired => GcsUploadError::PresignedUrlExpired {
+                location: Location::default(),
+            },
             GcsRequestError::MissingGcsCredentials => GcsUploadError::MissingGcsCredentials {
                 location: Location::default(),
             },
             GcsRequestError::RetryExhausted { detail } => GcsUploadError::RetryExhausted {
                 detail,
+                location: Location::default(),
+            },
+            GcsRequestError::Serialization { source } => GcsUploadError::Serialization {
+                source,
                 location: Location::default(),
             },
         }
@@ -484,11 +912,20 @@ impl From<GcsRequestError> for GcsDownloadError {
             GcsRequestError::TokenExpired => GcsDownloadError::TokenExpired {
                 location: Location::default(),
             },
+            GcsRequestError::PresignedUrlExpired => GcsDownloadError::PresignedUrlExpired {
+                location: Location::default(),
+            },
             GcsRequestError::MissingGcsCredentials => GcsDownloadError::MissingGcsCredentials {
                 location: Location::default(),
             },
             GcsRequestError::RetryExhausted { detail } => GcsDownloadError::RetryExhausted {
                 detail,
+                location: Location::default(),
+            },
+            // Serialization is upload-only; if it ever fires on the download
+            // path it's a logic bug, but we still need a total mapping.
+            GcsRequestError::Serialization { source } => GcsDownloadError::Deserialization {
+                source,
                 location: Location::default(),
             },
         }
@@ -516,6 +953,14 @@ pub enum GcsUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// The presigned URL for this file expired and a refresh attempt did not
+    /// yield a working replacement (second consecutive 400). Mirrors Python's
+    /// two-strike guard in `gcs_storage_client.py`.
+    #[snafu(display("GCS presigned URL expired and refresh did not produce a working URL"))]
+    PresignedUrlExpired {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to serialize GCS metadata"))]
     Serialization {
         source: serde_json::Error,
@@ -530,6 +975,13 @@ pub enum GcsUploadError {
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted {
         detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
+    StageInfoRefreshFailed {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -553,6 +1005,13 @@ pub enum GcsDownloadError {
     },
     #[snafu(display("GCS access token expired"))]
     TokenExpired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// The presigned URL for this file expired and a refresh attempt did not
+    /// yield a working replacement.
+    #[snafu(display("GCS presigned URL expired and refresh did not produce a working URL"))]
+    PresignedUrlExpired {
         #[snafu(implicit)]
         location: Location,
     },
@@ -585,6 +1044,13 @@ pub enum GcsDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
+    StageInfoRefreshFailed {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 // --- Unit tests ---
@@ -592,6 +1058,7 @@ pub enum GcsDownloadError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
@@ -1153,6 +1620,68 @@ mod tests {
         assert!(
             parse_result.is_err(),
             "malformed JSON should fail deserialization"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // 11. GcsTokenRefresher::should_refresh
+    // Direct port of s3_transfer.rs:expired_token_code_is_detected /
+    // other_aws_codes_are_not_treated_as_expired_token.
+    // Guards that 400 and 403 (handled separately) do NOT trigger the
+    // cred-rotation loop, only 401 (TokenExpired) does.
+    // ---------------------------------------------------------------
+
+    struct NoopRefresher {
+        cache: StageInfoCache,
+    }
+
+    impl NoopRefresher {
+        fn with_token(token: &str) -> Self {
+            Self {
+                cache: StageInfoCache::new(StageInfoSnapshot {
+                    creds: CloudCredentials::Gcs {
+                        gcs_access_token: Some(SensitiveString::from(token)),
+                    },
+                    presigned_url: None,
+                    presigned_urls: None,
+                }),
+            }
+        }
+    }
+
+    impl super::super::types::StageInfoRefresher for NoopRefresher {
+        fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn refresh_url(&mut self) -> RefreshFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn cache(&self) -> &StageInfoCache {
+            &self.cache
+        }
+    }
+
+    #[test]
+    fn gcs_token_refresher_should_refresh_matches_only_token_expired() {
+        // The GcsTokenRefresher must treat only 401 (TokenExpired) as a
+        // cred-rotation signal. 400 (presigned URL expiry, handled separately
+        // by the outer 400-refresh loop) and 403 (access denied, not
+        // recoverable by cred rotation) must not trigger the creds refresh
+        // loop.
+        let mut noop = NoopRefresher::with_token("tok");
+        // Use unit type as E to isolate the should_refresh logic from error
+        // conversions — the check dispatches only on the enum variant.
+        let r: GcsTokenRefresher<'_, (), _> = GcsTokenRefresher::new(&mut noop, |_| ());
+
+        assert!(
+            r.should_refresh(&GcsAttemptError::TokenExpired),
+            "TokenExpired (401) must trigger cred refresh"
+        );
+        assert!(
+            !r.should_refresh(&GcsAttemptError::Other(())),
+            "Other (400, 403, …) must NOT trigger cred refresh"
         );
     }
 }

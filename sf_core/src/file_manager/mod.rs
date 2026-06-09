@@ -8,14 +8,15 @@ pub mod types;
 
 pub use self::types::*;
 pub use azure_transfer::download_from_azure;
-pub use gcs_transfer::download_from_gcs;
+pub use gcs_transfer::{
+    GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
+};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
 use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
-use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
@@ -34,7 +35,7 @@ const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIP
 
 pub async fn upload_files(
     data: &UploadData,
-    mut refresher: Option<&mut dyn StageCredsRefresher>,
+    mut refresher: Option<&mut dyn StageInfoRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
         expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
@@ -48,11 +49,13 @@ pub async fn upload_files(
 
     let mut results = Vec::with_capacity(file_locations.len());
 
-    // The refresher owns the latest stage credentials for the batch via its
-    // shared `StageCredsCache`; per-file calls read from that cache, so
-    // refreshed creds heal the remaining files automatically (matching
-    // Python's shared `StorageCredential`). The refresher coalesces
-    // rapid-fire refresh calls across files.
+    // The refresher owns the latest stage info (creds + presigned URLs) for
+    // the batch via its shared `StageInfoCache`; per-file calls read from
+    // that cache, so refreshed creds/URLs heal the remaining files
+    // automatically (matching Python's shared `StorageCredential`). The
+    // refresher coalesces rapid-fire token refresh calls across files; URL
+    // refresh is intentionally not coalesced (each file may carry its own
+    // presigned URL).
     for file_location in file_locations {
         let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
         let single_upload_data = SingleUploadData {
@@ -74,24 +77,33 @@ pub async fn upload_files(
     Ok(results)
 }
 
-/// Returns a copy of `base` with `creds` replaced by the refresher's current
-/// snapshot, when a refresher is present. Without a refresher, `base` is
-/// returned unchanged.
-fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageCredsRefresher>) -> StageInfo {
-    let mut info = base.clone();
-    if let Some(r) = refresher {
-        info.creds = r.cache().snapshot();
-    }
-    info
+/// Returns a copy of `base` with `creds` and `presigned_url` overlaid from
+/// the refresher's current `StageInfoSnapshot`, when a refresher is present.
+/// Without a refresher, `base` is returned unchanged.
+///
+/// The snapshot's `presigned_urls[]` lives on `DownloadData` (not
+/// `StageInfo`); the per-file GCS GET path reads it directly from the
+/// refresher cache at the call site (see `download_from_gcs`).
+fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefresher>) -> StageInfo {
+    refresher.map_or_else(
+        || base.clone(),
+        |r| base.with_snapshot(r.cache().snapshot()),
+    )
 }
 
-/// Uploads one file. On S3 stages, the `refresher` (if any) is used to refresh
-/// STS credentials on `ExpiredToken`; see `s3_transfer::upload_to_s3_or_skip`
-/// for the refresh semantics. Refreshed credentials are stored in the
-/// refresher's `StageCredsCache` rather than returned here.
+/// Uploads one file. The `refresher` (if any) is used to refresh stage info
+/// on recoverable errors:
+/// - S3 stages: AWS `ExpiredToken` triggers a creds refresh
+///   (`s3_transfer::upload_to_s3_or_skip`).
+/// - GCS stages: 401 triggers a creds refresh; 400 in presigned-mode
+///   triggers a URL refresh (`gcs_transfer::upload_to_gcs_or_skip`).
+/// - Azure stages: SAS URL refresh is out of scope for the current gap stack.
+///
+/// Refreshed snapshots are stored in the refresher's `StageInfoCache` rather
+/// than returned here.
 pub async fn upload_single_file(
     data: SingleUploadData,
-    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
 
@@ -115,6 +127,7 @@ pub async fn upload_single_file(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            refresher,
         )
         .await
         .context(GcsUploadSnafu)?,
@@ -304,7 +317,7 @@ fn auto_detect_source_compression(
 
 pub async fn download_files(
     mut data: DownloadData,
-    mut refresher: Option<&mut dyn StageCredsRefresher>,
+    mut refresher: Option<&mut dyn StageInfoRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
@@ -313,12 +326,17 @@ pub async fn download_files(
     // be the same length as `src_locations` (padded with `None` when GS
     // omitted entries) so the zip never silently drops a file. See
     // `DownloadData.presigned_urls` doc-comment for the alignment invariant.
+    //
+    // The per-file index (`enumerate`) is forwarded into `download_single_file`
+    // so the GCS layer can re-resolve `presigned_urls[i]` from the refresher
+    // cache after a 400-triggered URL refresh.
     let download_iter = data
         .src_locations
         .drain(..)
         .zip(data.encryption_materials.drain(..))
-        .zip(data.presigned_urls.drain(..));
-    for ((file_location, encryption_material), presigned_url) in download_iter {
+        .zip(data.presigned_urls.drain(..))
+        .enumerate();
+    for (index, ((file_location, encryption_material), presigned_url)) in download_iter {
         let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
         let single_download_data = SingleDownloadData {
             src_location: file_location,
@@ -329,7 +347,7 @@ pub async fn download_files(
             flavor: data.flavor.clone(),
         };
 
-        let result = download_single_file(single_download_data, &mut refresher).await?;
+        let result = download_single_file(single_download_data, index, &mut refresher).await?;
         results.push(result);
     }
 
@@ -337,9 +355,15 @@ pub async fn download_files(
 }
 
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
+///
+/// `per_file_index` is the file's index inside the GET batch — i.e. its
+/// position in `DownloadData.presigned_urls` / `DownloadData.src_locations`.
+/// The GCS branch uses it to re-pick `presigned_urls[i]` from the refresher
+/// cache after a 400-triggered URL refresh. Non-GCS branches ignore it.
 pub async fn download_single_file(
     data: SingleDownloadData,
-    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    per_file_index: usize,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
     let DownloadResponse {
         data: raw_data,
@@ -357,6 +381,8 @@ pub async fn download_single_file(
             &data.stage_info,
             data.src_location.as_str(),
             data.presigned_url.as_deref(),
+            per_file_index,
+            refresher,
         )
         .await
         .context(GcsDownloadSnafu)?,
