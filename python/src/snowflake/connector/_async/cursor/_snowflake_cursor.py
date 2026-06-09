@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from .._internal.cursor import Row
-from .._internal.decorators import api_telemetry
-from ._base import SnowflakeCursorBase
+from ..._internal.cursor import Row
+from ..._internal.decorators import api_telemetry
+from ._base import AsyncSnowflakeCursorBase
 
 
-class SnowflakeCursor(SnowflakeCursorBase):
+class AsyncSnowflakeCursor(AsyncSnowflakeCursorBase):
     """Cursor returning results as tuples (default).
 
     This is the standard cursor returned by ``connection.cursor()``.
@@ -18,19 +18,19 @@ class SnowflakeCursor(SnowflakeCursorBase):
         return False
 
     @api_telemetry
-    def fetchone(self) -> Row | None:
+    async def fetchone(self) -> Row | None:
         """
         Fetch the next row of a query result set.
 
         Returns:
             tuple: Next row, or None when no more data is available
         """
-        row = self._fetchone()
+        row = await self._fetchone()
         if not (row is None or isinstance(row, tuple)):
             raise TypeError(f"fetchone got unexpected result: {row}")
         return row
 
-    def fetchmany(self, size: int | None = None) -> list[Row]:
+    async def fetchmany(self, size: int | None = None) -> list[Row]:
         """
         Fetch the next set of rows of a query result.
 
@@ -40,13 +40,13 @@ class SnowflakeCursor(SnowflakeCursorBase):
         Returns:
             list[tuple]: List of rows as tuples
         """
-        return super().fetchmany(size)
+        return await super().fetchmany(size)
 
-    def fetchall(self) -> list[Row]:
+    async def fetchall(self) -> list[Row]:
         """
         Fetch all (remaining) rows of a query result.
 
         Returns:
             list[tuple]: List of all remaining rows as tuples
         """
-        return super().fetchall()
+        return await super().fetchall()

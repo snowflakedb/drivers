@@ -9,8 +9,14 @@ import pytest
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
-from tests.conftest import with_paramstyle
+from tests.conftest import run_against_sync_and_async, skip_async, with_paramstyle
 from tests.e2e.types.utils import assert_sequential_values
+
+
+# Run every test in this module against BOTH the sync cursor and the async
+# cursor (driven through a blocking facade). Tests that assert against a
+# concrete sync cursor type opt out of the async run via ``@skip_async``.
+pytestmark = run_against_sync_and_async
 
 
 class TestCursorSfqid:
@@ -1795,6 +1801,7 @@ class TestCursorDatabaseQueries:
 class TestCursorFetch:
     """Test cursor fetch operations."""
 
+    @skip_async("asserts against the concrete sync SnowflakeCursor type")
     def test_execute_returns_cursor(self, cursor):
         """Test execute returns cursor"""
         r = cursor.execute("SELECT 1")
@@ -2188,6 +2195,7 @@ class TestCursorMultipleQueries:
 class TestDictCursorCreation:
     """Test DictCursor creation via connection.cursor()."""
 
+    @skip_async("asserts against the concrete sync DictCursor type")
     def test_create_dict_cursor(self, connection):
         """Test that DictCursor can be created via connection.cursor()."""
         from snowflake.connector.cursor import DictCursor

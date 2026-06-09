@@ -11,13 +11,9 @@ Hierarchy:
 
 from __future__ import annotations
 
-from ._base import (
-    DictRow,
-    Row,
-    SnowflakeCursorBase,
-)
+from .._internal.cursor import DictRow, QueryResultStats, ResultMetadata, ResultMetadataV2, Row
+from ._base import SnowflakeCursorBase
 from ._dict_cursor import DictCursor
-from ._result_metadata import QueryResultStats, ResultMetadata, ResultMetadataV2
 from ._snowflake_cursor import SnowflakeCursor
 
 

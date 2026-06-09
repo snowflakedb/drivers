@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager, contextmanager
 
-from .api_client.client_api import core_driver
+from .api_client.client_api import async_core_driver, core_driver
 from .protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseFetchChunkResponse,
@@ -38,6 +38,16 @@ def statement(conn_handle: ConnectionHandle, query: str) -> Generator[StatementH
         yield stmt_handle
     finally:
         core_driver.statement_release(stmt_handle=stmt_handle)
+
+
+@asynccontextmanager
+async def async_statement(conn_handle: ConnectionHandle, query: str) -> AsyncGenerator[StatementHandle]:
+    stmt_handle = (await async_core_driver.statement_new(conn_handle=conn_handle)).stmt_handle
+    try:
+        await async_core_driver.statement_set_query(stmt_handle=stmt_handle, query=query)
+        yield stmt_handle
+    finally:
+        await async_core_driver.statement_release(stmt_handle=stmt_handle)
 
 
 def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetGetStreamResponse | None) -> int:

@@ -101,8 +101,8 @@ class TestParamstyleSetter:
     def _no_native_stream_ops(self):
         """Avoid touching real Arrow stream memory when cursor tests run execute()."""
         with (
-            patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
-            patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
+            patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
+            patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"),
         ):
             yield
 

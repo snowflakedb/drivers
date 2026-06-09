@@ -21,13 +21,14 @@ from ..errors import Error
 
 
 if TYPE_CHECKING:
+    from .._async.cursor import AsyncSnowflakeCursorBase
     from ..connection import Connection
     from ..cursor import SnowflakeCursorBase
 
 
 def route_exception(
     connection: Connection | None,
-    cursor: SnowflakeCursorBase | None,
+    cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
     exc: Error,
 ) -> NoReturn:
     """Route an ``Error`` through the PEP 249 errorhandler chain, then re-raise.
@@ -57,7 +58,7 @@ class ErrorHandlerMixin:
         return None
 
     @property
-    def _errorhandler_cursor(self) -> SnowflakeCursorBase | None:
+    def _errorhandler_cursor(self) -> SnowflakeCursorBase | AsyncSnowflakeCursorBase | None:
         return None
 
 

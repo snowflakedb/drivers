@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from .._internal.cursor import DictRow
-from .._internal.decorators import api_telemetry
-from ._base import SnowflakeCursorBase
+from ..._internal.cursor import DictRow
+from ..._internal.decorators import api_telemetry
+from ._base import AsyncSnowflakeCursorBase
 
 
-class DictCursor(SnowflakeCursorBase):
+class AsyncDictCursor(AsyncSnowflakeCursorBase):
     """Cursor returning results as dictionaries with column names as keys.
 
     Usage::
 
-        with connection.cursor(DictCursor) as cur:
-            cur.execute("SELECT 1 AS id, 'hello' AS name")
-            row = cur.fetchone()
+        async with connection.cursor(DictCursor) as cur:
+            await cur.execute("SELECT 1 AS id, 'hello' AS name")
+            row = await cur.fetchone()
             # row == {"ID": 1, "NAME": "hello"}
     """
 
@@ -23,7 +23,7 @@ class DictCursor(SnowflakeCursorBase):
         return True
 
     @api_telemetry
-    def fetchone(self) -> DictRow | None:
+    async def fetchone(self) -> DictRow | None:
         """
         Fetch the next row of a query result set as a dictionary.
 
@@ -31,12 +31,12 @@ class DictCursor(SnowflakeCursorBase):
             dict: Next row as a dictionary with column names as keys,
                   or None when no more data is available
         """
-        row = self._fetchone()
+        row = await self._fetchone()
         if not (row is None or isinstance(row, dict)):
             raise TypeError(f"fetchone got unexpected result: {row}")
         return row
 
-    def fetchmany(self, size: int | None = None) -> list[DictRow]:
+    async def fetchmany(self, size: int | None = None) -> list[DictRow]:
         """
         Fetch the next set of rows as dictionaries.
 
@@ -46,13 +46,13 @@ class DictCursor(SnowflakeCursorBase):
         Returns:
             list[dict]: List of rows as dictionaries
         """
-        return super().fetchmany(size)
+        return await super().fetchmany(size)
 
-    def fetchall(self) -> list[DictRow]:
+    async def fetchall(self) -> list[DictRow]:
         """
         Fetch all (remaining) rows as dictionaries.
 
         Returns:
             list[dict]: List of all remaining rows as dictionaries
         """
-        return super().fetchall()
+        return await super().fetchall()

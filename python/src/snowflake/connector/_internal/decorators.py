@@ -9,9 +9,10 @@ to just the decorator façade.
 from __future__ import annotations
 
 import functools
+import inspect
 import types
 
-from collections.abc import Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextvars import ContextVar
 from typing import Any, TypeVar, cast
 
@@ -80,25 +81,64 @@ def backward_compatibility(obj: T) -> T:
 _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
+def _send_api_usage(self: Any, func: Callable[..., Any]) -> None:
+    """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
+    from snowflake.connector._async.cursor._base import AsyncSnowflakeCursorBase as AsyncSnowflakeCursorBase
+    from snowflake.connector.connection import Connection
+    from snowflake.connector.cursor._base import SnowflakeCursorBase
+
+    api_name = f"{type(self).__name__}.{func.__name__}"
+    if isinstance(self, Connection):
+        self._telemetry_client.send_api_usage(api_name)
+    elif isinstance(self, (SnowflakeCursorBase, AsyncSnowflakeCursorBase)):
+        self._connection._telemetry_client.send_api_usage(api_name)
+
+
 def api_telemetry(func: F) -> F:
     """Record ``{ClassName}.{method_name}`` telemetry for the outermost call.
 
     Suppresses ``_TRACKING`` for the method body so nested decorated calls
     are not recorded.  Generator results are wrapped to suppress only during
     each iteration step (see :func:`_suppress_tracking_generator`).
+
+    Supports synchronous functions, coroutine functions, and async generator
+    functions — the suppression always spans the actual execution of the
+    wrapped callable (the awaited body or each iteration step), so async
+    methods record telemetry exactly like their sync counterparts.
     """
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            if _TRACKING.get():
+                _send_api_usage(self, func)
+                _TRACKING.set(False)
+                try:
+                    return await func(self, *args, **kwargs)
+                finally:
+                    _TRACKING.set(True)
+            return await func(self, *args, **kwargs)
+
+        return cast(F, async_wrapper)
+
+    if inspect.isasyncgenfunction(func):
+
+        @functools.wraps(func)
+        async def async_gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            if _TRACKING.get():
+                _send_api_usage(self, func)
+                async for value in _suppress_tracking_async_generator(func(self, *args, **kwargs)):
+                    yield value
+            else:
+                async for value in func(self, *args, **kwargs):
+                    yield value
+
+        return cast(F, async_gen_wrapper)
 
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _TRACKING.get():
-            from snowflake.connector.connection import Connection
-            from snowflake.connector.cursor._base import SnowflakeCursorBase
-
-            api_name = f"{type(self).__name__}.{func.__name__}"
-            if isinstance(self, Connection):
-                self._telemetry_client.send_api_usage(api_name)
-            elif isinstance(self, SnowflakeCursorBase):
-                self._connection._telemetry_client.send_api_usage(api_name)
+            _send_api_usage(self, func)
 
             _TRACKING.set(False)
             try:
@@ -131,6 +171,27 @@ def _suppress_tracking_generator(
                 yield value
             except GeneratorExit:
                 gen.close()
+                return
+            _TRACKING.set(False)
+    finally:
+        _TRACKING.set(True)
+
+
+async def _suppress_tracking_async_generator(
+    agen: AsyncGenerator[Any, Any],
+) -> AsyncGenerator[Any, Any]:
+    """Async counterpart of :func:`_suppress_tracking_generator`.
+
+    Suppress ``_TRACKING`` during each iteration step, restore between yields.
+    """
+    _TRACKING.set(False)
+    try:
+        async for value in agen:
+            _TRACKING.set(True)
+            try:
+                yield value
+            except GeneratorExit:
+                await agen.aclose()
                 return
             _TRACKING.set(False)
     finally:
