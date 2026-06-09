@@ -223,5 +223,16 @@ std::string get_connection_string() {
     std::cout << "Old driver: proxy=" << wiremock_proxy << "\n";
   }
 
+  // Universal driver defaults to ignoring HTTP(S)_PROXY unless USE_PROXY_ENV is set.
+  // The WireMock perf harness routes traffic via proxy env vars, not explicit proxy=.
+  if (driver_type_str == "universal") {
+    const bool proxy_env_set =
+        !get_env_optional("HTTPS_PROXY", "").empty() || !get_env_optional("HTTP_PROXY", "").empty();
+    if (proxy_env_set) {
+      ss << "USE_PROXY_ENV=true;";
+      std::cout << "Universal driver: USE_PROXY_ENV=true (WireMock proxy env detected)\n";
+    }
+  }
+
   return ss.str();
 }

@@ -39,6 +39,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     account: str | None = None
     """Snowflake account identifier. Required"""
 
+    allow_empty_proxy: bool | None = True
+    """Empty PROXY value explicitly disables proxy (overrides env). Default: True"""
+
     application: str | None = None
     """User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)"""
 
@@ -117,6 +120,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     logout_total_timeout_seconds: int | None = None
     """Total timeout budget for logout operation including retries"""
 
+    no_proxy: str | None = None
+    """Comma-separated list of hosts to bypass the proxy for"""
+
     oauth_authorization_url: str | None = None
     """IdP authorization endpoint (defaults to https://{host}/oauth/authorize)"""
 
@@ -180,6 +186,21 @@ class ConnectionConfig(ConnectionConfigMixin):
     protocol: str | None = None
     """Connection protocol (http or https)"""
 
+    proxy: str | None = None
+    """Proxy URL ([scheme://][user:pass@]host[:port]); legacy ODBC `PROXY` form"""
+
+    proxy_host: str | None = None
+    """Proxy server hostname"""
+
+    proxy_password: str | None = None
+    """Proxy server password for Basic auth"""
+
+    proxy_port: int | None = None
+    """Proxy server port"""
+
+    proxy_user: str | None = None
+    """Proxy server username for Basic auth"""
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 
@@ -191,6 +212,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+
+    use_proxy_env: bool | None = False
+    """Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set. Default: False"""
 
     user: str | None = None
     """Login username. Required"""
@@ -233,11 +257,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Default warehouse to use"""
 
     _ALIAS_MAP: ClassVar[dict[str, str]] = {
+        "allowemptyproxy": "allow_empty_proxy",
         "allowunderscoresinhost": "preserve_underscores_in_hostname",
         "clientstoretemporarycredential": "client_store_temporary_credential",
         "crl_enabled": "crl_check_mode",
         "crl_mode": "crl_check_mode",
         "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
+        "noproxy": "no_proxy",
         "oauth_token_url": "oauth_token_request_url",
         "oauthauthorizationurl": "oauth_authorization_url",
         "oauthclientid": "oauth_client_id",
@@ -254,6 +280,7 @@ class ConnectionConfig(ConnectionConfigMixin):
         "private_key_base64": "private_key",
         "private_key_file_pwd": "private_key_password",
         "private_key_pwd": "private_key_password",
+        "proxywithenv": "use_proxy_env",
         "pwd": "password",
         "server": "host",
         "tls_custom_root_store_path": "custom_root_store_path",
@@ -279,6 +306,8 @@ class ConnectionConfig(ConnectionConfigMixin):
             "password",
             "private_key",
             "private_key_password",
+            "proxy",
+            "proxy_password",
             "token",
         }
     )

@@ -205,6 +205,8 @@ const FIELD_MAP: &[(i32, &str)] = &[
     (IDC_ROLEEDIT, "ROLE"),
     (IDC_TRACINGEDIT, "TRACING"),
     (IDC_AUTHENTICATOREDIT, "AUTHENTICATOR"),
+    // Legacy ODBC PROXY URL form: `[scheme://][user:pass@]host[:port]`.
+    // `sf_core::tls::config::ProxyConfig::from_settings` parses the URL.
     (IDC_PROXYEDIT, "PROXY"),
     (IDC_NO_PROXYEDIT, "NO_PROXY"),
     (IDC_PRIV_KEY_FILE_EDIT, "PRIV_KEY_FILE"),

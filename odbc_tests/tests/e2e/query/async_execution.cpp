@@ -134,7 +134,9 @@ TEST_CASE("should reject connection-level async with HY092", "[query][async]") {
 // ASYNC EXECUTION (POLLING)
 // =============================================================================
 
-TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[query][async]") {
+// [flaky]: the old reference driver can abort (simba_abort / pthread_mutex_lock)
+// when this long-running async query races with parallel ctest workers.
+TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[query][async][flaky]") {
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();

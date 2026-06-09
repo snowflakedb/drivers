@@ -12,4 +12,4 @@ Changes:
   one-time token refresh and retry. Multi-file glob PUT batches recover per file by
   re-issuing the PUT command rewritten for the current destination file, matching the
   Python and ODBC drivers. (snowflake-eng/universal-driver#62)
-
+- Added HTTP proxy connection parameters (`proxy_host`, `proxy_port`, `proxy_user`, `proxy_password`, `no_proxy`) with ODBC aliases including legacy `PROXY` URL form; wired through `ProxyConfig` and `create_tls_client_with_proxy()`. Explicit `proxy_host` overrides env vars; otherwise reqwest env detection applies unless disabled. (snowflake-eng/universal-driver#29)
