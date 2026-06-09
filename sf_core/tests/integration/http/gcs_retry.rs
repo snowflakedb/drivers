@@ -11,6 +11,8 @@ use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -396,6 +398,191 @@ async fn gcs_download_without_content_encoding_header_is_unchanged() {
         .expect("happy-path download must still succeed");
 
     assert_eq!(response.data, payload);
+}
+
+// ---------------------------------------------------------------
+// Content-Length verification (gap 2.5)
+//
+// download_from_gcs compares the response Content-Length header
+// against the actual body byte count. The check is skipped when
+// Content-Length is absent, Content-Encoding is present, or the
+// header value is malformed.
+// ---------------------------------------------------------------
+
+#[tokio::test]
+async fn gcs_download_content_length_match_succeeds() {
+    let server = MockServer::start().await;
+    let body = b"hello world";
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(body.to_vec())
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
+        .await
+        .expect("matching Content-Length must succeed");
+
+    assert_eq!(response.data, body);
+    assert_eq!(response.cloud_byte_count, body.len() as i64);
+}
+
+/// When the server announces more bytes in Content-Length than it sends,
+/// reqwest/hyper detects the truncation (IncompleteMessage) before our
+/// code gets a chance to compare lengths. The mismatch surfaces as an
+/// HTTP transport error. Our `ContentLengthMismatch` variant is the
+/// safety net for cases hyper does not catch (e.g. HTTP/2 framing
+/// edge cases, or future library changes).
+#[tokio::test]
+async fn gcs_download_content_length_mismatch_truncated_body_is_http_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        let response = "HTTP/1.1 200 OK\r\n\
+             Content-Length: 100\r\n\
+             x-goog-meta-sfc-digest: test-digest\r\n\
+             Connection: close\r\n\r\n\
+             only-14-bytes!";
+        stream.write_all(response.as_bytes()).await.unwrap();
+        let _ = stream.shutdown().await;
+    });
+
+    let presigned_url = format!("http://{addr}/download");
+    let stage = gcs_stage_with_presigned_url(&presigned_url);
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+
+    server.await.unwrap();
+    assert!(
+        result.is_err(),
+        "truncated body (Content-Length > actual bytes) must fail"
+    );
+}
+
+#[tokio::test]
+async fn gcs_download_no_content_length_header_succeeds() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"chunked body".to_vec())
+                .insert_header("transfer-encoding", "chunked")
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+
+    assert!(
+        result.is_ok(),
+        "absent Content-Length must skip the check: {result:?}"
+    );
+}
+
+/// When `Content-Encoding` is present the Content-Length check must be
+/// skipped — even when Content-Length and body size match. This pins the
+/// interaction with the step 3 `.no_gzip()` fix: after disabling
+/// auto-decode, `Content-Encoding` stays visible in the response headers
+/// and our guard suppresses the length comparison (which would be
+/// meaningless if a future code path re-enabled decoding).
+#[tokio::test]
+async fn gcs_download_content_encoding_present_skips_length_check() {
+    let server = MockServer::start().await;
+    let body = b"ten bytes!";
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(body.to_vec())
+                .insert_header("content-encoding", "gzip")
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+
+    assert!(
+        result.is_ok(),
+        "Content-Encoding present must skip the length check: {result:?}"
+    );
+    let response = result.unwrap();
+    assert_eq!(response.data, body);
+}
+
+#[tokio::test]
+async fn gcs_download_zero_byte_file_succeeds() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(Vec::new())
+                .insert_header("content-length", "0")
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
+        .await
+        .expect("zero-byte file must succeed");
+
+    assert!(response.data.is_empty());
+    assert_eq!(response.cloud_byte_count, 0);
+}
+
+/// Malformed Content-Length is rejected by hyper at the HTTP protocol layer
+/// before our code sees the response headers. Our defensive parse-to-u64
+/// fallback (`None` → skip check) exists for future-proofing but is
+/// currently unreachable. This test documents that behavior.
+#[tokio::test]
+async fn gcs_download_malformed_content_length_rejected_by_http_layer() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        let response = "HTTP/1.1 200 OK\r\n\
+             Content-Length: not-a-number\r\n\
+             x-goog-meta-sfc-digest: test-digest\r\n\
+             Connection: close\r\n\r\nsome data";
+        stream.write_all(response.as_bytes()).await.unwrap();
+        let _ = stream.shutdown().await;
+    });
+
+    let presigned_url = format!("http://{addr}/download");
+    let stage = gcs_stage_with_presigned_url(&presigned_url);
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+
+    server.await.unwrap();
+    assert!(
+        result.is_err(),
+        "malformed Content-Length is rejected by hyper before our code runs"
+    );
 }
 
 /// The GCS download path must not advertise `Accept-Encoding: gzip` on
