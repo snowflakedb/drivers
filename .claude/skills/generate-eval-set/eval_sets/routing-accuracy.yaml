@@ -1,0 +1,46 @@
+# Routing-accuracy eval set for: generate-eval-set
+# Updated by sf ai skills generate-eval.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "generate an eval set for .claude/skills/merge-pr/SKILL.md"              # KEEP
+    notes: "Direct request naming the command artifact and a concrete skill path."
+  - prompt: "create routing accuracy evals for the address-github-comments skill"     # KEEP
+    notes: "Explicit request using the domain term 'routing accuracy evals' for a named sibling skill."
+  - prompt: "I just wrote a new SKILL.md and want to make sure it gets triggered on the right prompts — can you set up evals for it?"  # KEEP
+    notes: "Contextual: new skill author wants routing validation; implies generate-eval workflow."
+  - prompt: "run sf ai skills generate-eval on .claude/skills/kubectl-diagnose"       # KEEP
+    notes: "Names the underlying CLI command directly; should route to the orchestrating skill."
+  - prompt: "my skill has no eval set, I want to add one"                             # KEEP
+    notes: "Indirect; describes the gap (missing eval set) rather than the action — still clearly a generate request."
+  - prompt: "gen evals for skills/foo/SKILL.md"                                       # KEEP
+    notes: "Abbreviated shorthand — 'gen evals' is a natural truncation of 'generate eval set'."
+  - prompt: "the generate-eval command came back with a ❌ status, can you retry with different feedback?"  # KEEP
+    notes: "Error/incident scenario: user hit a failure and wants to iterate using --feedback."
+  - prompt: "update the routing-accuracy yaml for the assign-reviewers skill, it's missing edge cases for indirect requests"  # KEEP
+    notes: "Borderline: 'update' could mean edit manually, but naming routing-accuracy.yaml and describing gap signals generate-eval workflow."
+  - prompt: "why isn't my skill getting triggered correctly? can you write some evals to test the routing?"  # KEEP
+    notes: "Borderline: situational framing that implies routing validation rather than naming the eval-set artifact explicitly."
+  - prompt: "i need evals for my new skill asap, skill dir is at .claude/skills/my-feature"  # KEEP
+    notes: "Terse, informal, with a typo-adjacent 'asap'; still unambiguously a generate-eval request."
+  - prompt: "the eval set for snowci-get-runtime-logs is stale — regenerate it"       # KEEP
+    notes: "Update-mode trigger: 'regenerate' + 'eval set' for a named skill path."
+
+should_not_trigger:
+  # REMOVED: "update the description in my SKILL.md so the skill triggers on more user prompts" — was: reason: "Modifying SKILL.md content is explicitly out of scope; should route to update-claude-skill reference skill."
+  - prompt: "my routing-accuracy.yaml looks done — run the check to confirm it validates"  # NEW
+    reason: "Requests validation of an existing eval set, not authoring one; routes to sf ai skills check."
+  - prompt: "generate test intents for the merge-pr skill"                            # KEEP
+    reason: "Uses 'generate' + skill name but targets test intents, not routing-accuracy evals; should route to snowci:experimental generate-test-intent."
+  - prompt: "run the eval suite against my skill to see if the routing is passing"    # KEEP
+    reason: "Running evals (sf ai skills eval) is explicitly out of scope for this skill; generate-eval-set only authors the YAML, it does not execute it."
+  - prompt: "generate unit tests for this Go function that parses YAML"               # KEEP
+    reason: "Uses 'generate' and 'YAML' but targets code test generation, not skill routing-accuracy evals; no skill applies."
+  - prompt: "review this skill file and tell me if it's well structured and follows best practices"  # KEEP
+    reason: "Evaluating skill quality/content rather than authoring routing-accuracy YAML; should route to review or general conversation."
+  - prompt: "check if my SKILL.md is missing any required frontmatter fields"         # KEEP
+    reason: "Skill validation/linting task, not eval set generation; shares 'skill file' vocabulary but different intent."
+  - prompt: "I want to edit the routing-accuracy yaml myself — show me what the schema looks like"  # KEEP
+    reason: "User explicitly opts for self-editing (option 3 in the skill's own workflow); no need to invoke generate-eval, this is general conversation."

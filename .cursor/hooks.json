@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "sf ai __hook --ide cursor --hook-type before-submit-prompt"
+      }
+    ]
+  }
+}

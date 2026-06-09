@@ -10,7 +10,7 @@ env:
 common: &common
   agents:
     queue: "discovery"
-    repo: "snowflakedb/universal-driver"
+    repo: "snowflake-eng/universal-driver"
   plugins:
     - ${GLOBAL_PLUGIN}/vault_secrets:
         secrets:
@@ -31,7 +31,7 @@ steps:
     key: "test-selection"
     agents:
       queue: "discovery"
-      repo: "snowflakedb/universal-driver"
+      repo: "snowflake-eng/universal-driver"
     command: |
       set -euo pipefail
       pip3 install pyyaml -q
@@ -362,7 +362,7 @@ steps:
     soft_fail: true
     agents:
       queue: "discovery"
-      repo: "snowflakedb/universal-driver"
+      repo: "snowflake-eng/universal-driver"
     plugins:
       - ${GLOBAL_PLUGIN}/vault_secrets:
           secrets:

@@ -4,6 +4,12 @@ Project-level guidance for Claude Code agents working in this repo.
 Keep this file thin; put substantive content in `.claude/rules/*.md` and
 `.claude/skills/*/SKILL.md`.
 
+## Skills & Evals
+
+This repo uses the `sf ai skills` convention. See
+[.claude/skills/README.md](.claude/skills/README.md) for the full
+lifecycle (author → generate-eval → check → eval → iterate).
+
 ## AI file conventions
 
 Two types of agent-config files live in this repo, with different sync rules:

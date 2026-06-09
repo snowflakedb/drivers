@@ -1,0 +1,24 @@
+{
+    "hooks": {
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "sf ai __hook --ide claude --hook-type user-prompt-submit > /dev/null"
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "sf ai __hook --ide claude --hook-type post-tool-use --detect implicit-skill > /dev/null"
+                    }
+                ]
+            }
+        ]
+    }
+}

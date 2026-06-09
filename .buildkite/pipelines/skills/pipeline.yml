@@ -1,0 +1,28 @@
+steps:
+  - label: "Skill Validation"
+    key: skill_check
+    timeout_in_minutes: 10
+    agents:
+      queue: "discovery"
+      repo: "snowflake-eng/universal-driver"
+    notify:
+      - github_check:
+          name: "Skill Validation"
+    command: |
+      sf ai skills bridge --lenient
+      sf ai skills check --context=ci --format=junit
+
+  - label: "Skill Eval"
+    key: skill_eval
+    timeout_in_minutes: 15
+    agents:
+      queue: "discovery"
+      repo: "snowflake-eng/universal-driver"
+    notify:
+      - github_check:
+          name: "Skill Eval"
+    command: |
+      sf ai skills bridge --lenient
+      PYTHON=$$(command -v python3.8 2>/dev/null || command -v python3)
+      $$PYTHON -m pip install pyyaml --quiet --user
+      $$PYTHON ci/skill_eval_runner.py

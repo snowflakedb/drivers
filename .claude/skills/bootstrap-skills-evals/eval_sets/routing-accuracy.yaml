@@ -1,0 +1,48 @@
+# Routing-accuracy eval set for: bootstrap-skills-evals
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "set up sf ai skills in this repo"
+    notes: "Exact trigger phrase from the skill description."
+  - prompt: "bootstrap skills for our monorepo"
+    notes: "Matches the 'bootstrap skills' trigger phrase with a minor addition."
+  - prompt: "run sf ai skills repo-setup on this project"
+    notes: "Exact trigger phrase variant from the skill description."
+  - prompt: "this repo doesn't have any meta-skills installed — how do I get the full skills convention wired up?"
+    notes: "Indirect contextual request: describes the exact gap the bootstrap fixes (missing meta-skills, hooks, CI)."
+  - prompt: "I want to add skill validation and eval CI gates to our pipeline, what's the one-time setup I need to do?"
+    notes: "Indirect: user knows the end goal (CI gates) but is asking about the initial setup process, which is bootstrap's job."
+  - prompt: "we're rolling out sf ai skills across all our repos — can you do the initial onboarding for this one?"
+    notes: "Contextual adoption request that implies repo-level bootstrap, not single-skill authoring."
+  - prompt: "our repo is missing the precommit hooks for skill check and there's no CI step either, can you fix that?"
+    notes: "Borderline error/incident: describes exactly what bootstrap installs (precommit hooks + CI steps), without naming the workflow."
+  - prompt: "need to add the orchestrator skills + hooks to this codebase asap"
+    notes: "Terse informal request; 'orchestrator skills + hooks' is the bootstrap's primary deliverable."
+  - prompt: "setup skills convention here"
+    notes: "Abbreviated shorthand; conveys the same intent as the trigger phrase."
+  - prompt: "add sf ai skills to this repo"
+    notes: "Shorthand that maps directly to the bootstrap workflow."
+  - prompt: "sf ai skills repo-setup"
+    notes: "Bare CLI command form of the trigger phrase — engineers often type the command they'd run."
+  - prompt: "we're missing the lifecycle README and claude.md pointer for skills — can you scaffold all of that?"
+    notes: "Borderline: specifically names two bootstrap artifacts (README + CLAUDE.md snippet) without using the trigger phrase; should still route here."
+
+should_not_trigger:
+  - prompt: "migrate my .ai/commands to .claude/skills"
+    reason: "migrate-repo-to-skills — this is explicitly out of scope for bootstrap; migration of legacy content is a separate workflow."
+  - prompt: "port the legacy commands from .ai/context to the new format, there are about 30 of them"
+    reason: "migrate-repo-to-skills — shares 'skills' vocabulary and is frequently confused with bootstrap, but the task is content migration not initial setup."
+  - prompt: "create a new skill for automatically triaging build failures"
+    reason: "author-skill — single skill authoring, not repo-level bootstrap. 'create a skill' is a different lifecycle step."
+  - prompt: "generate an eval set for the deploy-service skill"
+    reason: "generate-eval-set — generating evals for an existing skill, not installing the skills infrastructure."
+  - prompt: "run the routing-accuracy evals on all skills in this repo and show me the results"
+    reason: "run-skill-evals — running existing evals, not bootstrapping the repo to have them."
+  - prompt: "the SKILL.md frontmatter on several of our skills has the wrong name field — can you audit and fix them?"
+    reason: "configure-skill-settings — this is frontmatter audit/repair on existing skills, explicitly out of scope for bootstrap."
+  - prompt: "bootstrap a full Claude Code knowledge graph for this new codebase including master skills and CLAUDE.md"
+    reason: "init_claude_flywheel — 'bootstrap' keyword overlap, but this targets the broader Claude flywheel setup, not the sf ai skills convention specifically."
+  - prompt: "my skill isn't triggering even though the description looks right, can you help fix it?"
+    reason: "author-skill — skill debugging/modification, not repo onboarding."

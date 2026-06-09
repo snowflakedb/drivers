@@ -1,0 +1,63 @@
+# Routing-accuracy eval set for: configure-skill-settings
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "configure skills in GlobalServices/modules/metadata/"
+    notes: "Direct request with folder path — matches the primary trigger phrase 'configure skills' exactly."
+
+  - prompt: "audit skill settings for all the skills in our module"
+    notes: "Uses 'audit skill settings', one of the explicit trigger phrases in the description."
+
+  - prompt: "review skill frontmatter across the FDB directory"
+    notes: "Exact match on 'review skill frontmatter' trigger phrase with a domain path."
+
+  - prompt: "my context- skills keep auto-triggering when they shouldn't — want to turn off auto-invoke for all of them at once"
+    notes: "Indirect; describes a disable-model-invocation problem that this skill audits and fixes in batch."
+
+  - prompt: "want to understand what skills would actually load when im editing files deep in the metadata module"
+    notes: "Indirect question about ancestor walking visibility — a core capability of Step 2 in this skill."
+
+  - prompt: "some skills in our team dir have globs: set instead of paths: — can you check them all and flag invalid fields"
+    notes: "References the globs→paths conversion gotcha; Step 5 of this skill explicitly handles this."
+
+  - prompt: "skill descriptions in our module are all way over 250 chars and probably messing up routing, wanna audit them"
+    notes: "Indirect; describes the description-length issue that Step 5 covers. Not phrased as a direct trigger."
+
+  - prompt: "a skill keeps triggering when I edit files in a completely unrelated area — can we see what paths it has configured"
+    notes: "Error scenario; symptom points to misconfigured paths: field, which Step 4 reviews and corrects."
+
+  - prompt: "audit skills .claude/skills/"
+    notes: "Terse, abbreviated command — omits verb detail but 'audit skills' plus a path clearly invokes this workflow."
+
+  - prompt: "skill frontmatter check metadata module"
+    notes: "Shorthand fragment — no verb, no punctuation, but 'frontmatter check' maps directly to the skill's description trigger."
+
+  - prompt: "does any skill in our team directory have a name field that doesn't match the directory it's in"
+    notes: "Borderline — asks a specific diagnostic question that matches Step 5's name/directory mismatch check."
+
+  - prompt: "check which skills under GlobalServices are visible from files in the replication-core subdirectory and whether any shadow each other"
+    notes: "Borderline; specifically asks about ancestor walking and name shadowing — core to Step 2 of this skill."
+
+should_not_trigger:
+  - prompt: "generate an eval set for the context-md-core skill"
+    reason: "generate-eval-set — shares 'skill' domain vocabulary but this is an eval authoring request, explicitly out of scope for configure-skill-settings."
+
+  - prompt: "run skill evals on all skills in GlobalServices and show me which ones are failing"
+    reason: "run-skill-evals — same skill-tooling neighborhood, but this is an eval execution request, not a frontmatter audit."
+
+  - prompt: "I want to create a new skill to help with the ATQ triage workflow"
+    reason: "author-skill — skill creation is explicitly out of scope for configure-skill-settings."
+
+  - prompt: "my skill isn't triggering even when I use exactly the right words — how do I debug it"
+    reason: "author-skill — author-skill explicitly claims this scenario ('my skill isn't triggering, never fires') in its description."
+
+  - prompt: "fix the instructions in step 3 of my deploy-temptest skill — the curl command is outdated"
+    reason: "No skill / general editing — editing skill body content is explicitly out of scope; this skill only touches frontmatter."
+
+  - prompt: "run skill_check.py on the metadata module to validate skill structure"
+    reason: "No skill / CI tooling — the skill's Out of Scope section explicitly says skill_check.py CI validation is a separate concern."
+
+  - prompt: "what's the difference between paths and globs fields in Claude Code skill frontmatter"
+    reason: "No skill / general conversation — a knowledge question, not an audit action; no directory target means no workflow to invoke."
