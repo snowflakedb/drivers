@@ -7,8 +7,21 @@ use sf_core::protobuf::apis::database_driver_v1::{
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
 
+use super::arrow_result_helper::ArrowResultHelper;
 use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
+
+/// Cloud provider backing the current Snowflake deployment.
+///
+/// Internal (temporary) stages are provisioned in the deployment's cloud, so
+/// this is the signal cloud-specific PUT/GET tests use to self-skip when the
+/// connected account lives on a different cloud than the one under test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudProvider {
+    Aws,
+    Gcp,
+    Azure,
+}
 
 /// Creates a connected Snowflake client with database and connection initialized
 pub struct SnowflakeTestClient {
@@ -455,6 +468,32 @@ impl SnowflakeTestClient {
         self.execute_sql(&format!(
             "create temporary stage if not exists {stage_name}"
         ));
+    }
+
+    /// Returns the cloud provider of the current Snowflake deployment,
+    /// derived from `CURRENT_REGION()`. Internal (temporary) stages are
+    /// provisioned in this same cloud, so cloud-specific PUT/GET tests use
+    /// this to self-skip when the connected account is on another cloud
+    /// (e.g. CI's default AWS account vs. the GCS-only digest-skip test).
+    pub fn current_cloud(&self) -> CloudProvider {
+        let result = self.execute_query("SELECT CURRENT_REGION()");
+        let rows = ArrowResultHelper::from_result(result)
+            .transform_into_array::<String>()
+            .expect("CURRENT_REGION() should return rows");
+        let region = rows
+            .first()
+            .and_then(|row| row.first())
+            .expect("CURRENT_REGION() should return one value")
+            .to_uppercase();
+        // CURRENT_REGION() returns "<CLOUD>_<REGION>", optionally prefixed by a
+        // region group (e.g. "PUBLIC.AWS_US_WEST_2"); match on the cloud token.
+        if region.contains("GCP") {
+            CloudProvider::Gcp
+        } else if region.contains("AZURE") {
+            CloudProvider::Azure
+        } else {
+            CloudProvider::Aws
+        }
     }
 
     pub fn connect(&self) -> Result<(), String> {
