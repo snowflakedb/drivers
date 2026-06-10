@@ -1,7 +1,6 @@
 id: universal-driver-python-rules
 friendly_name: "Universal Driver Python Guidelines"
 status: enabled
-percentage_of_prs_reviewed: 100
 allowed_folders:
   - "python/src/snowflake/connector"
   - "python/tests"
@@ -9,7 +8,6 @@ excluded_folders:
   - "python/tests/__pycache__"
   - "python/src/snowflake/connector/_internal/protobuf_gen"
   - "python/src/snowflake/connector/_internal/nanoarrow_cpp"
-llm_model: "claude-sonnet-4-6"
 allowed_file_extensions:
   - ".py"
 rules:

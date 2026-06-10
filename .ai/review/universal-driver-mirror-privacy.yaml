@@ -1,7 +1,6 @@
 id: universal-driver-mirror-privacy
 friendly_name: "Universal Driver Mirror Privacy Check"
 status: enabled
-percentage_of_prs_reviewed: 100
 allowed_folders:
   # Root-level files (README, CLAUDE.md, changelogs, top-level docs, etc.)
   - "."
@@ -32,7 +31,6 @@ excluded_folders:
   - ".github"
   - "ci"
   - "scripts"
-llm_model: "claude-sonnet-4-5"
 allowed_file_extensions:
   - ".md"
   - ".mdc"

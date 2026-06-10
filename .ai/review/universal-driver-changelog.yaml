@@ -1,10 +1,8 @@
 id: universal-driver-changelog
 friendly_name: "Universal Driver Changelog Rules"
 status: enabled
-percentage_of_prs_reviewed: 100
 allowed_folders: []
 excluded_folders: []
-llm_model: "claude-sonnet-4-6"
 rules:
   - id: ud-pr-description-changelog-required
     scope: full-pr
