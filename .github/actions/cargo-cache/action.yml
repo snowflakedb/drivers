@@ -95,11 +95,18 @@ runs:
     #       an arm64 protoc binary under the macOS key, then the x86_64 cross-
     #       build job would restore it and crash with "Bad CPU type in executable"
     #       (os error 86). Busting v3 forces one clean rebuild per arch.
+    #   v5: evict the stale, config-drifted Windows target cache. The v4 Windows
+    #       cache restored on an exact key hit but cargo recompiled the whole dep
+    #       graph: its .fingerprint dirs were stored under build-config hashes
+    #       that no longer match the current invocation, and the action skips the
+    #       save on a restore hit, so the mismatched cache perpetuated itself.
+    #       Bumping forces one clean reseed under the current (post-sccache,
+    #       stable) build config so warm runs match hashes and reuse artifacts.
     - name: Compute cache keys
       id: keys
       shell: bash
       run: |
-        CACHE_VERSION='v4'
+        CACHE_VERSION='v5'
         LOCK_HASH="${{ hashFiles(inputs.lockfiles) }}"
         echo "registry=${{ runner.os }}-${{ runner.arch }}-cargo-registry-${CACHE_VERSION}-${LOCK_HASH}" >> $GITHUB_OUTPUT
         echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${CACHE_VERSION}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
@@ -110,7 +117,7 @@ runs:
     # ENOSPC during extract should not fail the job — the build can still run
     # from scratch. Workflow callers also wrap this composite in a step-level
     # continue-on-error for redundant protection.
-    # restore-keys include the CACHE_VERSION (v4) so a partial-prefix match
+    # restore-keys include the CACHE_VERSION (v5) so a partial-prefix match
     # never pulls in an older cache shaped under different slim rules / path
     # layouts. The version is hard-coded here intentionally — duplicating the
     # literal from the keys step above. If you bump CACHE_VERSION, also bump it
@@ -137,7 +144,7 @@ runs:
           ~/.cargo/git/db
           ~/.cache/protoc
         key: ${{ steps.keys.outputs.registry }}
-        restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-registry-v4-
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-registry-v5-
 
     - name: Restore Rust target cache
       id: restore-target
@@ -148,8 +155,8 @@ runs:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}
         restore-keys: |
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v4-${{ steps.rustc.outputs.hash }}-
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v4-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v5-${{ steps.rustc.outputs.hash }}-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v5-
 
     # ── Save mode ──
     # Two-layer guard before calling actions/cache/save@v5 (which is the slow step — tar of
