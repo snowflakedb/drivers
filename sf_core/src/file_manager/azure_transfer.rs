@@ -164,9 +164,6 @@ async fn upload_to_azure(
             let mut req = client
                 .put(&full_url)
                 .header("x-ms-blob-type", "BlockBlob")
-                // Empty content-encoding matches JDBC/ODBC behavior: explicitly clears
-                // any default encoding to ensure the blob is stored as-is.
-                .header("content-encoding", "")
                 .header(AZURE_META_SFC_DIGEST, &digest)
                 .body(data.clone());
 
@@ -560,6 +557,8 @@ pub enum AzureDownloadError {
 mod tests {
     use super::*;
     use crate::sensitive::SensitiveString;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
@@ -834,5 +833,77 @@ mod tests {
     fn upload_status_display() {
         assert_eq!(UploadStatus::Uploaded.to_string(), "UPLOADED");
         assert_eq!(UploadStatus::Skipped.to_string(), "SKIPPED");
+    }
+
+    // ---------------------------------------------------------------
+    // 7. Azure PUT omits Content-Encoding-class headers
+    // ---------------------------------------------------------------
+    //
+    // Asserts the wire-level outcome directly: neither `Content-Encoding`
+    // nor `x-ms-blob-content-encoding` reaches Azure on a single-shot PUT.
+    // Catches regressions where a reqwest default, middleware, or a future
+    // `default_headers(...)` configuration silently re-introduces one of
+    // these headers.
+
+    #[tokio::test]
+    async fn azure_put_omits_content_encoding_headers() {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+
+        let prepared = PreparedUpload {
+            data: b"hello world".to_vec(),
+            digest: "0".repeat(64),
+            encryption_metadata: None,
+        };
+
+        // overwrite=true skips the existence-check HEAD probe so the
+        // first request the mock sees is the PUT we want to inspect.
+        upload_to_azure_or_skip(prepared, &stage, "file.dat", true)
+            .await
+            .expect("upload should succeed against the mock");
+
+        let received = mock
+            .received_requests()
+            .await
+            .expect("mock should have captured requests");
+        let put = received
+            .iter()
+            .find(|r| r.method.as_str() == "PUT")
+            .expect("a PUT request should have been received");
+
+        // Positive presence checks: required headers must still be sent.
+        // Without these, a regression that silently strips ALL headers
+        // would also pass the absent-checks below.
+        assert!(
+            put.headers.get("x-ms-blob-type").is_some(),
+            "x-ms-blob-type must be present on Azure PUT"
+        );
+        assert!(
+            put.headers.get(AZURE_META_SFC_DIGEST).is_some(),
+            "{AZURE_META_SFC_DIGEST} must be present on Azure PUT"
+        );
+
+        // Absence checks: neither Content-Encoding nor its blob-metadata
+        // variant may appear. `http::HeaderMap::get` is case-insensitive —
+        // one check covers both `content-encoding` and `Content-Encoding`.
+        assert!(
+            put.headers.get("content-encoding").is_none(),
+            "Content-Encoding must be absent on Azure PUT (got {:?})",
+            put.headers.get("content-encoding")
+        );
+        assert!(
+            put.headers.get("x-ms-blob-content-encoding").is_none(),
+            "x-ms-blob-content-encoding must be absent on Azure PUT (got {:?})",
+            put.headers.get("x-ms-blob-content-encoding")
+        );
     }
 }

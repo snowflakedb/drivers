@@ -353,3 +353,26 @@ behavior_differences:
       kwargs, and the legacy ODBC `PROXY=[scheme://][user:pass@]host[:port]`
       URL form. When both are set, individual fields override URL components
       per-field. See (snowflakedb/universal-driver#29).
+
+  32:
+    name: "Azure Blob PUT does not set Content-Encoding header"
+    status: allowed
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      The Python connector sets `Content-Encoding: utf-8` on Azure Blob single-shot
+      PUT (the upload-chunk path in `azure_storage_client.py`) and
+      `x-ms-blob-content-encoding: utf-8` on the block-list commit (the final PUT
+      that finalizes a multi-block upload of a large file). The value is wrong:
+      `utf-8` is a character encoding, not an HTTP content coding (RFC 9110 §8.4
+      expects values like `gzip`, `br`, `deflate`, `zstd`, `identity`). Azure
+      tolerates the wrong value but persists it as a blob property echoed on
+      subsequent GETs.
+    new_driver_behavior: |
+      The universal driver omits `Content-Encoding` and `x-ms-blob-content-encoding`
+      entirely on Azure PUT, matching the Snowflake JDBC and libsnowflakeclient
+      drivers, which also omit them. The contract applies to every Azure PUT
+      codepath in UD, present and future. Existing blobs uploaded by the legacy
+      Python connector retain their stored `Content-Encoding: utf-8` property;
+      reading them with the new driver still works, because no driver acts on
+      the property when downloading.
