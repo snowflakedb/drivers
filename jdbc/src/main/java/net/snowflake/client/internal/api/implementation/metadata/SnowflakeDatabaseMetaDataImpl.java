@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.util.Properties;
 import net.snowflake.client.api.connection.SnowflakeDatabaseMetaData;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataCapabilities;
@@ -19,9 +20,9 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   private final MetaDataCapabilities capabilities;
   private final MetaDataLimits limits;
 
-  public SnowflakeDatabaseMetaDataImpl(SnowflakeConnectionImpl connection) {
+  public SnowflakeDatabaseMetaDataImpl(SnowflakeConnectionImpl connection, Properties properties) {
     this.connection = connection;
-    this.identity = new MetaDataIdentity(connection);
+    this.identity = new MetaDataIdentity(connection, properties);
     this.capabilities = new MetaDataCapabilities(connection);
     this.limits = new MetaDataLimits(connection);
   }

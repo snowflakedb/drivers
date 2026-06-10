@@ -11,6 +11,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Types;
+import java.util.Properties;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -856,35 +857,86 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     assertThrows(SQLFeatureNotSupportedException.class, md::getClientInfoProperties);
   }
 
-  // ---------- Disabled: identity values not yet implemented in universal-driver ----------
+  // ---------- Identity values from the connection ----------
 
   @Test
-  @Disabled("getURL not yet implemented in universal-driver")
-  void getURLReturnsJdbcUrl() {}
+  void getURLReturnsJdbcUrl() throws Exception {
+    String url = metaData().getURL();
+    assertTrue(
+        url != null && url.startsWith("jdbc:snowflake://"),
+        () -> "getURL must return a jdbc:snowflake:// URL, got: " + url);
+
+    // Both drivers should expose the connecting host in the URL. The legacy driver
+    // derives it from SERVER_URL; universal-driver returns the URL the caller passed.
+    Properties props = loadConnectionProperties();
+    String host =
+        props.getProperty("host", props.getProperty("account") + ".snowflakecomputing.com");
+    assertTrue(
+        url.toLowerCase().contains(host.toLowerCase()),
+        () -> "getURL must contain the connecting host '" + host + "', got: " + url);
+  }
 
   @Test
-  @Disabled("getUserName not yet implemented in universal-driver")
-  void getUserNameReturnsConnectedUser() {}
+  void getUserNameReturnsConnectedUser() throws Exception {
+    String expected = loadConnectionProperties().getProperty("user");
+    assertEquals(expected, metaData().getUserName(), "getUserName must match the 'user' property");
+  }
 
   @Test
-  @Disabled("getSQLKeywords not yet implemented in universal-driver")
-  void getSQLKeywordsReturnsSnowflakeKeywordList() {}
+  void getSQLKeywordsReturnsSnowflakeKeywordList() throws Exception {
+    assertEquals(
+        "ACCOUNT,ASOF,BIT,BYTEINT,CONNECTION,DATABASE,DATETIME,DATE_PART,FIXED,FOLLOWING,"
+            + "GSCLUSTER,GSPACKAGE,IDENTIFIER,ILIKE,INCREMENT,ISSUE,LONG,MAP,MATCH_CONDITION,"
+            + "MINUS,NUMBER,OBJECT,ORGANIZATION,QUALIFY,REFERENCE,REGEXP,RLIKE,SAMPLE,SCHEMA,"
+            + "STRING,TEXT,TIMESTAMPLTZ,TIMESTAMPNTZ,TIMESTAMPTZ,TIMESTAMP_LTZ,TIMESTAMP_NTZ,"
+            + "TIMESTAMP_TZ,TINYINT,TRANSIT,TRY_CAST,VARIANT,VECTOR,VIEW",
+        metaData().getSQLKeywords());
+  }
 
   @Test
-  @Disabled("getNumericFunctions not yet implemented in universal-driver")
-  void getNumericFunctionsReturnsKnownList() {}
+  void getNumericFunctionsReturnsKnownList() throws Exception {
+    assertEquals(
+        "ABS,ACOS,ASIN,ATAN,ATAN2,CBRT,CEILING,COS,COT,DEGREES,EXP,FACTORIAL,"
+            + "FLOOR,HAVERSINE,LN,LOG,MOD,PI,POWER,RADIANS,RAND,"
+            + "ROUND,SIGN,SIN,SQRT,SQUARE,TAN,TRUNCATE",
+        metaData().getNumericFunctions());
+  }
 
   @Test
-  @Disabled("getStringFunctions not yet implemented in universal-driver")
-  void getStringFunctionsReturnsKnownList() {}
+  void getStringFunctionsReturnsKnownList() throws Exception {
+    assertEquals(
+        "ASCII,BIT_LENGTH,CHAR,CONCAT,INSERT,LCASE,LEFT,LENGTH,LPAD,"
+            + "LOCATE,LTRIM,OCTET_LENGTH,PARSE_IP,PARSE_URL,REPEAT,REVERSE,"
+            + "REPLACE,RPAD,RTRIMMED_LENGTH,SPACE,SPLIT,SPLIT_PART,"
+            + "SPLIT_TO_TABLE,STRTOK,STRTOK_TO_ARRAY,STRTOK_SPLIT_TO_TABLE,"
+            + "TRANSLATE,TRIM,UNICODE,UUID_STRING,INITCAP,LOWER,UPPER,REGEXP,"
+            + "REGEXP_COUNT,REGEXP_INSTR,REGEXP_LIKE,REGEXP_REPLACE,"
+            + "REGEXP_SUBSTR,RLIKE,CHARINDEX,CONTAINS,EDITDISTANCE,ENDSWITH,"
+            + "ILIKE,ILIKE ANY,LIKE,LIKE ALL,LIKE ANY,POSITION,REPLACE,RIGHT,"
+            + "STARTSWITH,SUBSTRING,COMPRESS,DECOMPRESS_BINARY,DECOMPRESS_STRING,"
+            + "BASE64_DECODE_BINARY,BASE64_DECODE_STRING,BASE64_ENCODE,"
+            + "HEX_DECODE_BINARY,HEX_DECODE_STRING,HEX_ENCODE,"
+            + "TRY_BASE64_DECODE_BINARY,TRY_BASE64_DECODE_STRING,"
+            + "TRY_HEX_DECODE_BINARY,TRY_HEX_DECODE_STRING,MD_5,MD5_HEX,"
+            + "MD5_BINARY,SHA1,SHA1_HEX,SHA2,SHA1_BINARY,SHA2_HEX,SHA2_BINARY,"
+            + " HASH,HASH_AGG,COLLATE,COLLATION",
+        metaData().getStringFunctions());
+  }
 
   @Test
-  @Disabled("getSystemFunctions not yet implemented in universal-driver")
-  void getSystemFunctionsReturnsKnownList() {}
+  void getSystemFunctionsReturnsKnownList() throws Exception {
+    assertEquals("DATABASE,IFNULL,USER", metaData().getSystemFunctions());
+  }
 
   @Test
-  @Disabled("getTimeDateFunctions not yet implemented in universal-driver")
-  void getTimeDateFunctionsReturnsKnownList() {}
+  void getTimeDateFunctionsReturnsKnownList() throws Exception {
+    assertEquals(
+        "CURDATE,CURTIME,DAYNAME,DAYOFMONTH,DAYOFWEEK,DAYOFYEAR,HOUR,MINUTE,MONTH,"
+            + "MONTHNAME,NOW,QUARTER,SECOND,TIMESTAMPADD,TIMESTAMPDIFF,WEEK,YEAR",
+        metaData().getTimeDateFunctions());
+  }
+
+  // ---------- Disabled: limits not yet implemented in universal-driver ----------
 
   @Test
   @Disabled("getMaxBinaryLiteralLength not yet implemented in universal-driver")
