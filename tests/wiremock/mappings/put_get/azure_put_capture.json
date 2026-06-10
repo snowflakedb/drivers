@@ -1,0 +1,88 @@
+{
+  "mappings": [
+    {
+      "name": "Snowflake API: PUT command returns Azure stageInfo routed to wiremock",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          {
+            "matchesJsonPath": "$.sqlText",
+            "contains": "PUT"
+          },
+          {
+            "matchesJsonPath": "$.sqlText",
+            "contains": "@AZURE_TEST_STAGE"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "command": "UPLOAD",
+            "stageInfo": {
+              "locationType": "AZURE",
+              "location": "test-container/prefix/",
+              "path": "prefix/",
+              "region": "eastus2",
+              "storageAccount": "wiremockaccount",
+              "endPoint": "{{WIREMOCK_HTTP_URL}}",
+              "isClientSideEncrypted": false,
+              "creds": {
+                "AZURE_SAS_TOKEN": "?sv=2021-08-06&sig=mock-signature&se=2099-01-01T00%3A00%3A00Z&sp=racwl&sr=c"
+              },
+              "presignedUrl": null
+            },
+            "encryptionMaterial": null,
+            "src_locations": [
+              "{{REPO_ROOT}}/tests/test_data/generated_test_data/basic/test_data.csv"
+            ],
+            "parallel": 1,
+            "threshold": 209715200,
+            "autoCompress": false,
+            "overwrite": true,
+            "sourceCompression": "none",
+            "stageWarnings": []
+          }
+        }
+      }
+    },
+    {
+      "name": "Azure block-blob PUT (returns 201; wiremock journals the request headers)",
+      "priority": 3,
+      "request": {
+        "urlPathPattern": "/test-container/prefix/.*",
+        "method": "PUT"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Length": "0",
+          "ETag": "\"mock-etag\"",
+          "x-ms-request-id": "mock-request-id",
+          "x-ms-version": "2021-08-06",
+          "x-ms-content-crc64": "AAAAAAAAAAA="
+        }
+      }
+    },
+    {
+      "name": "Azure blob existence check — returns 404 (legacy emits HEAD before PUT regardless of OVERWRITE; UD skips when OVERWRITE=TRUE)",
+      "priority": 4,
+      "request": {
+        "urlPathPattern": "/test-container/prefix/.*",
+        "method": "HEAD"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "Server": "Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0",
+          "x-ms-version": "2021-04-10",
+          "x-ms-error-code": "BlobNotFound",
+          "x-ms-request-id": "00000000-0000-0000-0000-000000000000"
+        }
+      }
+    }
+  ]
+}
