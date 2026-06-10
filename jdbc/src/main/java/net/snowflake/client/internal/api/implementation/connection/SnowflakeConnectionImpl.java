@@ -59,8 +59,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   private final CoreDriverApi coreDriverApi;
   private final DatabaseHandle databaseHandle;
   private final ConnectionHandle connectionHandle;
-  private final String url;
-  private final Properties properties;
+  private final Properties resolvedProperties;
 
   private boolean autoCommit = true;
   private String catalog;
@@ -75,8 +74,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
 
   SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
       throws SQLException {
-    this.url = url;
-    this.properties = properties;
+    this.resolvedProperties = ConnectionOptionsResolver.resolve(url, properties);
     this.coreDriverApi = coreDriverApi;
 
     DatabaseHandle dbHandle = null;
@@ -86,8 +84,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
       coreDriverApi.databaseInit(dbHandle);
       connHandle = coreDriverApi.connectionNew().getConnHandle();
 
-      Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
-      setOptions(connHandle, connectionOptions);
+      setOptions(connHandle, resolvedProperties);
 
       WrapperIdentity identity = wrapperIdentity();
       coreDriverApi.connectionInit(connHandle, dbHandle, identity);
@@ -272,7 +269,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   @Override
   public DatabaseMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new SnowflakeDatabaseMetaDataImpl(this);
+    return new SnowflakeDatabaseMetaDataImpl(this, resolvedProperties);
   }
 
   @Override

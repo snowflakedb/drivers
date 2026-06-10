@@ -15,6 +15,7 @@ final class ConnectionOptionsResolver {
 
     String effectiveUrl = firstNonBlank(url, resolved.getProperty("url"));
     if (effectiveUrl != null) {
+      resolved.setProperty("url", effectiveUrl);
       populateFromConnectionString(effectiveUrl, resolved);
     }
     return resolved;
