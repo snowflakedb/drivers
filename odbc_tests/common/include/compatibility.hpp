@@ -2,6 +2,7 @@
 #define COMPATIBILITY_HPP
 
 #include <cstdlib>
+#include <string>
 #ifndef _WIN32
 #include <locale>
 #endif
@@ -98,6 +99,19 @@ inline bool is_ascii_locale() {
     if (std::getenv("JENKINS_DAILY_JOB") == nullptr) { \
       SKIP("Requires daily jenkins job: " << message); \
     }                                                  \
+  } while (0)
+
+// Gate for E2E tests that need the headless browser container
+// (snowdrivers-test-external-browser-universal-driver: Chromium + the
+// /externalbrowser/*.js automation scripts). Outside that container the
+// scripts and the Chromium debug port don't exist, so the test is SKIPPED.
+// Mirrors the Python `requires_browser` marker (SF_TEST_HEADLESS_BROWSER=true).
+#define REQUIRE_BROWSER(message)                                                                \
+  do {                                                                                          \
+    const char* headless_browser_env = std::getenv("SF_TEST_HEADLESS_BROWSER");                 \
+    if (headless_browser_env == nullptr || std::string(headless_browser_env) != "true") {       \
+      SKIP("Requires headless browser container (SF_TEST_HEADLESS_BROWSER=true): " << message); \
+    }                                                                                           \
   } while (0)
 
 // ============================================================================
