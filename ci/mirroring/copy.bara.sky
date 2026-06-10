@@ -198,7 +198,14 @@ core.workflow(
     # is explicitly re-included via EXCLUDED_PATH_OVERRIDES. Intentional:
     # external contributors cannot add files to .github/, adr/, _internal/,
     # etc. even if they try.
+    #
+    # destination_files must mirror origin_files exactly. Without it,
+    # copybara treats every file on the destination as managed, and since
+    # internal-only paths (.ai/, .claude/, .cursor/, .buildkite/, .github/,
+    # etc.) don't exist on the external mirror, copybara generates deletions
+    # for all of them in the imported PR diff.
     origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
+    destination_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
     transformations = [
         # Defensive: internal hostnames should never appear in a mirror PR,
         # but fail loudly if they somehow do.
