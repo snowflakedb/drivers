@@ -2,63 +2,76 @@ id: universal-driver-changelog
 friendly_name: "Universal Driver Changelog Rules"
 status: enabled
 percentage_of_prs_reviewed: 100
-allowed_folders:
-  # Changelog updates for nodejs are not planned in the near future.
-  # - "nodejs"
-  - "python"
-  - "sf_core"
-  - "jdbc"
-  - "odbc"
+allowed_folders: []
 excluded_folders: []
 llm_model: "claude-sonnet-4-6"
-allowed_file_extensions:
-  - ".md"
 rules:
-  - id: ud-changelog-pr-link-required
+  - id: ud-pr-description-changelog-required
+    scope: full-pr
     rule: |
-      **OBJECTIVE**: Every changelog entry must end with a link to the PR that introduced it so reviewers and users can navigate directly to the full diff, discussion, and test plan.
-
-      **REQUIREMENT**: Every bullet entry under any release heading in `CHANGELOG.md` MUST end with a PR reference in the format `(snowflake-eng/universal-driver#N)`. Entries without a PR link are incomplete and must not be merged. Applies to both `## Upcoming Release` and versioned release sections (`## X.Y.Z`). For multi-line entries (parent bullet + indented sub-bullets), the PR link goes on the parent bullet.
-
-      ❌ **BAD — no PR link**
-      ```
-      - Fixed connection reset on idle timeout.
-      ```
-
-      ✅ **GOOD**
-      ```
-      - Fixed connection reset on idle timeout. (snowflake-eng/universal-driver#42)
-      ```
-
-  - id: ud-changelog-section-structure
-    rule: |
-      **OBJECTIVE**: Enforce a consistent, scannable CHANGELOG structure across all components so release notes are easy to audit and publish.
+      **OBJECTIVE**: Every PR that introduces a user-visible change must include a `## Changelog` section at the **end** of the PR description. This section is the source of truth for release notes and must describe what changed from the user's perspective.
 
       **REQUIREMENT**:
-      1. The first section MUST be `## Upcoming Release`. No other heading precedes it.
-      2. Shipped releases use `## X.Y.Z` headings below `## Upcoming Release`.
-      3. Within a release, entries MUST be grouped under plain-text section labels followed by a colon and a blank line. Allowed section names in order: `Breaking changes:` (only when present), `New features:`, `Changes:`, `Bug fixes:`, `Dependencies:`, `Internal changes:`. Omit empty sections.
-      4. Do NOT use the legacy `[NEXT RELEASE]` or `- ## [...]` stub format.
+      1. The PR description MUST contain a `## Changelog` section.
+      2. It MUST be the **last section** in the PR description (nothing follows it except optional blank lines).
+      3. It MUST contain at least one bullet point written in user-facing language: what the user gains, what was fixed, or what changed in behavior — not how the code works internally.
+      4. Bullet points MUST start with a past-tense verb: `Added`, `Fixed`, `Removed`, `Improved`, `Changed`.
+      5. Avoid: Jira ticket numbers, PR numbers, internal module names, implementation details, or references to code structure.
 
-      ❌ **BAD — legacy stub**
-      ```markdown
-      # Changelog
-      - ## [NEXT RELEASE]
+      **EXEMPTIONS** — Do NOT flag if ALL of the following are true:
+      - The PR touches only CI/CD config, tooling, tests, build scripts, or internal documentation with no effect on the shipped driver.
+      - Even then, an empty `## Changelog` section is acceptable but not required.
+
+      **POSITION RULE**: The `## Changelog` section must be last. If other sections (e.g., `## Test plan`, `## Summary`) appear after it, that is a violation.
+
+      ❌ **BAD — No Changelog section:**
+      ```
+      ## Summary
+      Fixes a connection reset bug.
+
+      ## Test plan
+      - Ran integration tests.
       ```
 
-      ✅ **GOOD**
-      ```markdown
-      # Changelog
+      ❌ **BAD — Changelog is not the last section:**
+      ```
+      ## Summary
+      Fixes a connection reset bug.
 
-      ## Upcoming Release
+      ## Changelog
+      - Fixed connection reset on idle timeout.
 
-      Bug fixes:
+      ## Test plan
+      - Ran integration tests.
+      ```
 
-      - Fixed connection reset on idle timeout. (snowflake-eng/universal-driver#42)
+      ❌ **BAD — Internal/implementation language:**
+      ```
+      ## Changelog
+      - Refactored `SessionManager::reset_idle_state()` to call `flush_pending_ops` before closing.
+      ```
 
-      ## 1.2.3
+      ✅ **GOOD:**
+      ```
+      ## Summary
+      Fixes a connection reset bug on idle timeout.
 
-      New features:
+      ## Test plan
+      - Ran integration tests.
 
-      - Added OAuth token refresh support. (snowflake-eng/universal-driver#38)
+      ## Changelog
+      - Fixed an issue where connections were unexpectedly reset after an idle timeout period.
+      ```
+
+      ✅ **GOOD (multiple components):**
+      ```
+      ## Summary
+      Adds OAuth token refresh support.
+
+      ## Test plan
+      - Added integration tests for token refresh flow.
+
+      ## Changelog
+      - Added automatic OAuth token refresh to prevent authentication failures on long-running sessions.
+      - Improved error messages when OAuth configuration is invalid.
       ```
