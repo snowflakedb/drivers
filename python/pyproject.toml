@@ -2,6 +2,7 @@
 requires = ["hatchling", "editables", "Cython", "setuptools", "mypy-protobuf~=5.0"]
 build-backend = "hatchling.build"
 
+# test
 [project]
 name = "snowflake-connector-python"
 dynamic = ["version"]
