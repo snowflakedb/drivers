@@ -5,6 +5,7 @@ which provides headless Chromium + Playwright + Rust + Python.
 
 Local usage (requires parameters.json in repo root):
   ./ci/auth/run_auth_browser_python.sh
+  ./ci/auth/run_auth_browser_odbc.sh
 */
 
 @Library('pipeline-utils') _
@@ -16,11 +17,13 @@ def isMergeQueue() {
 }
 
 @Field def runPython = false
+@Field def runOdbc = false
 
 def detectChanges() {
   // For main branch builds (and cron), run everything.
   if (env.CHANGE_ID == null) {
     runPython = true
+    runOdbc = true
     return
   }
 
@@ -32,8 +35,8 @@ def detectChanges() {
   echo "Changed files (${changedFiles.size()}):"
   changedFiles.each { echo "  ${it}" }
 
-  // Shared Rust core — affects sf_core compilation, which the Python connector
-  // builds from source. Include the workspace-level deps of sf_core.
+  // Shared Rust core — affects sf_core compilation, which both the Python connector
+  // and the ODBC driver build from source. Include the workspace-level deps of sf_core.
   def corePatterns = [
     'sf_core/', 'proto_utils/', 'error_trace/', 'error_trace_derive/', 'proto_generator/',
     'Cargo.lock', 'rust-toolchain.toml',
@@ -42,19 +45,30 @@ def detectChanges() {
   for (file in changedFiles) {
     if (corePatterns.any { file.startsWith(it) || file == it }) {
       runPython = true
+      runOdbc = true
       break
     }
-    // Job definition, the container scripts, or the Python connector / tests.
+    // Job definition or the shared container scripts affect both wrappers.
     if (file == 'ci/Jenkinsfile.auth-browser-tests' ||
-        file.startsWith('ci/auth/') ||
-        file.startsWith('python/') ||
+        file.startsWith('ci/auth/')) {
+      runPython = true
+      runOdbc = true
+    }
+    // The Python connector / tests.
+    if (file.startsWith('python/') ||
         file.startsWith('pep249_dbapi/')) {
       runPython = true
+    }
+    // The ODBC driver / tests.
+    if (file.startsWith('odbc/') ||
+        file.startsWith('odbc_tests/')) {
+      runOdbc = true
     }
   }
 
   echo "=== Auth Browser Tests Change Detection ==="
   echo "  Run Python: ${runPython}"
+  echo "  Run ODBC: ${runOdbc}"
 }
 
 def authenticateDocker() {
@@ -100,6 +114,21 @@ pipeline {
                 sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
               }
               sh label: 'Run Python auth browser tests', script: './ci/auth/run_auth_browser_python.sh'
+            }
+          }
+        }
+        stage('ODBC') {
+          when {
+            expression { runOdbc }
+          }
+          agent { label 'build-node-extra-large' }
+          steps {
+            script {
+              authenticateDocker()
+              withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+              }
+              sh label: 'Run ODBC auth browser tests', script: './ci/auth/run_auth_browser_odbc.sh'
             }
           }
         }

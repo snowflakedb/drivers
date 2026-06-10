@@ -291,6 +291,6 @@ TEST_CASE("should fail when login request is rejected after browser callback", "
   CHECK(has_relevant_error);
 }
 
-// TODO(SNOW-2881750): Add e2e tests that exercise the full external browser flow against a real
-// browser using headless Chrome in Docker. These integ tests only simulate the callback via
-// raw sockets; real browser tests would validate the full redirect/SSO UX.
+// The full external browser flow against a real headless-Chrome browser is exercised by the
+// e2e test in tests/e2e/authentication/external_browser.cpp (run via ci/auth/run_auth_browser_odbc.sh).
+// The integration tests above only simulate the callback via raw sockets.

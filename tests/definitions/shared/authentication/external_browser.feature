@@ -9,7 +9,7 @@ Feature: External Browser Authentication
   # E2E Tests - Real External Browser Authentication (headless browser container)
   # =============================================================================
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should authenticate with external browser via Okta IdP
     Given External browser authentication is configured with valid Okta user
     When Trying to Connect with headless browser providing valid credentials
