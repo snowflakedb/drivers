@@ -123,8 +123,8 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: proto-target
-          key: ${{ runner.os }}-rust-packaging-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-rust-packaging-proto-target-
+          key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-proto-target-v2-
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
@@ -186,7 +186,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: proto-target
-          key: ${{ runner.os }}-rust-packaging-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+          key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
   # Combined unit + integration tests with universal connector
   python_tests:

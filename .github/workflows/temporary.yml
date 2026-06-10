@@ -95,8 +95,8 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-proto-target-
+          key: ${{ runner.os }}-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
+          restore-keys: ${{ runner.os }}-proto-target-v2-
 
       - name: Build wheel
         working-directory: python
@@ -134,7 +134,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+          key: ${{ runner.os }}-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
   # Single ODBC driver build, shared across the 3 cloud test entries below.
   # Mirrors the build_odbc_driver job in _test-odbc.yml for the Linux x64
