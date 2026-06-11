@@ -19,6 +19,12 @@ fn main() {
         emit_loader_rpaths();
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/opt/unixodbc/lib");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/opt/unixodbc/lib");
+    }
+
     // On Windows, use a .def file to limit DLL exports to only ODBC API functions.
     // This avoids the PE/COFF 65535 export symbol limit.
     #[cfg(target_os = "windows")]
