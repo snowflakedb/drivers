@@ -10,15 +10,7 @@
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
-#include "sf_odbc.h"
-
-static std::string get_last_query_id(StatementHandleWrapper& stmt) {
-  char buf[40] = {};
-  SQLINTEGER len = 0;
-  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, buf, sizeof(buf), &len);
-  REQUIRE_ODBC(ret, stmt);
-  return std::string(buf);
-}
+#include "query_helpers.hpp"
 
 static bool is_valid_query_id(const std::string& id) {
   if (id.length() != 36) return false;
