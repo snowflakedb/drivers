@@ -5,20 +5,32 @@ use super::types::{
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::refresh::{Refresher, execute_with_refresh};
 use snafu::{IntoError, Location, ResultExt, Snafu};
+use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 // AWS SDK imports
-use aws_config::{BehaviorVersion, Region};
+use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::retry::RetryConfig as AwsRetryConfig;
 use aws_sdk_s3::config::timeout::TimeoutConfig as AwsTimeoutConfig;
 use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::types::BucketAccelerateStatus;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 
 const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
 const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
+
+/// S3 Transfer Acceleration global endpoint. AWS routes the request to the
+/// nearest edge location, which then forwards over the AWS backbone.
+const S3_ACCELERATE_ENDPOINT: &str = "https://s3-accelerate.amazonaws.com";
+
+/// Bucket-name prefix Snowflake uses for internal (managed) stages. These
+/// never have transfer acceleration configured, so we skip the probe to
+/// avoid an extra HTTP call and a possible 403 against limited stage creds.
+const INTERNAL_STAGE_BUCKET_PREFIX: &str = "sfc-";
 
 /// Per-attempt HTTP timeout applied to every S3 SDK operation.
 ///
@@ -520,30 +532,115 @@ async fn create_s3_client(
         .load()
         .await;
 
-    let mut s3_config = aws_sdk_s3::config::Builder::from(&config);
-    if let Some(endpoint_url) = resolve_s3_endpoint(stage_info) {
-        tracing::debug!("Using S3 endpoint: {endpoint_url}");
-        s3_config = s3_config.endpoint_url(endpoint_url);
-    }
+    let accelerate = resolve_acceleration(stage_info, &config).await;
+    let endpoint_url = resolve_s3_endpoint(stage_info, accelerate);
+    Ok(build_s3_client(&config, endpoint_url))
+}
 
-    Ok(S3Client::from_conf(s3_config.build()))
+/// Builds an `S3Client` from a shared `SdkConfig`, optionally pinning an
+/// explicit endpoint. Shared by `create_s3_client` and the probe path so
+/// they wire the AWS config the same way.
+fn build_s3_client(config: &SdkConfig, endpoint_url: Option<String>) -> S3Client {
+    let mut s3_config = aws_sdk_s3::config::Builder::from(config);
+    if let Some(ep) = endpoint_url {
+        tracing::debug!("Using S3 endpoint: {ep}");
+        s3_config = s3_config.endpoint_url(ep);
+    }
+    S3Client::from_conf(s3_config.build())
+}
+
+/// Decides whether to route this stage through the S3 Transfer Acceleration
+/// global endpoint. Mirrors the Python connector's behaviour: probe the
+/// bucket once, cache the result, never probe internal stages or stages
+/// that already pin a custom endpoint (FIPS / VPCE).
+async fn resolve_acceleration(stage_info: &StageInfo, config: &SdkConfig) -> bool {
+    if should_skip_acceleration_probe(stage_info) {
+        return false;
+    }
+    if let Some(cached) = cached_acceleration(&stage_info.bucket) {
+        return cached;
+    }
+    // Probe with the same endpoint we'd use without acceleration; if the
+    // bucket turns out to be accelerated, the caller rebuilds the client
+    // with the accelerate endpoint instead.
+    let probe_endpoint = resolve_s3_endpoint(stage_info, false);
+    let probe_client = build_s3_client(config, probe_endpoint);
+    let enabled = probe_acceleration_enabled(&probe_client, &stage_info.bucket).await;
+    store_acceleration(&stage_info.bucket, enabled);
+    enabled
+}
+
+/// Skips the probe for internal (`sfc-*`) stages and for stages that have
+/// an explicit endpoint set (FIPS / VPCE / custom): both are incompatible
+/// with transfer acceleration and the probe would just waste an HTTP call.
+fn should_skip_acceleration_probe(stage_info: &StageInfo) -> bool {
+    stage_info.endpoint.is_some() || stage_info.bucket.starts_with(INTERNAL_STAGE_BUCKET_PREFIX)
+}
+
+/// Issues `GetBucketAccelerateConfiguration` and returns whether the bucket
+/// has acceleration enabled. Any error (network, AccessDenied, malformed
+/// response) is treated as "disabled" so the caller falls through to the
+/// regular endpoint — acceleration is a throughput optimisation, not a
+/// correctness requirement.
+async fn probe_acceleration_enabled(client: &S3Client, bucket: &str) -> bool {
+    match client
+        .get_bucket_accelerate_configuration()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(out) => matches!(out.status(), Some(BucketAccelerateStatus::Enabled)),
+        Err(e) => {
+            tracing::debug!(
+                "S3 transfer-acceleration probe failed for bucket {bucket}: {e}; treating as disabled"
+            );
+            false
+        }
+    }
+}
+
+/// Process-wide cache of probe results keyed by bucket name. Buckets very
+/// rarely flip the acceleration setting, so a permanent cache is acceptable
+/// and matches Python's per-storage-client cache in practice.
+static ACCELERATION_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+
+fn acceleration_cache() -> &'static Mutex<HashMap<String, bool>> {
+    ACCELERATION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_acceleration(bucket: &str) -> Option<bool> {
+    acceleration_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(bucket)
+        .copied()
+}
+
+fn store_acceleration(bucket: &str, enabled: bool) {
+    acceleration_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(bucket.to_string(), enabled);
 }
 
 /// Resolves the explicit S3 endpoint URL to hand to the AWS SDK builder, or
 /// `None` to let the SDK derive the endpoint from the region.
 ///
-/// Precedence (matches `snowflake-jdbc` and `libsnowflakeclient`):
+/// Precedence (matches `snowflake-jdbc` and `libsnowflakeclient`, with
+/// transfer-acceleration support layered on top — Python connector parity):
 /// 1. `stage_info.endpoint` set (FIPS / VPCE / custom): used verbatim, with
-///    `https://` prepended if no scheme is present.
-/// 2. `stage_info.use_s3_regional_url` set: route to
+///    `https://` prepended if no scheme is present. Wins over acceleration.
+/// 2. `accelerate` true: route to `s3-accelerate.amazonaws.com`. The caller
+///    has already verified the bucket has acceleration enabled.
+/// 3. `stage_info.use_s3_regional_url` set: route to
 ///    `s3.<region>.amazonaws.com[.cn]`.
-/// 3. Neither: `None` — the SDK uses its default endpoint resolver, which
+/// 4. Otherwise: `None` — the SDK uses its default endpoint resolver, which
 ///    handles standard regions, GovCloud, and `cn-*` correctly on its own.
 ///
 /// Extracted as a pure function so callers (and tests) can verify the chosen
 /// endpoint without going through `aws_sdk_s3::Config`, which doesn't expose
 /// the configured URL.
-fn resolve_s3_endpoint(stage_info: &StageInfo) -> Option<String> {
+fn resolve_s3_endpoint(stage_info: &StageInfo, accelerate: bool) -> Option<String> {
     if let Some(ep) = stage_info.endpoint.as_deref() {
         let endpoint_url = if ep.starts_with("https://") || ep.starts_with("http://") {
             ep.to_string()
@@ -551,6 +648,9 @@ fn resolve_s3_endpoint(stage_info: &StageInfo) -> Option<String> {
             format!("https://{ep}")
         };
         return Some(endpoint_url);
+    }
+    if accelerate {
+        return Some(S3_ACCELERATE_ENDPOINT.to_string());
     }
     if stage_info.use_s3_regional_url {
         return Some(regional_s3_endpoint(&stage_info.region));
@@ -767,9 +867,10 @@ mod tests {
 
     // --- Endpoint resolution ---
     //
-    // Exercises the four cases the AWS SDK can't surface for us because
+    // Exercises the cases the AWS SDK can't surface for us because
     // `aws_sdk_s3::Config` does not expose the resolved URL: explicit
-    // endpoint, regional flag, neither, and scheme-less endpoint.
+    // endpoint, regional flag, accelerate, neither, and scheme-less
+    // endpoint.
 
     use crate::file_manager::types::LocationType;
     use crate::sensitive::SensitiveString;
@@ -854,7 +955,7 @@ mod tests {
         // be silently overridden by the regional flag.
         let stage = s3_stage(Some("https://my-fips.us-east-1.amazonaws.com"), true);
         assert_eq!(
-            resolve_s3_endpoint(&stage).as_deref(),
+            resolve_s3_endpoint(&stage, false).as_deref(),
             Some("https://my-fips.us-east-1.amazonaws.com")
         );
     }
@@ -863,7 +964,7 @@ mod tests {
     fn resolve_endpoint_uses_regional_when_only_flag_set() {
         let stage = s3_stage(None, true);
         assert_eq!(
-            resolve_s3_endpoint(&stage).as_deref(),
+            resolve_s3_endpoint(&stage, false).as_deref(),
             Some("https://s3.us-east-1.amazonaws.com")
         );
     }
@@ -874,7 +975,7 @@ mod tests {
         // must NOT pre-pin an endpoint, otherwise the SDK can't apply its
         // own `cn-*` / GovCloud handling.
         let stage = s3_stage(None, false);
-        assert_eq!(resolve_s3_endpoint(&stage), None);
+        assert_eq!(resolve_s3_endpoint(&stage, false), None);
     }
 
     #[test]
@@ -883,7 +984,7 @@ mod tests {
         // The SDK's `endpoint_url` requires a scheme, so we add `https://`.
         let stage = s3_stage(Some("my-fips.us-east-1.amazonaws.com"), false);
         assert_eq!(
-            resolve_s3_endpoint(&stage).as_deref(),
+            resolve_s3_endpoint(&stage, false).as_deref(),
             Some("https://my-fips.us-east-1.amazonaws.com")
         );
     }
@@ -894,9 +995,63 @@ mod tests {
         // prefix or upgrade the scheme.
         let stage = s3_stage(Some("http://localhost:9000"), false);
         assert_eq!(
-            resolve_s3_endpoint(&stage).as_deref(),
+            resolve_s3_endpoint(&stage, false).as_deref(),
             Some("http://localhost:9000")
         );
+    }
+
+    // --- Acceleration endpoint resolution ---
+
+    #[test]
+    fn resolve_endpoint_uses_accelerate_when_enabled() {
+        let stage = s3_stage(None, false);
+        assert_eq!(
+            resolve_s3_endpoint(&stage, true).as_deref(),
+            Some(S3_ACCELERATE_ENDPOINT)
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_explicit_endpoint_wins_over_accelerate() {
+        // Acceleration is incompatible with FIPS / VPCE; the GS-supplied
+        // endpoint must still win even if the probe somehow returned true.
+        let stage = s3_stage(Some("https://my-fips.us-east-1.amazonaws.com"), false);
+        assert_eq!(
+            resolve_s3_endpoint(&stage, true).as_deref(),
+            Some("https://my-fips.us-east-1.amazonaws.com")
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_accelerate_wins_over_regional_flag() {
+        // When acceleration is enabled, it routes through the global
+        // accelerate endpoint regardless of `use_s3_regional_url`.
+        let stage = s3_stage(None, true);
+        assert_eq!(
+            resolve_s3_endpoint(&stage, true).as_deref(),
+            Some(S3_ACCELERATE_ENDPOINT)
+        );
+    }
+
+    #[test]
+    fn should_skip_acceleration_probe_for_internal_stage() {
+        let mut stage = s3_stage(None, false);
+        stage.bucket = "sfc-internal-bucket".to_string();
+        assert!(should_skip_acceleration_probe(&stage));
+    }
+
+    #[test]
+    fn should_skip_acceleration_probe_when_explicit_endpoint_set() {
+        // FIPS / VPCE: the probe would be wasted because the endpoint can
+        // not be swapped for accelerate even if the bucket has it on.
+        let stage = s3_stage(Some("https://my-fips.us-east-1.amazonaws.com"), false);
+        assert!(should_skip_acceleration_probe(&stage));
+    }
+
+    #[test]
+    fn should_not_skip_acceleration_probe_for_external_stage() {
+        let stage = s3_stage(None, false);
+        assert!(!should_skip_acceleration_probe(&stage));
     }
 
     #[test]
@@ -1121,5 +1276,110 @@ mod tests {
             }),
         })
         .await;
+    }
+
+    // --- Acceleration probe (wiremock) ---
+
+    use wiremock::matchers::query_param;
+
+    async fn build_probe_client_against(uri: &str) -> S3Client {
+        let creds = Credentials::new(
+            "AKIA-TEST",
+            "secret",
+            Some("token".to_string()),
+            None,
+            "test",
+        );
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .credentials_provider(creds)
+            .region(Region::new("us-east-1"))
+            .load()
+            .await;
+        build_s3_client(&config, Some(uri.to_string()))
+    }
+
+    const ACCELERATE_ENABLED_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></AccelerateConfiguration>"#;
+
+    const ACCELERATE_SUSPENDED_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></AccelerateConfiguration>"#;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn probe_returns_true_when_status_enabled() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("accelerate", ""))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(ACCELERATE_ENABLED_XML, "application/xml"),
+            )
+            .mount(&mock)
+            .await;
+
+        let client = build_probe_client_against(&mock.uri()).await;
+        assert!(probe_acceleration_enabled(&client, "probe-enabled-bkt").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn probe_returns_false_when_status_suspended() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("accelerate", ""))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(ACCELERATE_SUSPENDED_XML, "application/xml"),
+            )
+            .mount(&mock)
+            .await;
+
+        let client = build_probe_client_against(&mock.uri()).await;
+        assert!(!probe_acceleration_enabled(&client, "probe-suspended-bkt").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn probe_returns_false_on_access_denied() {
+        // Limited stage credentials may lack `s3:GetAccelerateConfiguration`.
+        // Treat that as "not accelerated" rather than failing the upload.
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("accelerate", ""))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&mock)
+            .await;
+
+        let client = build_probe_client_against(&mock.uri()).await;
+        assert!(!probe_acceleration_enabled(&client, "probe-denied-bkt").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn probe_result_is_cached_per_bucket() {
+        // The mock expects exactly one call; a second `cached_acceleration`
+        // hit must short-circuit without issuing another probe.
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("accelerate", ""))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(ACCELERATE_ENABLED_XML, "application/xml"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        // Unique per test, so the process-global cache doesn't collide
+        // with anything else running in parallel.
+        let bucket = "probe-cache-bkt-isolated";
+
+        let client = build_probe_client_against(&mock.uri()).await;
+        let probed = probe_acceleration_enabled(&client, bucket).await;
+        store_acceleration(bucket, probed);
+
+        // Subsequent resolutions read the cache and never reach the mock.
+        assert_eq!(cached_acceleration(bucket), Some(true));
+    }
+
+    #[test]
+    fn cached_acceleration_returns_none_for_unknown_bucket() {
+        // Unique name avoids collisions with any cache entries other tests
+        // (or future tests) might leave behind in this process-global map.
+        assert_eq!(cached_acceleration("never-stored-bkt-fc8a4f"), None);
     }
 }
