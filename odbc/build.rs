@@ -23,6 +23,8 @@ fn main() {
     {
         println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/opt/unixodbc/lib");
         println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/opt/unixodbc/lib");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/lib");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib");
     }
 
     // On Windows, use a .def file to limit DLL exports to only ODBC API functions.
