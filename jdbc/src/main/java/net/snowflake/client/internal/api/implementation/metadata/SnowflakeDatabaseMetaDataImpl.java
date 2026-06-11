@@ -12,6 +12,7 @@ import net.snowflake.client.internal.api.implementation.connection.SnowflakeConn
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataCapabilities;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataIdentity;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, SnowflakeDatabaseMetaData {
@@ -20,11 +21,12 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   private final MetaDataCapabilities capabilities;
   private final MetaDataLimits limits;
 
-  public SnowflakeDatabaseMetaDataImpl(SnowflakeConnectionImpl connection, Properties properties) {
+  public SnowflakeDatabaseMetaDataImpl(
+      SnowflakeConnectionImpl connection, Properties properties, CoreDriverApi coreDriverApi) {
     this.connection = connection;
     this.identity = new MetaDataIdentity(connection, properties);
     this.capabilities = new MetaDataCapabilities(connection);
-    this.limits = new MetaDataLimits(connection);
+    this.limits = new MetaDataLimits(connection, coreDriverApi);
   }
 
   @Override

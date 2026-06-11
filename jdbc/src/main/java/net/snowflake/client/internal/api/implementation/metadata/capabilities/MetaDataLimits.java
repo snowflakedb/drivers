@@ -2,23 +2,39 @@ package net.snowflake.client.internal.api.implementation.metadata.capabilities;
 
 import java.sql.SQLException;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
-import net.snowflake.client.internal.util.NotImplementedException;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 
 public final class MetaDataLimits {
-  private final SnowflakeConnectionImpl connection;
+  private static final String MAX_VARCHAR_BINARY_SIZE_PARAM_NAME =
+      "VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT";
 
-  public MetaDataLimits(SnowflakeConnectionImpl connection) {
+  // Defaults to 16MB
+  private static final int DEFAULT_MAX_LOB_SIZE = 16_777_216;
+
+  private final SnowflakeConnectionImpl connection;
+  private final CoreDriverApi coreDriverApi;
+
+  public MetaDataLimits(SnowflakeConnectionImpl connection, CoreDriverApi coreDriverApi) {
     this.connection = connection;
+    this.coreDriverApi = coreDriverApi;
   }
 
   public int getMaxBinaryLiteralLength() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    // Two hex chars per binary byte, hence /2
+    return getMaxCharLiteralLength() / 2;
   }
 
   public int getMaxCharLiteralLength() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    ConnectionGetParameterResponse response =
+        coreDriverApi.connectionGetParameter(
+            connection.getHandle(), MAX_VARCHAR_BINARY_SIZE_PARAM_NAME);
+    if (response.hasValue()) {
+      return Integer.parseInt(response.getValue());
+    }
+    return DEFAULT_MAX_LOB_SIZE;
   }
 
   public int getMaxColumnNameLength() throws SQLException {

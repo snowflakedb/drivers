@@ -269,7 +269,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   @Override
   public DatabaseMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new SnowflakeDatabaseMetaDataImpl(this, resolvedProperties);
+    return new SnowflakeDatabaseMetaDataImpl(this, resolvedProperties, coreDriverApi);
   }
 
   @Override

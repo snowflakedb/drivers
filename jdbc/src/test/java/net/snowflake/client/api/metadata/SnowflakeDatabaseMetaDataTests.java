@@ -688,6 +688,20 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   // ---------- Limits ----------
 
   @Test
+  void getMaxCharLiteralLengthReturnsLimit() throws Exception {
+    // VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT defaults to 16 MB; some accounts raise it.
+    int len = metaData().getMaxCharLiteralLength();
+    assertTrue(len >= 16_777_216, () -> "expected >= 16 MB, got " + len);
+  }
+
+  @Test
+  void getMaxBinaryLiteralLengthReturnsLimit() throws Exception {
+    // Hex-encoded binary literal: two chars per byte, so half the char limit.
+    DatabaseMetaData md = metaData();
+    assertEquals(md.getMaxCharLiteralLength() / 2, md.getMaxBinaryLiteralLength());
+  }
+
+  @Test
   void getMaxColumnNameLengthIs255() throws Exception {
     assertEquals(255, metaData().getMaxColumnNameLength());
   }
@@ -935,16 +949,6 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
             + "MONTHNAME,NOW,QUARTER,SECOND,TIMESTAMPADD,TIMESTAMPDIFF,WEEK,YEAR",
         metaData().getTimeDateFunctions());
   }
-
-  // ---------- Disabled: limits not yet implemented in universal-driver ----------
-
-  @Test
-  @Disabled("getMaxBinaryLiteralLength not yet implemented in universal-driver")
-  void getMaxBinaryLiteralLengthReturnsLimit() {}
-
-  @Test
-  @Disabled("getMaxCharLiteralLength not yet implemented in universal-driver")
-  void getMaxCharLiteralLengthReturnsLimit() {}
 
   // ---------- Disabled: ResultSet-returning methods that issue Snowflake queries ----------
 
