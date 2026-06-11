@@ -82,7 +82,7 @@ pub enum AuthConfig {
         token: SensitiveString,
     },
     /// OAuth 2.0 Authorization Code (with PKCE) flow.
-    OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
+    OAuthAuthorizationCode(Box<OAuthAuthorizationCodeConfig>),
     /// OAuth 2.0 Client Credentials flow, external IdP only.
     OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
@@ -431,9 +431,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         // ─── OAuth: Authorization Code (with PKCE) ───────────────────────
         // Snowflake-as-IdP defaults (LOCAL_APPLICATION substitution +
         // default endpoints) are applied at flow time.
-        "OAUTH_AUTHORIZATION_CODE" => Ok(AuthConfig::OAuthAuthorizationCode(
+        "OAUTH_AUTHORIZATION_CODE" => Ok(AuthConfig::OAuthAuthorizationCode(Box::new(
             OAuthAuthorizationCodeConfig::from_settings(settings)?,
-        )),
+        ))),
         // ─── OAuth: Client Credentials (external IdP only) ───────────────
         // client_id/client_secret/token_url are mandatory because
         // Snowflake's GS does not issue tokens for
@@ -597,7 +597,7 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             token: token.clone(),
         },
         AuthConfig::OAuthAuthorizationCode(cfg) => {
-            LoginMethod::OAuthAuthorizationCode(OAuthAuthorizationCodeConfig {
+            LoginMethod::OAuthAuthorizationCode(Box::new(OAuthAuthorizationCodeConfig {
                 username: cfg.username.clone(),
                 client_id: cfg.client_id.clone(),
                 client_secret: cfg.client_secret.clone(),
@@ -616,7 +616,7 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
                 // config through the LoginMethod projection (test builds
                 // carry a no-op factory; production carries `None`).
                 browser_launcher: cfg.browser_launcher.clone(),
-            })
+            }))
         }
         AuthConfig::OAuthClientCredentials(cfg) => {
             LoginMethod::OAuthClientCredentials(OAuthClientCredentialsConfig {

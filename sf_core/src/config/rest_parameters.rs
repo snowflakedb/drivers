@@ -6,6 +6,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::config::InvalidParameterValueSnafu;
+use crate::config::configured_redirect_uri::ConfiguredRedirectUri;
 use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
@@ -289,7 +290,11 @@ pub struct OAuthAuthorizationCodeConfig {
     /// Optional override for the loopback redirect URI advertised to the IdP.
     /// `None` ⇒ ephemeral `http://127.0.0.1:<random>` (bind to `127.0.0.1`,
     /// never `0.0.0.0`).
-    pub redirect_uri: Option<Url>,
+    ///
+    /// Stored as [`ConfiguredRedirectUri`] so the verbatim user string is
+    /// preserved end-to-end for IdPs that do RFC 6749 §3.1.2.3 simple-string
+    /// matching (e.g. Okta rejects the trailing-slash canonical form).
+    pub redirect_uri: Option<ConfiguredRedirectUri>,
     /// OAuth scope string (space-separated). `None` ⇒ derived from role
     /// (`session:role:<role>`).
     pub scope: Option<String>,
@@ -425,7 +430,7 @@ pub enum LoginMethod {
     },
     /// OAuth 2.0 Authorization Code with PKCE (S256). Multi-step flow
     /// orchestrated outside of `create_credentials`.
-    OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
+    OAuthAuthorizationCode(Box<OAuthAuthorizationCodeConfig>),
     /// OAuth 2.0 Client Credentials. External IdP only.
     OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
@@ -450,6 +455,41 @@ pub(crate) fn get_flexible_bool(settings: &dyn Settings, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Build an [`InvalidParameterValue`] error for a parameter whose value
+/// failed URL parsing. Centralizes the message so every URL-shaped
+/// parameter reports failures identically (and a new URL param doesn't
+/// re-copy the mapping). `source` should be the underlying parse error
+/// (e.g. [`url::ParseError`]) so the message stays terse.
+#[track_caller]
+fn invalid_url_param(
+    key: &'static str,
+    value: String,
+    source: impl std::fmt::Display,
+) -> ConfigError {
+    InvalidParameterValueSnafu {
+        parameter: key,
+        value,
+        explanation: format!("Could not parse URL: {source}"),
+    }
+    .build()
+}
+
+/// Parse an optional `oauth_redirect_uri` parameter as a
+/// [`ConfiguredRedirectUri`], preserving the verbatim user string for
+/// IdPs that perform RFC 6749 §3.1.2.3 exact-string `redirect_uri`
+/// matching. Returns [`InvalidParameterValue`] on malformed input;
+/// empty/missing values resolve to `None`.
+fn parse_optional_redirect_uri(
+    settings: &dyn Settings,
+    key: &'static str,
+) -> Result<Option<ConfiguredRedirectUri>, ConfigError> {
+    let Some(raw) = non_empty_string(settings, key) else {
+        return Ok(None);
+    };
+    let parsed = Url::parse(&raw).map_err(|e| invalid_url_param(key, raw.clone(), e))?;
+    Ok(Some(ConfiguredRedirectUri::from_parts(parsed, raw)))
+}
+
 /// Parse an optional URL parameter, returning [`InvalidParameterValue`]
 /// when the user supplied a value that cannot be parsed by the `url`
 /// crate. Empty/missing values resolve to `None` so callers can fall
@@ -461,14 +501,7 @@ pub(crate) fn parse_optional_url(
     let Some(raw) = non_empty_string(settings, key) else {
         return Ok(None);
     };
-    let url = Url::parse(&raw).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: key,
-            value: raw,
-            explanation: format!("Could not parse URL: {e}"),
-        }
-        .build()
-    })?;
+    let url = Url::parse(&raw).map_err(|e| invalid_url_param(key, raw, e))?;
     Ok(Some(url))
 }
 
@@ -478,14 +511,7 @@ pub(crate) fn parse_required_url(
     key: &'static str,
 ) -> Result<Url, ConfigError> {
     let raw = non_empty_string(settings, key).context(MissingParameterSnafu { parameter: key })?;
-    Url::parse(&raw).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: key,
-            value: raw,
-            explanation: format!("Could not parse URL: {e}"),
-        }
-        .build()
-    })
+    Url::parse(&raw).map_err(|e| invalid_url_param(key, raw, e))
 }
 
 impl OAuthAuthorizationCodeConfig {
@@ -500,7 +526,7 @@ impl OAuthAuthorizationCodeConfig {
         let client_secret = non_empty_string(settings, "oauth_client_secret").unwrap_or_default();
         let authorization_url = parse_optional_url(settings, "oauth_authorization_url")?;
         let token_url = parse_optional_url(settings, "oauth_token_request_url")?;
-        let redirect_uri = parse_optional_url(settings, "oauth_redirect_uri")?;
+        let redirect_uri = parse_optional_redirect_uri(settings, "oauth_redirect_uri")?;
         let scope = non_empty_string(settings, "oauth_scope");
         let enable_single_use_refresh_tokens =
             get_flexible_bool(settings, "oauth_enable_single_use_refresh_tokens");
@@ -781,12 +807,12 @@ impl LoginMethod {
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),
             }),
-            "OAUTH_AUTHORIZATION_CODE" => Ok(Self::OAuthAuthorizationCode(
+            "OAUTH_AUTHORIZATION_CODE" => Ok(Self::OAuthAuthorizationCode(Box::new(
                 // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
                 // missing client_id/client_secret at flow time. Keep them
                 // empty here and let the AC provider apply that default.
                 OAuthAuthorizationCodeConfig::from_settings(settings)?,
-            )),
+            ))),
             "OAUTH_CLIENT_CREDENTIALS" => Ok(Self::OAuthClientCredentials(
                 // CC is external-IdP only: Snowflake does not issue
                 // tokens for `grant_type=client_credentials`, so client_id,
@@ -1361,7 +1387,9 @@ mod tests {
                     Some("https://idp.example.com/oauth/token")
                 );
                 assert_eq!(
-                    cfg.redirect_uri.as_ref().map(Url::as_str),
+                    cfg.redirect_uri
+                        .as_ref()
+                        .map(ConfiguredRedirectUri::as_configured),
                     Some("http://127.0.0.1:9090/")
                 );
                 assert_eq!(cfg.scope.as_deref(), Some("session:role:DEV"));
@@ -1406,6 +1434,34 @@ mod tests {
                 );
             }
             other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_authorization_code_rejects_malformed_redirect_uri() {
+        // A malformed `oauth_redirect_uri` must surface as a typed
+        // InvalidParameterValue naming that parameter (not a generic
+        // failure), so wrappers can map it to a precise diagnostic.
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            (
+                "oauth_redirect_uri",
+                Setting::String("not a url".to_string()),
+            ),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        match err {
+            ConfigError::InvalidParameterValue {
+                parameter, value, ..
+            } => {
+                assert_eq!(parameter, "oauth_redirect_uri");
+                assert_eq!(value, "not a url");
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
         }
     }
 
