@@ -714,8 +714,10 @@ fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
 
 /// Server-side parameter names forwarded in the query request.
 /// Each entry maps a local `ParamKey` to the Snowflake server-side parameter name.
-const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] =
-    &[(param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT")];
+const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] = &[
+    (param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT"),
+    (param_names::STATEMENT_QUERY_TAG, "QUERY_TAG"),
+];
 
 fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde_json::Value>> {
     let mut params = HashMap::new();
@@ -1515,9 +1517,63 @@ mod tests {
             Some(&serde_json::Value::String("AUTO".to_string()))
         );
     }
-
     fn deserialize_query_response(json: &str) -> Data {
         serde_json::from_str(json).expect("test JSON must be valid query response Data")
+    }
+
+    #[test]
+    fn build_query_parameters_maps_statement_query_tag() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::STATEMENT_QUERY_TAG.as_str().to_string(),
+            Setting::String("etl_job_42".to_string()),
+        );
+        let params = build_query_parameters(&store).expect("expected a parameter map");
+        assert_eq!(
+            params.get("QUERY_TAG"),
+            Some(&serde_json::Value::String("etl_job_42".to_string()))
+        );
+        assert!(!params.contains_key("statement_query_tag"));
+    }
+
+    #[test]
+    fn statement_query_tag_serializes_into_request_parameters() {
+        use crate::rest::snowflake::query_request;
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::STATEMENT_QUERY_TAG.as_str().to_string(),
+            Setting::String("etl_job_42".to_string()),
+        );
+        let req = query_request::Request {
+            sql_text: "SELECT 1".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: build_query_parameters(&store),
+            bindings: None,
+            bind_stage: None,
+            query_context: query_request::QueryContext { entries: None },
+        };
+        let json = serde_json::to_value(&req).expect("request must serialize");
+        assert_eq!(json["parameters"]["QUERY_TAG"], serde_json::json!("etl_job_42"));
+    }
+
+    #[tokio::test]
+    async fn statement_accepts_statement_query_tag_option() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        ds.statement_set_option(
+            sh,
+            param_names::STATEMENT_QUERY_TAG.as_str().into(),
+            Setting::String("etl_job_42".into()),
+        )
+        .await
+        .expect("statement_query_tag must be accepted as a statement-scoped option");
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
     }
 
     #[test]

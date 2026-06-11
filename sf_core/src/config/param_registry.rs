@@ -82,6 +82,11 @@ pub mod param_names {
     pub const CRL_CONNECTION_TIMEOUT: ParamKey = ParamKey("crl_connection_timeout");
     pub const ASYNC_EXECUTION: ParamKey = ParamKey("async_execution");
     pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
+    /// Per-statement QUERY_TAG, forwarded in-band in the query-request
+    /// `parameters` object. Deliberately distinct from the connection-level
+    /// `query_tag` passthrough: registering `query_tag` itself would, via
+    /// case-insensitive resolution, divert session-wide login forwarding.
+    pub const STATEMENT_QUERY_TAG: ParamKey = ParamKey("statement_query_tag");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
@@ -1098,6 +1103,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: None,
         sensitive: false,
         description: "Exact number of statements in a multi-statement query",
+        deprecated_by: None,
+        scope: ParamScope::Statement,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::STATEMENT_QUERY_TAG.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Per-statement QUERY_TAG forwarded in-band in the query-request parameters",
         deprecated_by: None,
         scope: ParamScope::Statement,
         used_at_connect: false,
