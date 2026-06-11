@@ -1621,19 +1621,25 @@ mod tests {
 
     #[test]
     fn calculate_rows_affected_file_transfer_fallback_uses_total() {
-        // PUT/GET responses can omit statementTypeId; response_to_descriptor
-        // derives the effective type from command=UPLOAD/DOWNLOAD. rows_affected
-        // must use that same effective type (Cursor -> total), not None.
+        use super::super::global_state::WrapperPresets;
+        use crate::query_types::statement_type::QueryType;
+
+        // PUT/GET responses can omit statementTypeId. Exercise the full wiring:
+        // response_to_descriptor must derive the effective type from
+        // command=UPLOAD via effective_statement_type_id, then rows_affected must
+        // use that same type (Cursor -> total), not fall back to None.
         let upload = deserialize_query_response(
             r#"{
                 "command": "UPLOAD",
                 "total": 3
             }"#,
         );
+        let descriptor = result_set::response_to_descriptor(&upload, &WrapperPresets::default());
         assert_eq!(
-            result_set::calculate_rows_affected(&upload, Some(0x7102)),
-            Some(3)
+            descriptor.statement_type_id,
+            Some(QueryType::PUT_FILES.raw())
         );
+        assert_eq!(descriptor.rows_affected, Some(3));
     }
 
     #[test]
