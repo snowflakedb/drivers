@@ -1,5 +1,4 @@
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -8,7 +7,7 @@ use crate::api::encoding::{
     write_wide_buffer, write_wide_null,
 };
 use crate::conversion::error::{
-    BindingStrideOverflowSnafu, ConversionError, IndicatorRequiredSnafu, JsonBindingError,
+    BindingError, BindingStrideOverflowSnafu, ConversionError, IndicatorRequiredSnafu,
     ReadArrowError, WriteOdbcError,
 };
 use crate::conversion::warning::{Warning, Warnings};
@@ -592,12 +591,20 @@ pub(crate) trait ReadODBC: SnowflakeType {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError>;
+    ) -> Result<Self::Representation<'a>, BindingError>;
 }
 
-/// Converts a typed representation into a JSON value for the Snowflake binding protocol.
-pub(crate) trait WriteJson: SnowflakeType {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError>;
+/// Converts a typed representation into the canonical wire-text payload for
+/// the Snowflake parameter-binding protocol.
+///
+/// Every Snowflake bind value is carried on the wire as text — JSON binding
+/// places it in the `"value"` field of `{"type": ..., "value": ...}`; CSV
+/// (stage) binding writes it as a single cell.  Both formats are thin
+/// wrappers around the same text payload, so converters produce that text
+/// directly and the format-specific encoders (`odbc_bindings_to_json` /
+/// `odbc_bindings_to_csv`) supply the envelope.
+pub(crate) trait WriteWire: SnowflakeType {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError>;
     fn sf_type(&self) -> SnowflakeLogicalType;
 }
 

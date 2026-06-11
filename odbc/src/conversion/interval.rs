@@ -31,14 +31,13 @@
 use std::borrow::Cow;
 
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::{CDataType, ParameterBinding};
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{BindingError, UnsupportedCDataTypeSnafu};
 use crate::conversion::param_binding::{
     read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, SnowflakeType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, SnowflakeType, WriteWire};
 
 // =============================================================================
 // Subtype enums — stable, family-typed view over SQL_INTERVAL_* concise codes.
@@ -142,7 +141,7 @@ impl ReadODBC for SnowflakeIntervalYearMonth {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let s = match binding.value_type {
             // Character sources are always legal — server-side parses the literal.
             CDataType::Default | CDataType::Char => read_char_str(binding)?,
@@ -200,7 +199,7 @@ impl ReadODBC for SnowflakeIntervalDayTime {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let s = match binding.value_type {
             CDataType::Default | CDataType::Char => read_char_str(binding)?,
             CDataType::WChar => read_wchar_str(binding)?,
@@ -258,7 +257,7 @@ impl SnowflakeIntervalYearMonth {
         &self,
         value: i128,
         binding: &ParameterBinding,
-    ) -> Result<String, JsonBindingError> {
+    ) -> Result<String, BindingError> {
         if self.subtype.is_compound() {
             return unsupported::<String>(binding.value_type);
         }
@@ -270,7 +269,7 @@ impl SnowflakeIntervalYearMonth {
         mantissa: i128,
         scale: i8,
         binding: &ParameterBinding,
-    ) -> Result<String, JsonBindingError> {
+    ) -> Result<String, BindingError> {
         if self.subtype.is_compound() {
             return unsupported::<String>(binding.value_type);
         }
@@ -287,7 +286,7 @@ impl SnowflakeIntervalDayTime {
         &self,
         value: i128,
         binding: &ParameterBinding,
-    ) -> Result<String, JsonBindingError> {
+    ) -> Result<String, BindingError> {
         if self.subtype.is_compound() {
             return unsupported::<String>(binding.value_type);
         }
@@ -306,7 +305,7 @@ impl SnowflakeIntervalDayTime {
         mantissa: i128,
         scale: i8,
         binding: &ParameterBinding,
-    ) -> Result<String, JsonBindingError> {
+    ) -> Result<String, BindingError> {
         if self.subtype.is_compound() {
             return unsupported::<String>(binding.value_type);
         }
@@ -322,7 +321,7 @@ impl SnowflakeIntervalDayTime {
     }
 }
 
-fn unsupported<T>(c_type: CDataType) -> Result<T, JsonBindingError> {
+fn unsupported<T>(c_type: CDataType) -> Result<T, BindingError> {
     UnsupportedCDataTypeSnafu { c_type }.fail()
 }
 
@@ -593,13 +592,14 @@ pub(crate) fn read_single_field_interval_i128(binding: &ParameterBinding) -> i12
 }
 
 // =============================================================================
-// WriteJson — emit `{"type": "INTERVAL_YEAR_MONTH" | "INTERVAL_DAY_TIME",
-// "value": "<literal>"}`.
+// WriteWire — emit the ANSI interval literal text.  Each value is wrapped by
+// the format-specific encoder into either `{"type": "INTERVAL_YEAR_MONTH" |
+// "INTERVAL_DAY_TIME", "value": "<literal>"}` (JSON) or a single CSV cell.
 // =============================================================================
 
-impl WriteJson for SnowflakeIntervalYearMonth {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.into_owned()))
+impl WriteWire for SnowflakeIntervalYearMonth {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(value.into_owned())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
@@ -607,9 +607,9 @@ impl WriteJson for SnowflakeIntervalYearMonth {
     }
 }
 
-impl WriteJson for SnowflakeIntervalDayTime {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.into_owned()))
+impl WriteWire for SnowflakeIntervalDayTime {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(value.into_owned())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

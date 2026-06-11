@@ -453,6 +453,64 @@ impl Data {
         })
     }
 
+    /// Build a `SingleUploadData` for an internal `SYSTEM$BIND` CSV upload.
+    ///
+    /// Unlike user-facing PUT commands, `SYSTEM$BIND` uploads are internal
+    /// driver infrastructure: the upload result is never surfaced to the
+    /// application, so no wrapper flavor or compression-detection preset is
+    /// needed. Only `stage_info`, `encryption_material`, and `overwrite` are
+    /// read from the server response; everything else is fixed for this path:
+    /// - `filename` / `file_path` are always `"0"` (one CSV file per request)
+    /// - `auto_compress` is `true` (stage binding uses server-side compress)
+    /// - `source_compression` is `None` (CSV payload is sent uncompressed)
+    pub fn to_bind_stage_upload_data(
+        &self,
+        use_s3_regional_url_session_param: bool,
+    ) -> Result<file_manager::SingleUploadData, QueryResponseError> {
+        let mut stage_info: file_manager::StageInfo = self
+            .stage_info
+            .as_ref()
+            .context(MissingParameterSnafu {
+                parameter: "stage info",
+            })?
+            .try_into()?;
+
+        if use_s3_regional_url_session_param {
+            stage_info.use_s3_regional_url = true;
+        }
+
+        let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
+            .encryption_material
+        {
+            Some(materials) => {
+                let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                match converted.len() {
+                    0 => None,
+                    1 => converted.into_iter().next(),
+                    _ => InvalidFormatSnafu {
+                        message: "Expected exactly one encryption material for upload".to_string(),
+                    }
+                    .fail()?,
+                }
+            }
+            None => None,
+        };
+
+        let overwrite = self.overwrite.unwrap_or(false);
+
+        Ok(file_manager::SingleUploadData {
+            file_path: "0".to_string(),
+            filename: "0".to_string(),
+            stage_info,
+            encryption_material,
+            auto_compress: true,
+            source_compression: SourceCompressionParam::None,
+            overwrite,
+            flavor: PutGetResultsetFlavor::default(),
+            legacy_odbc_compression_autodetect: false,
+        })
+    }
+
     /// Encryption material is optional — SSE stages omit it from the response.
     ///
     /// `flavor` selects the wrapper-specific shape of the resulting GET

@@ -190,7 +190,7 @@ pub enum ConversionError {
 
 #[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
-pub enum JsonBindingError {
+pub enum BindingError {
     #[snafu(display("Parameter bindings must be contiguous and start at 1"))]
     InvalidParameterIndices {
         #[snafu(implicit)]

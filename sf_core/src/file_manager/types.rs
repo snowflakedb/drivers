@@ -44,6 +44,7 @@ pub struct UploadData {
     pub legacy_odbc_compression_autodetect: bool,
 }
 
+// TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
 pub struct SingleUploadData {
     pub file_path: String,
     pub filename: String,

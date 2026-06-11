@@ -4,13 +4,12 @@ use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidCharacterValueForCastSnafu,
-    InvalidDatetimeValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
+    InvalidCharacterValueForCastSnafu, InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu,
     UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
@@ -22,7 +21,7 @@ use crate::conversion::param_binding::{
     read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -671,7 +670,7 @@ fn write_timestamp_to_odbc(
     }
 }
 
-fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, JsonBindingError> {
+fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, BindingError> {
     match binding.value_type {
         CDataType::TimeStamp | CDataType::TypeTimestamp => {
             let ts = read_unaligned::<sql::Timestamp>(binding);
@@ -792,16 +791,16 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
 /// Treating the value as already-UTC is correct for TIMESTAMP_NTZ (where the
 /// server stores the bytes verbatim with no TZ interpretation) and for
 /// TIMESTAMP_TZ (which carries its own offset alongside this instant). It is
-/// **wrong** for TIMESTAMP_LTZ — see `write_timestamp_json_wallclock` below
+/// **wrong** for TIMESTAMP_LTZ — see `write_timestamp_wire_wallclock` below
 /// for the LTZ path.
-fn write_timestamp_json_epoch_nanos(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
+fn write_timestamp_wire_epoch_nanos(value: NaiveDateTime) -> Result<String, BindingError> {
     let epoch_nanos = value.and_utc().timestamp_nanos_opt().ok_or_else(|| {
         UnsupportedCDataTypeSnafu {
             c_type: CDataType::TypeTimestamp,
         }
         .build()
     })?;
-    Ok(Value::String(epoch_nanos.to_string()))
+    Ok(epoch_nanos.to_string())
 }
 
 /// Encode a `NaiveDateTime` as a bare wall-clock literal string, with no
@@ -819,7 +818,7 @@ fn write_timestamp_json_epoch_nanos(value: NaiveDateTime) -> Result<Value, JsonB
 /// (BindUploader.cpp's process-local-offset format is a *separate* CSV-staging
 /// path that this driver doesn't use — JSON binds always go through the
 /// SFQueryExecutor TEXT path.)
-fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
+fn write_timestamp_wire_wallclock(value: NaiveDateTime) -> Result<String, BindingError> {
     let mut buf = [0u8; 48];
     let wall_clock = format_timestamp_string_into(&value, &mut buf).map_err(|_| {
         UnsupportedCDataTypeSnafu {
@@ -827,7 +826,7 @@ fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBin
         }
         .build()
     })?;
-    Ok(Value::String(wall_clock.to_string()))
+    Ok(wall_clock.to_string())
 }
 
 // =============================================================================
@@ -856,7 +855,7 @@ const TZ_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM";
 const TS_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fffffffff]";
 
 /// Read a TIMESTAMP_TZ value from a parameter binding. Captures both the UTC
-/// instant and the offset so `write_timestamp_tz_json` can emit the legacy
+/// instant and the offset so `write_timestamp_tz_wire` can emit the legacy
 /// two-token wire format.
 ///
 /// Bind paths:
@@ -873,7 +872,7 @@ const TS_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fffffffff]";
 ///   unsupported binding *shape*, and from 22008 ("Datetime field overflow")
 ///   that the JSON writer emits when the parsed instant exceeds the
 ///   nanosecond epoch range.
-fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, JsonBindingError> {
+fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, BindingError> {
     match binding.value_type {
         CDataType::Char => {
             let s = read_char_str(binding)?;
@@ -900,10 +899,7 @@ fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, JsonB
 /// offset-less formats (treated as UTC). Returns
 /// `InvalidCharacterValueForCast` (SQLSTATE 22018) if neither shape parses,
 /// carrying a truncated copy of the input and the expected format template.
-fn parse_tz_string_with_fallback(
-    s: &str,
-    c_type: CDataType,
-) -> Result<TzInstant, JsonBindingError> {
+fn parse_tz_string_with_fallback(s: &str, c_type: CDataType) -> Result<TzInstant, BindingError> {
     for fmt in &["%Y-%m-%d %H:%M:%S%.f %:z", "%Y-%m-%d %H:%M:%S%.f%:z"] {
         if let Ok(dt) = DateTime::<FixedOffset>::parse_from_str(s, fmt) {
             return Ok(TzInstant {
@@ -931,7 +927,7 @@ fn parse_tz_string_with_fallback(
         })
 }
 
-fn write_timestamp_tz_json(value: TzInstant) -> Result<Value, JsonBindingError> {
+fn write_timestamp_tz_wire(value: TzInstant) -> Result<String, BindingError> {
     // `timestamp_nanos_opt` returns `None` only when the UTC instant would
     // overflow `i64` nanoseconds (~year 1677 to year 2262 outside this).
     // That's exactly what 22008 ("Datetime field overflow") describes per
@@ -948,7 +944,7 @@ fn write_timestamp_tz_json(value: TzInstant) -> Result<Value, JsonBindingError> 
         .build()
     })?;
     let biased_offset = value.offset_minutes + TZ_OFFSET_BIAS_MINUTES;
-    Ok(Value::String(format!("{epoch_nanos} {biased_offset}")))
+    Ok(format!("{epoch_nanos} {biased_offset}"))
 }
 
 // =============================================================================
@@ -960,25 +956,25 @@ fn write_timestamp_tz_json(value: TzInstant) -> Result<Value, JsonBindingError> 
 //     hand-writes its own impls because `Representation = TzInstant`, which
 //     the macro's `@common` arm can't express).
 //   - The `SnowflakeLogicalType` returned by `sf_type()`.
-//   - The wire-format encoding in `write_json` (NTZ/TZ use epoch nanoseconds;
+//   - The wire-format encoding in `write_wire` (NTZ/TZ use epoch nanoseconds;
 //     LTZ uses a bare wall-clock literal string and tags `type=TEXT` so the
 //     server interprets it in the session timezone -- see
-//     `write_timestamp_json_wallclock` for why). The `ltz_wallclock_string`
-//     arm therefore intentionally skips the macro's `WriteJson` generation
-//     and the LTZ `WriteJson` impl is written by hand below.
+//     `write_timestamp_wire_wallclock` for why). The `ltz_wallclock_string`
+//     arm therefore intentionally skips the macro's `WriteWire` generation
+//     and the LTZ `WriteWire` impl is written by hand below.
 // =============================================================================
 
 macro_rules! impl_snowflake_timestamp {
-    // NTZ path: StructArray reader ignores scale, JSON encodes as epoch_ns.
+    // NTZ path: StructArray reader ignores scale, wire encodes as epoch_ns.
     ($name:ident, standard, $logical_type:expr) => {
         impl_snowflake_timestamp!(@struct_array_standard $name);
         impl_snowflake_timestamp!(@common $name);
-        impl_snowflake_timestamp!(@write_json_epoch_nanos $name, $logical_type);
+        impl_snowflake_timestamp!(@write_wire_epoch_nanos $name, $logical_type);
     };
 
-    // LTZ path: same readers as NTZ but wall-clock-string JSON. The
-    // `WriteJson` impl is intentionally NOT generated here — see the
-    // hand-written `impl WriteJson for SnowflakeTimestampLtz` below.
+    // LTZ path: same readers as NTZ but wall-clock-string wire payload. The
+    // `WriteWire` impl is intentionally NOT generated here — see the
+    // hand-written `impl WriteWire for SnowflakeTimestampLtz` below.
     ($name:ident, ltz_wallclock_string) => {
         impl_snowflake_timestamp!(@struct_array_standard $name);
         impl_snowflake_timestamp!(@common $name);
@@ -988,7 +984,7 @@ macro_rules! impl_snowflake_timestamp {
     ($name:ident, tz, $logical_type:expr) => {
         impl_snowflake_timestamp!(@struct_array_tz $name);
         impl_snowflake_timestamp!(@common $name);
-        impl_snowflake_timestamp!(@write_json_epoch_nanos $name, $logical_type);
+        impl_snowflake_timestamp!(@write_wire_epoch_nanos $name, $logical_type);
     };
 
     (@struct_array_standard $name:ident) => {
@@ -1065,19 +1061,19 @@ macro_rules! impl_snowflake_timestamp {
             fn read_odbc<'a>(
                 &self,
                 binding: &'a ParameterBinding,
-            ) -> Result<Self::Representation<'a>, JsonBindingError> {
+            ) -> Result<Self::Representation<'a>, BindingError> {
                 read_timestamp_odbc(binding)
             }
         }
     };
 
-    (@write_json_epoch_nanos $name:ident, $logical_type:expr) => {
-        impl WriteJson for $name {
-            fn write_json(
+    (@write_wire_epoch_nanos $name:ident, $logical_type:expr) => {
+        impl WriteWire for $name {
+            fn write_wire(
                 &self,
                 value: Self::Representation<'_>,
-            ) -> Result<Value, JsonBindingError> {
-                write_timestamp_json_epoch_nanos(value)
+            ) -> Result<String, BindingError> {
+                write_timestamp_wire_epoch_nanos(value)
             }
 
             fn sf_type(&self) -> SnowflakeLogicalType {
@@ -1107,7 +1103,7 @@ pub(crate) struct SnowflakeTimestampLtz {
 
 impl_snowflake_timestamp!(SnowflakeTimestampLtz, ltz_wallclock_string);
 
-// LTZ-specific JSON encoder. Unlike NTZ/TZ (which encode as epoch_ns and
+// LTZ-specific wire encoder. Unlike NTZ/TZ (which encode as epoch_ns and
 // let the server take it verbatim), LTZ emits a bare wall-clock literal
 // string and relies on the server to interpret it in the **session
 // timezone**.
@@ -1123,12 +1119,12 @@ impl_snowflake_timestamp!(SnowflakeTimestampLtz, ltz_wallclock_string);
 // is rejected by the server with SQLSTATE 22000 "Invalid bind value (...)
 // for type (TIMESTAMP_LTZ)", which is what made every LTZ e2e test fail
 // across all platforms before this fix.
-impl WriteJson for SnowflakeTimestampLtz {
-    fn write_json(
+impl WriteWire for SnowflakeTimestampLtz {
+    fn write_wire(
         &self,
         value: <Self as SnowflakeType>::Representation<'_>,
-    ) -> Result<Value, JsonBindingError> {
-        write_timestamp_json_wallclock(value)
+    ) -> Result<String, BindingError> {
+        write_timestamp_wire_wallclock(value)
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
@@ -1229,7 +1225,7 @@ impl WriteODBCType for SnowflakeTimestampTz {
         // omitting it from CHAR/WCHAR by default avoids surprising apps
         // that already parse the bare `YYYY-MM-DD HH:MM:SS` shape. The
         // original offset is still preserved on the *bind* side via
-        // `write_timestamp_tz_json`, so values round-trip correctly when
+        // `write_timestamp_tz_wire`, so values round-trip correctly when
         // written back to the server regardless of fetch rendering.
         if let Some(fmt) = self.tz_offset_format
             && matches!(binding.target_type, CDataType::Char | CDataType::WChar)
@@ -1275,14 +1271,14 @@ impl ReadODBC for SnowflakeTimestampTz {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         read_timestamp_tz_odbc(binding)
     }
 }
 
-impl WriteJson for SnowflakeTimestampTz {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        write_timestamp_tz_json(value)
+impl WriteWire for SnowflakeTimestampTz {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        write_timestamp_tz_wire(value)
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
@@ -1348,7 +1344,7 @@ mod format_timestamp_string_into_tests {
 #[cfg(test)]
 mod parse_tz_string_with_fallback_tests {
     use super::*;
-    use crate::conversion::error::JsonBindingError;
+    use crate::conversion::error::BindingError;
 
     #[test]
     fn unparseable_string_returns_invalid_character_value_for_cast() {
@@ -1360,7 +1356,7 @@ mod parse_tz_string_with_fallback_tests {
         let err = parse_tz_string_with_fallback("not-a-timestamp", CDataType::Char)
             .expect_err("garbage input must not parse");
         match err {
-            JsonBindingError::InvalidCharacterValueForCast {
+            BindingError::InvalidCharacterValueForCast {
                 c_type,
                 value,
                 expected_format,
@@ -1384,7 +1380,7 @@ mod parse_tz_string_with_fallback_tests {
         let err = parse_tz_string_with_fallback(&huge, CDataType::WChar)
             .expect_err("garbage input must not parse");
         match err {
-            JsonBindingError::InvalidCharacterValueForCast { value, .. } => {
+            BindingError::InvalidCharacterValueForCast { value, .. } => {
                 assert_eq!(
                     value.len(),
                     TEMPORAL_CHAR_DIAG_MAX_CHARS,
@@ -1427,7 +1423,7 @@ mod parse_tz_string_with_fallback_tests {
 }
 
 #[cfg(test)]
-mod write_timestamp_tz_json_tests {
+mod write_timestamp_tz_wire_tests {
     use super::*;
 
     #[test]
@@ -1440,13 +1436,13 @@ mod write_timestamp_tz_json_tests {
         let out_of_range = NaiveDate::from_ymd_opt(9999, 12, 31)
             .and_then(|d| d.and_hms_opt(23, 59, 59))
             .expect("constant inputs");
-        let err = write_timestamp_tz_json(TzInstant {
+        let err = write_timestamp_tz_wire(TzInstant {
             utc: out_of_range,
             offset_minutes: 0,
         })
         .expect_err("year 9999 cannot fit in i64 nanoseconds");
         assert!(
-            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            matches!(err, BindingError::DatetimeFieldOverflow { .. }),
             "expected DatetimeFieldOverflow, got {err:?}"
         );
     }
@@ -1460,13 +1456,13 @@ mod write_timestamp_tz_json_tests {
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_opt(9, 0, 45))
             .expect("constant inputs");
-        let v = write_timestamp_tz_json(TzInstant {
+        let v = write_timestamp_tz_wire(TzInstant {
             utc: dt,
             offset_minutes: 5 * 60 + 30,
         })
         .expect("in-range UTC instant serialises");
         // 2024-03-15T09:00:45 UTC == 1710493245 epoch seconds == 1710493245000000000 ns.
         // 330 + 1440 = 1770.
-        assert_eq!(v, Value::String("1710493245000000000 1770".to_string()));
+        assert_eq!(v, "1710493245000000000 1770");
     }
 }

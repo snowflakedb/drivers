@@ -512,6 +512,16 @@ pub enum StmtAttr {
     UseBookmarks = 12,
     /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
     EnableAutoIpd = 15,
+    /// `SQL_ATTR_PARAM_BIND_OFFSET_PTR` (17) — pointer to offset added to APD data/indicator ptrs.
+    ParamBindOffsetPtr = 17,
+    /// `SQL_ATTR_PARAM_BIND_TYPE` (18) — column-wise (0) vs row-wise parameter binding.
+    ParamBindType = 18,
+    /// `SQL_ATTR_PARAM_STATUS_PTR` (20) — pointer to per-parameter-set status array (written by driver).
+    ParamStatusPtr = 20,
+    /// `SQL_ATTR_PARAMS_PROCESSED_PTR` (21) — pointer where driver writes count of processed param sets.
+    ParamsProcessedPtr = 21,
+    /// `SQL_ATTR_PARAMSET_SIZE` (22) — number of parameter sets in each `SQLExecute`/`SQLExecDirect`.
+    ParamsetSize = 22,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
@@ -558,6 +568,11 @@ impl TryFrom<i32> for StmtAttr {
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
             15 => Ok(StmtAttr::EnableAutoIpd),
+            17 => Ok(StmtAttr::ParamBindOffsetPtr),
+            18 => Ok(StmtAttr::ParamBindType),
+            20 => Ok(StmtAttr::ParamStatusPtr),
+            21 => Ok(StmtAttr::ParamsProcessedPtr),
+            22 => Ok(StmtAttr::ParamsetSize),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
@@ -1282,6 +1297,11 @@ pub struct ParameterBinding {
 }
 
 impl ParameterBinding {
+    /// Build a `ParameterBinding` directly from a single APD/IPD record pair
+    /// without applying any row offset. Production code routes through
+    /// `binding_for_row`, which handles column-wise / row-wise array binding;
+    /// this constructor is kept for unit tests that build a single binding.
+    #[cfg(test)]
     pub fn from_apd_ipd(apd: &ApdRecord, ipd: &IpdRecord) -> Self {
         Self {
             sql_data_type: ipd.sql_data_type,
@@ -1536,6 +1556,7 @@ pub struct ExecDirectOutcome {
 pub struct PrepareOutcome {
     pub number_of_binds: u16,
     pub schema: SchemaRef,
+    pub array_bind_supported: bool,
 }
 
 pub struct ExecuteOutcome {
@@ -1584,6 +1605,13 @@ pub struct StatementInner {
     /// parameters (e.g. DAE detection for "SELECT 1" with a bound param).
     /// `None` before the first prepare or after exec-direct.
     pub prepared_param_count: Option<u16>,
+    /// Server hint from the most recent `SQLPrepare` describe
+    /// (`arrayBindSupported`). `None` for exec-direct paths (where the
+    /// describe phase is skipped and the wrapper has no per-statement
+    /// hint) - those should default to the conservative `false` behaviour
+    /// when consulting the flag. Cleared back to `None` whenever the
+    /// statement leaves the prepared-state (SQLFreeStmt, new prepare, etc.).
+    pub prepared_array_bind_supported: Option<bool>,
     /// `SQL_ATTR_QUERY_TIMEOUT` — query timeout in seconds (default 0 = no timeout).
     pub query_timeout: sql::ULen,
     /// `SQL_ATTR_NOSCAN` — whether to scan for ODBC escape sequences (default SQL_NOSCAN_OFF = 0).
@@ -1648,6 +1676,7 @@ impl Statement {
                 max_length: 0,
                 used_extended_fetch: false,
                 prepared_param_count: None,
+                prepared_array_bind_supported: None,
                 metadata_id,
                 query_timeout: 0,
                 noscan: SQL_NOSCAN_OFF,

@@ -287,7 +287,6 @@ impl DatabaseDriverV1 {
             query_parameters,
             session_token: &session_token,
             retry_policy,
-            wrapper_presets: &self.wrapper_presets,
             use_s3_regional_url_session_param,
         };
         let request_id = uuid::Uuid::new_v4();

@@ -4,13 +4,12 @@ use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
 use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidDatetimeValueSnafu,
-    JsonBindingError, UnsupportedCDataTypeSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
+    InvalidDatetimeValueSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     ConversionError, DatetimeOutOfSqlRangeSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
@@ -20,7 +19,7 @@ use crate::conversion::param_binding::{
     parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -187,7 +186,7 @@ impl ReadODBC for SnowflakeDate {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         match binding.value_type {
             CDataType::Date | CDataType::TypeDate => {
                 let date = read_unaligned::<sql::Date>(binding);
@@ -283,10 +282,10 @@ impl ReadODBC for SnowflakeDate {
     }
 }
 
-impl WriteJson for SnowflakeDate {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+impl WriteWire for SnowflakeDate {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
         let millis = (value - UNIX_EPOCH).num_days() * 86_400_000;
-        Ok(Value::String(millis.to_string()))
+        Ok(millis.to_string())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
