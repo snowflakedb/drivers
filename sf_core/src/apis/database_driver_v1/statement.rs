@@ -1536,6 +1536,10 @@ mod tests {
         serde_json::from_str(json).expect("test JSON must be valid query response Data")
     }
 
+    fn rows_affected_of(data: &Data) -> Option<i64> {
+        result_set::calculate_rows_affected(data, data.statement_type_id)
+    }
+
     #[test]
     fn calculate_rows_affected_sums_dml_columns() {
         let data = deserialize_query_response(
@@ -1548,7 +1552,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(13));
+        assert_eq!(rows_affected_of(&data), Some(13));
     }
 
     #[test]
@@ -1563,7 +1567,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(5));
+        assert_eq!(rows_affected_of(&data), Some(5));
     }
 
     #[test]
@@ -1577,7 +1581,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(0));
+        assert_eq!(rows_affected_of(&data), Some(0));
     }
 
     #[test]
@@ -1588,7 +1592,7 @@ mod tests {
                 "total": 42
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(42));
+        assert_eq!(rows_affected_of(&data), Some(42));
     }
 
     #[test]
@@ -1601,7 +1605,7 @@ mod tests {
                 "total": 1
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), None);
+        assert_eq!(rows_affected_of(&data), None);
     }
 
     #[test]
@@ -1612,7 +1616,24 @@ mod tests {
                 "total": 1
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), None);
+        assert_eq!(rows_affected_of(&data), None);
+    }
+
+    #[test]
+    fn calculate_rows_affected_file_transfer_fallback_uses_total() {
+        // PUT/GET responses can omit statementTypeId; response_to_descriptor
+        // derives the effective type from command=UPLOAD/DOWNLOAD. rows_affected
+        // must use that same effective type (Cursor -> total), not None.
+        let upload = deserialize_query_response(
+            r#"{
+                "command": "UPLOAD",
+                "total": 3
+            }"#,
+        );
+        assert_eq!(
+            result_set::calculate_rows_affected(&upload, Some(0x7102)),
+            Some(3)
+        );
     }
 
     #[test]

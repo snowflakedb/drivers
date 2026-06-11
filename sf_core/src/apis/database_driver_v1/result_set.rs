@@ -145,16 +145,29 @@ pub(super) struct ResultSet {
 
 // --- Response parsing helpers ---
 
+/// The statement type id to classify a response by: the server-provided
+/// `statementTypeId`, falling back to the file-transfer `command` when the
+/// server omits it (PUT/GET responses sometimes do). Both `response_to_descriptor`
+/// and `calculate_rows_affected` key off this so classification never diverges.
+fn effective_statement_type_id(data: &Data) -> Option<i64> {
+    data.statement_type_id.or(match data.command.as_deref() {
+        Some("UPLOAD") => Some(QueryType::PUT_FILES.raw()),
+        Some("DOWNLOAD") => Some(QueryType::GET_FILES.raw()),
+        _ => None,
+    })
+}
+
 /// Calculate rows affected from a query response, keyed off the statement's
 /// [`ResultKind`] (the shared `query_types::statement_type` classifier).
 ///
 /// - `UpdateCount` (DML): sum the affected-row columns from the rowset.
-/// - `Cursor` (SELECT / SHOW / ...): the result-set size in `data.total`.
+/// - `Cursor` (SELECT / SHOW / file transfers / ...): the result-set size in
+///   `data.total`.
 /// - `NoResult` (DDL / TCL / unknown): `None`. Snowflake returns `total: 1` as a
 ///   generic success marker for these; surfacing it as `rows_affected = 1` is
 ///   misleading, so we report "not applicable" instead.
-pub(super) fn calculate_rows_affected(data: &Data) -> Option<i64> {
-    match QueryType::from_raw(data.statement_type_id).result_kind() {
+pub(super) fn calculate_rows_affected(data: &Data, statement_type_id: Option<i64>) -> Option<i64> {
+    match QueryType::from_raw(statement_type_id).result_kind() {
         ResultKind::UpdateCount => Some(sum_dml_affected_rows(data)),
         ResultKind::Cursor => data.total,
         ResultKind::NoResult => None,
@@ -191,7 +204,8 @@ pub(super) fn response_to_descriptor(
     wrapper_presets: &WrapperPresets,
 ) -> ResultSetDescriptor {
     let query_id = data.query_id.clone().unwrap_or_default();
-    let rows_affected = calculate_rows_affected(data);
+    let statement_type_id = effective_statement_type_id(data);
+    let rows_affected = calculate_rows_affected(data, statement_type_id);
     let columns = data
         .row_type
         .as_ref()
@@ -202,12 +216,6 @@ pub(super) fn response_to_descriptor(
         .as_ref()
         .map(|row_types| row_types_to_columns(row_types))
         .unwrap_or_default();
-
-    let statement_type_id = data.statement_type_id.or(match data.command.as_deref() {
-        Some("UPLOAD") => Some(QueryType::PUT_FILES.raw()),
-        Some("DOWNLOAD") => Some(QueryType::GET_FILES.raw()),
-        _ => None,
-    });
 
     ResultSetDescriptor {
         query_id,
