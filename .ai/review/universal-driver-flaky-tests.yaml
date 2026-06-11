@@ -154,6 +154,8 @@ rules:
       - Rust `static mut` or `lazy_static! { static ref FOO: Mutex<Vec<...>> }` populated in one `#[test]` and read in another.
       - C++ `static` local variables in test helpers that accumulate state across test cases.
       - Node.js module-level `let`/`var` mutated across tests — Node's module cache keeps the same instance alive for all tests in the file.
+      - Java: `@TestInstance(TestInstance.Lifecycle.PER_CLASS)` with mutable instance fields (`Connection`, `Statement`, `ResultSet`, counters) written in one `@Test` and read in another — common in integration base classes; flag when tests mutate shared connection state without per-test reset.
+      - Java: `private static` mutable fields on driver singletons, registries, or caches.
 
       ❌ **BAD (Python):**
       ```python
@@ -209,6 +211,38 @@ rules:
           let mut collected = vec![];
           collected.push("b".to_string());
           assert_eq!(collected.len(), 1);
+      }
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+      class QueryTests extends SnowflakeIntegrationTestBase {
+          private int lastRowCount;   // written by one @Test, read by another
+
+          @Test
+          void shouldInsertRow() throws Exception {
+              try (Statement stmt = getDefaultConnection().createStatement()) {
+                  stmt.execute("INSERT INTO t VALUES (1)");
+                  lastRowCount = stmt.getUpdateCount();
+              }
+          }
+
+          @Test
+          void shouldMatchPreviousCount() {
+              assertEquals(1, lastRowCount);   // ordering-dependent
+          }
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @Test
+      void shouldInsertRow() throws Exception {
+          try (Statement stmt = getDefaultConnection().createStatement()) {
+              stmt.execute("INSERT INTO t VALUES (1)");
+              assertEquals(1, stmt.getUpdateCount());   // self-contained
+          }
       }
       ```
 
@@ -304,6 +338,48 @@ rules:
           assert cursor.fetchone() == ("alice",)
       ```
 
+      ❌ **BAD (Java):**
+      ```java
+      @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+      class UserFlowTest {
+          @Test @Order(1)
+          void shouldCreateUser() throws SQLException {
+              stmt.execute("INSERT INTO users(name) VALUES ('alice')");
+          }
+
+          @Test @Order(2)
+          void shouldSelectUser() throws SQLException {
+              // fails if shouldCreateUser did not run first
+              rs = stmt.executeQuery("SELECT name FROM users");
+              assertTrue(rs.next());
+              assertEquals("alice", rs.getString(1));
+          }
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      private String userName;
+
+      @BeforeEach
+      void insertAlice() throws SQLException {
+          userName = "alice_" + UUID.randomUUID().toString().replace("-", "");
+          stmt.execute("INSERT INTO users(name) VALUES ('" + userName + "')");
+      }
+
+      @AfterEach
+      void deleteAlice() throws SQLException {
+          stmt.execute("DELETE FROM users WHERE name = '" + userName + "'");
+      }
+
+      @Test
+      void shouldSelectUser() throws SQLException {
+          rs = stmt.executeQuery("SELECT name FROM users WHERE name = '" + userName + "'");
+          assertTrue(rs.next());
+          assertEquals(userName, rs.getString(1));
+      }
+      ```
+
   - id: ud-no-implicit-parallelism-shared-resources
     rule: |
       **OBJECTIVE**: Prevent data races and assertion interference in tests that share resources when the test runner executes them in parallel.
@@ -323,6 +399,7 @@ rules:
       - In Rust, annotate tests that must not run in parallel with `#[serial_test::serial]`, or use `tokio::task_local!` to scope shared values.
       - Bind servers on port `0` (OS assigns a free port) and pass the port to the test client.
       - Node.js (Jest): test *files* run in parallel across worker processes by default; shared Snowflake objects and hardcoded file paths collide across workers. Within a file, tests are serial. Bind mock HTTP servers on port `0`.
+      - Java (Gradle): test *classes* may run in parallel; shared Snowflake object names and fixed WireMock/Jetty ports collide across workers. WireMock tests must bind port `0` and reset stubs between tests (see `BaseWiremockTest`).
 
       ❌ **BAD (Python):**
       ```python
@@ -367,6 +444,26 @@ rules:
           let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
           let port = listener.local_addr().unwrap().port();
           // pass `port` to the client under test
+      }
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      @BeforeAll
+      void startMock() {
+          wireMockServer = new WireMockServer(options().port(8080));  // fixed — collides
+          wireMockServer.start();
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      // Extend BaseWiremockTest or follow WiremockClient: ServerSocket(0) for dynamic port,
+      // poll-until-healthy with timeout, and @AfterEach wiremock.reset().
+      @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+      abstract class BaseWiremockTest {
+          @AfterEach
+          void resetWiremock() { wiremock.reset(); }
       }
       ```
 
@@ -419,6 +516,10 @@ rules:
       - C++: RAII wrappers (see `cleanup-safety` rule); never rely on test body reaching its end.
       - Node.js: open resources in `beforeEach` and close them in `afterEach`; or use `try/finally` within the test body. Call `connection.end()` / `cursor.close()` unconditionally.
 
+      **JDBC/Java patterns to flag**:
+      - `Connection`, `Statement`, or `ResultSet` acquired outside `try-with-resources` with no `@AfterEach` close.
+      - Multistatement tests that call `getMoreResults()` but leave intermediate `ResultSet`s open — can block the shared connection for subsequent tests.
+
       ❌ **BAD (Python):**
       ```python
       def test_query():
@@ -462,6 +563,28 @@ rules:
       }
       ```
 
+      ❌ **BAD (Java):**
+      ```java
+      statement.execute("SELECT 1; SELECT 2; SELECT 3");
+      ResultSet rs1 = statement.getResultSet();
+      assertTrue(rs1.next());
+      // rs1 never closed; getMoreResults() may fail or block later tests
+      statement.getMoreResults();
+      ResultSet rs2 = statement.getResultSet();
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      statement.execute("SELECT 1; SELECT 2; SELECT 3");
+      try (ResultSet rs1 = statement.getResultSet()) {
+          assertTrue(rs1.next());
+      }
+      assertTrue(statement.getMoreResults());
+      try (ResultSet rs2 = statement.getResultSet()) {
+          assertTrue(rs2.next());
+      }
+      ```
+
   - id: ud-no-retry-hiding-real-failure
     rule: |
       **OBJECTIVE**: Prevent retry logic from silently masking real failures and making tests appear to pass despite underlying bugs.
@@ -496,6 +619,36 @@ rules:
               time.sleep(0.2)
           else:
               pytest.fail("Job did not reach DONE within 30s")
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      @Test
+      void shouldGetAsyncResult() throws Exception {
+          for (int i = 0; i < 5; i++) {
+              try {
+                  ResultSet rs = stmt.getResultSet();
+                  assertTrue(rs.next());
+                  assertEquals("DONE", rs.getString(1));
+                  return;
+              } catch (AssertionError e) {
+                  Thread.sleep(1000);   // masks race; may pass silently if loop exits
+              }
+          }
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @Test
+      void shouldGetAsyncResult() throws Exception {
+          Awaitility.await()
+              .atMost(30, TimeUnit.SECONDS)
+              .until(() -> {
+                  ResultSet rs = stmt.getResultSet();
+                  return rs.next() && "DONE".equals(rs.getString(1));
+              });
+      }
       ```
 
   - id: ud-teardown-must-not-depend-on-test-passing
@@ -579,6 +732,30 @@ rules:
       - C++: Set the env in a RAII wrapper that restores the original value on destruction.
       - Node.js: never assign `process.env.KEY = value` in a test body without restoring it; use `jest.replaceProperty(process.env, 'KEY', 'value')` (Jest 29+) or save/restore manually in `beforeEach`/`afterEach`.
 
+      **JDBC/Java patterns to flag**:
+      - `System.setProperty("CORE_PATH", ...)`, `System.setProperty("PARAMETER_PATH", ...)`, or mutating `QUERY_RESULT_FORMAT` without `@AfterEach` restoration — Gradle parallel workers share the JVM process.
+      - Setting connection properties via `System.setProperty` in `@BeforeAll` without cleanup.
+
+      ❌ **BAD (Java):**
+      ```java
+      @BeforeAll
+      static void setNativeLib() {
+          System.setProperty("CORE_PATH", "/tmp/libjdbc_bridge.dylib");  // leaks
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @RegisterExtension
+      static final EnvironmentVariables env = new EnvironmentVariables();
+
+      @BeforeEach
+      void setNativeLib() {
+          env.set("CORE_PATH", nativeLibPath);
+          // JUnit Pioneer EnvironmentVariables restores after each test
+      }
+      ```
+
       ❌ **BAD (Node.js):**
       ```javascript
       test('proxy settings', () => {
@@ -629,6 +806,24 @@ rules:
 
       Do NOT write to relative paths (implicitly in the working directory of the test runner), hardcoded paths in `/tmp`, or project-relative paths like `./test_output/` that are shared across invocations.
 
+      ❌ **BAD (Java):**
+      ```java
+      @Test
+      void shouldWritePrivateKey() throws Exception {
+          Path keyFile = Paths.get("/tmp/test_key.pem");   // collides across workers
+          Files.writeString(keyFile, privateKeyPem);
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @Test
+      void shouldWritePrivateKey(@TempDir Path tempDir) throws Exception {
+          Path keyFile = tempDir.resolve("test_key.pem");
+          Files.writeString(keyFile, privateKeyPem);
+      }
+      ```
+
       ❌ **BAD (Python):**
       ```python
       def test_export_to_csv(cursor):
@@ -655,6 +850,10 @@ rules:
       **OBJECTIVE**: Prevent ghost tasks from running after a test ends, interfering with teardown or subsequent tests.
 
       **REQUIREMENT**: In `async` tests, every spawned task (`tokio::spawn`, `asyncio.create_task`, `CompletableFuture.runAsync`) MUST be awaited or explicitly cancelled before the test returns. Orphaned tasks run against the next test's state (connection pool, database objects) and produce mysterious failures that are unrelated to the test that spawned them.
+
+      **JDBC/Java patterns to flag**:
+      - `CompletableFuture.runAsync(...)`, `executor.submit(...)`, or `new Thread(...).start()` without `.get()` / `.join()` / `shutdown()` + await before test exit.
+      - Background JDBC work (async upload, async query) started but not awaited before assertions.
 
       ❌ **BAD (Python):**
       ```python
@@ -693,6 +892,35 @@ rules:
       }
       ```
 
+      ❌ **BAD (Java):**
+      ```java
+      @Test
+      void shouldCompleteBackgroundQuery() throws Exception {
+          ExecutorService executor = Executors.newSingleThreadExecutor();
+          executor.submit(() -> stmt.execute("SELECT heavy_query()"));  // not awaited
+          ResultSet rs = stmt.executeQuery("SELECT status FROM job");
+          assertTrue(rs.next());
+          // executor never shut down — threads leak across test suite
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @Test
+      void shouldCompleteBackgroundQuery() throws Exception {
+          ExecutorService executor = Executors.newSingleThreadExecutor();
+          try {
+              Future<?> future = executor.submit(() -> stmt.execute("SELECT heavy_query()"));
+              future.get(30, TimeUnit.SECONDS);
+              ResultSet rs = stmt.executeQuery("SELECT status FROM job");
+              assertTrue(rs.next());
+          } finally {
+              executor.shutdown();
+              assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+          }
+      }
+      ```
+
   - id: ud-no-toctou-race-in-assertions
     rule: |
       **OBJECTIVE**: Prevent time-of-check/time-of-use (TOCTOU) races where a condition is asserted before an asynchronous operation completes.
@@ -728,6 +956,30 @@ rules:
               pytest.fail(f"event_count never reached 1, got {client.event_count()}")
       ```
 
+      ❌ **BAD (Java):**
+      ```java
+      @Test
+      void shouldReturnAsyncQueryResult() throws Exception {
+          stmt.executeAsync("SELECT heavy_query()");
+          Thread.sleep(100);                              // TOCTOU — query may not be done
+          assertNotNull(stmt.getResultSet());
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @Test
+      void shouldReturnAsyncQueryResult() throws Exception {
+          stmt.executeAsync("SELECT heavy_query()");
+          Awaitility.await()
+              .atMost(30, TimeUnit.SECONDS)
+              .until(() -> !stmt.isStillRunning());
+          try (ResultSet rs = stmt.getResultSet()) {
+              assertTrue(rs.next());
+          }
+      }
+      ```
+
   - id: ud-no-singleton-or-module-cache-pollution
     rule: |
       **OBJECTIVE**: Prevent hard-to-diagnose failures caused by singleton or module-level cache state left over from a previous test.
@@ -738,6 +990,7 @@ rules:
       - A Rust `OnceLock`/`OnceCell` initialized in one test — subsequent tests in the same process see the first test's value.
       - A Java static field mutated in a test without `@BeforeEach` / `@AfterEach` reset.
       - A Node.js module-level singleton (cached connection, registry, `Map`) that is mutated by one test and read by the next — Node's `require` cache keeps the same object alive for all tests in the file.
+      - A Java: static driver state (`SnowflakeDriver`, cached `DataSource`, config registries) mutated in one test without reset.
 
       Mitigations:
       - Python: call `func.cache_clear()` in a `yield`-fixture or `autouse` `@pytest.fixture`.
@@ -777,4 +1030,209 @@ rules:
 
       def test_default_schema():
           assert get_default_schema() == "PUBLIC"   # always correct now
+      ```
+
+      ❌ **BAD (Java):**
+      ```java
+      private static Properties cachedProps;   // set once, never cleared
+
+      @Test
+      void shouldUseCustomWarehouse() throws Exception {
+          cachedProps = loadConnectionProperties();
+          cachedProps.setProperty("warehouse", "COMPUTE_WH");
+          Connection conn = DriverManager.getConnection(url, cachedProps);
+          // ...
+      }
+
+      @Test
+      void shouldUseDefaultWarehouse() throws Exception {
+          // cachedProps still has COMPUTE_WH from previous test
+          Connection conn = DriverManager.getConnection(url, cachedProps);
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @BeforeEach
+      void resetProps() {
+          cachedProps = loadConnectionProperties();   // fresh copy each test
+      }
+      ```
+
+  - id: jdbc-no-shared-connection-mutation-without-isolation
+    rule: |
+      **OBJECTIVE**: Prevent session and schema pollution when multiple `@Test` methods share one JDBC connection (e.g., via `SnowflakeIntegrationTestBase` and `@TestInstance(PER_CLASS)`).
+
+      **REQUIREMENT**: Tests that use `getDefaultConnection()` or any shared `Connection` MUST NOT leave session-altering side-effects for sibling tests in the same class. Flag mutations without per-test restore:
+      - DDL (`CREATE`/`DROP`/`ALTER TABLE`), `USE DATABASE` / `USE SCHEMA`, `ALTER SESSION`
+      - Transaction state: `setAutoCommit(false)`, uncommitted `commit()`/`rollback()`
+      - Statement parameters or connection properties changed on the shared connection
+
+      Prefer per-test connections via `openConnection()` in try-with-resources, or restore session state in `@AfterEach`.
+
+      ❌ **BAD (Java):**
+      ```java
+      @Test
+      void shouldDisableAutoCommit() throws Exception {
+          Connection conn = getDefaultConnection();
+          conn.setAutoCommit(false);   // leaks to next @Test on same connection
+          stmt.execute("INSERT INTO t VALUES (1)");
+      }
+
+      @Test
+      void shouldInsertWithDefaultAutoCommit() throws Exception {
+          // may fail — autoCommit still false from previous test
+          stmt.execute("INSERT INTO t VALUES (2)");
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @Test
+      void shouldDisableAutoCommit() throws Exception {
+          try (Connection conn = openConnection()) {
+              conn.setAutoCommit(false);
+              try (Statement stmt = conn.createStatement()) {
+                  stmt.execute("INSERT INTO t VALUES (1)");
+                  conn.commit();
+              }
+          }
+      }
+      ```
+
+  - id: jdbc-wiremock-must-use-dynamic-port-and-reset
+    rule: |
+      **OBJECTIVE**: Prevent WireMock port collisions and stale stub interference when Gradle runs JDBC test classes in parallel.
+
+      **REQUIREMENT**: WireMock-based tests in `jdbc/src/test/java/net/snowflake/jdbc/wiremock/` MUST:
+      - Bind on a dynamic port (`new ServerSocket(0)`, WireMock `options().dynamicPort()`, or `WiremockClient` which allocates port 0).
+      - Reset stubs between tests (`@AfterEach` calling `wiremock.reset()` — see `BaseWiremockTest`).
+      - Skip cleanly on Java 8 with `Assumptions.assumeTrue(..., "reason")` when WireMock 3.x requires JRE 11+.
+
+      Do NOT use hardcoded ports (`8080`, `9090`) or start WireMock without per-test reset.
+
+      ❌ **BAD (Java):**
+      ```java
+      @BeforeAll
+      void startWiremock() {
+          wiremock = new WireMockServer(options().port(8080));
+          wiremock.start();
+      }
+      // no @AfterEach reset — stubs leak between tests
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      // Extend BaseWiremockTest: dynamic port via WiremockClient, @AfterEach resetWiremock(),
+      // Assumptions.assumeTrue(WiremockClient.requiresJava11OrHigher(), "...") in @BeforeAll.
+      public class LogoutTest extends BaseWiremockTest { ... }
+      ```
+
+  - id: jdbc-resultset-must-be-fully-consumed-or-closed
+    rule: |
+      **OBJECTIVE**: Prevent connection blocking when open `ResultSet`s are left on a shared JDBC connection, causing intermittent failures in later tests.
+
+      **REQUIREMENT**: Every `executeQuery()` / `getResultSet()` in JDBC tests MUST either:
+      - Use try-with-resources on the `ResultSet`, or
+      - Fully consume all rows and close explicitly before acquiring another `ResultSet` on the same `Statement`/`Connection`.
+
+      This is especially critical for multistatement tests using `getMoreResults()` and for tests sharing `getDefaultConnection()`.
+
+      ❌ **BAD (Java):**
+      ```java
+      ResultSet rs = stmt.executeQuery("SELECT 1");
+      assertTrue(rs.next());
+      // rs left open — blocks connection for subsequent tests
+      stmt.execute("INSERT INTO t VALUES (1)");
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      try (ResultSet rs = stmt.executeQuery("SELECT 1")) {
+          assertTrue(rs.next());
+      }
+      stmt.execute("INSERT INTO t VALUES (1)");
+      ```
+
+  - id: jdbc-async-query-must-poll-status
+    rule: |
+      **OBJECTIVE**: Prevent flaky Snowflake async query tests that use bare sleeps instead of polling query completion status.
+
+      **REQUIREMENT**: After `executeAsync`, `executeQuery` with async mode, or any non-blocking query submission, tests MUST poll until the query completes before calling `getResultSet()` or asserting on results. Use `Awaitility.await().until(...)`, a deadline loop checking `isStillRunning()` / query status, or the driver's async status API — never `Thread.sleep(N)` alone.
+
+      See also: `ud-no-bare-sleep-for-async-wait`, `ud-no-toctou-race-in-assertions`.
+
+      ❌ **BAD (Java):**
+      ```java
+      stmt.executeAsync("SELECT seq8() FROM TABLE(GENERATOR(ROWCOUNT => 1000000))");
+      Thread.sleep(2000);
+      ResultSet rs = stmt.getResultSet();
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      stmt.executeAsync("SELECT seq8() FROM TABLE(GENERATOR(ROWCOUNT => 1000000))");
+      Awaitility.await()
+          .atMost(60, TimeUnit.SECONDS)
+          .pollInterval(200, TimeUnit.MILLISECONDS)
+          .until(() -> !stmt.isStillRunning());
+      try (ResultSet rs = stmt.getResultSet()) {
+          assertTrue(rs.next());
+      }
+      ```
+
+  - id: jdbc-multistatement-hardcoded-object-names
+    rule: |
+      **OBJECTIVE**: Prevent parallel CI collisions on Snowflake objects created inside multistatement SQL strings.
+
+      **REQUIREMENT**: Multistatement SQL that creates temporary or permanent tables, stages, or schemas MUST use unique names per invocation (UUID suffix). Hardcoded names like `ms_dml_test` or `ms_mix_test` collide when Gradle runs multiple test classes against the same Snowflake schema concurrently.
+
+      **Exempt**: Single-statement tests that create and drop within one try-with-resources block using a UUID-generated name (see `BasicExecuteQueryTests`).
+
+      ❌ **BAD (Java):**
+      ```java
+      String sql =
+          "CREATE OR REPLACE TEMPORARY TABLE ms_dml_test(id INT);"
+              + " INSERT INTO ms_dml_test VALUES (1);"
+              + " DROP TABLE ms_dml_test";
+      statement.execute(sql);
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      String table = "ms_dml_" + UUID.randomUUID().toString().replace("-", "");
+      String sql =
+          "CREATE OR REPLACE TEMPORARY TABLE " + table + "(id INT);"
+              + " INSERT INTO " + table + " VALUES (1);"
+              + " DROP TABLE " + table;
+      statement.execute(sql);
+      ```
+
+  - id: jdbc-native-bridge-env-must-be-scoped
+    rule: |
+      **OBJECTIVE**: Prevent JNI bridge and credential env mutations from leaking across parallel Gradle test workers.
+
+      **REQUIREMENT**: Tests that set `CORE_PATH`, `PARAMETER_PATH`, `QUERY_RESULT_FORMAT`, or other env vars / system properties used to load the native JDBC bridge MUST scope changes to the test and restore afterward. Use JUnit Pioneer's `EnvironmentVariables` extension, `@AfterEach` restoration, or per-test `Properties` passed to `DriverManager.getConnection` — never bare `System.setProperty` in `@BeforeAll` without matching cleanup.
+
+      See also: `ud-no-environment-variable-side-effects`.
+
+      ❌ **BAD (Java):**
+      ```java
+      @BeforeAll
+      static void configureNativeBridge() {
+          System.setProperty("CORE_PATH", "/path/to/libjdbc_bridge.dylib");
+          // never restored — parallel test classes see wrong native lib
+      }
+      ```
+
+      ✅ **GOOD (Java):**
+      ```java
+      @RegisterExtension
+      static final EnvironmentVariables environmentVariables = new EnvironmentVariables();
+
+      @BeforeEach
+      void configureNativeBridge() {
+          environmentVariables.set("CORE_PATH", nativeLibPath);
+          environmentVariables.set("PARAMETER_PATH", parametersPath);
+      }
       ```
