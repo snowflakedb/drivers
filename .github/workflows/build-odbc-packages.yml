@@ -9,6 +9,7 @@ on:
     paths:
       - 'odbc/installer/**'
       - 'ci/Dockerfile.rocky-rpm-build'
+      - 'ci/Dockerfile.debian-deb-build'
       - '.github/actions/install-wix-from-artifact/**'
       - '.github/workflows/build-odbc-packages.yml'
       - '.github/workflows/_build-odbc-packages.yml'

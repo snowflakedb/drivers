@@ -287,6 +287,7 @@ jobs:
             -w /workspace \
             -e PLATFORM=${{ matrix.platform }} \
             -e COMMIT_HASH=$(git rev-parse --short HEAD) \
+            -e PKG_FORMATS=rpm \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             rpm-build \
             bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
@@ -399,3 +400,99 @@ jobs:
         with:
           name: snowflake-odbc-ud-macos-universal
           path: build/snowflake-odbc-ud-*.pkg
+
+  build_deb:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64-glibc
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64-glibc
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    name: build_deb (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Cargo registry cache (DEB build)
+        id: deb-cargo-registry
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-
+
+      - name: Restore Rust target cache (DEB build)
+        id: deb-cargo-target
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-deb
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-
+
+      - name: Prepare cache directories
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-deb
+
+      - name: Build Docker image
+        run: docker build -t deb-build -f ci/Dockerfile.debian-deb-build .
+
+      - name: Build ODBC driver and package .deb + .tgz
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -v ${{ github.workspace }}/.cargo-cache/registry:/root/.cargo/registry \
+            -v ${{ github.workspace }}/.cargo-cache/git:/root/.cargo/git \
+            -v ${{ github.workspace }}/.cargo-target-deb:/workspace/target \
+            -w /workspace \
+            -e PLATFORM=${{ matrix.platform }} \
+            -e COMMIT_HASH=$(git rev-parse --short HEAD) \
+            -e PKG_FORMATS="deb tgz" \
+            -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
+            deb-build \
+            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+
+      - name: Save Cargo registry cache (DEB build)
+        if: steps.deb-cargo-registry.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (DEB build)
+        if: steps.deb-cargo-target.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-deb
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-ud-deb-${{ matrix.arch }}
+          path: build/snowflake-odbc-ud_*.deb
+
+      - name: Upload .tgz
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-ud-tgz-${{ matrix.arch }}
+          path: build/snowflake-odbc-ud-*.tar.gz

@@ -167,6 +167,7 @@ jobs:
             odbc_packaging:
               - 'odbc/installer/**'
               - 'ci/Dockerfile.rocky-rpm-build'
+              - 'ci/Dockerfile.debian-deb-build'
               - '.github/workflows/_build-odbc-packages.yml'
             python:
               - 'python/**'
