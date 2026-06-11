@@ -76,14 +76,16 @@ repos:
         entry: bash -c 'cd nodejs && npm run fmt:fix && npm run lint:check'
         pass_filenames: false
         files: ^nodejs/
+        exclude: BehaviorDifferences\.yaml$
         language: system
     -   id: behavior-differences-validator
         name: Behavioral Differences format check
-        description: Validate BehaviorDifferences.yaml schema (status, type, required fields)
-        entry: python3 odbc_tests/validate_behavior_differences.py
+        description: Validate BehaviorDifferences.yaml schema (status, type, impact, is_breaking_change)
+        entry: python3 scripts/validate_behavior_differences.py
         pass_filenames: false
-        files: ^odbc_tests/BehaviorDifferences\.yaml$
-        language: system
+        additional_dependencies: ['pyyaml']
+        files: ^(odbc_tests|python|jdbc|nodejs)/BehaviorDifferences\.yaml$
+        language: python
     -   id: tests-format-validator
         name: Tests format validator
         description: Validate that test implementations match Gherkin feature scenarios

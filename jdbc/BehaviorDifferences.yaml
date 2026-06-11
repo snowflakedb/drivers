@@ -27,6 +27,8 @@ behavior_differences:
     status: unknown
     type: bugfix
     reviewed: false
+    is_breaking_change: true
+    impact: high
     status_rationale: |
       The old driver's DataSource.getConnection() unconditionally requires a password for all
       authenticators except SNOWFLAKE_JWT and EXTERNALBROWSER. This prevents PAT (Programmatic
@@ -37,6 +39,8 @@ behavior_differences:
     status: unknown
     type: bugfix
     reviewed: false
+    is_breaking_change: true
+    impact: high
     status_rationale: |
       The old driver throws SnowflakeSQLLoggedException(EXECUTE_BATCH_INTEGER_OVERFLOW,
       NUMERIC_VALUE_OUT_OF_RANGE) for any per-row count that exceeds Integer.MAX_VALUE in
@@ -48,6 +52,8 @@ behavior_differences:
     status: unknown
     type: enhancement
     reviewed: false
+    is_breaking_change: true
+    impact: high
     status_rationale: |
       In the old driver, Statement.executeBatch's success branch is the only place that appends
       to batchQueryIDs, so failed entries skip the append and the resulting list is shorter than
@@ -61,6 +67,8 @@ behavior_differences:
     status: unknown
     type: bugfix
     reviewed: false
+    is_breaking_change: true
+    impact: high
     status_rationale: |
       Per JDBC spec, after Statement.executeBatch() the statement should have no current result
       (getResultSet() returns null, getUpdateCount() returns -1). The old driver leaves
@@ -71,6 +79,8 @@ behavior_differences:
     status: unknown
     type: api_incompatibility
     reviewed: false
+    is_breaking_change: true
+    impact: high
     status_rationale: |
       The old driver exposed two distinct properties for credential caching:
         - `clientRequestMfaToken` (setEnableClientRequestMfaToken) — MFA-token cache for
@@ -91,6 +101,8 @@ behavior_differences:
     status: unknown
     type: enhancement
     reviewed: false
+    impact: high
+    is_breaking_change: true
     status_rationale: |
       The universal driver routes OAUTH_CLIENT_CREDENTIALS through sf_core, which rejects missing
       oauth_client_id, oauth_client_secret, and oauth_token_request_url synchronously at connect
