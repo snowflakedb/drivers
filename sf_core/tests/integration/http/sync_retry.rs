@@ -218,6 +218,7 @@ async fn should_include_statement_timeout_in_parameters_when_set() {
         QueryInput {
             sql: "SELECT 1".to_string(),
             bindings: None,
+            bind_stage: None,
             describe_only: None,
             query_parameters: Some({
                 let mut m = std::collections::HashMap::new();

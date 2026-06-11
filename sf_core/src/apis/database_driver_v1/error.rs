@@ -183,4 +183,11 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Stage binding failed: {source}"))]
+    StageBindingFailed {
+        #[snafu(source(from(crate::stage_binding::StageBindingError, Box::new)))]
+        source: Box<crate::stage_binding::StageBindingError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

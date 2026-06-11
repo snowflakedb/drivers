@@ -198,6 +198,7 @@ pub struct PrepareResult {
     pub number_of_binds: i32,
     pub query: String,
     pub sql_state: Option<String>,
+    pub array_bind_supported: bool,
 }
 
 impl DatabaseDriverV1 {
@@ -236,6 +237,7 @@ impl DatabaseDriverV1 {
                 number_of_binds: rs_info.descriptor.number_of_binds,
                 query,
                 sql_state: rs_info.descriptor.sql_state,
+                array_bind_supported: rs_info.descriptor.array_bind_supported,
             })
         }
         .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
@@ -259,6 +261,40 @@ impl DatabaseDriverV1 {
             .await
     }
 
+    async fn upload_csv_bindings_to_stage(
+        &self,
+        conn_arc: &Arc<Mutex<super::connection::Connection>>,
+        http_client: &reqwest::Client,
+        query_parameters: &QueryParameters,
+        retry_policy: &RetryPolicy,
+        csv_bytes: &[u8],
+    ) -> Result<String, ApiError> {
+        let (use_s3_regional_url_session_param, flags) = {
+            let conn = conn_arc.lock().await;
+            let regional = conn.use_s3_regional_url_session_param().await;
+            let flags = crate::stage_binding::StageBindingFlags {
+                stage_state: conn.stage_state.clone(),
+            };
+            (regional, flags)
+        };
+
+        let mut upload_refresh = RefreshContext::from_arc(conn_arc).await?;
+        let session_token = upload_refresh.refresh_token(None).await?;
+
+        let stage_ctx = crate::stage_binding::StageBindingContext {
+            client: http_client,
+            query_parameters,
+            session_token: &session_token,
+            retry_policy,
+            wrapper_presets: &self.wrapper_presets,
+            use_s3_regional_url_session_param,
+        };
+        let request_id = uuid::Uuid::new_v4();
+        crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
+            .await
+            .context(StageBindingFailedSnafu)
+    }
+
     async fn execute_query_internal<'a>(
         &self,
         stmt_handle: Handle,
@@ -280,17 +316,37 @@ impl DatabaseDriverV1 {
 
         let execution_mode = stmt.execution_mode(Some(&query));
 
-        let query_bindings = resolve_query_bindings(&bindings)?;
+        let mut query_parameter_map =
+            build_query_parameters_with_timeout(&stmt.settings, timeout_seconds);
+
+        let conn_arc = stmt.conn.clone();
+        drop(stmt);
+
+        let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
+
+        let bind_stage_path = if let Some(bytes) = csv_bytes {
+            let path = self
+                .upload_csv_bindings_to_stage(
+                    &conn_arc,
+                    &http_client,
+                    &query_parameters,
+                    &retry_policy,
+                    bytes,
+                )
+                .await?;
+            inject_timestamp_input_format_auto(&mut query_parameter_map);
+            Some(path)
+        } else {
+            None
+        };
 
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
+            bind_stage: bind_stage_path,
             describe_only,
-            query_parameters: build_query_parameters_with_timeout(&stmt.settings, timeout_seconds),
+            query_parameters: query_parameter_map,
         };
-
-        let conn_arc = stmt.conn.clone();
-        drop(stmt);
 
         let response = {
             let mut ctx = RefreshContext::from_arc(&conn_arc).await?;
@@ -394,12 +450,33 @@ impl DatabaseDriverV1 {
 
         let query = extract_query(&stmt)?;
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
-        let query_bindings = resolve_query_bindings(&bindings)?;
+        let mut query_parameter_map = build_query_parameters(&stmt.settings);
+        let conn_arc = stmt.conn.clone();
+
+        let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
+
+        let bind_stage_path = if let Some(bytes) = csv_bytes {
+            let path = self
+                .upload_csv_bindings_to_stage(
+                    &conn_arc,
+                    &http_client,
+                    &query_parameters,
+                    &retry_policy,
+                    bytes,
+                )
+                .await?;
+            inject_timestamp_input_format_auto(&mut query_parameter_map);
+            Some(path)
+        } else {
+            None
+        };
+
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
+            bind_stage: bind_stage_path,
             describe_only: None,
-            query_parameters: build_query_parameters(&stmt.settings),
+            query_parameters: query_parameter_map,
         };
         let request_id = uuid::Uuid::new_v4();
 
@@ -799,22 +876,37 @@ pub(crate) fn parse_json_bindings<'a>(
     Ok(raw)
 }
 
-/// Resolve `BindingType` into a borrowed `&RawValue` suitable for query submission.
+/// Splits an optional `BindingType` into its two mutually-exclusive components:
+/// - `query_bindings`: parsed JSON `RawValue` for inline JSON bindings.
+/// - `csv_bytes`: raw CSV byte slice for stage-based CSV bindings.
 ///
-/// Zero-copy for JSON bindings; returns `Err` for unsupported CSV bindings.
-fn resolve_query_bindings<'a>(
+/// Exactly one of the two is `Some` when `bindings` is `Some`; both are `None`
+/// when `bindings` is `None`. The two fields being separate is load-bearing:
+/// the `QueryInput` struct requires them as distinct optional fields.
+fn split_bindings<'a>(
     bindings: &'a Option<BindingType<'a>>,
-) -> Result<Option<&'a RawValue>, ApiError> {
-    match bindings {
-        Some(BindingType::Json(data_ptr)) => {
-            Ok(Some(parse_json_bindings(data_ptr).context(StatementSnafu)?))
-        }
-        Some(BindingType::Csv(_)) => Err(InvalidArgumentSnafu {
-            argument: "CSV bindings are not yet implemented".to_string(),
-        }
-        .build()),
-        None => Ok(None),
-    }
+) -> Result<(Option<&'a RawValue>, Option<&'a [u8]>), ApiError> {
+    Ok(match bindings {
+        None => (None, None),
+        Some(BindingType::Json(ptr)) => (
+            Some(parse_json_bindings(ptr).context(StatementSnafu)?),
+            None,
+        ),
+        Some(BindingType::Csv(ptr)) => (None, Some(ptr.slice())),
+    })
+}
+
+const TIMESTAMP_INPUT_FORMAT_KEY: &str = "TIMESTAMP_INPUT_FORMAT";
+const TIMESTAMP_INPUT_FORMAT_VALUE_AUTO: &str = "AUTO";
+
+fn inject_timestamp_input_format_auto(
+    query_parameters: &mut Option<HashMap<String, serde_json::Value>>,
+) {
+    let map = query_parameters.get_or_insert_with(HashMap::new);
+    map.insert(
+        TIMESTAMP_INPUT_FORMAT_KEY.to_string(),
+        serde_json::Value::String(TIMESTAMP_INPUT_FORMAT_VALUE_AUTO.to_string()),
+    );
 }
 
 #[cfg(test)]
@@ -1295,6 +1387,123 @@ mod tests {
         assert!(
             !serialized.contains("bindings"),
             "None bindings should be omitted from serialized output.\nSerialized: {serialized}"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_with_bind_stage_emits_bindstage_field() {
+        // When the CSV stage uploader has written a path into
+        // `QueryInput::bind_stage`, the serialized request must carry
+        // the `bindStage` field.
+        let request = query_request::Request {
+            sql_text: "INSERT INTO t VALUES (?, ?)".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: None,
+            bind_stage: Some("@SYSTEM$BIND/abc-123".to_string()),
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(
+            serialized.contains(r#""bindStage":"@SYSTEM$BIND/abc-123""#),
+            "serialized request must carry bindStage:\n{serialized}"
+        );
+        assert!(
+            !serialized.contains(r#""bindings""#),
+            "bindings must be omitted when bind_stage is set:\n{serialized}"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_without_bind_stage_omits_bindstage_field() {
+        // Symmetric to the previous test: the inline-JSON path must not
+        // leak `bindStage` onto the wire. `skip_serializing_if` on the
+        // field is what enforces this; the test is a regression guard.
+        let request = query_request::Request {
+            sql_text: "SELECT 1".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: None,
+            bind_stage: None,
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(
+            !serialized.contains("bindStage"),
+            "bindStage must be omitted when None:\n{serialized}"
+        );
+    }
+
+    #[test]
+    fn inject_timestamp_input_format_auto_allocates_map_when_none() {
+        // The inline-bindings path keeps `query_parameters: None` when
+        // no other server-side parameter is needed. The CSV path must
+        // therefore be able to lazily allocate the map.
+        let mut params = None;
+        inject_timestamp_input_format_auto(&mut params);
+        let map = params.expect("map must be allocated");
+        assert_eq!(
+            map.get("TIMESTAMP_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("AUTO".to_string()))
+        );
+        assert_eq!(map.len(), 1, "no other keys should be added");
+    }
+
+    #[test]
+    fn inject_timestamp_input_format_auto_preserves_other_keys() {
+        // Pre-existing entries (e.g. MULTI_STATEMENT_COUNT,
+        // STATEMENT_TIMEOUT_IN_SECONDS) must survive the injection.
+        let mut params = Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "MULTI_STATEMENT_COUNT".to_string(),
+                serde_json::Value::Number(3.into()),
+            );
+            m
+        });
+        inject_timestamp_input_format_auto(&mut params);
+        let map = params.unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get("TIMESTAMP_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("AUTO".to_string()))
+        );
+        assert_eq!(
+            map.get("MULTI_STATEMENT_COUNT"),
+            Some(&serde_json::Value::Number(3.into()))
+        );
+    }
+
+    #[test]
+    fn inject_timestamp_input_format_auto_overrides_existing_value() {
+        // If the user has set their own
+        // TIMESTAMP_INPUT_FORMAT in session params and *also* requested
+        // stage binding, the stage path wins for that query so the
+        // server can parse staged timestamps. A user who needs a
+        // specific session-level format must `ALTER SESSION SET` after
+        // the binding completes.
+        let mut params = Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "TIMESTAMP_INPUT_FORMAT".to_string(),
+                serde_json::Value::String("YYYY-MM-DD HH:MI:SS".to_string()),
+            );
+            m
+        });
+        inject_timestamp_input_format_auto(&mut params);
+        assert_eq!(
+            params.unwrap().get("TIMESTAMP_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("AUTO".to_string()))
         );
     }
 

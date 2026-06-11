@@ -2,6 +2,8 @@ use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::stage_binding::{AtomicStageState, StageState};
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -116,6 +118,7 @@ impl DatabaseDriverV1 {
         let query_input = QueryInput {
             sql: sql.to_string(),
             bindings: None,
+            bind_stage: None,
             describe_only: None,
             query_parameters: None,
         };
@@ -811,6 +814,17 @@ pub struct Connection {
     pub(crate) session_id: Option<i64>,
     /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
     pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
+
+    /// Lifecycle state of the per-session `SYSTEM$BIND` stage.
+    ///
+    /// A single tri-state value is used instead of two booleans to make the
+    /// illegal fourth state (`Created = true` **and** `Disabled = true`
+    /// simultaneously) unrepresentable by construction.
+    ///
+    /// Wrappers should consult this — together with the session parameter
+    /// `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD` — when deciding whether to send
+    /// CSV bindings.
+    pub stage_state: Arc<AtomicStageState>,
 }
 
 impl Default for Connection {
@@ -842,6 +856,7 @@ impl Connection {
             wrapper_identity: None,
             session_id: None,
             heartbeat_handle: None,
+            stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
         }
     }
 

@@ -548,6 +548,7 @@ message PrepareResult {
   int32 number_of_binds = 5;
   string query = 6;
   optional string sql_state = 7;
+  bool array_bind_supported = 8;
 }
 
 message StatementPrepareRequest {

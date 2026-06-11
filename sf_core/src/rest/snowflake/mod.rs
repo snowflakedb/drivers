@@ -220,6 +220,7 @@ pub enum QueryExecutionMode {
 pub struct QueryInput<'a> {
     pub sql: String,
     pub bindings: Option<&'a RawValue>,
+    pub bind_stage: Option<String>,
     pub describe_only: Option<bool>,
     pub query_parameters: Option<HashMap<String, serde_json::Value>>,
 }
@@ -229,6 +230,7 @@ impl<'a> QueryInput<'a> {
         QueryInput {
             sql: sql.into(),
             bindings: None,
+            bind_stage: None,
             describe_only: None,
             query_parameters: None,
         }
@@ -1515,7 +1517,7 @@ async fn execute_sync_query<'a>(
         describe_only: query_input.describe_only,
         parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
-        bind_stage: None,
+        bind_stage: query_input.bind_stage.clone(),
         query_context: query_request::QueryContext { entries: None },
     };
 

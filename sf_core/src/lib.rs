@@ -11,6 +11,7 @@ mod compression;
 mod compression_types;
 pub mod config;
 pub mod crl;
+pub mod csv_bind;
 // Public for integration tests; only `types` and specific transfer functions are re-exported.
 pub mod file_manager;
 pub mod fs_adapter;
@@ -22,6 +23,7 @@ pub mod query_types;
 pub mod refresh;
 pub mod rest;
 pub mod sensitive;
+pub mod stage_binding;
 pub mod telemetry;
 pub mod tls;
 pub mod token_cache;
