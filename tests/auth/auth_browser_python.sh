@@ -3,12 +3,13 @@
 # Python authentication E2E tests requiring a headless browser.
 # Runs inside the snowdrivers-test-external-browser-universal-driver Docker image.
 #
-# Local usage (requires parameters.json in repo root):
+# Local usage (requires parameters_preprod.json in repo root,
+# from ./scripts/decode_secrets.sh preprod parameters_preprod.json):
 #
 #   docker run --rm --platform linux/amd64 \
 #     -v "$PWD:/mnt/host" -e WORKSPACE_ROOT=/mnt/host \
 #     snowdrivers-test-external-browser-universal-driver:1 \
-#     bash /mnt/host/ci/auth/auth_browser_python.sh
+#     bash /mnt/host/tests/auth/auth_browser_python.sh
 
 set -euo pipefail
 

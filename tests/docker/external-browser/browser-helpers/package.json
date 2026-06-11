@@ -1,0 +1,17 @@
+{
+  "name": "external-browser",
+  "version": "1.0.0",
+  "main": "provideBrowserCredentials.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "playwright": "^1.49.0",
+    "snowflake-sdk": "2.0.3",
+    "speakeasy": "^2.0.0"
+  }
+}

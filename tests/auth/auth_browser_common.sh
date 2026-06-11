@@ -4,19 +4,19 @@
 # Sourced by wrapper-specific scripts (auth_browser_python.sh, etc.)
 #
 # Expects:
-#   - parameters.json in workspace root (from decode_secrets.sh)
+#   - parameters_preprod.json in workspace root (from decode_secrets.sh)
 #   - Running inside the snowdrivers-test-external-browser-universal-driver image
 
 set -euo pipefail
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
-if [ ! -f "${WORKSPACE_ROOT}/parameters.json" ]; then
-    echo "ERROR: parameters.json not found in ${WORKSPACE_ROOT}" >&2
-    echo "Run scripts/decode_secrets.sh first." >&2
+if [ ! -f "${WORKSPACE_ROOT}/parameters_preprod.json" ]; then
+    echo "ERROR: parameters_preprod.json not found in ${WORKSPACE_ROOT}" >&2
+    echo "Run: ./scripts/decode_secrets.sh preprod parameters_preprod.json" >&2
     exit 1
 fi
 
-export PARAMETER_PATH="${WORKSPACE_ROOT}/parameters.json"
+export PARAMETER_PATH="${WORKSPACE_ROOT}/parameters_preprod.json"
 export SF_TEST_HEADLESS_BROWSER=true
 export CARGO_TARGET_DIR="${WORKSPACE_ROOT}/target"

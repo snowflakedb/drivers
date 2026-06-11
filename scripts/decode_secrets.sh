@@ -1,8 +1,13 @@
 #!/bin/bash
 CLOUD="${1:-aws}"
+# Output file for the main parameters bundle. Defaults to parameters.json so every
+# existing caller (GitHub workflows, ODBC/JDBC/Rust runners, etc.) is unaffected.
+# Pass a distinct name (e.g. parameters_preprod.json) to decode an alternate account
+# WITHOUT clobbering a parameters.json already decoded for the rest of the suite.
+OUTPUT_FILE="${2:-parameters.json}"
 
-if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" ]]; then
-    echo "Usage: $0 [aws|gcp|azure]" >&2
+if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" && "${CLOUD}" != "preprod" ]]; then
+    echo "Usage: $0 [aws|gcp|azure|preprod] [output-file]" >&2
     exit 1
 fi
 
@@ -17,8 +22,8 @@ fi
 echo "Decoding secrets with GPG..."
 
 # Decode main parameters file (required)
-printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "./.github/secrets/parameters_${CLOUD}.json.gpg" > parameters.json
-echo "  ✓ parameters.json"
+printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "./.github/secrets/parameters_${CLOUD}.json.gpg" > "${OUTPUT_FILE}"
+echo "  ✓ ${OUTPUT_FILE}"
 
 # Decode performance test parameters if they exist (optional)
 perf_dir="tests/performance/parameters"

@@ -46,13 +46,13 @@ constexpr int CHROMIUM_DEBUG_PORT = 9222;
 std::string get_external_browser_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  configure_driver_string(ss);
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_HOST", "SERVER");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_ACCOUNT", "ACCOUNT");
+  // Use the default test connection (host, account, etc.) but override UID to
+  // the Okta user and switch the authenticator to EXTERNALBROWSER — mirroring
+  // what the Python E2E test does via connection_factory(**browser_credentials).
+  read_default_params(ss, params, {"UID", "AUTHENTICATOR", "ROLE"});
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_USER", "UID");
   ss << "AUTHENTICATOR=EXTERNALBROWSER;";
   ss << "ROLE=PUBLIC;";
-  // Never reuse a cached id-token: always exercise the real browser flow.
   ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   return ss.str();
 }

@@ -3,14 +3,20 @@ Jenkinsfile for authentication E2E tests requiring a headless browser.
 Runs inside the snowdrivers-test-external-browser-universal-driver Docker image
 which provides headless Chromium + Playwright + Rust + Python.
 
-Local usage (requires parameters.json in repo root):
-  ./ci/auth/run_auth_browser_python.sh
-  ./ci/auth/run_auth_browser_odbc.sh
+Local usage (requires parameters_preprod.json in repo root):
+  ./scripts/decode_secrets.sh preprod parameters_preprod.json
+  DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh python
+  DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh odbc
+
+Or build & run locally without a pre-built image:
+  ./tests/auth/run_auth_browser_local.sh python
 */
 
 @Library('pipeline-utils') _
 import groovy.transform.Field
 import com.snowflake.DevEnvUtils
+
+@Field String AUTH_BROWSER_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-development-docker-drivers-local/snowflakedb/snowdrivers-test-external-browser-universal-driver:2'
 
 def isMergeQueue() {
   return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
@@ -50,7 +56,7 @@ def detectChanges() {
     }
     // Job definition or the shared container scripts affect both wrappers.
     if (file == 'ci/Jenkinsfile.auth-browser-tests' ||
-        file.startsWith('ci/auth/')) {
+        file.startsWith('tests/auth/')) {
       runPython = true
       runOdbc = true
     }
@@ -111,9 +117,9 @@ pipeline {
             script {
               authenticateDocker()
               withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
               }
-              sh label: 'Run Python auth browser tests', script: './ci/auth/run_auth_browser_python.sh'
+              sh label: 'Run Python auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh python"
             }
           }
         }
@@ -126,9 +132,9 @@ pipeline {
             script {
               authenticateDocker()
               withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
               }
-              sh label: 'Run ODBC auth browser tests', script: './ci/auth/run_auth_browser_odbc.sh'
+              sh label: 'Run ODBC auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh odbc"
             }
           }
         }

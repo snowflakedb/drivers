@@ -9,7 +9,7 @@ from snowflake.connector.errors import DatabaseError
 
 
 # These Node.js scripts and the Chromium remote-debugging port are provided by the
-# snowdrivers-test-external-browser-universal-driver Docker image (see ci/auth/). They
+# snowdrivers-test-external-browser-universal-driver Docker image (see tests/auth/). They
 # do not exist outside that container, which is why these tests are gated behind the
 # `requires_browser` marker.
 PROVIDE_CREDENTIALS_SCRIPT = "/externalbrowser/provideBrowserCredentials.js"
