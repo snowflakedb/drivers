@@ -71,7 +71,7 @@ pub mod param_names {
     pub const CUSTOM_ROOT_STORE_PATH: ParamKey = ParamKey("custom_root_store_path");
     pub const VERIFY_HOSTNAME: ParamKey = ParamKey("verify_hostname");
     pub const VERIFY_CERTIFICATES: ParamKey = ParamKey("verify_certificates");
-    pub const INSECURE_SKIP_TLS_VERIFY: ParamKey = ParamKey("insecure_skip_tls_verify");
+    pub const TLS_SKIP_VERIFY: ParamKey = ParamKey("tls_skip_verify");
     pub const CRL_CHECK_MODE: ParamKey = ParamKey("crl_check_mode");
     pub const CRL_ENABLE_DISK_CACHING: ParamKey = ParamKey("crl_enable_disk_caching");
     pub const CRL_ENABLE_MEMORY_CACHING: ParamKey = ParamKey("crl_enable_memory_caching");
@@ -741,14 +741,14 @@ static PARAM_DEFS: &[ParamDef] = &[
         mutable_after_connect: false,
     },
     ParamDef {
-        canonical_name: param_names::INSECURE_SKIP_TLS_VERIFY.as_str(),
-        aliases: &["TLS_SKIP_VERIFY"],
+        canonical_name: param_names::TLS_SKIP_VERIFY.as_str(),
+        aliases: &[],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
-        description: "Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only.",
+        description: "Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -1305,7 +1305,7 @@ mod tests {
             ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
             ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
             ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
-            ("TLS_SKIP_VERIFY", "insecure_skip_tls_verify"),
+            ("TLS_SKIP_VERIFY", "tls_skip_verify"),
             ("CRL_MODE", "crl_check_mode"),
             ("CRL_ENABLED", "crl_check_mode"),
             ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
