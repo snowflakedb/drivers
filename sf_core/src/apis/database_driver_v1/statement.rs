@@ -1584,10 +1584,35 @@ mod tests {
     fn calculate_rows_affected_select_uses_total() {
         let data = deserialize_query_response(
             r#"{
+                "statementTypeId": 4096,
                 "total": 42
             }"#,
         );
         assert_eq!(result_set::calculate_rows_affected(&data), Some(42));
+    }
+
+    #[test]
+    fn calculate_rows_affected_ddl_is_none_not_total() {
+        // DDL (0x6000) is a no-result statement. Snowflake returns total: 1 as a
+        // generic success marker; we must report None rather than a misleading 1.
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 24576,
+                "total": 1
+            }"#,
+        );
+        assert_eq!(result_set::calculate_rows_affected(&data), None);
+    }
+
+    #[test]
+    fn calculate_rows_affected_unknown_type_is_none() {
+        // No statementTypeId -> unknown -> no-result -> None (not data.total).
+        let data = deserialize_query_response(
+            r#"{
+                "total": 1
+            }"#,
+        );
+        assert_eq!(result_set::calculate_rows_affected(&data), None);
     }
 
     #[test]
