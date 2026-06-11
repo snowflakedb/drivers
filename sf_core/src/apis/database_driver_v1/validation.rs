@@ -92,6 +92,31 @@ fn try_coerce_setting(
         .or_else(|| additional.and_then(|value_type| try_coerce_to_value_type(setting, value_type)))
 }
 
+fn odbc_key_for(internal_canonical: &str) -> Option<&'static str> {
+    match internal_canonical {
+        "user" => Some("UID"),
+        "password" => Some("PWD"),
+        "host" => Some("SERVER"),
+        _ => None,
+    }
+}
+
+fn push_conflict_error(
+    issues: &mut Vec<ValidationIssue>,
+    existing_key: &str,
+    new_key: &str,
+    canonical_name: &str,
+) {
+    issues.push(ValidationIssue {
+        severity: ValidationSeverity::Error,
+        parameter: new_key.to_string(),
+        message: format!(
+            "Parameters '{existing_key}' and '{new_key}' both resolve to '{canonical_name}'. Provide only one key for that setting.",
+        ),
+        code: ValidationCode::ConflictingParameters,
+    });
+}
+
 /// Validate and resolve a batch of options through the `ParamRegistry`.
 ///
 /// Returns `(resolved_options, issues)` where `resolved_options` contains
@@ -110,15 +135,30 @@ pub fn resolve_options(
             Some(param_def) => {
                 let canonical_name = param_def.canonical_name.to_string();
                 if let Some(existing_key) = canonical_sources.get(&canonical_name) {
-                    issues.push(ValidationIssue {
-                        severity: ValidationSeverity::Error,
-                        parameter: key.clone(),
-                        message: format!(
-                            "Parameters '{existing_key}' and '{key}' both resolve to '{}'. Provide only one key for that setting.",
-                            param_def.canonical_name
-                        ),
-                        code: ValidationCode::ConflictingParameters,
-                    });
+                    if let Some(odbc_key) = odbc_key_for(&canonical_name) {
+                        let (winner, loser) = if existing_key.eq_ignore_ascii_case(odbc_key) {
+                            (existing_key.clone(), key.clone())
+                        } else if key.eq_ignore_ascii_case(odbc_key) {
+                            (key.clone(), existing_key.clone())
+                        } else {
+                            push_conflict_error(&mut issues, existing_key, &key, &canonical_name);
+                            continue;
+                        };
+                        issues.push(ValidationIssue {
+                            severity: ValidationSeverity::Warning,
+                            parameter: loser.clone(),
+                            message: format!(
+                                "Parameter '{loser}' is ignored because '{winner}' was also provided (both resolve to '{canonical_name}').",
+                            ),
+                            code: ValidationCode::ConflictingParameters,
+                        });
+                        if winner == key {
+                            canonical_sources.insert(canonical_name.clone(), key);
+                            resolved.insert(canonical_name, value);
+                        }
+                        continue;
+                    }
+                    push_conflict_error(&mut issues, existing_key, &key, &canonical_name);
                     continue;
                 }
 
@@ -677,27 +717,6 @@ mod tests {
     fn duplicate_alias_and_canonical_key_is_error() {
         let mut options = HashMap::new();
         options.insert(
-            "SERVER".to_string(),
-            Setting::String("dsn.example.com".to_string()),
-        );
-        options.insert(
-            "host".to_string(),
-            Setting::String("attr.example.com".to_string()),
-        );
-
-        let (_resolved, issues) = resolve_options(options);
-
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].severity, ValidationSeverity::Error);
-        assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
-        assert!(issues[0].message.contains("SERVER"));
-        assert!(issues[0].message.contains("host"));
-    }
-
-    #[test]
-    fn duplicate_case_variants_of_same_alias_are_error() {
-        let mut options = HashMap::new();
-        options.insert(
             "PRIV_KEY_BASE64".to_string(),
             Setting::String("dsn-key".to_string()),
         );
@@ -711,7 +730,93 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
         assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
-        assert!(issues[0].message.contains("private_key"));
+    }
+
+    #[test]
+    fn uid_and_user_together_uid_wins_with_warning() {
+        let mut options = HashMap::new();
+        options.insert("UID".to_string(), Setting::String("joe".to_string()));
+        options.insert("USER".to_string(), Setting::String("jane".to_string()));
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, ValidationSeverity::Warning);
+        assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
+        assert!(
+            issues[0].message.contains("USER"),
+            "warning should mention the ignored key USER"
+        );
+        assert_eq!(
+            resolved.get("user"),
+            Some(&Setting::String("joe".to_string())),
+            "UID value should win"
+        );
+    }
+
+    #[test]
+    fn pwd_and_password_together_pwd_wins_with_warning() {
+        let mut options = HashMap::new();
+        options.insert("PWD".to_string(), Setting::String("s3cr3t".to_string()));
+        options.insert("PASSWORD".to_string(), Setting::String("other".to_string()));
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, ValidationSeverity::Warning);
+        assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
+        assert!(
+            issues[0].message.contains("PASSWORD"),
+            "warning should mention the ignored key PASSWORD"
+        );
+        assert_eq!(
+            resolved.get("password"),
+            Some(&Setting::String("s3cr3t".to_string())),
+            "PWD value should win"
+        );
+    }
+
+    #[test]
+    fn server_and_host_together_server_wins_with_warning() {
+        let mut options = HashMap::new();
+        options.insert(
+            "SERVER".to_string(),
+            Setting::String("dsn.example.com".to_string()),
+        );
+        options.insert(
+            "host".to_string(),
+            Setting::String("attr.example.com".to_string()),
+        );
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, ValidationSeverity::Warning);
+        assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
+        assert!(
+            issues[0].message.contains("host"),
+            "warning should mention the ignored key host"
+        );
+        assert_eq!(
+            resolved.get("host"),
+            Some(&Setting::String("dsn.example.com".to_string())),
+            "SERVER value should win"
+        );
     }
 
     #[test_case("abc_test", "host", "abc_test.us-east-1.snowflakecomputing.com", "abc-test.us-east-1.snowflakecomputing.com" ; "host")]
