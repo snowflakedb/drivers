@@ -1,4 +1,5 @@
 pub mod config_manager;
+pub mod configured_redirect_uri;
 pub mod connection_config;
 pub mod ini_loader;
 pub mod logging_config_loader;

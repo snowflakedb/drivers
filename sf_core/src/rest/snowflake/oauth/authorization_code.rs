@@ -36,7 +36,8 @@ use url::Url;
 use super::dpop::{self, DPoPKey};
 use super::error::{
     AuthenticationTimeoutSnafu, EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu,
-    OAuthError, RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
+    OAuthError, RedirectUriParseSnafu, RefreshTokenExchangeSnafu, StateMismatchSnafu,
+    TokenResponseDecodeSnafu,
 };
 use super::http_client::make_http_client;
 use super::loopback_server::{self, RedirectResult};
@@ -357,7 +358,8 @@ async fn run_interactive_flow(
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     let authorize_url_base = resolve_authorize_url(server_url, config.authorization_url.as_ref())?;
     let binding = loopback_server::bind(config.redirect_uri.as_ref()).await?;
-    let redirect_uri = binding.redirect_uri.clone();
+    let redirect_uri_advertised = binding.redirect_uri.as_configured().to_string();
+    let redirect_uri = binding.redirect_uri.parsed().clone();
 
     let dpop_key = if config.flow_options.enable_dpop {
         Some(dpop::DPoPKey::generate()?)
@@ -370,7 +372,7 @@ async fn run_interactive_flow(
         config,
         authorize_url_base.clone(),
         token_url.clone(),
-        redirect_uri.clone(),
+        redirect_uri_advertised,
     )?;
 
     // PKCE S256 is on by default across drivers; Python
@@ -483,11 +485,14 @@ async fn refresh_access_token(
     tracing::debug!("Refreshing OAuth access token");
     // For the refresh leg we don't need authorize_url; reuse the same
     // token_url for both endpoints to satisfy the typestate bounds.
-    let oauth_client = build_oauth_client(config, token_url.clone(), token_url.clone(), {
+    let oauth_client = build_oauth_client(
+        config,
+        token_url.clone(),
+        token_url.clone(),
         // Refresh leg has no redirect URI requirement. Re-use the token
-        // URL as a placeholder; `exchange_refresh_token` never reads it.
-        token_url.clone()
-    })?;
+        // URL string as a placeholder; `exchange_refresh_token` never reads it.
+        token_url.to_string(),
+    )?;
 
     // Drift B.12: reuse the caller-supplied DPoP key on the refresh hop
     // so the IdP can verify the proof and so the new access token can be
@@ -541,7 +546,7 @@ fn build_oauth_client(
     config: &OAuthAuthorizationCodeConfig,
     authorize_url: Url,
     token_url: Url,
-    redirect_uri: Url,
+    redirect_uri_advertised: String,
 ) -> Result<
     BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
     OAuthError,
@@ -552,11 +557,18 @@ fn build_oauth_client(
     // Snowflake-as-IdP signal, matching JDBC's `OAuthUtil` heuristic.
     let snowflake_idp = config.token_url.is_none();
     let (client_id, client_secret) = resolve_client_credentials(config, snowflake_idp);
+    // Use `RedirectUrl::new` (not `from_url`) so the verbatim user-supplied
+    // string is stored and emitted byte-for-byte by `oauth2`'s wire layer.
+    // `from_url` re-serializes the `Url` struct, which adds a trailing slash
+    // to bare origins (e.g. `http://localhost:12346` → `http://localhost:12346/`),
+    // breaking IdPs that do RFC 6749 §3.1.2.3 exact-string `redirect_uri`
+    // matching (e.g. Okta).
+    let redirect_url = RedirectUrl::new(redirect_uri_advertised).context(RedirectUriParseSnafu)?;
     Ok(BasicClient::new(ClientId::new(client_id))
         .set_client_secret(ClientSecret::new(client_secret))
         .set_auth_uri(AuthUrl::from_url(authorize_url))
         .set_token_uri(TokenUrl::from_url(token_url))
-        .set_redirect_uri(RedirectUrl::from_url(redirect_uri)))
+        .set_redirect_uri(redirect_url))
 }
 
 /// Drift B.1: if no client credentials were provided and Snowflake is
@@ -842,6 +854,39 @@ mod tests {
         assert_eq!(
             tok.as_str(),
             "https://acct.snowflakecomputing.com/oauth/token-request"
+        );
+    }
+
+    #[test]
+    fn build_oauth_client_emits_redirect_uri_verbatim_without_trailing_slash() {
+        // Regression guard for SNOW-3637145: a bare-origin redirect URI must
+        // reach the IdP byte-for-byte. `RedirectUrl::from_url` re-serializes
+        // the `Url` and appends a trailing slash
+        // (`http://localhost:12346` → `http://localhost:12346/`), breaking
+        // IdPs that do RFC 6749 §3.1.2.3 exact-string matching (Okta). This
+        // asserts on the emitted authorize URL, so it fails if anyone swaps
+        // `RedirectUrl::new` back to `from_url`.
+        let config = cfg_with_token_url(server_url());
+        let authorize_url = Url::parse("https://idp.example.com/authorize").unwrap();
+        let token_url = Url::parse("https://idp.example.com/token").unwrap();
+
+        let client = build_oauth_client(
+            &config,
+            authorize_url,
+            token_url,
+            "http://localhost:12346".to_string(),
+        )
+        .expect("client builds");
+
+        let (url, _state) = client.authorize_url(|| CsrfToken::new_random_len(32)).url();
+        let redirect = url
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned())
+            .expect("authorize URL must carry a redirect_uri parameter");
+        assert_eq!(
+            redirect, "http://localhost:12346",
+            "redirect_uri must be emitted verbatim (no trailing slash added)"
         );
     }
 
