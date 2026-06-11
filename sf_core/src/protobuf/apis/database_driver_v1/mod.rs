@@ -705,6 +705,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 number_of_binds: result.number_of_binds,
                 query: result.query,
                 sql_state: result.sql_state,
+                array_bind_supported: result.array_bind_supported,
             }),
         })
     }

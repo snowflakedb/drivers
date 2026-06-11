@@ -35,6 +35,7 @@ pub struct ResultSetDescriptor {
     pub sql_state: Option<String>,
     pub stats: Option<Stats>,
     pub number_of_binds: i32,
+    pub array_bind_supported: bool,
 }
 
 /// A result set handle paired with its descriptor.
@@ -251,6 +252,7 @@ pub(super) fn response_to_descriptor(
         sql_state: data.sql_state.clone(),
         stats: data.stats.clone(),
         number_of_binds: data.number_of_binds.unwrap_or(0),
+        array_bind_supported: data.array_bind_supported.unwrap_or(false),
     }
 }
 

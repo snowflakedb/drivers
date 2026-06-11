@@ -741,6 +741,16 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::StageBindingFailed { .. } => DriverError {
+            // Surface as `GenericError` for now: the wrapper-side fallback
+            // (catch `ApiError::StageBindingFailed`, re-issue with inline JSON
+            // bindings) lives in a separate PR. A dedicated proto variant
+            // for stage-binding failures can land alongside that work —
+            // the underlying snafu source-chain (logged via the
+            // `error_trace::ErrorTrace` derive on `StageBindingError`)
+            // already carries the diagnostic detail.
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
         ApiError::TokenCacheInitialization { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
@@ -960,6 +970,12 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
         ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
         ApiError::LogoutFailed { .. } => StatusCode::InternalError,
+        // Stage-binding failures are surfaced as a transport-layer
+        // generic error for now (no dedicated proto status code yet);
+        // the wrapper-side fallback work will add a dedicated variant and
+        // map to it. Until then, `GenericError` is the right bucket — the
+        // error trace carries enough detail for diagnostics.
+        ApiError::StageBindingFailed { .. } => StatusCode::GenericError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);

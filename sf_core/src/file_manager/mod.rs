@@ -110,7 +110,38 @@ pub async fn upload_single_file(
     let mut file_buffer = Vec::new();
     input_file.read_to_end(&mut file_buffer).context(IoSnafu)?;
 
-    let (prepared, file_metadata) = preprocess_file_before_upload(file_buffer, &data)?;
+    upload_prepared_buffer(file_buffer, data, refresher).await
+}
+
+/// Uploads an in-memory byte buffer to the stage location described by
+/// `data`. Skips the disk read that [`upload_single_file`] performs and
+/// delegates to the shared cloud-upload path, so encryption, compression,
+/// SHA-256 digesting, and the per-cloud (S3 / GCS / Azure) dispatch behave
+/// identically.
+///
+/// `data.file_path` is consulted by `preprocess_file_before_upload` only to
+/// fill the `source` column of the upload result on the legacy
+/// `PutGetResultsetFlavor::Odbc + Windows` path; callers that do not surface
+/// the upload result back to the user (notably the large-bindings stage
+/// uploader) may set it to the same value as `data.filename`.
+pub async fn upload_in_memory_file(
+    buffer: Vec<u8>,
+    data: SingleUploadData,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<UploadResult, FileManagerError> {
+    upload_prepared_buffer(buffer, data, refresher).await
+}
+
+/// Shared core of the upload path used by both `upload_single_file` (file
+/// source) and `upload_in_memory_file` (in-memory source). Splitting the
+/// disk read off lets both callers reuse the same preprocess + cloud
+/// dispatch with no behavior drift.
+async fn upload_prepared_buffer(
+    buffer: Vec<u8>,
+    data: SingleUploadData,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<UploadResult, FileManagerError> {
+    let (prepared, file_metadata) = preprocess_file_before_upload(buffer, &data)?;
 
     let status = match data.stage_info.location_type {
         LocationType::S3 => upload_to_s3_or_skip(

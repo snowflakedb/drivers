@@ -95,6 +95,8 @@ pub struct Data {
     pub final_role_name: Option<String>,
     #[serde(rename = "numberOfBinds")]
     pub number_of_binds: Option<i32>,
+    #[serde(rename = "arrayBindSupported")]
+    pub array_bind_supported: Option<bool>,
     #[serde(rename = "statementTypeId")]
     pub statement_type_id: Option<i64>,
     #[serde(rename = "version")]
