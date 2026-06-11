@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     api::{InfoType, SqlState, diagnostic::DiagnosticRecord, oauth},
-    conversion::error::JsonBindingError,
+    conversion::error::BindingError,
     conversion::{ConversionError, error::WriteOdbcError},
 };
 use arrow::error::ArrowError;
@@ -371,7 +371,16 @@ pub enum OdbcError {
 
     #[snafu(display("Error binding JSON parameters: {source:?}"))]
     JsonBinding {
-        source: JsonBindingError,
+        #[snafu(source(from(BindingError, Box::new)))]
+        source: Box<BindingError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Error binding CSV parameters: {source:?}"))]
+    CsvBinding {
+        #[snafu(source(from(BindingError, Box::new)))]
+        source: Box<BindingError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -564,6 +573,26 @@ fn is_well_formed_sql_state(state: &str) -> bool {
             .all(|b| b.is_ascii_digit() || b.is_ascii_uppercase())
 }
 
+fn binding_error_to_sql_state(source: &BindingError) -> SqlState {
+    match source {
+        BindingError::NumericMagnitudeOverflow { .. }
+        | BindingError::BindingNumericOutOfRange { .. } => SqlState::NumericValueOutOfRange,
+        BindingError::InvalidDatetimeValue { .. } => SqlState::InvalidDatetimeFormat,
+        BindingError::DatetimeFieldOverflow { .. } => SqlState::DatetimeFieldOverflow,
+        BindingError::UnsupportedCDataType { .. }
+        | BindingError::UnsupportedParameterType { .. } => {
+            SqlState::RestrictedDataTypeAttributeViolation
+        }
+        BindingError::InvalidBooleanValue { .. }
+        | BindingError::InvalidNumericLiteral { .. }
+        | BindingError::InvalidHexLiteral { .. }
+        | BindingError::InvalidCharacterValueForCast { .. } => {
+            SqlState::InvalidCharacterValueForCast
+        }
+        _ => SqlState::GeneralError,
+    }
+}
+
 impl OdbcError {
     /// High-level telemetry bucket for this wrapper error.
     ///
@@ -619,6 +648,7 @@ impl OdbcError {
             OdbcError::ConnectionInit { .. } => ErrorSource::Connectivity,
             OdbcError::ConversionError { .. } => ErrorSource::DataConversion,
             OdbcError::JsonBinding { .. } => ErrorSource::DataConversion,
+            OdbcError::CsvBinding { .. } => ErrorSource::DataConversion,
             OdbcError::ParameterBinding { .. } => ErrorSource::DataConversion,
             OdbcError::FetchData { .. } => ErrorSource::DataConversion,
             OdbcError::TextConversionFromUtf8 { .. } => ErrorSource::DataConversion,
@@ -792,25 +822,9 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::InvalidWideChar { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::JsonBinding { source, .. } => match source {
-                JsonBindingError::NumericMagnitudeOverflow { .. }
-                | JsonBindingError::BindingNumericOutOfRange { .. } => {
-                    SqlState::NumericValueOutOfRange
-                }
-                JsonBindingError::InvalidDatetimeValue { .. } => SqlState::InvalidDatetimeFormat,
-                JsonBindingError::DatetimeFieldOverflow { .. } => SqlState::DatetimeFieldOverflow,
-                JsonBindingError::UnsupportedCDataType { .. }
-                | JsonBindingError::UnsupportedParameterType { .. } => {
-                    SqlState::RestrictedDataTypeAttributeViolation
-                }
-                JsonBindingError::InvalidBooleanValue { .. }
-                | JsonBindingError::InvalidNumericLiteral { .. }
-                | JsonBindingError::InvalidHexLiteral { .. }
-                | JsonBindingError::InvalidCharacterValueForCast { .. } => {
-                    SqlState::InvalidCharacterValueForCast
-                }
-                _ => SqlState::GeneralError,
-            },
+            OdbcError::JsonBinding { source, .. } | OdbcError::CsvBinding { source, .. } => {
+                binding_error_to_sql_state(source)
+            }
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
                 CoreProtobufError::Application {
@@ -1191,7 +1205,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
@@ -1326,7 +1340,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(
@@ -1342,7 +1356,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(
@@ -1381,7 +1395,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
@@ -1394,7 +1408,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(
@@ -1416,7 +1430,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(
@@ -1441,7 +1455,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(
@@ -1453,7 +1467,7 @@ mod tests {
     /// Pins the SQLSTATE for "the parsed datetime overflowed the wire
     /// format's representable range" -- 22008, distinct from 22018 (parse
     /// failure on the input string) and 07006 (the binding shape itself
-    /// was wrong). Triggered by `write_timestamp_tz_json` when
+    /// was wrong). Triggered by `write_timestamp_tz_wire` when
     /// `timestamp_nanos_opt()` returns `None`. See PR #1005 review on
     /// `timestamp.rs:643`.
     #[test]
@@ -1465,7 +1479,7 @@ mod tests {
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
-            source: json_err,
+            source: Box::new(json_err),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::DatetimeFieldOverflow);

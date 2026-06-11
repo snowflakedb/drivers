@@ -1,12 +1,11 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::api::encoding::wchar_byte_size;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, NumericMagnitudeOverflowSnafu,
     UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
@@ -21,7 +20,7 @@ use crate::conversion::param_binding::{
     buffer_data_len, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -537,7 +536,7 @@ impl ReadODBC for SnowflakeNumber {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let value = match binding.value_type {
             CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as i128,
             CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as i128,
@@ -696,9 +695,9 @@ impl ReadODBC for SnowflakeNumber {
     }
 }
 
-impl WriteJson for SnowflakeNumber {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.to_string()))
+impl WriteWire for SnowflakeNumber {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(value.to_string())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

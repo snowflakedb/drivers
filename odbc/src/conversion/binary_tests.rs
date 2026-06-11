@@ -598,7 +598,7 @@ mod tests {
     // ========================================================================
 
     use crate::api::ParameterBinding;
-    use crate::conversion::error::JsonBindingError;
+    use crate::conversion::error::BindingError;
     use crate::conversion::traits::ReadODBC;
 
     fn binding(value_type: CDataType, ptr: sql::Pointer, buffer_len: sql::Len) -> ParameterBinding {
@@ -744,7 +744,7 @@ mod tests {
         let b = binding_with_indicator(CDataType::Char, buf.as_ptr() as sql::Pointer, 3, &mut ind);
         let err = sn.read_odbc(&b).unwrap_err();
         assert!(
-            matches!(err, JsonBindingError::InvalidHexLiteral { .. }),
+            matches!(err, BindingError::InvalidHexLiteral { .. }),
             "expected InvalidHexLiteral, got: {err}"
         );
     }
@@ -757,7 +757,7 @@ mod tests {
         let mut ind: sql::Len = 4;
         let b = binding_with_indicator(CDataType::Char, buf.as_ptr() as sql::Pointer, 4, &mut ind);
         let err = sn.read_odbc(&b).unwrap_err();
-        assert!(matches!(err, JsonBindingError::InvalidHexLiteral { .. }));
+        assert!(matches!(err, BindingError::InvalidHexLiteral { .. }));
     }
 
     #[test]
@@ -793,7 +793,7 @@ mod tests {
             &mut ind,
         );
         let err = sn.read_odbc(&b).unwrap_err();
-        assert!(matches!(err, JsonBindingError::InvalidHexLiteral { .. }));
+        assert!(matches!(err, BindingError::InvalidHexLiteral { .. }));
     }
 
     #[test]
@@ -848,16 +848,16 @@ mod tests {
             );
             let err = sn.read_odbc(&b).unwrap_err();
             assert!(
-                matches!(err, JsonBindingError::UnsupportedCDataType { c_type: c, .. } if c == c_type),
+                matches!(err, BindingError::UnsupportedCDataType { c_type: c, .. } if c == c_type),
                 "expected UnsupportedCDataType for {c_type:?}, got: {err}"
             );
         }
     }
 
     // ========================================================================
-    // Bind-side end-to-end (ReadODBC -> WriteJson) — the legacy driver bug
+    // Bind-side end-to-end (ReadODBC -> WriteWire) — the legacy driver bug
     //
-    // Pre-fix: SQL_C_CHAR "DEADBEEF" produced JSON value
+    // Pre-fix: SQL_C_CHAR "DEADBEEF" produced bind value
     // "4445414442454546" (16 hex chars = ASCII codes of "DEADBEEF"),
     // storing 8 bytes in Snowflake instead of the intended 4. Post-fix:
     // the same input yields "deadbeef" (4 bytes server-side), matching
@@ -865,8 +865,8 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn read_odbc_then_write_json_round_trips_char_hex_to_lowercase_string() {
-        use crate::conversion::traits::WriteJson;
+    fn read_odbc_then_write_wire_round_trips_char_hex_to_lowercase_string() {
+        use crate::conversion::traits::WriteWire;
 
         let sn = sn();
         let buf = b"DEADBEEF";
@@ -878,13 +878,13 @@ mod tests {
             &mut ind,
         );
         let bytes = sn.read_odbc(&b).unwrap();
-        let json = sn.write_json(bytes).unwrap();
-        assert_eq!(json, serde_json::Value::String("deadbeef".to_string()));
+        let wire = sn.write_wire(bytes).unwrap();
+        assert_eq!(wire, "deadbeef");
     }
 
     #[test]
-    fn read_odbc_then_write_json_round_trips_binary_to_lowercase_hex() {
-        use crate::conversion::traits::WriteJson;
+    fn read_odbc_then_write_wire_round_trips_binary_to_lowercase_hex() {
+        use crate::conversion::traits::WriteWire;
 
         let sn = sn();
         let buf: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
@@ -892,7 +892,7 @@ mod tests {
         let b =
             binding_with_indicator(CDataType::Binary, buf.as_ptr() as sql::Pointer, 4, &mut ind);
         let bytes = sn.read_odbc(&b).unwrap();
-        let json = sn.write_json(bytes).unwrap();
-        assert_eq!(json, serde_json::Value::String("deadbeef".to_string()));
+        let wire = sn.write_wire(bytes).unwrap();
+        assert_eq!(wire, "deadbeef");
     }
 }

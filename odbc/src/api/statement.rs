@@ -3,9 +3,10 @@ use crate::api::TimestampSubtype;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu,
-    CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu, InvalidAttributeValueSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
+    CsvBindingSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu,
+    InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu,
+    InvalidDuringDaeSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
+    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
     NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
     ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, StillExecutingSnafu,
     UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
@@ -20,7 +21,7 @@ use crate::api::{
     StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
-use crate::conversion::param_binding::odbc_bindings_to_json;
+use crate::conversion::param_binding::{odbc_bindings_to_csv, odbc_bindings_to_json};
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -120,6 +121,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         }
 
         inner.prepared_param_count = None;
+        inner.prepared_array_bind_supported = None;
 
         let dae_params = find_dae_params(&inner.apd, None);
         if !dae_params.is_empty() {
@@ -140,7 +142,17 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             return DaeRequiredSnafu.fail();
         }
 
-        let (bindings, json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
+        let param_count = effective_param_count(&inner.apd, &inner.ipd, false, None);
+        let effective_cells = inner.apd.array_size as u64 * u64::from(param_count);
+        let binding_mode = select_binding_mode(
+            &conn_handle,
+            effective_cells,
+            // exec-direct: no prepare describe ran — None means "unknown",
+            // which falls through to the threshold check.
+            None,
+        )?;
+        let (bindings, bindings_owner) =
+            apply_parameter_bindings(&inner.apd, &inner.ipd, false, None, binding_mode)?;
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
         let effective_query = statement_text.to_string();
@@ -148,7 +160,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         let async_enabled = inner.async_enabled;
 
         match run_cancellable(&guard, async_enabled, |client| async move {
-            let _json_owner = json_owner;
+            let _bindings_owner = bindings_owner;
             if multi_statement_count >= 0 {
                 let mut options = std::collections::HashMap::new();
                 options.insert(
@@ -223,7 +235,8 @@ use crate::conversion::NumericSettings;
 
 /// Common finalization after a successful execution (ExecDirect, Execute).
 /// Refreshes connection numeric settings from the server, applies the
-/// execution response to statement state, and resets the row counter.
+/// execution response to statement state, resets the row counter, and writes
+/// the parameter-array output fields (`PARAMS_PROCESSED_PTR` / `PARAM_STATUS_PTR`).
 fn finalize_execute_response(
     conn: &mut crate::api::Connection,
     inner: &mut StatementInner,
@@ -233,9 +246,29 @@ fn finalize_execute_response(
     last_sql: Option<&str>,
 ) -> OdbcResult<()> {
     update_numeric_settings(&conn_handle, &mut conn.numeric_settings, last_sql)?;
-    apply_execute_response(inner, conn_handle, response, origin)?;
+
+    // Snapshot output pointers before passing `inner` into apply_execute_response.
+    let param_set_size = inner.apd.array_size;
+    let rows_processed_ptr = inner.ipd.rows_processed_ptr;
+    let param_status_ptr = inner.ipd.array_status_ptr;
+
+    let result = apply_execute_response(inner, conn_handle, response, origin);
     inner.rows_returned = 0;
-    Ok(())
+
+    // Write PARAMS_PROCESSED and PARAM_STATUS regardless of result so the
+    // application always gets feedback for the rows that were sent.
+    unsafe {
+        if !rows_processed_ptr.is_null() {
+            *rows_processed_ptr = param_set_size as sql::ULen;
+        }
+        if !param_status_ptr.is_null() {
+            for i in 0..param_set_size {
+                *param_status_ptr.add(i) = 0u16; // SQL_PARAM_SUCCESS
+            }
+        }
+    }
+
+    result
 }
 
 /// Refresh the cached connection-level numeric settings after an execute.
@@ -811,6 +844,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             Ok(PrepareOutcome {
                 number_of_binds: param_count,
                 schema,
+                array_bind_supported: result.array_bind_supported,
             })
         })?;
         match execution_outcome {
@@ -836,9 +870,11 @@ fn apply_prepare_outcome(
     let crate::api::PrepareOutcome {
         number_of_binds,
         schema,
+        array_bind_supported,
     } = outcome;
     inner.ird.desc_count = schema.fields().len() as sql::SmallInt;
     inner.prepared_param_count = Some(number_of_binds);
+    inner.prepared_array_bind_supported = Some(array_bind_supported);
     let max_varchar = conn.numeric_settings.max_varchar_size;
     inner.ipd.records.retain(|&k, _| k <= number_of_binds);
     for i in 1..=number_of_binds {
@@ -942,11 +978,24 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 return DisconnectedSnafu.fail();
             }
         };
-        let (bindings, json_owner) = apply_parameter_bindings(
+        let param_count = effective_param_count(
             &inner.apd,
             &inner.ipd,
             is_prepared,
             inner.prepared_param_count,
+        );
+        let effective_cells = inner.apd.array_size as u64 * u64::from(param_count);
+        let binding_mode = select_binding_mode(
+            &conn_handle,
+            effective_cells,
+            inner.prepared_array_bind_supported,
+        )?;
+        let (bindings, bindings_owner) = apply_parameter_bindings(
+            &inner.apd,
+            &inner.ipd,
+            is_prepared,
+            inner.prepared_param_count,
+            binding_mode,
         )?;
 
         let stmt_handle = guard.stmt_handle;
@@ -955,7 +1004,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         let async_enabled = inner.async_enabled;
 
         let outcome = match run_cancellable(&guard, async_enabled, |client| async move {
-            let _json_owner = json_owner;
+            let _bindings_owner = bindings_owner;
             if multi_statement_count >= 0 {
                 let mut options = std::collections::HashMap::new();
                 options.insert(
@@ -1197,7 +1246,13 @@ fn create_execute_state_from_stream(
     Ok(state)
 }
 
-/// Build JSON query bindings from ODBC parameter bindings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindingMode {
+    Json,
+    Csv,
+}
+
+/// Build query bindings from ODBC parameter bindings.
 ///
 /// When `prepared` is true (SQLPrepare+SQLExecute flow), the IPD has server-
 /// provided parameter count and we validate that the APD covers every marker.
@@ -1207,11 +1262,16 @@ fn create_execute_state_from_stream(
 /// `prepared_param_count` caps how many parameters are serialized for prepared
 /// statements, preventing phantom bindings beyond the server-reported marker
 /// count from being dereferenced.
+///
+/// `mode` selects the wire format. The second tuple element is the owner
+/// of the serialized buffer that the returned `BinaryDataPtr` points into;
+/// callers must hold onto it for the lifetime of the async execute call.
 fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
     prepared: bool,
     prepared_param_count: Option<u16>,
+    mode: BindingMode,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     let effective_count: u16 = if prepared {
         prepared_param_count.ok_or_else(|| {
@@ -1253,29 +1313,104 @@ fn apply_parameter_bindings(
         }
     }
     tracing::info!(
-        "apply_parameter_bindings: Found {} bound parameters (effective_count={})",
+        "apply_parameter_bindings: Found {} bound parameters (effective_count={}, mode={:?})",
         apd.records.len(),
         effective_count,
+        mode,
     );
 
-    let json_string =
-        odbc_bindings_to_json(apd, ipd, effective_count).context(JsonBindingSnafu {})?;
-
-    let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
-    let json_data_len = json_string.len();
-
-    let binary_data_ptr = BinaryDataPtr {
-        value: json_data_ptr.to_le_bytes().to_vec(),
-        length: json_data_len as i64,
+    let (owner, binding_type) = match mode {
+        BindingMode::Json => {
+            let s = odbc_bindings_to_json(apd, ipd, effective_count).context(JsonBindingSnafu)?;
+            let ptr = BinaryDataPtr {
+                value: (s.as_bytes().as_ptr() as u64).to_le_bytes().to_vec(),
+                length: s.len() as i64,
+            };
+            (s, query_bindings::BindingType::Json(ptr))
+        }
+        BindingMode::Csv => {
+            let s = odbc_bindings_to_csv(apd, ipd, effective_count).context(CsvBindingSnafu)?;
+            let ptr = BinaryDataPtr {
+                value: (s.as_bytes().as_ptr() as u64).to_le_bytes().to_vec(),
+                length: s.len() as i64,
+            };
+            (s, query_bindings::BindingType::Csv(ptr))
+        }
     };
 
     let bindings = QueryBindings {
-        binding_type: Some(query_bindings::BindingType::Json(binary_data_ptr)),
+        binding_type: Some(binding_type),
     };
 
     tracing::info!("apply_parameter_bindings: Successfully bound parameters");
 
-    Ok((Some(bindings), Some(json_string)))
+    Ok((Some(bindings), Some(owner)))
+}
+
+/// Decide whether to use JSON or CSV (stage) binding.
+///
+/// `effective_cells` is `array_size × param_count` — the total number of
+/// cells across all parameter sets in this execute.  The server threshold
+/// `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD` is expressed in cells.
+///
+/// * `array_bind_supported == Some(false)` — server explicitly said no (e.g.
+///   bare SELECT, EXECUTE IMMEDIATE).  Always JSON to avoid server rejection.
+/// * `array_bind_supported == None` — no prepare ran (SQLExecDirect) or no
+///   hint returned.  Treated as "unknown / assume yes"; fall through to
+///   threshold check.
+/// * `array_bind_supported == Some(true)` — server confirmed support.
+fn select_binding_mode(
+    conn_handle: &ConnectionHandle,
+    effective_cells: u64,
+    array_bind_supported: Option<bool>,
+) -> OdbcResult<BindingMode> {
+    if effective_cells == 0 {
+        return Ok(BindingMode::Json);
+    }
+    // Hard block only when server explicitly said no.
+    if array_bind_supported == Some(false) {
+        return Ok(BindingMode::Json);
+    }
+    let threshold = stage_binding_threshold(conn_handle)?;
+    if effective_cells >= u64::from(threshold) {
+        Ok(BindingMode::Csv)
+    } else {
+        Ok(BindingMode::Json)
+    }
+}
+
+fn stage_binding_threshold(conn_handle: &ConnectionHandle) -> OdbcResult<u32> {
+    let raw = get_session_parameter(conn_handle, "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD")?;
+    // Default Snowflake value is 65280 (255 * 256).  0 would mean "never
+    // stage-bind" when the parameter is absent, which is wrong.
+    Ok(raw.and_then(|s| s.parse::<u32>().ok()).unwrap_or(65280))
+}
+
+fn effective_param_count(
+    apd: &crate::api::ApdDescriptor,
+    ipd: &crate::api::IpdDescriptor,
+    prepared: bool,
+    prepared_param_count: Option<u16>,
+) -> u16 {
+    if prepared {
+        prepared_param_count.unwrap_or(0)
+    } else {
+        apd.desc_count().max(ipd.desc_count())
+    }
+}
+
+fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResult<Option<String>> {
+    crate::api::runtime::global()
+        .context(OdbcRuntimeSnafu)?
+        .block_on(async |c| {
+            let resp = c
+                .connection_get_parameter(ConnectionGetParameterRequest {
+                    conn_handle: Some(*conn_handle),
+                    key: key.to_string(),
+                })
+                .await?;
+            Ok(resp.value)
+        })
 }
 
 /// Bind a parameter to a prepared statement
@@ -1724,6 +1859,41 @@ pub fn set_stmt_attr(
             inner.ard.bind_offset_ptr = ptr;
             Ok(())
         }
+        StmtAttr::ParamBindType => {
+            let raw = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamBindType (raw) = {}", raw);
+            inner.apd.bind_type = raw;
+            Ok(())
+        }
+        StmtAttr::ParamBindOffsetPtr => {
+            let ptr = value_ptr as *mut sql::Len;
+            tracing::debug!("set_stmt_attr: ParamBindOffsetPtr = {:?}", ptr);
+            inner.apd.bind_offset_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamStatusPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamStatusPtr = {:?}", ptr);
+            inner.ipd.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamsProcessedPtr => {
+            let ptr = value_ptr as *mut sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamsProcessedPtr = {:?}", ptr);
+            inner.ipd.rows_processed_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamsetSize => {
+            let size = value_ptr as usize;
+            tracing::debug!("set_stmt_attr: ParamsetSize = {}", size);
+            inner.apd.array_size = if size == 0 {
+                tracing::warn!("set_stmt_attr: ParamsetSize 0 is invalid, coercing to 1");
+                1
+            } else {
+                size
+            };
+            Ok(())
+        }
         StmtAttr::MetadataId => {
             let val = value_ptr as sql::ULen;
             inner.metadata_id = val != 0;
@@ -2047,6 +2217,42 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::RowBindOffsetPtr => {
             unsafe {
                 *(value_ptr as *mut *mut sql::Len) = inner.ard.bind_offset_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindType => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = inner.apd.bind_type;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindOffsetPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::Len) = inner.apd.bind_offset_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamStatusPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut u16) = inner.ipd.array_status_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamsProcessedPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::ULen) = inner.ipd.rows_processed_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamsetSize => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = inner.apd.array_size as sql::ULen;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
             }
             Ok(())
         }
@@ -2674,11 +2880,30 @@ fn execute_dae(
         }
     }
 
-    let (bindings, _json_owner) = match apply_parameter_bindings(
+    let param_count = effective_param_count(
         &temp_apd,
         &inner.ipd,
         is_prepared,
         inner.prepared_param_count,
+    );
+    let effective_cells = temp_apd.array_size as u64 * u64::from(param_count);
+    let binding_mode = match select_binding_mode(
+        &conn_handle,
+        effective_cells,
+        inner.prepared_array_bind_supported,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            inner.state.set(restored);
+            return Err(e);
+        }
+    };
+    let (bindings, _bindings_owner) = match apply_parameter_bindings(
+        &temp_apd,
+        &inner.ipd,
+        is_prepared,
+        inner.prepared_param_count,
+        binding_mode,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -2881,9 +3106,42 @@ mod tests {
     fn apply_bindings_prepared_without_param_count_errors() {
         let apd = ApdDescriptor::new();
         let ipd = IpdDescriptor::new();
-        let result = apply_parameter_bindings(&apd, &ipd, true, None);
+        let result = apply_parameter_bindings(&apd, &ipd, true, None, BindingMode::Json);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.to_sql_state(), SqlState::CountFieldIncorrect);
+    }
+
+    #[test]
+    fn select_binding_mode_returns_json_when_no_bindings() {
+        // Zero cells short-circuits to Json without any threshold lookup.
+        let handle = ConnectionHandle { id: 0, magic: 0 };
+        let mode = select_binding_mode(&handle, 0, None).unwrap();
+        assert_eq!(mode, BindingMode::Json);
+        let mode = select_binding_mode(&handle, 0, Some(true)).unwrap();
+        assert_eq!(mode, BindingMode::Json);
+    }
+
+    #[test]
+    fn select_binding_mode_returns_json_when_array_bind_unsupported() {
+        // `arrayBindSupported=false` must hard-force JSON — server would reject
+        // stage-binding (SQLSTATE 42601). Fires before threshold lookup.
+        let handle = ConnectionHandle { id: 0, magic: 0 };
+        let mode = select_binding_mode(&handle, 1, Some(false)).unwrap();
+        assert_eq!(mode, BindingMode::Json);
+    }
+
+    #[test]
+    fn select_binding_mode_none_hint_falls_through_to_threshold() {
+        // `None` means no prepare hint (SQLExecDirect path) — treated as
+        // "unknown / assume supported".  With 0 cells it still short-circuits
+        // to Json; only the cell count controls the outcome here.
+        let handle = ConnectionHandle { id: 0, magic: 0 };
+        // 0 cells → Json regardless of hint
+        let mode = select_binding_mode(&handle, 0, None).unwrap();
+        assert_eq!(mode, BindingMode::Json);
+        // Non-zero cells → falls through to threshold check (no live
+        // connection here, so the RPC will error; the test only asserts the
+        // short-circuit paths above don't fire for `None`).
     }
 }

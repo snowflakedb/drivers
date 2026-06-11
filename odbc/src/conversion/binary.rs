@@ -3,18 +3,17 @@ use std::slice;
 
 use arrow::array::{Array, GenericByteArray};
 use arrow::datatypes::GenericBinaryType;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::JsonBindingError;
+use crate::conversion::error::BindingError;
 use crate::conversion::error::{
     InvalidHexLiteralSnafu, ReadArrowError, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu,
     WriteOdbcError,
 };
 use crate::conversion::param_binding::{buffer_data_len, read_char_str, read_wchar_str};
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 use odbc_sys as sql;
@@ -65,7 +64,7 @@ fn hex_digit_to_ascii(nibble: u8) -> u8 {
 /// Whitespace is *not* tolerated (the spec grammar admits no
 /// separators), and odd-length / non-hex input must surface as
 /// SQLSTATE 22018.
-fn hex_decode_ascii(input: &str) -> Result<Vec<u8>, JsonBindingError> {
+fn hex_decode_ascii(input: &str) -> Result<Vec<u8>, BindingError> {
     if !input.len().is_multiple_of(2) {
         return InvalidHexLiteralSnafu {
             reason: format!(
@@ -85,7 +84,7 @@ fn hex_decode_ascii(input: &str) -> Result<Vec<u8>, JsonBindingError> {
     Ok(out)
 }
 
-fn hex_nibble(c: u8) -> Result<u8, JsonBindingError> {
+fn hex_nibble(c: u8) -> Result<u8, BindingError> {
     match c {
         b'0'..=b'9' => Ok(c - b'0'),
         b'a'..=b'f' => Ok(c - b'a' + 10),
@@ -199,7 +198,7 @@ impl ReadODBC for SnowflakeBinary {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         match binding.value_type {
             CDataType::Default | CDataType::Binary => {
                 let len = buffer_data_len(binding);
@@ -227,9 +226,9 @@ pub(crate) fn hex_encode_lowercase(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-impl WriteJson for SnowflakeBinary {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(hex_encode_lowercase(value.as_ref())))
+impl WriteWire for SnowflakeBinary {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(hex_encode_lowercase(value.as_ref()))
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

@@ -4,19 +4,18 @@ use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::ArrowPrimitiveType;
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidArrowValueSnafu,
-    InvalidDatetimeValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError,
+    BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
+    InvalidArrowValueSnafu, InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
     parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
-use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -225,7 +224,7 @@ impl ReadODBC for SnowflakeTime {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         match binding.value_type {
             CDataType::Time | CDataType::TypeTime => {
                 let time = read_unaligned::<sql::Time>(binding);
@@ -324,12 +323,12 @@ impl ReadODBC for SnowflakeTime {
     }
 }
 
-impl WriteJson for SnowflakeTime {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+impl WriteWire for SnowflakeTime {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
         let secs = value.num_seconds_from_midnight() as i64;
         let nanos = value.nanosecond() as i64;
         let total_nanos = secs * 1_000_000_000 + nanos;
-        Ok(Value::String(total_nanos.to_string()))
+        Ok(total_nanos.to_string())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

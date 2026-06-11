@@ -4,11 +4,10 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use snafu::{Location, ResultExt, Snafu};
 use uuid::Uuid;
 
-use crate::apis::database_driver_v1::{PutGetResultsetFlavor, WrapperPresets};
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
-use crate::file_manager::{SingleUploadData, SourceCompressionParam, upload_in_memory_file};
+use crate::file_manager::upload_in_memory_file;
 use crate::rest::snowflake::query_response::{Data, QueryResponseError, Response};
 use crate::rest::snowflake::{
     QueryExecutionMode, QueryInput, RestError, snowflake_query_with_client,
@@ -119,7 +118,6 @@ pub struct StageBindingContext<'a> {
     pub query_parameters: &'a QueryParameters,
     pub session_token: &'a SensitiveString,
     pub retry_policy: &'a RetryPolicy,
-    pub wrapper_presets: &'a WrapperPresets,
     pub use_s3_regional_url_session_param: bool,
 }
 
@@ -220,28 +218,9 @@ async fn upload_blob(
     csv_bytes: &[u8],
     data: &Data,
 ) -> Result<(), StageBindingError> {
-    let upload_data = data
-        .to_file_upload_data(
-            ctx.wrapper_presets.put_get_resultset_flavor.clone(),
-            ctx.wrapper_presets.legacy_odbc_compression_autodetect,
-            ctx.use_s3_regional_url_session_param,
-        )
+    let single = data
+        .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param)
         .context(MalformedPutResponseSnafu)?;
-
-    let filename = "0".to_string();
-    let file_path = filename.clone();
-
-    let single = SingleUploadData {
-        file_path,
-        filename,
-        stage_info: upload_data.stage_info,
-        encryption_material: upload_data.encryption_material,
-        auto_compress: true,
-        source_compression: SourceCompressionParam::None,
-        overwrite: upload_data.overwrite,
-        flavor: PutGetResultsetFlavor::Python,
-        legacy_odbc_compression_autodetect: upload_data.legacy_odbc_compression_autodetect,
-    };
 
     // No `StageInfoRefresher` is needed here: CSV binding payloads are small
     // (a few KB at most) and upload in well under the storage-credential

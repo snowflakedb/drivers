@@ -23,7 +23,7 @@ use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::{ApdRecord, CDataType, IpdRecord, ParameterBinding};
-use crate::conversion::error::JsonBindingError;
+use crate::conversion::error::BindingError;
 use crate::conversion::param_binding;
 use crate::conversion::traits::SnowflakeLogicalType;
 
@@ -49,7 +49,7 @@ fn make_binding(
     ParameterBinding::from_apd_ipd(&apd, &ipd)
 }
 
-fn convert(binding: &ParameterBinding) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+fn convert(binding: &ParameterBinding) -> Result<(SnowflakeLogicalType, String), BindingError> {
     param_binding::convert_for_test(binding)
 }
 
@@ -171,7 +171,7 @@ fn bit_to_interval_rejected_07006() {
         );
         let err = convert(&binding).expect_err("SQL_C_BIT → interval must be rejected");
         assert!(
-            matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+            matches!(err, BindingError::UnsupportedCDataType { .. }),
             "expected UnsupportedCDataType (07006) for interval code {code}, got {err:?}",
         );
     }
@@ -352,7 +352,7 @@ fn c_interval_day_to_sql_year_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("cross-family must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -369,7 +369,7 @@ fn c_interval_year_to_sql_day_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("cross-family must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -393,7 +393,7 @@ fn slong_to_year_to_month_rejected_07006() {
     );
     let err = convert(&binding).expect_err("numeric → compound must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -410,7 +410,7 @@ fn numeric_to_day_to_second_rejected_07006() {
     );
     let err = convert(&binding).expect_err("numeric → compound must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -427,7 +427,7 @@ fn ubigint_to_hour_to_minute_rejected_07006() {
     );
     let err = convert(&binding).expect_err("integer → compound must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -448,7 +448,7 @@ fn float_to_year_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("FLOAT → INTERVAL must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -465,7 +465,7 @@ fn double_to_second_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("DOUBLE → INTERVAL must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -483,7 +483,7 @@ fn binary_to_year_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("BINARY → INTERVAL must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -505,7 +505,7 @@ fn guid_to_year_to_month_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("GUID → INTERVAL must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -526,7 +526,7 @@ fn date_to_year_target_rejected_07006() {
     );
     let err = convert(&binding).expect_err("DATE → INTERVAL must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }
@@ -551,7 +551,7 @@ fn timestamp_to_day_to_second_rejected_07006() {
     );
     let err = convert(&binding).expect_err("TIMESTAMP → INTERVAL must error");
     assert!(
-        matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+        matches!(err, BindingError::UnsupportedCDataType { .. }),
         "expected UnsupportedCDataType (07006), got {err:?}",
     );
 }

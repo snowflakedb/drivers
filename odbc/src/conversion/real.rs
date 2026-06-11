@@ -2,13 +2,12 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, Float64Array};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::api::encoding::wchar_byte_size;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, InvalidNumericLiteralSnafu, JsonBindingError,
+    BindingError, BindingNumericOutOfRangeSnafu, InvalidNumericLiteralSnafu,
     NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
@@ -24,7 +23,7 @@ use crate::conversion::param_binding::{
     read_wchar_str,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -173,7 +172,7 @@ fn is_explicit_non_finite_token(s: &str) -> bool {
 }
 
 /// Map a parsed-but-non-finite `f64` from a SQL_C_CHAR / SQL_C_WCHAR bind to
-/// the spec-aligned `JsonBindingError`, distinguishing explicit non-finite
+/// the spec-aligned `BindingError`, distinguishing explicit non-finite
 /// tokens (22018) from numeric overflow (22003). Returns `Ok(())` for any
 /// finite value; the caller continues with `v` unchanged.
 ///
@@ -181,7 +180,7 @@ fn is_explicit_non_finite_token(s: &str) -> bool {
 /// typed it; `v` is the result of `trimmed.parse::<f64>()`. See
 /// `is_explicit_non_finite_token` for the rationale behind discriminating on
 /// the input token rather than on `is_finite()` alone.
-fn reject_non_finite_real_literal(trimmed: &str, v: f64) -> Result<(), JsonBindingError> {
+fn reject_non_finite_real_literal(trimmed: &str, v: f64) -> Result<(), BindingError> {
     if v.is_finite() {
         return Ok(());
     }
@@ -451,7 +450,7 @@ impl ReadODBC for SnowflakeReal {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let value = match binding.value_type {
             CDataType::Float => read_unaligned::<f32>(binding) as f64,
             CDataType::Default | CDataType::Double => read_unaligned::<f64>(binding),
@@ -545,8 +544,8 @@ impl ReadODBC for SnowflakeReal {
     }
 }
 
-impl WriteJson for SnowflakeReal {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+impl WriteWire for SnowflakeReal {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
         // Snowflake's JSON parameter-binding parser is stricter than its
         // SQL `TO_DOUBLE()` text parser. The SQL parser accepts any of
         // `nan`, `inf`, `infinity` (case-insensitive), but the JSON bind
@@ -566,7 +565,7 @@ impl WriteJson for SnowflakeReal {
         } else {
             value.to_string()
         };
-        Ok(Value::String(s))
+        Ok(s)
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

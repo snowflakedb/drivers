@@ -634,70 +634,61 @@ mod tests {
         }
     }
 
-    /// LTZ JSON encoding must produce a **bare** wall-clock literal string
+    /// LTZ wire encoding must produce a **bare** wall-clock literal string
     /// with no timezone offset suffix. The wire `type` is `TEXT` (see
     /// `SnowflakeTimestampLtz::sf_type`), and the Snowflake server uses the
     /// session timezone to interpret the wall-clock string when coercing
     /// into a TIMESTAMP_LTZ column. Mirrors the legacy 3.16.0 driver's
     /// JSON-bind path in `SFQueryExecutor.cpp`.
     #[test]
-    fn ltz_write_json_emits_bare_wall_clock_literal() {
-        use crate::conversion::traits::WriteJson;
+    fn ltz_write_wire_emits_bare_wall_clock_literal() {
+        use crate::conversion::traits::WriteWire;
         use chrono::NaiveDate;
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_nano_opt(14, 30, 45, 123_456_789))
             .expect("constant inputs");
-        let v = ltz(9).write_json(dt).expect("write_json");
-        assert_eq!(
-            v,
-            serde_json::Value::String("2024-03-15 14:30:45.123456789".to_string())
-        );
+        let v = ltz(9).write_wire(dt).expect("write_wire");
+        assert_eq!(v, "2024-03-15 14:30:45.123456789");
     }
 
     /// Whole-second LTZ values must omit the fractional part entirely
     /// (matching legacy 3.16.0 and the existing fetch-side
     /// `format_timestamp_string_into` behaviour). Round-tripping a stored
     /// instant must not gain a `.000000000` suffix the application never
-    /// emitted. No offset suffix either — LTZ JSON binds are bare wall-clock.
+    /// emitted. No offset suffix either — LTZ binds are bare wall-clock.
     #[test]
-    fn ltz_write_json_omits_zero_nanos_no_offset() {
-        use crate::conversion::traits::WriteJson;
+    fn ltz_write_wire_omits_zero_nanos_no_offset() {
+        use crate::conversion::traits::WriteWire;
         use chrono::NaiveDate;
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_opt(14, 30, 45))
             .expect("constant inputs");
-        let v = ltz(9).write_json(dt).expect("write_json");
-        assert_eq!(
-            v,
-            serde_json::Value::String("2024-03-15 14:30:45".to_string())
-        );
+        let v = ltz(9).write_wire(dt).expect("write_wire");
+        assert_eq!(v, "2024-03-15 14:30:45");
     }
 
     /// NTZ must keep emitting epoch-nanoseconds (the existing wire format).
     /// Pinning this here so that any future refactor of the macro that
     /// accidentally swaps the encoder gets caught at unit-test time.
     #[test]
-    fn ntz_write_json_emits_epoch_nanos_string() {
-        use crate::conversion::traits::WriteJson;
+    fn ntz_write_wire_emits_epoch_nanos_string() {
+        use crate::conversion::traits::WriteWire;
         use chrono::NaiveDate;
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_nano_opt(14, 30, 45, 123_456_789))
             .expect("constant inputs");
-        let v = ntz(9).write_json(dt).expect("write_json");
+        let v = ntz(9).write_wire(dt).expect("write_wire");
         // 2024-03-15T14:30:45.123456789 UTC == 1710513045123456789 ns.
-        assert_eq!(
-            v,
-            serde_json::Value::String("1710513045123456789".to_string())
-        );
+        assert_eq!(v, "1710513045123456789");
     }
-    // ---- TZ-specific write/read/json round-trip tests ------------------------
+    // ---- TZ-specific write/read/wire round-trip tests ------------------------
     //
     // The helpers under test live in timestamp.rs; we exercise them here through
-    // the public `WriteODBCType` / `ReadODBC` / `WriteJson` traits to keep the
+    // the public `WriteODBCType` / `ReadODBC` / `WriteWire` traits to keep the
     // tests resilient against private function renames.
 
     use crate::api::ParameterBinding;
-    use crate::conversion::traits::{ReadODBC, WriteJson};
+    use crate::conversion::traits::{ReadODBC, WriteWire};
 
     fn make_naive(s: &str) -> NaiveDateTime {
         NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
@@ -837,41 +828,39 @@ mod tests {
     }
 
     #[test]
-    fn write_tz_json_emits_two_token_format() {
+    fn write_tz_wire_emits_two_token_format() {
         // Wire format: `<epoch_nanos> <offset_minutes + 1440>`. Server
         // subtracts the bias to recover the signed offset; legacy Python and
         // ODBC drivers use the same encoding.
         let sn = tz(9);
-        let json = sn.write_json(tz_value("2024-01-15 09:00:45", 330)).unwrap();
+        let wire = sn.write_wire(tz_value("2024-01-15 09:00:45", 330)).unwrap();
         // 2024-01-15 09:00:45 UTC -> epoch_nanos = 1705309245000000000
         // offset 330 + 1440 = 1770
-        assert_eq!(
-            json,
-            serde_json::Value::String("1705309245000000000 1770".into())
-        );
+        assert_eq!(wire, "1705309245000000000 1770");
     }
 
     #[test]
-    fn write_tz_json_negative_offset_stays_positive_on_wire() {
+    fn write_tz_wire_negative_offset_stays_positive_on_wire() {
         // -480 + 1440 = 960; the bias guarantees the second token is always
         // non-negative for any legal offset.
         let sn = tz(9);
-        let json = sn
-            .write_json(tz_value("2024-01-15 22:30:45", -480))
+        let wire = sn
+            .write_wire(tz_value("2024-01-15 22:30:45", -480))
             .unwrap();
-        let s = json.as_str().unwrap();
-        let parts: Vec<&str> = s.split(' ').collect();
+        let parts: Vec<&str> = wire.split(' ').collect();
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[1], "960");
     }
 
     #[test]
-    fn write_tz_json_zero_offset_emits_bias() {
+    fn write_tz_wire_zero_offset_emits_bias() {
         // Naive bind path (offset = 0 -> wire token = 1440).
         let sn = tz(9);
-        let json = sn.write_json(tz_value("2024-01-15 14:30:45", 0)).unwrap();
-        let s = json.as_str().unwrap();
-        assert!(s.ends_with(" 1440"), "expected bias-only suffix, got {s}");
+        let wire = sn.write_wire(tz_value("2024-01-15 14:30:45", 0)).unwrap();
+        assert!(
+            wire.ends_with(" 1440"),
+            "expected bias-only suffix, got {wire}"
+        );
     }
 
     // ---- TZ -> CHAR/WCHAR with `tz_offset_format` set --------------------

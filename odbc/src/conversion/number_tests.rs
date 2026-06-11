@@ -1541,7 +1541,7 @@ mod tests {
     // -------------------------------------------------------------------------
     mod interval_to_number_bind {
         use crate::api::{ApdRecord, CDataType, IpdRecord, ParameterBinding};
-        use crate::conversion::error::JsonBindingError;
+        use crate::conversion::error::BindingError;
         use crate::conversion::param_binding;
         use crate::conversion::traits::SnowflakeLogicalType;
         use odbc_sys as sql;
@@ -1583,7 +1583,7 @@ mod tests {
 
         fn convert(
             binding: &ParameterBinding,
-        ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+        ) -> Result<(SnowflakeLogicalType, String), BindingError> {
             param_binding::convert_for_test(binding)
         }
 
@@ -1731,7 +1731,7 @@ mod tests {
             let err = convert(&bind_ym(CDataType::IntervalYearToMonth, SQL_INTEGER, &iv))
                 .expect_err("compound interval must reject");
             assert!(
-                matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+                matches!(err, BindingError::UnsupportedCDataType { .. }),
                 "expected UnsupportedCDataType, got {err:?}"
             );
         }
@@ -1762,8 +1762,8 @@ mod tests {
                 assert!(
                     matches!(
                         err,
-                        JsonBindingError::UnsupportedCDataType { .. }
-                            | JsonBindingError::UnsupportedParameterType { .. }
+                        BindingError::UnsupportedCDataType { .. }
+                            | BindingError::UnsupportedParameterType { .. }
                     ),
                     "expected unsupported-source error for {sql_type:?}, got {err:?}"
                 );
@@ -1789,8 +1789,8 @@ mod tests {
                 assert!(
                     matches!(
                         err,
-                        JsonBindingError::UnsupportedParameterType { .. }
-                            | JsonBindingError::UnsupportedCDataType { .. }
+                        BindingError::UnsupportedParameterType { .. }
+                            | BindingError::UnsupportedCDataType { .. }
                     ),
                     "expected unsupported-source error for {c_type:?}, got {err:?}"
                 );
@@ -1812,7 +1812,7 @@ mod tests {
                 let err = convert(&bind_ym(c_type, SQL_INTEGER, &iv))
                     .expect_err("compound interval must reject");
                 assert!(
-                    matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+                    matches!(err, BindingError::UnsupportedCDataType { .. }),
                     "expected UnsupportedCDataType for {c_type:?}, got {err:?}"
                 );
             }

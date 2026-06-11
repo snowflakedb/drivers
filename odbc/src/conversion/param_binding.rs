@@ -21,9 +21,10 @@ use super::date::SnowflakeDate;
 #[cfg(not(windows))]
 use super::error::InvalidUtf8Snafu;
 use super::error::{
-    BindingNumericOutOfRangeSnafu, InvalidCharacterValueForCastSnafu, InvalidParameterIndicesSnafu,
-    JsonBindingError, NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
-    UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu, WCharConversionSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, InvalidCharacterValueForCastSnafu,
+    InvalidParameterIndicesSnafu, NullPointerSnafu, NumericMagnitudeOverflowSnafu,
+    SerializationSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
+    WCharConversionSnafu,
 };
 use super::interval::{
     SnowflakeIntervalDayTime, SnowflakeIntervalYearMonth, day_time_subtype_from_sql,
@@ -33,49 +34,64 @@ use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
 use super::time::SnowflakeTime;
 use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz, SnowflakeTimestampTz};
-use super::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use super::traits::{ReadODBC, SnowflakeLogicalType, SnowflakeType, WriteWire};
 use super::varchar::SnowflakeVarchar;
 
 // =============================================================================
 // ParamConverter trait (public interface)
 // =============================================================================
 
-/// Trait for converting an ODBC parameter binding into the Snowflake JSON
-/// binding format (`sf_type`, `Value`).
+/// Trait for converting an ODBC parameter binding into the canonical wire-text
+/// payload Snowflake's parameter-binding protocol expects.
+///
+/// Returns `(sf_type, text)`; the format-specific encoder
+/// (`odbc_bindings_to_json` for inline JSON, `odbc_bindings_to_csv` for the
+/// stage-binding CSV file) supplies the envelope around the text.  Keeping
+/// converters format-agnostic means every type has a single source of truth
+/// for its wire representation.
 pub(crate) trait ParamConverter {
     fn convert(
         &self,
         binding: &ParameterBinding,
-    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError>;
+    ) -> Result<(SnowflakeLogicalType, String), BindingError>;
 }
 
-/// Generic adapter: any type implementing `ReadODBC + WriteJson` automatically
+/// Generic adapter: any type implementing `ReadODBC + WriteWire` automatically
 /// gets a `ParamConverter` implementation via this wrapper.
-struct JsonParamConverter<T: ReadODBC + WriteJson> {
+struct WireParamConverter<T: ReadODBC + WriteWire> {
     snowflake_type: T,
 }
 
-impl<T: ReadODBC + WriteJson> ParamConverter for JsonParamConverter<T> {
+impl<T: ReadODBC + WriteWire> ParamConverter for WireParamConverter<T> {
     fn convert(
         &self,
         binding: &ParameterBinding,
-    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+    ) -> Result<(SnowflakeLogicalType, String), BindingError> {
         let value = self.snowflake_type.read_odbc(binding)?;
-        let json_value = self.snowflake_type.write_json(value)?;
-        Ok((self.snowflake_type.sf_type(), json_value))
+        let text = self.snowflake_type.write_wire(value)?;
+        Ok((self.snowflake_type.sf_type(), text))
     }
 }
 
-/// Parameter-only converter for SQL_DECIMAL/SQL_NUMERIC: reads the value as a
-/// string (like varchar) but reports the Snowflake type as FIXED so the server
-/// applies numeric semantics.
-struct DecimalParamConverter;
+/// Parameter-only Snowflake type for SQL_DECIMAL / SQL_NUMERIC: reads the
+/// value as canonical decimal text (covering every C source ODBC Appendix D
+/// permits) and tags the wire payload as `FIXED` so the server applies
+/// numeric semantics.
+///
+/// `Representation = String` so `WriteWire::write_wire` is the identity and
+/// the generic `WireParamConverter` adapter handles the dispatch — no
+/// special-case `ParamConverter` impl needed.
+pub(crate) struct SnowflakeDecimal;
 
-impl ParamConverter for DecimalParamConverter {
-    fn convert(
+impl SnowflakeType for SnowflakeDecimal {
+    type Representation<'a> = String;
+}
+
+impl ReadODBC for SnowflakeDecimal {
+    fn read_odbc<'a>(
         &self,
-        binding: &ParameterBinding,
-    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let s = match binding.value_type {
             CDataType::Char => read_char_str(binding)?,
             CDataType::WChar => read_wchar_str(binding)?,
@@ -134,7 +150,17 @@ impl ParamConverter for DecimalParamConverter {
                 .build());
             }
         };
-        Ok((SnowflakeLogicalType::Fixed, Value::String(s)))
+        Ok(s)
+    }
+}
+
+impl WriteWire for SnowflakeDecimal {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(value)
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Fixed
     }
 }
 
@@ -161,13 +187,13 @@ impl ParamConverter for DecimalParamConverter {
 /// `Some(Tz)` route to the matching Snowflake logical type. Vendor-code
 /// normalisation happens at `bind_parameter` time, so by the time we get
 /// here `sql_data_type` is always a standard ODBC code.
-fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>, JsonBindingError> {
+fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>, BindingError> {
     let sql_type = &binding.sql_data_type;
     match *sql_type {
         sql::SqlDataType::INTEGER
         | sql::SqlDataType::SMALLINT
         | sql::SqlDataType::EXT_BIG_INT
-        | sql::SqlDataType::EXT_TINY_INT => Ok(Box::new(JsonParamConverter {
+        | sql::SqlDataType::EXT_TINY_INT => Ok(Box::new(WireParamConverter {
             snowflake_type: SnowflakeNumber {
                 scale: 0,
                 precision: 19,
@@ -176,7 +202,7 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         })),
 
         sql::SqlDataType::REAL | sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => {
-            Ok(Box::new(JsonParamConverter {
+            Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeReal,
             }))
         }
@@ -186,24 +212,24 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         | sql::SqlDataType::EXT_LONG_VARCHAR
         | sql::SqlDataType::EXT_W_CHAR
         | sql::SqlDataType::EXT_W_VARCHAR
-        | sql::SqlDataType::EXT_W_LONG_VARCHAR => Ok(Box::new(JsonParamConverter {
+        | sql::SqlDataType::EXT_W_LONG_VARCHAR => Ok(Box::new(WireParamConverter {
             snowflake_type: SnowflakeVarchar {
                 len: 0,
                 is_semi_structured: false,
             },
         })),
 
-        sql::SqlDataType::DECIMAL | sql::SqlDataType::NUMERIC => {
-            Ok(Box::new(DecimalParamConverter))
-        }
+        sql::SqlDataType::DECIMAL | sql::SqlDataType::NUMERIC => Ok(Box::new(WireParamConverter {
+            snowflake_type: SnowflakeDecimal,
+        })),
 
-        sql::SqlDataType::EXT_BIT => Ok(Box::new(JsonParamConverter {
+        sql::SqlDataType::EXT_BIT => Ok(Box::new(WireParamConverter {
             snowflake_type: SnowflakeBoolean,
         })),
 
         sql::SqlDataType::EXT_BINARY
         | sql::SqlDataType::EXT_VAR_BINARY
-        | sql::SqlDataType::EXT_LONG_VAR_BINARY => Ok(Box::new(JsonParamConverter {
+        | sql::SqlDataType::EXT_LONG_VAR_BINARY => Ok(Box::new(WireParamConverter {
             snowflake_type: SnowflakeBinary { len: 0 },
         })),
 
@@ -212,7 +238,7 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         // header value is shared with the datetime-header code) route to the
         // same converter. Per ODBC Appendix G, ODBC 3.x drivers must accept
         // either spelling and treat them as identical at the API boundary.
-        sql::SqlDataType::DATE | sql::SqlDataType::DATETIME => Ok(Box::new(JsonParamConverter {
+        sql::SqlDataType::DATE | sql::SqlDataType::DATETIME => Ok(Box::new(WireParamConverter {
             snowflake_type: SnowflakeDate,
         })),
 
@@ -223,7 +249,7 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         // SQLBindParameter boundary: the interval subtypes use codes
         // 101-113 and are matched by their own guarded arms below.
         sql::SqlDataType::TIME | sql::SqlDataType::EXT_TIME_OR_INTERVAL => {
-            Ok(Box::new(JsonParamConverter {
+            Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeTime { scale: 9 },
             }))
         }
@@ -238,10 +264,10 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         // backward compatibility with Tableau/Excel/Power BI; explicit LTZ
         // and TZ opt-ins map to the corresponding Snowflake logical types.
         sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => match binding.sf_subtype {
-            None | Some(TimestampSubtype::Ntz) => Ok(Box::new(JsonParamConverter {
+            None | Some(TimestampSubtype::Ntz) => Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeTimestampNtz { scale: 9 },
             })),
-            Some(TimestampSubtype::Ltz) => Ok(Box::new(JsonParamConverter {
+            Some(TimestampSubtype::Ltz) => Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeTimestampLtz { scale: 9 },
             })),
             // TZ binding emits the legacy two-token wire format
@@ -255,9 +281,9 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             // string and preserve that offset on the wire.
             //
             // `tz_offset_format` is a fetch-side concern only -- the
-            // bind path's `WriteJson` always emits the offset
+            // bind path's `WriteWire` always emits the offset
             // unconditionally -- so `None` is correct here.
-            Some(TimestampSubtype::Tz) => Ok(Box::new(JsonParamConverter {
+            Some(TimestampSubtype::Tz) => Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeTimestampTz {
                     scale: 9,
                     tz_offset_format: None,
@@ -271,24 +297,27 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         // single-field targets accept character + every exact-numeric C
         // type + same-family C interval types; compound targets accept
         // only character types and same-family C interval types. The
-        // emitted JSON `type` is `INTERVAL_YEAR_MONTH` / `INTERVAL_DAY_TIME`
+        // emitted wire `type` is `INTERVAL_YEAR_MONTH` / `INTERVAL_DAY_TIME`
         // to mirror the result-side logical type GS already uses for
         // native INTERVAL columns (see `sf_core::SnowflakeLogicalType`).
         sql_type if year_month_subtype_from_sql(sql_type.0).is_some() => {
             let subtype = year_month_subtype_from_sql(sql_type.0).expect("guarded by match arm");
-            Ok(Box::new(JsonParamConverter {
+            Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeIntervalYearMonth { subtype },
             }))
         }
         sql_type if day_time_subtype_from_sql(sql_type.0).is_some() => {
             let subtype = day_time_subtype_from_sql(sql_type.0).expect("guarded by match arm");
-            Ok(Box::new(JsonParamConverter {
+            Ok(Box::new(WireParamConverter {
                 snowflake_type: SnowflakeIntervalDayTime { subtype },
             }))
         }
 
         _ => {
-            tracing::error!("Unsupported SQL data type for JSON binding: {:?}", sql_type);
+            tracing::error!(
+                "Unsupported SQL data type for parameter binding: {:?}",
+                sql_type
+            );
             UnsupportedParameterTypeSnafu {
                 sql_type: *sql_type,
             }
@@ -309,18 +338,36 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
 /// of this call. If `str_len_or_ind_ptr` is non-null, it must also point to
 /// valid memory for reads.
 ///
-/// Returns a JSON string in the format:
+/// # Wire format
+/// Single-row (`apd.array_size == 1`, scalar `value`):
 /// ```json
 /// {
 ///   "1": {"type": "FIXED", "value": "123"},
-///   "2": {"type": "TEXT", "value": "hello"}
+///   "2": {"type": "TEXT",  "value": "hello"}
 /// }
 /// ```
+/// Multi-row (`apd.array_size > 1`, array `value`; NULL rows are JSON `null`):
+/// ```json
+/// {
+///   "1": {"type": "FIXED", "value": ["1", "2", null]},
+///   "2": {"type": "TEXT",  "value": ["a", null, "c"]}
+/// }
+/// ```
+/// The per-parameter `type` is the Snowflake logical type derived from the
+/// first non-NULL row (it does not vary across rows of an array binding);
+/// if every row is NULL the type defaults to `ANY`.
 pub fn odbc_bindings_to_json(
     apd: &ApdDescriptor,
     ipd: &IpdDescriptor,
     max_params: u16,
-) -> Result<String, JsonBindingError> {
+) -> Result<String, BindingError> {
+    let array_size = apd.array_size.max(1);
+    let bind_type = apd.bind_type;
+    let bind_offset = if apd.bind_offset_ptr.is_null() {
+        0
+    } else {
+        unsafe { *apd.bind_offset_ptr }
+    };
     let mut json_bindings = Map::new();
 
     for param_num in 1..=max_params {
@@ -339,16 +386,35 @@ pub fn odbc_bindings_to_json(
             InvalidParameterIndicesSnafu.build()
         })?;
 
-        let binding = ParameterBinding::from_apd_ipd(apd_rec, ipd_rec);
+        let mut snowflake_type = SnowflakeLogicalType::Any;
+        let mut values: Vec<Value> = Vec::with_capacity(array_size);
 
-        let (snowflake_type, json_value) = if is_null_indicator(&binding) {
-            (SnowflakeLogicalType::Any, Value::Null)
-        } else {
+        for row_idx in 0..array_size {
+            let binding = binding_for_row(apd_rec, ipd_rec, row_idx, bind_type, bind_offset);
+
+            // NULL rows are emitted as JSON `null`; the per-parameter
+            // `type` is taken from the first non-NULL row (Snowflake's
+            // wire format expects one type per parameter, not per cell).
+            // Routing every non-NULL value through `Value::String` lets
+            // serde apply JSON escape rules (control characters, embedded
+            // `"`, etc.) without us hand-rolling them in each converter.
+            if is_null_indicator(&binding) {
+                values.push(Value::Null);
+                continue;
+            }
             if binding.parameter_value_ptr.is_null() {
                 return NullPointerSnafu.fail();
             }
             let converter = make_converter(&binding)?;
-            converter.convert(&binding)?
+            let (sf_type, text) = converter.convert(&binding)?;
+            snowflake_type = sf_type;
+            values.push(Value::String(text));
+        }
+
+        let value = if array_size == 1 {
+            values.into_iter().next().unwrap_or(Value::Null)
+        } else {
+            Value::Array(values)
         };
 
         let mut binding_obj = Map::new();
@@ -356,12 +422,174 @@ pub fn odbc_bindings_to_json(
             "type".to_string(),
             Value::String(snowflake_type.as_str().to_string()),
         );
-        binding_obj.insert("value".to_string(), json_value);
+        binding_obj.insert("value".to_string(), value);
 
         json_bindings.insert(param_num.to_string(), Value::Object(binding_obj));
     }
 
     serde_json::to_string(&Value::Object(json_bindings)).context(SerializationSnafu)
+}
+
+pub fn odbc_bindings_to_csv(
+    apd: &ApdDescriptor,
+    ipd: &IpdDescriptor,
+    max_params: u16,
+) -> Result<String, BindingError> {
+    let array_size = apd.array_size;
+    let bind_type = apd.bind_type;
+    let bind_offset = if apd.bind_offset_ptr.is_null() {
+        0
+    } else {
+        unsafe { *apd.bind_offset_ptr }
+    };
+    let mut output = String::new();
+
+    for row_idx in 0..array_size {
+        for param_num in 1..=max_params {
+            let apd_rec = apd.records.get(&param_num).ok_or_else(|| {
+                tracing::error!(
+                    "odbc_bindings_to_csv: APD record #{param_num} not found. \
+                     Parameter bindings must be contiguous and start at 1.",
+                );
+                InvalidParameterIndicesSnafu.build()
+            })?;
+            let ipd_rec = ipd.records.get(&param_num).ok_or_else(|| {
+                tracing::error!(
+                    "odbc_bindings_to_csv: IPD record #{param_num} not found. \
+                     Parameter bindings must be contiguous and start at 1.",
+                );
+                InvalidParameterIndicesSnafu.build()
+            })?;
+
+            if param_num > 1 {
+                output.push(',');
+            }
+
+            let binding = binding_for_row(apd_rec, ipd_rec, row_idx, bind_type, bind_offset);
+
+            if is_null_indicator(&binding) {
+                continue;
+            }
+            if binding.parameter_value_ptr.is_null() {
+                return NullPointerSnafu.fail();
+            }
+
+            let converter = make_converter(&binding)?;
+            let (_, text) = converter.convert(&binding)?;
+            append_escaped_csv_cell(&mut output, &text);
+        }
+        output.push('\n');
+    }
+    Ok(output)
+}
+
+/// Build a `ParameterBinding` for a specific row in a parameter array.
+///
+/// **Column-wise binding** (`bind_type == 0`, i.e. `SQL_PARAM_BIND_BY_COLUMN`):
+/// * For each column the application provided a contiguous array of values.
+///   Row `i`'s data is `data_ptr + bind_offset + i * buffer_length` bytes.
+/// * Row `i`'s indicator is at `str_len_or_ind_ptr + bind_offset + i`.
+///
+/// **Row-wise binding** (`bind_type == row_size`):
+/// * The application provided a single buffer where each row occupies
+///   `bind_type` bytes.  The base pointers are first shifted by `bind_offset`
+///   bytes (honouring `SQL_ATTR_PARAM_BIND_OFFSET_PTR`); then row strides are
+///   applied on top.
+///
+/// `bind_offset` is the dereferenced value of `APD.SQL_DESC_BIND_OFFSET_PTR`
+/// (i.e. `*SQL_ATTR_PARAM_BIND_OFFSET_PTR`), or 0 when that pointer is null.
+fn binding_for_row(
+    apd_rec: &crate::api::ApdRecord,
+    ipd_rec: &crate::api::IpdRecord,
+    row_idx: usize,
+    bind_type: sql::ULen,
+    bind_offset: sql::Len,
+) -> ParameterBinding {
+    use std::mem::size_of;
+
+    let (data_ptr, str_len_or_ind_ptr) = if bind_type == 0 {
+        // Column-wise: each column is a flat array; stride == buffer_length.
+        let stride = apd_rec.buffer_length as usize;
+        let data_ptr = if apd_rec.data_ptr.is_null() {
+            apd_rec.data_ptr
+        } else {
+            unsafe {
+                (apd_rec.data_ptr as *mut u8)
+                    .offset(bind_offset)
+                    .add(row_idx * stride) as sql::Pointer
+            }
+        };
+        let ind_ptr = if apd_rec.str_len_or_ind_ptr.is_null() {
+            apd_rec.str_len_or_ind_ptr
+        } else {
+            unsafe {
+                (apd_rec.str_len_or_ind_ptr as *mut u8)
+                    .offset(bind_offset)
+                    .add(row_idx * size_of::<sql::Len>()) as *mut sql::Len
+            }
+        };
+        (data_ptr, ind_ptr)
+    } else {
+        // Row-wise: the entire row occupies `bind_type` bytes; stride == bind_type.
+        let row_stride = bind_type;
+        let data_ptr = if apd_rec.data_ptr.is_null() {
+            apd_rec.data_ptr
+        } else {
+            unsafe {
+                (apd_rec.data_ptr as *mut u8)
+                    .offset(bind_offset)
+                    .add(row_idx * row_stride) as sql::Pointer
+            }
+        };
+        let ind_ptr = if apd_rec.str_len_or_ind_ptr.is_null() {
+            apd_rec.str_len_or_ind_ptr
+        } else {
+            // Indicator lives inside the row struct; its byte offset from the
+            // row base is fixed (same as for row 0).  We advance by full
+            // `row_stride` bytes per row.
+            let base_offset = unsafe {
+                (apd_rec.str_len_or_ind_ptr as *mut u8).offset_from(apd_rec.data_ptr as *mut u8)
+            };
+            unsafe {
+                (apd_rec.data_ptr as *mut u8)
+                    .offset(bind_offset)
+                    .add(row_idx * row_stride)
+                    .offset(base_offset) as *mut sql::Len
+            }
+        };
+        (data_ptr, ind_ptr)
+    };
+
+    let _ = size_of::<sql::Len>(); // keep import live
+    ParameterBinding {
+        sql_data_type: ipd_rec.sql_data_type,
+        value_type: apd_rec.value_type,
+        parameter_value_ptr: data_ptr,
+        buffer_length: apd_rec.buffer_length,
+        str_len_or_ind_ptr,
+        sf_subtype: ipd_rec.sf_subtype,
+    }
+}
+
+/// Append `s` to `out` using always-quoted RFC-4180 rules:
+/// * if `s` is empty, write `""` (reserved for empty string; NULL is written as an absent cell).
+/// * otherwise, wrap in `"..."` and double every embedded `"`.
+///
+/// All non-null string cells are always quoted — never written bare — because
+/// the SYSTEM$BIND stage sets `escape_unenclosed_field=NONE`.  Even with that
+/// set, quoting every string is the safer canonical form: `ESCAPE = NONE` is
+/// already the default for enclosed fields, and enclosed fields are immune to
+/// any future change of the unenclosed-field escape setting.
+fn append_escaped_csv_cell(out: &mut String, s: &str) {
+    out.push('"');
+    for ch in s.chars() {
+        if ch == '"' {
+            out.push_str("\"\"");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('"');
 }
 
 // =============================================================================
@@ -386,9 +614,7 @@ pub(crate) fn read_unaligned<T: Copy>(binding: &ParameterBinding) -> T {
 /// numeric value.
 ///
 /// Returns an error if the magnitude exceeds the representable `i128` range.
-pub(crate) fn read_numeric_struct(
-    binding: &ParameterBinding,
-) -> Result<(i128, i8), JsonBindingError> {
+pub(crate) fn read_numeric_struct(binding: &ParameterBinding) -> Result<(i128, i8), BindingError> {
     let ns = read_unaligned::<sql::Numeric>(binding);
     let magnitude = u128::from_le_bytes(ns.val);
     let negative_min_magnitude = (i128::MAX as u128) + 1;
@@ -502,7 +728,7 @@ pub(crate) fn buffer_data_len(binding: &ParameterBinding) -> usize {
 pub(crate) fn read_binary_struct<T: Copy>(
     binding: &ParameterBinding,
     struct_name: &str,
-) -> Result<T, JsonBindingError> {
+) -> Result<T, BindingError> {
     let len = buffer_data_len(binding);
     let expected = std::mem::size_of::<T>();
     if len != expected {
@@ -522,7 +748,7 @@ pub(crate) fn read_binary_struct<T: Copy>(
 /// not be UTF-8. We call `MultiByteToWideChar(CP_ACP, …)` to widen to UTF-16,
 /// then convert the UTF-16 to a Rust `String`.
 #[cfg(windows)]
-fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, JsonBindingError> {
+fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, BindingError> {
     if bytes.is_empty() {
         return Ok(String::new());
     }
@@ -574,7 +800,7 @@ fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, JsonBindingError> {
 }
 
 #[cfg(not(windows))]
-fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, JsonBindingError> {
+fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, BindingError> {
     str::from_utf8(bytes)
         .context(InvalidUtf8Snafu)
         .map(|s| s.to_string())
@@ -588,7 +814,7 @@ use super::error::AcpConversionSnafu;
 /// Per ODBC spec: when the indicator is SQL_NTS or the indicator pointer is
 /// NULL, character data is null-terminated. Otherwise we use the indicated
 /// length (clamped to buffer_length).
-pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, JsonBindingError> {
+pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, BindingError> {
     let null_terminated =
         binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
 
@@ -609,7 +835,7 @@ pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, JsonBi
 /// When `StrLen_or_IndPtr` is NULL or points to `SQL_NTS`, the buffer is
 /// treated as null-terminated (scans for the first null DM-side unit,
 /// bounded by `buffer_length`). Otherwise the indicated byte length is used.
-pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonBindingError> {
+pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, BindingError> {
     let null_terminated =
         binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
     let unit_size = wchar_byte_size();
@@ -663,7 +889,7 @@ pub(crate) fn parse_temporal_char_input<T>(
     binding: &ParameterBinding,
     expected_format: &'static str,
     try_parse: impl Fn(&str) -> Result<T, ()>,
-) -> Result<T, JsonBindingError> {
+) -> Result<T, BindingError> {
     let s = match binding.value_type {
         CDataType::Char => read_char_str(binding)?,
         CDataType::WChar => read_wchar_str(binding)?,
@@ -690,7 +916,7 @@ pub(crate) fn parse_temporal_char_input<T>(
 #[cfg(test)]
 pub(crate) fn convert_for_test(
     binding: &ParameterBinding,
-) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+) -> Result<(SnowflakeLogicalType, String), BindingError> {
     let converter = make_converter(binding)?;
     converter.convert(binding)
 }
@@ -769,7 +995,7 @@ mod tests {
 
     fn convert_binding(
         binding: &ParameterBinding,
-    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+    ) -> Result<(SnowflakeLogicalType, String), BindingError> {
         let converter = make_converter(binding)?;
         converter.convert(binding)
     }
@@ -849,7 +1075,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -865,7 +1091,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("-7".to_string()));
+        assert_eq!(v, "-7".to_string());
         Ok(())
     }
 
@@ -881,7 +1107,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("9999999999".to_string()));
+        assert_eq!(v, "9999999999".to_string());
         Ok(())
     }
 
@@ -897,7 +1123,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("4000000000".to_string()));
+        assert_eq!(v, "4000000000".to_string());
         Ok(())
     }
 
@@ -913,7 +1139,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("65535".to_string()));
+        assert_eq!(v, "65535".to_string());
         Ok(())
     }
 
@@ -929,7 +1155,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("1000000000000".to_string()));
+        assert_eq!(v, "1000000000000".to_string());
         Ok(())
     }
 
@@ -945,7 +1171,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("255".to_string()));
+        assert_eq!(v, "255".to_string());
         Ok(())
     }
 
@@ -961,7 +1187,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("-128".to_string()));
+        assert_eq!(v, "-128".to_string());
         Ok(())
     }
 
@@ -977,7 +1203,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("1.234".to_string()));
+        assert_eq!(v, "1.234".to_string());
         Ok(())
     }
 
@@ -993,7 +1219,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert!(v.as_str().unwrap().starts_with("1.5"));
+        assert!(v.starts_with("1.5"));
         Ok(())
     }
 
@@ -1009,7 +1235,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("hello".to_string()));
+        assert_eq!(v, "hello".to_string());
         Ok(())
     }
 
@@ -1026,7 +1252,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("hello".to_string()));
+        assert_eq!(v, "hello".to_string());
         Ok(())
     }
 
@@ -1042,7 +1268,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1058,7 +1284,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1076,7 +1302,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1092,7 +1318,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1108,7 +1334,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1124,7 +1350,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1141,7 +1367,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1158,7 +1384,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1174,7 +1400,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1190,7 +1416,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1206,7 +1432,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1222,7 +1448,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1238,7 +1464,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1254,7 +1480,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1275,7 +1501,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1296,7 +1522,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1313,7 +1539,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1330,7 +1556,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1346,7 +1572,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1362,7 +1588,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1378,7 +1604,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1394,7 +1620,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1410,7 +1636,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1426,7 +1652,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1442,7 +1668,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1458,7 +1684,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1474,7 +1700,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1490,7 +1716,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1586,7 +1812,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1649,13 +1875,13 @@ mod tests {
     // itself is unavailable.
 
     fn assert_invalid_char_value_for_cast(
-        err: JsonBindingError,
+        err: BindingError,
         want_c_type: CDataType,
         want_value: &str,
         want_format: &str,
     ) {
         match err {
-            JsonBindingError::InvalidCharacterValueForCast {
+            BindingError::InvalidCharacterValueForCast {
                 c_type,
                 value,
                 expected_format,
@@ -1776,7 +2002,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1792,7 +2018,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1808,7 +2034,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1824,7 +2050,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1840,7 +2066,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -1856,7 +2082,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1872,7 +2098,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1888,7 +2114,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1904,7 +2130,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -1971,7 +2197,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Binary);
-        assert_eq!(v, Value::String("deadbeef".to_string()));
+        assert_eq!(v, "deadbeef".to_string());
         Ok(())
     }
 
@@ -2136,10 +2362,13 @@ mod tests {
         // the wire-format the converter actually emits.
         let (ty, value) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::TimestampTz);
-        let s = value.as_str().expect("TZ JSON value should be a string");
         // Wire token shape: "<epoch_nanos> <offset_minutes_plus_1440>".
-        let parts: Vec<&str> = s.split(' ').collect();
-        assert_eq!(parts.len(), 2, "expected `<epoch_ns> <offset>`, got {s}");
+        let parts: Vec<&str> = value.split(' ').collect();
+        assert_eq!(
+            parts.len(),
+            2,
+            "expected `<epoch_ns> <offset>`, got {value}"
+        );
         // Naive struct -> offset 0 -> wire token = bias = 1440.
         assert_eq!(parts[1], "1440");
         Ok(())
@@ -2160,8 +2389,7 @@ mod tests {
         );
         let (ty, value) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::TimestampTz);
-        let wire = value.as_str().unwrap();
-        let parts: Vec<&str> = wire.split(' ').collect();
+        let parts: Vec<&str> = value.split(' ').collect();
         // 2024-01-15 14:30:45 +05:30 -> 09:00:45 UTC -> 1705309245000000000 ns
         // offset 330 + 1440 = 1770
         assert_eq!(parts[0], "1705309245000000000");
@@ -2183,7 +2411,7 @@ mod tests {
         );
         let (ty, json_val) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(json_val, Value::String("99".to_string()));
+        assert_eq!(json_val, "99".to_string());
         Ok(())
     }
 
@@ -2311,6 +2539,77 @@ mod tests {
     }
 
     #[test]
+    fn json_multi_row_column_wise_emits_value_arrays() -> TestResult {
+        // 3-row column-wise array binding for one INTEGER and one VARCHAR
+        // parameter. The JSON wire form must wrap each parameter's row
+        // values in an array — the scalar form is only valid when
+        // `apd.array_size == 1`.
+        let ids: [i32; 3] = [10, 20, 30];
+        const NAME_BUF: usize = 8;
+        let mut names = [0u8; NAME_BUF * 3];
+        for (i, s) in ["a", "bb", "ccc"].iter().enumerate() {
+            names[i * NAME_BUF..i * NAME_BUF + s.len()].copy_from_slice(s.as_bytes());
+        }
+        let mut name_inds: [sql::Len; 3] = [1, 2, 3];
+
+        let (mut apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                ids.as_ptr() as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                names.as_ptr() as sql::Pointer,
+                NAME_BUF as sql::Len,
+                name_inds.as_mut_ptr(),
+            ),
+        ]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 2)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "FIXED");
+        assert_eq!(parsed["1"]["value"], serde_json::json!(["10", "20", "30"]));
+        assert_eq!(parsed["2"]["type"], "TEXT");
+        assert_eq!(parsed["2"]["value"], serde_json::json!(["a", "bb", "ccc"]));
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_null_indicator_yields_json_null_cell() -> TestResult {
+        // Mixed-NULL multi-row binding: row 1 of the INTEGER column is NULL.
+        // The per-parameter `type` is still FIXED (taken from non-NULL rows);
+        // the NULL row becomes JSON `null` inside the value array.
+        let ids: [i32; 3] = [1, 0, 3];
+        let mut id_inds: [sql::Len; 3] = [0, sql::NULL_DATA, 0];
+
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            ids.as_ptr() as sql::Pointer,
+            mem::size_of::<i32>() as sql::Len,
+            id_inds.as_mut_ptr(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "FIXED");
+        assert_eq!(
+            parsed["1"]["value"],
+            serde_json::json!(["1", serde_json::Value::Null, "3"])
+        );
+        Ok(())
+    }
+
+    #[test]
     fn convert_char_as_integer() -> TestResult {
         let val = b"12345\0";
         let binding = make_binding(
@@ -2322,7 +2621,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("12345".to_string()));
+        assert_eq!(v, "12345".to_string());
         Ok(())
     }
 
@@ -2338,7 +2637,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("3.14".to_string()));
+        assert_eq!(v, "3.14".to_string());
         Ok(())
     }
 
@@ -2362,7 +2661,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2378,7 +2677,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2394,7 +2693,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2421,7 +2720,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2449,7 +2748,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2466,7 +2765,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2492,7 +2791,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -2508,7 +2807,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -2533,7 +2832,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -2552,7 +2851,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2572,7 +2871,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2597,7 +2896,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2626,7 +2925,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -2647,7 +2946,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2663,7 +2962,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2679,7 +2978,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2696,7 +2995,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
         // Also exercise a non-canonical case to catch any narrowing of the
         // detector.
@@ -2710,7 +3009,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding2),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2726,7 +3025,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2754,7 +3053,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidNumericLiteral { .. })
+            Err(BindingError::InvalidNumericLiteral { .. })
         ));
     }
 
@@ -2785,7 +3084,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("2024-01-15 10:30:45".to_string()));
+        assert_eq!(v, "2024-01-15 10:30:45".to_string());
         Ok(())
     }
 
@@ -2832,7 +3131,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("2024-12-25".to_string()));
+        assert_eq!(v, "2024-12-25".to_string());
         Ok(())
     }
 
@@ -2852,7 +3151,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("14:30:59".to_string()));
+        assert_eq!(v, "14:30:59".to_string());
         Ok(())
     }
 
@@ -2871,10 +3170,10 @@ mod tests {
     //
     // Two distinct error classes apply to the structs themselves:
     //   - 22007 ("Invalid datetime format") — struct field outside its legal
-    //     range (e.g. month=13, hour=25), via JsonBindingError::InvalidDatetimeValue.
+    //     range (e.g. month=13, hour=25), via BindingError::InvalidDatetimeValue.
     //   - 22008 ("Datetime field overflow") — discarded portion is non-zero
     //     when narrowing TIMESTAMP → DATE/TIME, via
-    //     JsonBindingError::DatetimeFieldOverflow.
+    //     BindingError::DatetimeFieldOverflow.
     // Both are distinct from 07006 ("Restricted data type attribute
     // violation"), which would incorrectly signal that the conversion itself
     // is unsupported.
@@ -2908,7 +3207,7 @@ mod tests {
             - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
         .num_days()
             * 86_400_000;
-        assert_eq!(v, Value::String(expected_millis.to_string()));
+        assert_eq!(v, expected_millis.to_string());
         Ok(())
     }
 
@@ -2936,7 +3235,7 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Time);
         // 12:30:45 -> 45045s -> 45_045_000_000_000ns since midnight.
-        assert_eq!(v, Value::String("45045000000000".to_string()));
+        assert_eq!(v, "45045000000000".to_string());
         Ok(())
     }
 
@@ -2963,7 +3262,7 @@ mod tests {
             .and_utc()
             .timestamp_nanos_opt()
             .unwrap();
-        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        assert_eq!(v, expected_nanos.to_string());
         Ok(())
     }
 
@@ -2987,7 +3286,7 @@ mod tests {
         // data type attribute violation).
         let err = convert_binding(&binding).expect_err("invalid date must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3049,7 +3348,7 @@ mod tests {
         c_type: CDataType,
         sql_code: i16,
         iv: &sql::IntervalStruct,
-    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+    ) -> Result<(SnowflakeLogicalType, String), BindingError> {
         let binding = make_binding(
             c_type,
             sql::SqlDataType(sql_code),
@@ -3065,7 +3364,7 @@ mod tests {
         let iv = ym_interval(0, 5, 0);
         let (ty, v) = convert_interval(CDataType::IntervalYear, 101, &iv)?;
         assert_eq!(ty, SnowflakeLogicalType::IntervalYearMonth);
-        assert_eq!(v, Value::String("5".to_string()));
+        assert_eq!(v, "5".to_string());
         Ok(())
     }
 
@@ -3074,7 +3373,7 @@ mod tests {
         let iv = ym_interval(1, 0, 11);
         let (ty, v) = convert_interval(CDataType::IntervalMonth, 102, &iv)?;
         assert_eq!(ty, SnowflakeLogicalType::IntervalYearMonth);
-        assert_eq!(v, Value::String("-11".to_string()));
+        assert_eq!(v, "-11".to_string());
         Ok(())
     }
 
@@ -3085,7 +3384,7 @@ mod tests {
         let iv = ds_interval(0, 42, 0, 0, 0, 0);
         let (ty, v) = convert_interval(CDataType::IntervalDay, 103, &iv)?;
         assert_eq!(ty, SnowflakeLogicalType::IntervalDayTime);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -3094,7 +3393,7 @@ mod tests {
         // Single-field SQL_C_INTERVAL_HOUR: only `day_second.hour` is read.
         let iv = ds_interval(0, 0, 23, 0, 0, 0);
         let (_, v) = convert_interval(CDataType::IntervalHour, 104, &iv)?;
-        assert_eq!(v, Value::String("23".to_string()));
+        assert_eq!(v, "23".to_string());
         Ok(())
     }
 
@@ -3104,7 +3403,7 @@ mod tests {
         // `day_second.minute` is consulted alongside `interval_sign`.
         let iv = ds_interval(1, 0, 0, 90, 0, 0);
         let (_, v) = convert_interval(CDataType::IntervalMinute, 105, &iv)?;
-        assert_eq!(v, Value::String("-90".to_string()));
+        assert_eq!(v, "-90".to_string());
         Ok(())
     }
 
@@ -3112,7 +3411,7 @@ mod tests {
     fn convert_interval_year_to_month() -> TestResult {
         let iv = ym_interval(0, 5, 11);
         let (_, v) = convert_interval(CDataType::IntervalYearToMonth, 107, &iv)?;
-        assert_eq!(v, Value::String("5-11".to_string()));
+        assert_eq!(v, "5-11".to_string());
         Ok(())
     }
 
@@ -3125,7 +3424,7 @@ mod tests {
         // spec (default seconds precision = 6).
         let iv = ds_interval(0, 10, 12, 30, 59, 500_000);
         let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
-        assert_eq!(v, Value::String("10 12:30:59.500000".to_string()));
+        assert_eq!(v, "10 12:30:59.500000".to_string());
         Ok(())
     }
 
@@ -3136,7 +3435,7 @@ mod tests {
         // `numeric_helpers::compute_interval_fraction`).
         let iv = ds_interval(0, 0, 0, 0, 1, 1);
         let (_, v) = convert_interval(CDataType::IntervalSecond, 106, &iv)?;
-        assert_eq!(v, Value::String("1.000001".to_string()));
+        assert_eq!(v, "1.000001".to_string());
         Ok(())
     }
 
@@ -3147,7 +3446,7 @@ mod tests {
         // seconds component is always rendered with a 6-digit fraction.
         let iv = ds_interval(1, 1, 2, 3, 4, 0);
         let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
-        assert_eq!(v, Value::String("-1 02:03:04.000000".to_string()));
+        assert_eq!(v, "-1 02:03:04.000000".to_string());
         Ok(())
     }
 
@@ -3155,7 +3454,7 @@ mod tests {
     fn convert_interval_hour_to_minute() -> TestResult {
         let iv = ds_interval(0, 0, 14, 7, 0, 0);
         let (_, v) = convert_interval(CDataType::IntervalHourToMinute, 111, &iv)?;
-        assert_eq!(v, Value::String("14:07".to_string()));
+        assert_eq!(v, "14:07".to_string());
         Ok(())
     }
 
@@ -3165,7 +3464,7 @@ mod tests {
         // to 2 chars per ODBC "Interval Data Type Length".
         let iv = ds_interval(0, 3, 7, 0, 0, 0);
         let (_, v) = convert_interval(CDataType::IntervalDayToHour, 108, &iv)?;
-        assert_eq!(v, Value::String("3 07".to_string()));
+        assert_eq!(v, "3 07".to_string());
         Ok(())
     }
 
@@ -3175,7 +3474,7 @@ mod tests {
         // day field is rendered as-is.
         let iv = ds_interval(0, 3, 7, 5, 0, 0);
         let (_, v) = convert_interval(CDataType::IntervalDayToMinute, 109, &iv)?;
-        assert_eq!(v, Value::String("3 07:05".to_string()));
+        assert_eq!(v, "3 07:05".to_string());
         Ok(())
     }
 
@@ -3186,7 +3485,7 @@ mod tests {
         // ODBC spec (no trimming).
         let iv = ds_interval(0, 0, 12, 30, 59, 250_000);
         let (_, v) = convert_interval(CDataType::IntervalHourToSecond, 112, &iv)?;
-        assert_eq!(v, Value::String("12:30:59.250000".to_string()));
+        assert_eq!(v, "12:30:59.250000".to_string());
         Ok(())
     }
 
@@ -3199,7 +3498,7 @@ mod tests {
         // through legacy ODBC and other spec-conforming consumers.
         let iv = ds_interval(0, 0, 0, 30, 7, 0);
         let (_, v) = convert_interval(CDataType::IntervalMinuteToSecond, 113, &iv)?;
-        assert_eq!(v, Value::String("30:07.000000".to_string()));
+        assert_eq!(v, "30:07.000000".to_string());
         Ok(())
     }
 
@@ -3220,7 +3519,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::IntervalYearMonth);
-        assert_eq!(v, Value::String("5-11".to_string()));
+        assert_eq!(v, "5-11".to_string());
         Ok(())
     }
 
@@ -3309,11 +3608,7 @@ mod tests {
 
         assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
 
-        let nanos_str = match v {
-            Value::String(s) => s,
-            other => panic!("expected Value::String, got {other:?}"),
-        };
-        let nanos: i64 = nanos_str.parse().expect("nanos must parse as i64");
+        let nanos: i64 = v.parse().expect("nanos must parse as i64");
         let dt = chrono::DateTime::from_timestamp_nanos(nanos).naive_utc();
 
         // The time component is preserved exactly with a zero fractional part.
@@ -3352,7 +3647,7 @@ mod tests {
         // as SQLSTATE 22007.
         let err = convert_binding(&binding).expect_err("invalid time must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3380,7 +3675,7 @@ mod tests {
         // as SQLSTATE 22007.
         let err = convert_binding(&binding).expect_err("invalid date must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3408,7 +3703,7 @@ mod tests {
         // as SQLSTATE 22007.
         let err = convert_binding(&binding).expect_err("invalid time must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3449,7 +3744,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("nonzero time must overflow");
         assert!(
-            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            matches!(err, BindingError::DatetimeFieldOverflow { .. }),
             "expected DatetimeFieldOverflow, got {err:?}"
         );
     }
@@ -3474,7 +3769,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("nonzero fraction must overflow");
         assert!(
-            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            matches!(err, BindingError::DatetimeFieldOverflow { .. }),
             "expected DatetimeFieldOverflow, got {err:?}"
         );
     }
@@ -3499,7 +3794,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("nonzero fraction must overflow");
         assert!(
-            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            matches!(err, BindingError::DatetimeFieldOverflow { .. }),
             "expected DatetimeFieldOverflow, got {err:?}"
         );
     }
@@ -3529,7 +3824,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid struct must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue (22007), got {err:?}"
         );
     }
@@ -3557,7 +3852,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid fraction must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue (22007), got {err:?}"
         );
     }
@@ -3583,7 +3878,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid struct must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue (22007), got {err:?}"
         );
     }
@@ -3609,7 +3904,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid fraction must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue (22007), got {err:?}"
         );
     }
@@ -3639,7 +3934,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid date in TS → TIME must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue (22007), got {err:?}"
         );
     }
@@ -3664,7 +3959,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid date must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3685,7 +3980,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid time must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3710,7 +4005,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid date must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3735,7 +4030,7 @@ mod tests {
         );
         let err = convert_binding(&binding).expect_err("invalid time must error");
         assert!(
-            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            matches!(err, BindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
         );
     }
@@ -3757,7 +4052,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -3778,7 +4073,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("-123.45".to_string()));
+        assert_eq!(v, "-123.45".to_string());
         Ok(())
     }
 
@@ -3799,7 +4094,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("0.005".to_string()));
+        assert_eq!(v, "0.005".to_string());
         Ok(())
     }
 
@@ -3820,7 +4115,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("12300".to_string()));
+        assert_eq!(v, "12300".to_string());
         Ok(())
     }
 
@@ -3841,7 +4136,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("-5000".to_string()));
+        assert_eq!(v, "-5000".to_string());
         Ok(())
     }
 
@@ -3858,7 +4153,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("deadbeef".to_string()));
+        assert_eq!(v, "deadbeef".to_string());
         Ok(())
     }
 
@@ -4012,7 +4307,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -4028,7 +4323,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -4044,7 +4339,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -4060,7 +4355,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(BindingError::NumericMagnitudeOverflow { .. })
         ));
     }
 
@@ -4076,7 +4371,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("-123".to_string()));
+        assert_eq!(v, "-123".to_string());
         Ok(())
     }
 
@@ -4092,7 +4387,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -4108,7 +4403,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("1".to_string()));
+        assert_eq!(v, "1".to_string());
         Ok(())
     }
 
@@ -4129,7 +4424,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("999".to_string()));
+        assert_eq!(v, "999".to_string());
         Ok(())
     }
 
@@ -4150,7 +4445,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -4202,7 +4497,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("4.25".to_string()));
+        assert_eq!(v, "4.25".to_string());
         Ok(())
     }
 
@@ -4218,7 +4513,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -4234,7 +4529,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("1000000".to_string()));
+        assert_eq!(v, "1000000".to_string());
         Ok(())
     }
 
@@ -4250,7 +4545,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("1".to_string()));
+        assert_eq!(v, "1".to_string());
         Ok(())
     }
 
@@ -4271,7 +4566,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("3.14".to_string()));
+        assert_eq!(v, "3.14".to_string());
         Ok(())
     }
 
@@ -4287,7 +4582,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -4303,7 +4598,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -4319,7 +4614,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -4335,7 +4630,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -4351,7 +4646,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -4367,7 +4662,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidBooleanValue { .. })
+            Err(BindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -4383,7 +4678,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidBooleanValue { .. })
+            Err(BindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -4404,7 +4699,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -4420,7 +4715,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("1".to_string()));
+        assert_eq!(v, "1".to_string());
         Ok(())
     }
 
@@ -4441,7 +4736,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("12345.678".to_string()));
+        assert_eq!(v, "12345.678".to_string());
         Ok(())
     }
 
@@ -4457,7 +4752,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
-        assert_eq!(v, Value::String("0".to_string()));
+        assert_eq!(v, "0".to_string());
         Ok(())
     }
 
@@ -4473,7 +4768,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
+        assert_eq!(v, "true".to_string());
         Ok(())
     }
 
@@ -4489,7 +4784,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
+        assert_eq!(v, "false".to_string());
         Ok(())
     }
 
@@ -4505,7 +4800,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidBooleanValue { .. })
+            Err(BindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -4521,7 +4816,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::InvalidBooleanValue { .. })
+            Err(BindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -4543,7 +4838,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("42".to_string()));
+        assert_eq!(v, "42".to_string());
         Ok(())
     }
 
@@ -4561,7 +4856,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("9999999999".to_string()));
+        assert_eq!(v, "9999999999".to_string());
         Ok(())
     }
 
@@ -4579,7 +4874,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("-7".to_string()));
+        assert_eq!(v, "-7".to_string());
         Ok(())
     }
 
@@ -4597,7 +4892,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("127".to_string()));
+        assert_eq!(v, "127".to_string());
         Ok(())
     }
 
@@ -4614,7 +4909,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -4632,7 +4927,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -4650,7 +4945,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -4672,7 +4967,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("3.125".to_string()));
+        assert_eq!(v, "3.125".to_string());
         Ok(())
     }
 
@@ -4690,7 +4985,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
-        assert_eq!(v, Value::String("2.5".to_string()));
+        assert_eq!(v, "2.5".to_string());
         Ok(())
     }
 
@@ -4716,7 +5011,7 @@ mod tests {
         assert_eq!(ty, SnowflakeLogicalType::Real);
         // Rust's Display for f64::NAN is the literal "NaN" — the server-side
         // JSON binding parser accepts the same literal for FLOAT targets.
-        assert_eq!(v, Value::String("NaN".to_string()));
+        assert_eq!(v, "NaN".to_string());
         Ok(())
     }
 
@@ -4738,7 +5033,7 @@ mod tests {
         // the literals Snowflake's JSON bind parser accepts: "Infinity" /
         // "-Infinity" / "NaN". Rust's `Display` for f32::INFINITY is the
         // short form "inf", which the server rejects.
-        assert_eq!(v, Value::String("Infinity".to_string()));
+        assert_eq!(v, "Infinity".to_string());
         Ok(())
     }
 
@@ -4759,7 +5054,7 @@ mod tests {
         // Same rationale as the +Infinity case: `SnowflakeReal::write_json`
         // emits the full "-Infinity" literal Snowflake's JSON bind parser
         // accepts, not Rust's short "-inf" form.
-        assert_eq!(v, Value::String("-Infinity".to_string()));
+        assert_eq!(v, "-Infinity".to_string());
         Ok(())
     }
 
@@ -4776,12 +5071,12 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
     // =========================================================================
-    // SQL_C_BINARY → SQL_DECIMAL / SQL_NUMERIC (via DecimalParamConverter)
+    // SQL_C_BINARY → SQL_DECIMAL / SQL_NUMERIC (via SnowflakeDecimal)
     // =========================================================================
 
     #[test]
@@ -4813,7 +5108,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("123.45".to_string()));
+        assert_eq!(v, "123.45".to_string());
         Ok(())
     }
 
@@ -4830,7 +5125,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -4862,7 +5157,7 @@ mod tests {
             - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
         .num_days()
             * 86_400_000;
-        assert_eq!(v, Value::String(expected_millis.to_string()));
+        assert_eq!(v, expected_millis.to_string());
         Ok(())
     }
 
@@ -4879,7 +5174,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -4908,7 +5203,7 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Time);
         let nanos = 14 * 3600 * 1_000_000_000i64 + 30 * 60 * 1_000_000_000 + 45 * 1_000_000_000;
-        assert_eq!(v, Value::String(nanos.to_string()));
+        assert_eq!(v, nanos.to_string());
         Ok(())
     }
 
@@ -4925,7 +5220,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -4967,7 +5262,7 @@ mod tests {
             .and_utc()
             .timestamp_nanos_opt()
             .unwrap();
-        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        assert_eq!(v, expected_nanos.to_string());
         Ok(())
     }
 
@@ -4984,7 +5279,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+            Err(BindingError::BindingNumericOutOfRange { .. })
         ));
     }
 
@@ -5002,7 +5297,7 @@ mod tests {
         );
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
-        assert_eq!(v, Value::String("-100".to_string()));
+        assert_eq!(v, "-100".to_string());
         Ok(())
     }
 
@@ -5040,7 +5335,486 @@ mod tests {
             .and_utc()
             .timestamp_nanos_opt()
             .unwrap();
-        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        assert_eq!(v, expected_nanos.to_string());
+        Ok(())
+    }
+
+    fn csv_cell(s: &str) -> String {
+        let mut buf = String::new();
+        append_escaped_csv_cell(&mut buf, s);
+        buf
+    }
+
+    #[test]
+    fn csv_cell_always_quoted_even_without_specials() {
+        // All non-empty strings are always wrapped in quotes so that
+        // multi-byte UTF-8 characters are sent through Snowflake's
+        // quoted-field path where ESCAPE is NONE by default.
+        assert_eq!(csv_cell("hello"), "\"hello\"");
+        assert_eq!(csv_cell("123"), "\"123\"");
+        assert_eq!(csv_cell("2024-01-01"), "\"2024-01-01\"");
+    }
+
+    #[test]
+    fn csv_cell_empty_string_is_quoted_pair_to_distinguish_from_null() {
+        // An empty *unquoted* CSV field is consumed as NULL on the server side;
+        // empty strings must round-trip as a literal `""` to preserve that
+        // distinction. This matches JDBC's `BindUploader.bindValueToCSV` rule.
+        assert_eq!(csv_cell(""), "\"\"");
+    }
+
+    #[test]
+    fn csv_cell_quotes_when_contains_comma() {
+        assert_eq!(csv_cell("a,b"), "\"a,b\"");
+    }
+
+    #[test]
+    fn csv_cell_doubles_inner_quotes() {
+        assert_eq!(csv_cell("she said \"hi\""), "\"she said \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn csv_cell_quotes_when_contains_newline_or_cr() {
+        assert_eq!(csv_cell("line1\nline2"), "\"line1\nline2\"");
+        assert_eq!(csv_cell("line1\rline2"), "\"line1\rline2\"");
+        assert_eq!(csv_cell("a\r\nb"), "\"a\r\nb\"");
+    }
+
+    #[test]
+    fn csv_cell_quotes_when_contains_only_quote() {
+        assert_eq!(csv_cell("\""), "\"\"\"\"");
+    }
+
+    #[test]
+    fn csv_cell_quotes_when_contains_backslash() {
+        assert_eq!(csv_cell("a\\b"), "\"a\\b\"");
+        assert_eq!(csv_cell("\\"), "\"\\\"");
+    }
+
+    #[test]
+    fn csv_cell_utf8_multibyte_is_quoted() {
+        // Multi-byte UTF-8 (e.g. CJK) must be quoted so Snowflake's
+        // byte-level escape scanner (ESCAPE_UNENCLOSED_FIELD='\\') cannot
+        // misinterpret high bytes as escape sequences, which would cause NULL
+        // to be stored instead of the intended string.
+        let s = "\u{65e5}\u{672c}\u{8a9e}6"; // 日本語6
+        assert_eq!(csv_cell(s), "\"日本語6\"");
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn build_type_matrix_row() -> (ApdDescriptor, IpdDescriptor, u16, Box<TypeMatrixStorage>) {
+        let mut storage = Box::new(TypeMatrixStorage::default());
+        storage.i32_v = 42;
+        storage.i16_v = -7;
+        storage.i64_v = 9_000_000_000;
+        storage.i8_v = 5;
+        storage.f32_v = 1.5;
+        storage.f64_v = 3.25;
+        storage.decimal = *b"123.456";
+        storage.bit_v = 1;
+        storage.binary = [0xDE, 0xAD];
+        storage.ascii = *b"hello";
+        // 日本語 — 3 chars × 3 bytes UTF-8 = 9 bytes
+        storage.multibyte[..9].copy_from_slice("\u{65e5}\u{672c}\u{8a9e}".as_bytes());
+        storage.multibyte_len = 9;
+        storage.date = sql::Date {
+            year: 2024,
+            month: 1,
+            day: 1,
+        };
+        storage.time = sql::Time {
+            hour: 12,
+            minute: 30,
+            second: 45,
+        };
+        storage.timestamp = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        storage.decimal_ind = storage.decimal.len() as sql::Len;
+        storage.binary_ind = storage.binary.len() as sql::Len;
+        storage.ascii_ind = storage.ascii.len() as sql::Len;
+        storage.multibyte_ind = storage.multibyte_len as sql::Len;
+        storage.null_ind = sql::NULL_DATA;
+
+        let cols: Vec<(
+            u16,
+            CDataType,
+            sql::SqlDataType,
+            sql::Pointer,
+            sql::Len,
+            *mut sql::Len,
+        )> = vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                &raw const storage.i32_v as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::Short,
+                sql::SqlDataType::SMALLINT,
+                &raw const storage.i16_v as sql::Pointer,
+                mem::size_of::<i16>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                3,
+                CDataType::SBigInt,
+                sql::SqlDataType::EXT_BIG_INT,
+                &raw const storage.i64_v as sql::Pointer,
+                mem::size_of::<i64>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                4,
+                CDataType::STinyInt,
+                sql::SqlDataType::EXT_TINY_INT,
+                &raw const storage.i8_v as sql::Pointer,
+                mem::size_of::<i8>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                5,
+                CDataType::Float,
+                sql::SqlDataType::REAL,
+                &raw const storage.f32_v as sql::Pointer,
+                mem::size_of::<f32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                6,
+                CDataType::Double,
+                sql::SqlDataType::DOUBLE,
+                &raw const storage.f64_v as sql::Pointer,
+                mem::size_of::<f64>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                7,
+                CDataType::Char,
+                sql::SqlDataType::DECIMAL,
+                storage.decimal.as_ptr() as sql::Pointer,
+                storage.decimal.len() as sql::Len,
+                &raw mut storage.decimal_ind,
+            ),
+            (
+                8,
+                CDataType::Bit,
+                sql::SqlDataType::EXT_BIT,
+                &raw const storage.bit_v as sql::Pointer,
+                mem::size_of::<u8>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                9,
+                CDataType::Binary,
+                sql::SqlDataType::EXT_BINARY,
+                storage.binary.as_ptr() as sql::Pointer,
+                storage.binary.len() as sql::Len,
+                &raw mut storage.binary_ind,
+            ),
+            (
+                10,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                storage.ascii.as_ptr() as sql::Pointer,
+                storage.ascii.len() as sql::Len,
+                &raw mut storage.ascii_ind,
+            ),
+            (
+                11,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                storage.multibyte.as_ptr() as sql::Pointer,
+                storage.multibyte.len() as sql::Len,
+                &raw mut storage.multibyte_ind,
+            ),
+            (
+                12,
+                CDataType::TypeDate,
+                sql::SqlDataType::DATE,
+                &raw const storage.date as sql::Pointer,
+                mem::size_of::<sql::Date>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                13,
+                CDataType::TypeTime,
+                sql::SqlDataType::TIME,
+                &raw const storage.time as sql::Pointer,
+                mem::size_of::<sql::Time>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                14,
+                CDataType::TypeTimestamp,
+                sql::SqlDataType::TIMESTAMP,
+                &raw const storage.timestamp as sql::Pointer,
+                mem::size_of::<sql::Timestamp>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                15,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                std::ptr::null_mut(),
+                0,
+                &raw mut storage.null_ind,
+            ),
+        ];
+        let (apd, ipd) = make_descriptors(cols);
+        (apd, ipd, 15, storage)
+    }
+
+    #[derive(Default)]
+    struct TypeMatrixStorage {
+        i32_v: i32,
+        i16_v: i16,
+        i64_v: i64,
+        i8_v: i8,
+        f32_v: f32,
+        f64_v: f64,
+        decimal: [u8; 7],
+        bit_v: u8,
+        binary: [u8; 2],
+        ascii: [u8; 5],
+        multibyte: [u8; 16],
+        multibyte_len: usize,
+        date: sql::Date,
+        time: sql::Time,
+        timestamp: sql::Timestamp,
+        decimal_ind: sql::Len,
+        binary_ind: sql::Len,
+        ascii_ind: sql::Len,
+        multibyte_ind: sql::Len,
+        null_ind: sql::Len,
+    }
+
+    struct VarcharHazardStorage {
+        ids: [i32; 7],
+        txt: [u8; 16 * 7],
+        txt_inds: [sql::Len; 7],
+    }
+
+    fn build_varchar_hazard_rows() -> (ApdDescriptor, IpdDescriptor, u16, Box<VarcharHazardStorage>)
+    {
+        const SLOT: usize = 16;
+        let mut storage = Box::new(VarcharHazardStorage {
+            ids: [0, 1, 2, 3, 4, 5, 6],
+            txt: [0; SLOT * 7],
+            txt_inds: [0; 7],
+        });
+
+        let payloads: [Option<&[u8]>; 7] = [
+            Some(b"val,0"),
+            Some(b"say\"1\""),
+            Some(b"a\nb"),
+            Some(b"C:\\dir\\3"),
+            Some(b""),
+            None, // SQL NULL — indicator override below
+            Some("\u{65e5}\u{672c}\u{8a9e}".as_bytes()),
+        ];
+        for (i, payload) in payloads.iter().enumerate() {
+            match payload {
+                Some(bytes) => {
+                    storage.txt[i * SLOT..i * SLOT + bytes.len()].copy_from_slice(bytes);
+                    storage.txt_inds[i] = bytes.len() as sql::Len;
+                }
+                None => {
+                    storage.txt_inds[i] = sql::NULL_DATA;
+                }
+            }
+        }
+
+        let cols: Vec<(
+            u16,
+            CDataType,
+            sql::SqlDataType,
+            sql::Pointer,
+            sql::Len,
+            *mut sql::Len,
+        )> = vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                storage.ids.as_ptr() as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                storage.txt.as_ptr() as sql::Pointer,
+                SLOT as sql::Len,
+                storage.txt_inds.as_mut_ptr(),
+            ),
+        ];
+        let (mut apd, ipd) = make_descriptors(cols);
+        apd.array_size = 7;
+        (apd, ipd, 2, storage)
+    }
+
+    #[test]
+    fn csv_bindings_match_reference_fixture() -> TestResult {
+        let mut actual = String::new();
+        {
+            let (apd, ipd, n, _storage) = build_type_matrix_row();
+            actual.push_str(&odbc_bindings_to_csv(&apd, &ipd, n)?);
+        }
+        {
+            let (apd, ipd, n, _storage) = build_varchar_hazard_rows();
+            actual.push_str(&odbc_bindings_to_csv(&apd, &ipd, n)?);
+        }
+
+        const REFERENCE: &[u8] = include_bytes!("testdata/large_bindings_csv_reference.csv");
+        assert_eq!(
+            actual.as_bytes(),
+            REFERENCE,
+            "CSV bindings must match the reference fixture byte-for-byte"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn csv_two_int_columns_one_row() -> TestResult {
+        let v1: i32 = 42;
+        let v2: i32 = -7;
+        let (apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                &v1 as *const i32 as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                &v2 as *const i32 as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+        ]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 2)?;
+        assert_eq!(csv, "\"42\",\"-7\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_varchar_with_specials_is_quoted() -> TestResult {
+        let s = b"a, \"b\"\nc";
+        let mut ind: sql::Len = s.len() as sql::Len;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            s.as_ptr() as sql::Pointer,
+            s.len() as sql::Len,
+            &mut ind,
+        )]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 1)?;
+        assert_eq!(csv, "\"a, \"\"b\"\"\nc\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_null_indicator_yields_empty_field() -> TestResult {
+        // Two columns: param 1 is NULL, param 2 is `7`. Expect the row to be
+        // `,7\n` — leading empty field encodes SQL NULL.
+        let v: i32 = 7;
+        let mut null_ind: sql::Len = sql::NULL_DATA;
+        let (apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                std::ptr::null_mut(),
+                0,
+                &mut null_ind,
+            ),
+            (
+                2,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                &v as *const i32 as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+        ]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 2)?;
+        assert_eq!(csv, ",\"7\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_binary_is_lowercase_hex_bare() -> TestResult {
+        let bytes: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut ind: sql::Len = 4;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Binary,
+            sql::SqlDataType::EXT_BINARY,
+            bytes.as_ptr() as sql::Pointer,
+            4,
+            &mut ind,
+        )]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 1)?;
+        assert_eq!(csv, "\"deadbeef\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_empty_string_field_is_quoted_pair_in_full_row() -> TestResult {
+        // Empty string column followed by an integer column. We expect the
+        // first cell to be `""` (so the server doesn't confuse it with NULL)
+        // and the second to be the integer quoted.
+        let empty: [u8; 0] = [];
+        let mut empty_ind: sql::Len = 0;
+        let v: i32 = 1;
+        let (apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                empty.as_ptr() as sql::Pointer,
+                0,
+                &mut empty_ind,
+            ),
+            (
+                2,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                &v as *const i32 as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+        ]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 2)?;
+        assert_eq!(csv, "\"\",\"1\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_zero_params_returns_just_newline() -> TestResult {
+        let (apd, ipd) = make_descriptors(vec![]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 0)?;
+        // Zero columns produces just the row terminator. (Real code never
+        // calls this path because `apply_parameter_bindings` short-circuits
+        // when `effective_count == 0`, but the function itself stays total.)
+        assert_eq!(csv, "\n");
         Ok(())
     }
 }
