@@ -25,7 +25,9 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
 use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{ParamKey, ParamScope, param_names};
+use crate::config::param_registry::{
+    DEFAULT_PUT_GET_MAX_ATTEMPTS, ParamKey, ParamScope, param_names,
+};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
@@ -872,6 +874,16 @@ impl Connection {
     pub(crate) async fn use_s3_regional_url_session_param(&self) -> bool {
         let params = self.session_parameters.read().await;
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
+    }
+
+    /// Reads `put_get_max_attempts` from the connection seed; falls back to
+    /// `DEFAULT_PUT_GET_MAX_ATTEMPTS` for unset or out-of-range values.
+    pub(crate) fn put_get_max_attempts(&self) -> u32 {
+        self.connection_seed
+            .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
+            .filter(|v| *v > 0 && *v <= u32::MAX as i64)
+            .map(|v| v as u32)
+            .unwrap_or(DEFAULT_PUT_GET_MAX_ATTEMPTS)
     }
 
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
@@ -2328,6 +2340,69 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("statement-scoped"), "unexpected error: {msg}");
         ds.connection_release(handle).unwrap();
+    }
+
+    /// `set_option` with the canonical `put_get_max_attempts` key must land
+    /// on `connection_seed` so the PUT/GET dispatch site can read it.
+    #[tokio::test]
+    async fn connection_set_option_put_get_max_attempts_lands_on_seed() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().into(),
+            Setting::Int(10),
+        )
+        .await
+        .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.connection_seed
+                .get_int(param_names::PUT_GET_MAX_ATTEMPTS),
+            Some(10),
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[test]
+    fn put_get_max_attempts_unset_yields_default() {
+        let conn = Connection::new();
+        assert_eq!(conn.put_get_max_attempts(), DEFAULT_PUT_GET_MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn put_get_max_attempts_returns_user_value() {
+        let mut conn = Connection::new();
+        conn.set_option(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+            Setting::Int(25),
+        );
+        assert_eq!(conn.put_get_max_attempts(), 25);
+
+        conn.set_option(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+            Setting::Int(1),
+        );
+        assert_eq!(conn.put_get_max_attempts(), 1);
+    }
+
+    #[test]
+    fn put_get_max_attempts_out_of_range_falls_back_to_default() {
+        let mut conn = Connection::new();
+        for bad in [0i64, -1, (u32::MAX as i64) + 1] {
+            conn.set_option(
+                param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+                Setting::Int(bad),
+            );
+            assert_eq!(
+                conn.put_get_max_attempts(),
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                "bad value: {bad}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -1,6 +1,7 @@
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
+use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::file_manager::{
     CloudCredentials, DownloadData, GcsDownloadError, GcsUploadError, LocationType, PreparedUpload,
     RefreshFuture, StageInfo, StageInfoCache, StageInfoRefresher, StageInfoSnapshot,
@@ -93,8 +94,15 @@ async fn gcs_download_401_returns_token_expired() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        0,
+        &mut None,
+    )
+    .await;
 
     let err = result.unwrap_err();
     assert!(
@@ -128,8 +136,15 @@ async fn gcs_download_403_is_retried_then_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        0,
+        &mut None,
+    )
+    .await;
 
     assert!(result.is_ok(), "403 should be retried and succeed");
     assert_eq!(
@@ -164,8 +179,15 @@ async fn gcs_download_400_with_presigned_url_is_retried() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        0,
+        &mut None,
+    )
+    .await;
 
     assert!(
         result.is_ok(),
@@ -190,8 +212,15 @@ async fn gcs_download_400_without_presigned_url_is_not_retried() {
         .await;
 
     let stage = gcs_stage_with_token(&server.uri());
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        0,
+        &mut None,
+    )
+    .await;
 
     assert!(
         result.is_err(),
@@ -224,8 +253,15 @@ async fn gcs_download_404_is_not_retried() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        0,
+        &mut None,
+    )
+    .await;
 
     assert!(result.is_err(), "404 should be a hard failure");
     assert_eq!(attempt.load(Ordering::SeqCst), 1, "should NOT retry 404");
@@ -256,8 +292,15 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        0,
+        &mut None,
+    )
+    .await;
 
     assert!(
         result.is_ok(),
@@ -314,7 +357,7 @@ async fn gcs_download_content_encoding_gzip_with_non_gzip_body_is_returned_verba
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
     let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None).await;
 
     let response = result.expect(
         "download must succeed: reqwest auto-gunzip must be disabled on the GCS client \
@@ -360,9 +403,10 @@ async fn gcs_download_content_encoding_gzip_with_gzip_body_is_not_decoded() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
-        .await
-        .expect("download must succeed");
+    let response =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None)
+            .await
+            .expect("download must succeed");
 
     assert_eq!(
         response.data, gzipped,
@@ -393,9 +437,10 @@ async fn gcs_download_without_content_encoding_header_is_unchanged() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
-        .await
-        .expect("happy-path download must still succeed");
+    let response =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None)
+            .await
+            .expect("happy-path download must still succeed");
 
     assert_eq!(response.data, payload);
 }
@@ -425,9 +470,10 @@ async fn gcs_download_content_length_match_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
-        .await
-        .expect("matching Content-Length must succeed");
+    let response =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None)
+            .await
+            .expect("matching Content-Length must succeed");
 
     assert_eq!(response.data, body);
     assert_eq!(response.cloud_byte_count, body.len() as i64);
@@ -460,7 +506,7 @@ async fn gcs_download_content_length_mismatch_truncated_body_is_http_error() {
     let presigned_url = format!("http://{addr}/download");
     let stage = gcs_stage_with_presigned_url(&presigned_url);
     let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None).await;
 
     server.await.unwrap();
     assert!(
@@ -486,7 +532,7 @@ async fn gcs_download_no_content_length_header_succeeds() {
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
     let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None).await;
 
     assert!(
         result.is_ok(),
@@ -518,7 +564,7 @@ async fn gcs_download_content_encoding_present_skips_length_check() {
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
     let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None).await;
 
     assert!(
         result.is_ok(),
@@ -544,9 +590,10 @@ async fn gcs_download_zero_byte_file_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
-        .await
-        .expect("zero-byte file must succeed");
+    let response =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None)
+            .await
+            .expect("zero-byte file must succeed");
 
     assert!(response.data.is_empty());
     assert_eq!(response.cloud_byte_count, 0);
@@ -576,7 +623,7 @@ async fn gcs_download_malformed_content_length_rejected_by_http_layer() {
     let presigned_url = format!("http://{addr}/download");
     let stage = gcs_stage_with_presigned_url(&presigned_url);
     let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None).await;
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None).await;
 
     server.await.unwrap();
     assert!(
@@ -608,7 +655,7 @@ async fn gcs_download_does_not_advertise_gzip_accept_encoding() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut None)
+    sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, 0, &mut None)
         .await
         .expect("download must succeed");
 
@@ -698,7 +745,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         flavor: PutGetResultsetFlavor::Python,
     };
 
-    let results = download_files(data, None)
+    let results = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
         .await
         .expect("multi-file presigned GET should succeed");
 
@@ -732,7 +779,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         flavor: PutGetResultsetFlavor::Python,
     };
 
-    let err = download_files(data, None)
+    let err = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
         .await
         .expect_err("download must fail when neither URL nor token is available");
     // Walk the error chain (snafu wraps the leaf `MissingGcsCredentials`
@@ -881,9 +928,15 @@ async fn gcs_download_400_triggers_url_refresh_and_succeeds() {
     });
 
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut refresher_opt)
-            .await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        0,
+        0,
+        &mut refresher_opt,
+    )
+    .await;
 
     assert!(result.is_ok(), "400 → refresh_url → retry should succeed");
     assert_eq!(
@@ -956,10 +1009,16 @@ async fn gcs_download_400_after_url_refresh_returns_presigned_url_expired() {
     });
 
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
-    let err =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut refresher_opt)
-            .await
-            .expect_err("two consecutive 400s must fail fast");
+    let err = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        0,
+        0,
+        &mut refresher_opt,
+    )
+    .await
+    .expect_err("two consecutive 400s must fail fast");
 
     assert!(
         matches!(err, GcsDownloadError::PresignedUrlExpired { .. }),
@@ -1033,9 +1092,15 @@ async fn gcs_download_401_triggers_token_refresh_and_succeeds() {
     });
 
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
-    let result =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut refresher_opt)
-            .await;
+    let result = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        0,
+        0,
+        &mut refresher_opt,
+    )
+    .await;
 
     assert!(result.is_ok(), "401 → refresh → retry should succeed");
     assert_eq!(
@@ -1090,10 +1155,16 @@ async fn gcs_download_401_with_unchanged_token_returns_token_expired() {
     });
 
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
-    let err =
-        sf_core::file_manager::download_from_gcs(&stage, "file.csv", None, 0, &mut refresher_opt)
-            .await
-            .expect_err("unchanged token must surface TokenExpired");
+    let err = sf_core::file_manager::download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        0,
+        0,
+        &mut refresher_opt,
+    )
+    .await
+    .expect_err("unchanged token must surface TokenExpired");
 
     assert!(
         matches!(err, GcsDownloadError::TokenExpired { .. }),
@@ -1183,6 +1254,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         &stage,
         "file.csv",
         true,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
         &mut refresher_opt,
     )
     .await;
@@ -1271,6 +1343,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         &stage,
         "file.csv",
         true,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
         &mut refresher_opt,
     )
     .await;
@@ -1350,6 +1423,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         &stage,
         "part-01.csv.gz",
         true,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
         &mut refresher_opt,
     )
     .await;
@@ -1423,6 +1497,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         &stage,
         "file.csv",
         true,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
         &mut refresher_opt,
     )
     .await
@@ -1525,6 +1600,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         "file1.csv",
         Some(&stale_1),
         0,
+        0,
         &mut refresher_opt,
     )
     .await;
@@ -1537,6 +1613,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         &stage,
         "file2.csv",
         Some(&stale_2),
+        0,
         0,
         &mut refresher_opt,
     )
@@ -1636,7 +1713,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
     };
 
     let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
-    let results = download_files(data, refresher_opt)
+    let results = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, refresher_opt)
         .await
         .expect("batch download should succeed after per-file URL refresh");
 

@@ -62,6 +62,7 @@ pub async fn upload_to_s3_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
@@ -71,7 +72,7 @@ pub async fn upload_to_s3_or_skip(
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_UPLOAD_PROVIDER)
+            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_UPLOAD_PROVIDER, max_attempts)
                 .await
                 .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
 
@@ -346,6 +347,7 @@ async fn put_object(
 pub async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
+    max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
@@ -354,9 +356,10 @@ pub async fn download_from_s3(
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER)
-                .await
-                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            let s3_client =
+                create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, max_attempts)
+                    .await
+                    .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
             get_object(&s3_client, &stage_info, &s3_key).await
         }
     };
@@ -447,9 +450,9 @@ async fn get_object(
 /// Returns a retry policy tuned for S3 file-transfer operations.
 ///
 /// Mirrors the shape and budget of the GCS/Azure policies so that cross-cloud
-/// behavior is consistent: 6 attempts, exponential backoff from 1s to 16s,
-/// and a total retry budget of 600s (2× `REQUEST_TIMEOUT_SECS`) so at least
-/// one full-timeout attempt can complete before the budget expires.
+/// behavior is consistent: exponential backoff from 1s to 16s, and a total
+/// retry budget of 600s (2× `REQUEST_TIMEOUT_SECS`) so at least one
+/// full-timeout attempt can complete before the budget expires.
 ///
 /// The AWS SDK's standard retry strategy already covers transient transport
 /// errors, 5xx server errors, and throttling (429, SlowDown). 403 is left to
@@ -458,9 +461,9 @@ async fn get_object(
 /// and retrying is rarely productive — `create_s3_client` is called per
 /// operation, so an expired STS token surfaces as a non-retryable 403 and the
 /// caller can re-fetch credentials via a new PUT/GET parse.
-pub(crate) fn s3_retry_policy() -> RetryPolicy {
+pub(crate) fn s3_retry_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy {
-        max_attempts: 6,
+        max_attempts,
         backoff: BackoffConfig {
             base: Duration::from_secs(1),
             factor: 2.0,
@@ -505,6 +508,7 @@ fn to_aws_timeout_config(policy: &RetryPolicy) -> AwsTimeoutConfig {
 async fn create_s3_client(
     stage_info: &StageInfo,
     provider_name: &'static str,
+    max_attempts: u32,
 ) -> Result<S3Client, S3CredentialError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
@@ -523,7 +527,7 @@ async fn create_s3_client(
         provider_name,
     );
 
-    let policy = s3_retry_policy();
+    let policy = s3_retry_policy(max_attempts);
     let config = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
@@ -775,16 +779,20 @@ pub enum DownloadFileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 
     #[test]
-    fn s3_retry_policy_max_attempts_matches_gcs_and_azure() {
-        let policy = s3_retry_policy();
-        assert_eq!(policy.max_attempts, 6);
+    fn s3_retry_policy_max_attempts() {
+        let policy = s3_retry_policy(25);
+        assert_eq!(policy.max_attempts, 25);
+        assert_eq!(to_aws_retry_config(&policy).max_attempts(), 25);
+
+        assert_eq!(s3_retry_policy(1).max_attempts, 1);
     }
 
     #[test]
     fn s3_retry_policy_backoff_bounds() {
-        let policy = s3_retry_policy();
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert_eq!(policy.backoff.base, Duration::from_secs(1));
         assert_eq!(policy.backoff.cap, Duration::from_secs(16));
         assert_eq!(policy.backoff.factor, 2.0);
@@ -792,7 +800,7 @@ mod tests {
 
     #[test]
     fn s3_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = s3_retry_policy();
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
             "retry budget must exceed a single request timeout"
@@ -802,7 +810,7 @@ mod tests {
 
     #[test]
     fn s3_retry_policy_has_per_request_timeout() {
-        let policy = s3_retry_policy();
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert_eq!(
             policy.per_request_timeout,
             Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
@@ -812,7 +820,7 @@ mod tests {
 
     #[test]
     fn to_aws_retry_config_translates_policy() {
-        let policy = s3_retry_policy();
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         let aws = to_aws_retry_config(&policy);
         assert_eq!(aws.max_attempts(), policy.max_attempts);
         assert_eq!(aws.initial_backoff(), policy.backoff.base);
@@ -821,7 +829,7 @@ mod tests {
 
     #[test]
     fn to_aws_timeout_config_sets_attempt_and_operation_timeouts() {
-        let policy = s3_retry_policy();
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         let cfg = to_aws_timeout_config(&policy);
         assert_eq!(cfg.operation_timeout(), Some(policy.max_elapsed));
         assert_eq!(cfg.operation_attempt_timeout(), policy.per_request_timeout);
@@ -1242,9 +1250,16 @@ mod tests {
         };
 
         // overwrite=true skips the HEAD probe.
-        upload_to_s3_or_skip(prepared, &stage_info, "f.dat", true, &mut None)
-            .await
-            .expect("upload should succeed against the mock");
+        upload_to_s3_or_skip(
+            prepared,
+            &stage_info,
+            "f.dat",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
     }
 
     #[tokio::test(flavor = "multi_thread")]
