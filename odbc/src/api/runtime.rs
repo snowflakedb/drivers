@@ -7,7 +7,7 @@ use sf_core::protobuf::apis::database_driver_v1::{
 };
 use snafu::{Location, ResultExt, Snafu};
 
-use crate::api::handle_registry::HandleManager;
+use crate::api::handle_registry::{DescLookup, HandleManager};
 
 /// Serializes "last environment freed → `OdbcGlobals` destroyed" vs "first environment of the
 /// next epoch allocates a new `OdbcGlobals`".
@@ -60,6 +60,7 @@ pub struct OdbcGlobals {
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
     pub stmt_registry: HandleManager<crate::api::Statement>,
+    pub desc_manager: HandleManager<DescLookup>,
 }
 
 impl OdbcGlobals {
@@ -165,6 +166,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         env_registry: HandleManager::new(),
         dbc_registry: HandleManager::new(),
         stmt_registry: HandleManager::new(),
+        desc_manager: HandleManager::new(),
     }));
     tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
     guard.env_count += 1;

@@ -5,7 +5,14 @@ use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, Mutex, RawRwLock, RwL
 
 use crate::api::OdbcResult;
 use crate::api::error::InvalidHandleSnafu;
+use crate::api::types::DescriptorKind;
 use odbc_sys as sql;
+
+#[derive(Debug, Clone, Copy)]
+pub struct DescLookup {
+    pub stmt_id: HandleId,
+    pub kind: DescriptorKind,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct HandleId {

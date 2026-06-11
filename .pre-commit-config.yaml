@@ -11,14 +11,14 @@ repos:
     -   id: rust-clippy
         name: Rust clippy
         description: Run cargo clippy on files included in the commit. clippy should be installed before-hand.
-        entry: cargo clippy --all-targets --all-features -- -Dclippy::all
+        entry: env OPENSSL_NO_VENDOR=1 cargo clippy --all-targets --all-features -- -Dclippy::all
         pass_filenames: false
         types: [file, rust]
         language: system
     -   id: rust-cargo-check
         name: Rust cargo check
         description: Run cargo check on files included in the commit. cargo check should be installed before-hand.
-        entry: cargo check --all-targets --all-features
+        entry: env OPENSSL_NO_VENDOR=1 cargo check --all-targets --all-features
         pass_filenames: false
         types: [file, rust]
         language: system
