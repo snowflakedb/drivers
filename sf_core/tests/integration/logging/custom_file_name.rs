@@ -24,7 +24,8 @@ fn custom_log_file_name_is_used() {
         Some("my_custom_driver.log")
     );
 
-    LogManager::init(config).unwrap();
+    let lm = LogManager::init(config).unwrap();
+    let _guard = tracing::dispatcher::set_default(lm.dispatch());
 
     tracing::info!("custom_file_name_test_message");
 

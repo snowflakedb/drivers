@@ -21,7 +21,8 @@ fn warn_level_filters_info_and_debug() {
     let config = logging_config_from_ini(&ini).unwrap();
     assert_eq!(config.level, tracing::level_filters::LevelFilter::WARN);
 
-    LogManager::init(config).unwrap();
+    let lm = LogManager::init(config).unwrap();
+    let _guard = tracing::dispatcher::set_default(lm.dispatch());
 
     tracing::error!("level_filter_error_msg");
     tracing::warn!("level_filter_warn_msg");

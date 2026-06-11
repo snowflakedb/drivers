@@ -9,6 +9,7 @@ use proto_utils::{ProtoError, Transport};
 struct CApiState {
     runtime: tokio::runtime::Runtime,
     transport: RustTransport,
+    dispatch: tracing::dispatcher::Dispatch,
 }
 
 static STATE: OnceLock<CApiState> = OnceLock::new();
@@ -17,6 +18,7 @@ static STATE: OnceLock<CApiState> = OnceLock::new();
 /// given `LogManager`.  Called once from `sf_core_init`.
 pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
     STATE.get_or_init(|| {
+        let dispatch = lm.dispatch().clone();
         let providers = DriverProviders {
             log_manager: Some(lm),
             wrapper_presets,
@@ -30,6 +32,7 @@ pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
                 .build()
                 .expect("Failed to create tokio runtime"),
             transport: RustTransport::new_with(providers),
+            dispatch,
         }
     });
 }
@@ -77,6 +80,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
     // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
     let result = std::panic::catch_unwind(|| unsafe {
         let state = STATE.get().expect("sf_core_init was not called");
+        let _guard = tracing::dispatcher::set_default(&state.dispatch);
         let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
         let method = std::ffi::CStr::from_ptr(method)
             .to_string_lossy()

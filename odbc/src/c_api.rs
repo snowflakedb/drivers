@@ -9,6 +9,16 @@ use crate::api::encoding::WideChar;
 use crate::api::{self, Narrow, ToSqlReturn, Wide};
 use odbc_sys as sql;
 
+/// Set the ODBC tracing dispatcher as the thread-local default for the
+/// duration of the current C API call so that all `tracing::` output
+/// (not just code inside [`OdbcGlobals::block_on`]) reaches the
+/// configured log sink.
+macro_rules! set_dispatch {
+    () => {
+        let _dispatch_guard = crate::api::runtime::dispatch_guard();
+    };
+}
+
 /// Fire a fire-and-forget `api_call` telemetry event for an ODBC entry
 /// point.
 ///
@@ -33,6 +43,7 @@ macro_rules! record_err {
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Env, std::ptr::null_mut(), "SQLAllocEnv");
     let result = api::handle_allocation::sql_alloc_handle(
         sql::HandleType::Env,
@@ -49,6 +60,7 @@ pub unsafe extern "system" fn SQLAllocConnect(
     environment_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Env, environment_handle, "SQLAllocConnect");
     let result = api::handle_allocation::sql_alloc_handle(
         sql::HandleType::Dbc,
@@ -67,6 +79,7 @@ pub unsafe extern "system" fn SQLAllocHandle(
     input_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
+    set_dispatch!();
     // Use the *parent* handle for telemetry attribution: SQLAllocHandle(STMT, dbc)
     // is reportable against the connection that owns the soon-to-exist statement.
     record_api!(handle_type, input_handle, "SQLAllocHandle");
@@ -83,6 +96,7 @@ pub unsafe extern "system" fn SQLExecDirect(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecDirect");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result =
@@ -100,6 +114,7 @@ pub unsafe extern "system" fn SQLExecDirectW(
     statement_text: *const WideChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecDirect");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::exec_direct::<Wide>(statement_handle, statement_text, text_length);
@@ -115,6 +130,7 @@ pub unsafe extern "system" fn SQLFreeHandle(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(handle_type, handle, "SQLFreeHandle");
     api::handle_allocation::sql_free_handle(handle_type, handle).to_sql_code()
 }
@@ -125,6 +141,7 @@ pub unsafe extern "system" fn SQLFreeStmt(
     statement_handle: sql::Handle,
     option: sql::USmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLFreeStmt");
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -141,6 +158,7 @@ pub unsafe extern "system" fn SQLFreeStmt(
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLCloseCursor");
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -187,6 +205,7 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
 /// diagnostic records per spec. Only cross-thread cancel skips diagnostics.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLCancel");
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -221,6 +240,7 @@ pub unsafe extern "system" fn SQLCancelHandle(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(handle_type, handle, "SQLCancelHandle");
     if handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -263,6 +283,7 @@ pub unsafe extern "system" fn SQLConnect(
     authentication: *const sql::Char,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Narrow>(
         connection_handle,
@@ -294,6 +315,7 @@ pub unsafe extern "system" fn SQLConnectW(
     authentication: *const WideChar,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Wide>(
         connection_handle,
@@ -319,6 +341,7 @@ pub unsafe extern "system" fn SQLSetEnvAttr(
     value: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Env, environment_handle, "SQLSetEnvAttr");
     if environment_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -341,6 +364,7 @@ pub unsafe extern "system" fn SQLGetEnvAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Env, environment_handle, "SQLGetEnvAttr");
     if environment_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -368,6 +392,7 @@ pub unsafe extern "system" fn SQLGetInfo(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::get_info::<Narrow>(
@@ -392,6 +417,7 @@ pub unsafe extern "system" fn SQLGetInfoW(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::get_info::<Wide>(
@@ -415,6 +441,7 @@ pub unsafe extern "system" fn SQLSetConnectAttr(
     value: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLSetConnectAttr");
     if connection_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -447,6 +474,7 @@ pub unsafe extern "system" fn SQLSetConnectAttrW(
     value: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLSetConnectAttr");
     if connection_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -480,6 +508,7 @@ pub unsafe extern "system" fn SQLGetConnectAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetConnectAttr");
     if connection_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -514,6 +543,7 @@ pub unsafe extern "system" fn SQLGetConnectAttrW(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetConnectAttr");
     if connection_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -610,6 +640,7 @@ pub unsafe extern "system" fn SQLDriverConnect(
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::driver_connect::<Narrow>(
         connection_handle,
@@ -636,6 +667,7 @@ pub unsafe extern "system" fn SQLDriverConnectW(
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::driver_connect::<Wide>(
         connection_handle,
@@ -652,6 +684,7 @@ pub unsafe extern "system" fn SQLDriverConnectW(
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     // Record BEFORE disconnect tears down the session so the resolver still
     // finds the connection in `Connected` state.
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDisconnect");
@@ -663,6 +696,7 @@ pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> s
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLFetch(statement_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
     let result = api::data::fetch(statement_handle, &mut warnings);
@@ -684,6 +718,7 @@ pub unsafe extern "system" fn SQLFetchScroll(
     fetch_orientation: sql::SmallInt,
     _fetch_offset: sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
     let result = api::data::fetch_scroll(statement_handle, fetch_orientation, &mut warnings);
@@ -707,6 +742,7 @@ pub unsafe extern "system" fn SQLExtendedFetch(
     row_count_ptr: *mut sql::ULen,
     row_status_ptr: *mut sql::USmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
     let result = api::data::extended_fetch(
@@ -738,6 +774,7 @@ pub unsafe extern "system" fn SQLGetData(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
     let result = api::data::get_data(
@@ -771,6 +808,7 @@ pub unsafe extern "system" fn SQLColAttribute(
     string_length_ptr: *mut sql::SmallInt,
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLColAttribute");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
@@ -806,6 +844,7 @@ pub unsafe extern "system" fn SQLColAttributeW(
     string_length_ptr: *mut sql::SmallInt,
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLColAttribute");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
@@ -843,6 +882,7 @@ pub unsafe extern "system" fn SQLDescribeCol(
     decimal_digits_ptr: *mut sql::SmallInt,
     nullable_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLDescribeCol");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
@@ -882,6 +922,7 @@ pub unsafe extern "system" fn SQLDescribeColW(
     decimal_digits_ptr: *mut sql::SmallInt,
     nullable_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLDescribeCol");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
@@ -914,6 +955,7 @@ pub unsafe extern "system" fn SQLNumResultCols(
     statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLNumResultCols");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::utils::num_result_cols(statement_handle, column_count_ptr);
@@ -929,6 +971,7 @@ pub unsafe extern "system" fn SQLNumParams(
     statement_handle: sql::Handle,
     param_count_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLNumParams");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::num_params(statement_handle, param_count_ptr);
@@ -948,6 +991,7 @@ pub unsafe extern "system" fn SQLDescribeParam(
     decimal_digits_ptr: *mut sql::SmallInt,
     nullable_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLDescribeParam");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::describe_param(
@@ -970,6 +1014,7 @@ pub unsafe extern "system" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLRowCount");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::utils::row_count(statement_handle, row_count_ptr);
@@ -993,6 +1038,7 @@ pub unsafe extern "system" fn SQLBindParameter(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLBindParameter");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::bind_parameter(
@@ -1020,6 +1066,7 @@ pub unsafe extern "system" fn SQLPrepare(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLPrepare");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::prepare::<Narrow>(statement_handle, statement_text, text_length);
@@ -1036,6 +1083,7 @@ pub unsafe extern "system" fn SQLPrepareW(
     statement_text: *const WideChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLPrepare");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::prepare::<Wide>(statement_handle, statement_text, text_length);
@@ -1051,6 +1099,7 @@ pub unsafe extern "system" fn SQLParamData(
     statement_handle: sql::Handle,
     value_ptr_ptr: *mut sql::Pointer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLParamData");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::param_data(statement_handle, value_ptr_ptr);
@@ -1067,6 +1116,7 @@ pub unsafe extern "system" fn SQLPutData(
     data_ptr: sql::Pointer,
     str_len_or_ind: sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLPutData");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::put_data(statement_handle, data_ptr, str_len_or_ind);
@@ -1079,6 +1129,7 @@ pub unsafe extern "system" fn SQLPutData(
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecute");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::execute(statement_handle);
@@ -1100,6 +1151,7 @@ pub unsafe extern "system" fn SQLGetDiagRec(
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     let mut warnings = vec![];
     let result = unsafe {
         api::diagnostic::get_diag_rec::<Narrow>(
@@ -1131,6 +1183,7 @@ pub unsafe extern "system" fn SQLGetDiagRecW(
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     let mut warnings = vec![];
     let result = unsafe {
         api::diagnostic::get_diag_rec::<Wide>(
@@ -1161,6 +1214,7 @@ pub unsafe extern "system" fn SQLGetDiagField(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     let result = api::diagnostic::get_diag_field::<Narrow>(
         handle_type,
         handle,
@@ -1185,6 +1239,7 @@ pub unsafe extern "system" fn SQLGetDiagFieldW(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    set_dispatch!();
     let result = api::diagnostic::get_diag_field::<Wide>(
         handle_type,
         handle,
@@ -1209,6 +1264,7 @@ pub unsafe extern "system" fn SQLBindCol(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLBindCol");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::bind_col(
@@ -1233,6 +1289,7 @@ pub unsafe extern "system" fn SQLSetStmtAttr(
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLSetStmtAttr");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
@@ -1262,6 +1319,7 @@ pub unsafe extern "system" fn SQLSetStmtAttrW(
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLSetStmtAttr");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
@@ -1340,6 +1398,7 @@ pub unsafe extern "system" fn SQLGetStmtAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetStmtAttr");
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -1374,6 +1433,7 @@ pub unsafe extern "system" fn SQLGetStmtAttrW(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetStmtAttr");
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -1402,6 +1462,7 @@ pub unsafe extern "system" fn SQLGetStmtAttrW(
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLMoreResults");
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -1424,6 +1485,7 @@ pub unsafe extern "system" fn SQLNativeSql(
     buffer_length: sql::Integer,
     text_length2_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLNativeSql");
     if connection_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -1460,6 +1522,7 @@ pub unsafe extern "system" fn SQLNativeSqlW(
     buffer_length: sql::Integer,
     text_length2_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLNativeSql");
     if connection_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
@@ -1496,6 +1559,7 @@ pub unsafe extern "system" fn SQLGetDescField(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescField");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::get_desc_field(
@@ -1521,6 +1585,7 @@ pub unsafe extern "system" fn SQLGetDescFieldW(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescFieldW");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::get_desc_field(
@@ -1546,6 +1611,7 @@ pub unsafe extern "system" fn SQLSetDescField(
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescField");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::set_desc_field(
@@ -1570,6 +1636,7 @@ pub unsafe extern "system" fn SQLSetDescFieldW(
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
 ) -> sql::RetCode {
+    set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescFieldW");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::set_desc_field(

@@ -34,7 +34,10 @@ fn for_odbc_factory_end_to_end() {
     load_ini_files(&[PathBuf::from(&ini_path)])
         .expect("first load_ini_files in this test binary must succeed");
 
-    LogManager::for_odbc();
+    let lm = LogManager::for_odbc();
+    let _guard = lm
+        .as_ref()
+        .map(|m| tracing::dispatcher::set_default(m.dispatch()));
 
     tracing::info!("for_odbc_factory_test_message");
 

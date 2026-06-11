@@ -14,15 +14,21 @@ static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
 struct JdbcBridge {
     runtime: tokio::runtime::Runtime,
     transport: RustTransport,
+    dispatch: tracing::dispatcher::Dispatch,
 }
 
 impl JdbcBridge {
     pub fn new() -> Self {
+        let lm = JDBC_LOG_MANAGER
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        let dispatch = lm
+            .as_ref()
+            .map(|m| m.dispatch().clone())
+            .unwrap_or_else(tracing::dispatcher::Dispatch::none);
         let providers = DriverProviders {
-            log_manager: JDBC_LOG_MANAGER
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take(),
+            log_manager: lm,
             wrapper_presets: WrapperPresets::jdbc(),
             ..Default::default()
         };
@@ -33,6 +39,7 @@ impl JdbcBridge {
                 .build()
                 .expect("Failed to create tokio runtime"),
             transport: RustTransport::new_with(providers),
+            dispatch,
         }
     }
 
@@ -42,6 +49,7 @@ impl JdbcBridge {
         method_name: &str,
         request_bytes: Vec<u8>,
     ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+        let _guard = tracing::dispatcher::set_default(&self.dispatch);
         self.runtime.block_on(self.transport.handle_message(
             service_name,
             method_name,

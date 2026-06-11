@@ -57,6 +57,7 @@ static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
     client: Arc<DatabaseDriverClient>,
+    dispatch: tracing::dispatcher::Dispatch,
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
     pub stmt_registry: HandleManager<crate::api::Statement>,
@@ -65,6 +66,7 @@ pub struct OdbcGlobals {
 
 impl OdbcGlobals {
     pub fn block_on<T>(&self, f: impl AsyncFnOnce(&DatabaseDriverClient) -> T) -> T {
+        let _guard = tracing::dispatcher::set_default(&self.dispatch);
         self.runtime.block_on(f(&self.client))
     }
 
@@ -134,6 +136,14 @@ pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
     Ok(GlobalsGuard(arc))
 }
 
+/// Installs the ODBC tracing dispatcher as the thread-local default for the
+/// duration of the returned guard. Returns `None` when globals are not yet
+/// initialized (e.g. during the very first `SQLAllocHandle(SQL_HANDLE_ENV)`).
+pub fn dispatch_guard() -> Option<tracing::dispatcher::DefaultGuard> {
+    let g = global().ok()?;
+    Some(tracing::dispatcher::set_default(&g.dispatch))
+}
+
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     // Take the teardown mutex before `STATE`'s write lock so we never invert lock order relative
     // to `env_freed` (which does `STATE` then teardown on the last-env path).
@@ -149,6 +159,10 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     if let Some(lm) = &log_manager {
         crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());
     }
+    let dispatch = log_manager
+        .as_ref()
+        .map(|lm| lm.dispatch().clone())
+        .unwrap_or_else(tracing::dispatcher::Dispatch::none);
     let providers = DriverProviders {
         log_manager,
         wrapper_presets: WrapperPresets::odbc(),
@@ -160,9 +174,11 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         .build()
         .context(RuntimeCreationSnafu)?;
     let client = Arc::new(database_driver_client_with(providers));
+    let _log_guard = tracing::dispatcher::set_default(&dispatch);
     guard.globals = Some(Arc::new(OdbcGlobals {
         runtime,
         client,
+        dispatch,
         env_registry: HandleManager::new(),
         dbc_registry: HandleManager::new(),
         stmt_registry: HandleManager::new(),
@@ -177,6 +193,8 @@ pub fn env_freed() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     guard.env_count = guard.env_count.saturating_sub(1);
     if guard.env_count == 0 {
+        let dispatch = guard.globals.as_ref().map(|g| g.dispatch.clone());
+        let _log_guard = dispatch.as_ref().map(tracing::dispatcher::set_default);
         tracing::info!("Last ODBC environment freed, tearing down global state");
         let globals = guard.globals.take();
         drop(guard);

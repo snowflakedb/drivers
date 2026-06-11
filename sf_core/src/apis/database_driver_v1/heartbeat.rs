@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::instrument::WithSubscriber;
 use url::Url;
 
 use super::connection::RefreshContext;
@@ -89,14 +90,17 @@ pub fn spawn_heartbeat_task(
     let cancel_token = CancellationToken::new();
     let task_token = cancel_token.clone();
 
-    let task_handle = tokio::spawn(heartbeat_loop(
-        tokens,
-        http_client,
-        server_url,
-        client_info,
-        heartbeat_interval,
-        task_token,
-    ));
+    let task_handle = tokio::spawn(
+        heartbeat_loop(
+            tokens,
+            http_client,
+            server_url,
+            client_info,
+            heartbeat_interval,
+            task_token,
+        )
+        .with_current_subscriber(),
+    );
 
     HeartbeatHandle {
         cancel_token,
