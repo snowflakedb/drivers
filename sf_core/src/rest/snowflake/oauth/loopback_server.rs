@@ -33,6 +33,7 @@ use serde::Deserialize;
 use snafu::ResultExt;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
+use tracing::instrument::WithSubscriber;
 use url::Url;
 
 use super::error::{
@@ -219,13 +220,16 @@ impl LoopbackBinding {
             .route(redirect_uri.path(), get(handle_redirect))
             .with_state(state);
 
-        let server_task = tokio::spawn(async move {
-            let _ = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await;
-        });
+        let server_task = tokio::spawn(
+            async move {
+                let _ = axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await;
+            }
+            .with_current_subscriber(),
+        );
 
         let (outcome, handler_fired) = tokio::select! {
             received = result_rx => {

@@ -36,7 +36,9 @@ unsafe extern "C" fn test_callback(
 fn callback_layer_delivers_events() {
     let config = LoggingConfig::default();
     let cb: CLogCallback = test_callback;
-    LogManager::with_app_sink(config, CallbackLayer::new(cb), SessionRegistry::default()).unwrap();
+    let lm = LogManager::with_app_sink(config, CallbackLayer::new(cb), SessionRegistry::default())
+        .unwrap();
+    let _guard = tracing::dispatcher::set_default(lm.dispatch());
 
     tracing::info!("callback_info_msg");
     tracing::warn!("callback_warn_msg");

@@ -4898,6 +4898,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-appender",
+ "tracing-core",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-test",

@@ -18,17 +18,98 @@ use super::{EmptyLayer, LoggingConfig};
 
 type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 
+/// Wraps the composed tracing subscriber and owns the `SdkTracerProvider`,
+/// tying the OTEL exporter lifetime to the subscriber. Lives inside a
+/// [`tracing::dispatcher::Dispatch`] (which `Arc`-wraps it); the provider
+/// stays alive as long as any `Dispatch` clone exists.
+struct DriverSubscriber {
+    #[allow(dead_code)]
+    telemetry_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+    inner: Box<dyn tracing::Subscriber + Send + Sync>,
+}
+
+impl tracing::Subscriber for DriverSubscriber {
+    fn register_callsite(
+        &self,
+        metadata: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        self.inner.register_callsite(metadata)
+    }
+
+    fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+        self.inner.max_level_hint()
+    }
+
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        self.inner.enabled(metadata)
+    }
+
+    fn new_span(&self, attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        self.inner.new_span(attrs)
+    }
+
+    fn record(&self, span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+        self.inner.record(span, values);
+    }
+
+    fn record_follows_from(&self, span: &tracing::span::Id, follows: &tracing::span::Id) {
+        self.inner.record_follows_from(span, follows);
+    }
+
+    fn event_enabled(&self, event: &tracing::Event<'_>) -> bool {
+        self.inner.event_enabled(event)
+    }
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        self.inner.event(event);
+    }
+
+    fn enter(&self, span: &tracing::span::Id) {
+        self.inner.enter(span);
+    }
+
+    fn exit(&self, span: &tracing::span::Id) {
+        self.inner.exit(span);
+    }
+
+    fn clone_span(&self, id: &tracing::span::Id) -> tracing::span::Id {
+        self.inner.clone_span(id)
+    }
+
+    fn try_close(&self, id: tracing::span::Id) -> bool {
+        self.inner.try_close(id)
+    }
+
+    fn current_span(&self) -> tracing_core::span::Current {
+        self.inner.current_span()
+    }
+
+    fn on_register_dispatch(&self, subscriber: &tracing::dispatcher::Dispatch) {
+        self.inner.on_register_dispatch(subscriber);
+    }
+
+    unsafe fn downcast_raw(&self, id: std::any::TypeId) -> Option<*const ()> {
+        if id == std::any::TypeId::of::<Self>() {
+            Some(self as *const Self as *const ())
+        } else {
+            // SAFETY: delegating to inner subscriber which upholds the same
+            // contract — returned pointer is valid for the type identified by `id`.
+            unsafe { self.inner.downcast_raw(id) }
+        }
+    }
+}
+
 /// Telemetry and logging state created during logging initialisation.
 ///
 /// Call exactly one of [`LogManager::init`], [`LogManager::with_app_sink`],
-/// [`LogManager::for_odbc`], or [`LogManager::for_toml`] once per process.
-/// The returned instance owns the `SdkTracerProvider`, `SessionRegistry`,
-/// and lazily-computed OS details. Inject it into [`DatabaseDriverV1`] via
+/// [`LogManager::for_odbc`], or [`LogManager::for_toml`] per driver
+/// lifecycle. The returned instance holds a [`tracing::dispatcher::Dispatch`]
+/// that consumers install per-thread via
+/// [`tracing::dispatcher::set_default`], the `SessionRegistry`, and
+/// lazily-computed OS details. Inject it into [`DatabaseDriverV1`] via
 /// [`DriverProviders`].
 pub struct LogManager {
-    /// Kept alive so the Snowflake exporter is not shut down.
-    #[allow(dead_code)]
-    telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider,
+    dispatch: tracing::dispatcher::Dispatch,
     telemetry_sessions: SessionRegistry,
     session_flusher: Option<SessionFlushHandle>,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
@@ -85,16 +166,25 @@ impl LogManager {
         self.error_trace_enabled
     }
 
-    /// Create a `LogManager` without installing a global tracing subscriber.
+    /// The [`tracing::dispatcher::Dispatch`] wrapping the configured
+    /// subscriber. Consumers install this per-thread via
+    /// [`tracing::dispatcher::set_default`] or propagate it to spawned
+    /// futures with `.with_current_subscriber()`.
+    pub fn dispatch(&self) -> &tracing::dispatcher::Dispatch {
+        &self.dispatch
+    }
+
+    /// Create a `LogManager` with a no-op tracing subscriber.
     ///
     /// The returned instance still provides a `SessionRegistry` and
-    /// lazily-detected OS details via the given `fs`, but does not call
-    /// `set_global_default`. Use this when the subscriber is managed
-    /// externally (e.g. the host application or test harness already
-    /// configures tracing).
+    /// lazily-detected OS details via the given `fs`. The dispatch wraps
+    /// a no-op subscriber so installing it is harmless. Use this when
+    /// the real subscriber is managed externally (e.g. the host
+    /// application or test harness already configures tracing).
     pub fn with_none_subscriber(fs: Arc<dyn FsAdapter>) -> Self {
+        let noop = tracing::dispatcher::Dispatch::none();
         Self {
-            telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            dispatch: noop,
             telemetry_sessions: SessionRegistry::default(),
             session_flusher: None,
             os_details: once_cell::sync::OnceCell::new(),
@@ -128,16 +218,10 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
-        let (provider, flusher) =
+        let (dispatch, flusher) =
             Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?;
-        let provider = provider.ok_or_else(|| {
-            InitSnafu {
-                message: "provider is always Some when sessions are provided",
-            }
-            .build()
-        })?;
         Ok(Self {
-            telemetry_provider: provider,
+            dispatch,
             telemetry_sessions: sessions,
             session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
@@ -162,15 +246,9 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
-        let (provider, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
-        let provider = provider.ok_or_else(|| {
-            InitSnafu {
-                message: "provider is always Some when registry is Some",
-            }
-            .build()
-        })?;
+        let (dispatch, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
         Ok(Self {
-            telemetry_provider: provider,
+            dispatch,
             telemetry_sessions: registry,
             session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
@@ -243,13 +321,7 @@ impl LogManager {
         config: LoggingConfig,
         app_sink: Option<L>,
         registry: Option<SessionRegistry>,
-    ) -> Result<
-        (
-            Option<opentelemetry_sdk::trace::SdkTracerProvider>,
-            Option<SessionFlushHandle>,
-        ),
-        LogError,
-    >
+    ) -> Result<(tracing::dispatcher::Dispatch, Option<SessionFlushHandle>), LogError>
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
@@ -305,15 +377,15 @@ impl LogManager {
 
         let subscriber = Registry::default().with(layers);
 
-        tracing::subscriber::set_global_default(subscriber).map_err(|e| {
-            eprintln!("Failed to set global default subscriber: {e:?}");
-            InitSnafu {
-                message: e.to_string(),
-            }
-            .build()
-        })?;
+        let driver_subscriber = DriverSubscriber {
+            telemetry_provider: provider,
+            inner: Box::new(subscriber),
+        };
 
-        Ok((provider, flush_handle))
+        Ok((
+            tracing::dispatcher::Dispatch::new(driver_subscriber),
+            flush_handle,
+        ))
     }
 
     fn build_core_layer(config: &LoggingConfig) -> Result<BoxedLayer, LogError> {

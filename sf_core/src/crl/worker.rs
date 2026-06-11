@@ -21,9 +21,11 @@ impl CrlWorker {
         GLOBAL_WORKER.get_or_init(|| {
             let (tx, rx): (Sender<CrlWorkerRequest>, Receiver<CrlWorkerRequest>) = mpsc::channel();
 
+            let dispatch = tracing::dispatcher::get_default(|d| d.clone());
             std::thread::Builder::new()
                 .name("crl-worker".into())
                 .spawn(move || {
+                    let _log_guard = tracing::dispatcher::set_default(&dispatch);
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()

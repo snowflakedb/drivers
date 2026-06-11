@@ -10,6 +10,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use snafu::ResultExt;
 use tokio::sync::mpsc::error::SendError;
+use tracing::instrument::WithSubscriber;
 
 use super::memory_budget::{MemoryBudget, MemoryTicket};
 use super::{ChunkDownloadData, ChunkError, ChunkReadingSnafu, PrefetchConfig};
@@ -72,15 +73,18 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
         let memory_budget = MemoryBudget::new(config.memory_limit_mb);
 
-        tokio::spawn(Self::prefetch_batches(
-            downloader,
-            parser,
-            chunks,
-            initial,
-            tx,
-            prefetch_concurrency,
-            memory_budget,
-        ));
+        tokio::spawn(
+            Self::prefetch_batches(
+                downloader,
+                parser,
+                chunks,
+                initial,
+                tx,
+                prefetch_concurrency,
+                memory_budget,
+            )
+            .with_current_subscriber(),
+        );
 
         Ok(Box::new(Self {
             schema,
@@ -128,7 +132,9 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
                 let d = downloader.clone();
                 let p = parser.clone();
-                chunk_tasks.push_back(tokio::task::spawn(get_chunk(d, p, data, ticket)));
+                chunk_tasks.push_back(tokio::task::spawn(
+                    get_chunk(d, p, data, ticket).with_current_subscriber(),
+                ));
             }
         }
 
@@ -151,7 +157,9 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
                 let d = downloader.clone();
                 let p = parser.clone();
-                chunk_tasks.push_back(tokio::task::spawn(get_chunk(d, p, data, ticket)));
+                chunk_tasks.push_back(tokio::task::spawn(
+                    get_chunk(d, p, data, ticket).with_current_subscriber(),
+                ));
             }
         }
 

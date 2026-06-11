@@ -24,7 +24,8 @@ fn ini_to_log_manager_happy_path() {
     assert_eq!(config.log_path.as_deref(), Some(log_dir.as_path()));
     assert_eq!(config.log_file_name.as_deref(), Some("test_driver.log"));
 
-    LogManager::init(config).unwrap();
+    let lm = LogManager::init(config).unwrap();
+    let _guard = tracing::dispatcher::set_default(lm.dispatch());
 
     tracing::info!("happy_path_info_message");
     tracing::warn!("happy_path_warn_message");

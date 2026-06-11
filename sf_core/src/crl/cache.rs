@@ -15,6 +15,7 @@ use snafu::ResultExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio_stream::StreamExt;
+use tracing::instrument::WithSubscriber;
 
 #[derive(Debug, Clone)]
 pub struct CachedCrl {
@@ -143,9 +144,11 @@ impl CrlCache {
         }
 
         let thread_name = "crl-refresh".to_string();
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
         let _ = std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
+                let _log_guard = tracing::dispatcher::set_default(&dispatch);
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -183,13 +186,12 @@ impl CrlCache {
                                     let _ = tokio::spawn(async move {
                                         let lock = match me.get_url_lock(&url_for_task) { Ok(l) => l, Err(_) => return };
                                         let _guard = lock.lock().await;
-                                        // Check current cache entry and validity
                                         if let Ok(Some(entry)) = me.get_from_memory_cache(&url_for_task).await
                                             && Utc::now() < entry.expires_at
                                         {
                                             let _ = me.fetch_from_network_and_cache(&url_for_task).await;
                                         }
-                                    }).await;
+                                    }.with_current_subscriber()).await;
                                     // After refresh, look up updated entry and reschedule
                                     this.reschedule_url(&mut dq, &mut keys, &url).await;
                                 }

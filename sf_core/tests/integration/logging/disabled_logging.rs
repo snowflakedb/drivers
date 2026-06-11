@@ -21,7 +21,8 @@ fn disabled_logging_produces_no_output() {
     let config = logging_config_from_ini(&ini).unwrap();
     assert!(!config.enabled);
 
-    LogManager::init(config).unwrap();
+    let lm = LogManager::init(config).unwrap();
+    let _guard = tracing::dispatcher::set_default(lm.dispatch());
     tracing::info!("disabled_logging_test_message");
 
     thread::sleep(Duration::from_millis(200));

@@ -40,7 +40,8 @@ fn toml_log_section_with_level_filtering() {
     let config = logging_config_from_toml_section(&section);
     assert_eq!(config.level, tracing::level_filters::LevelFilter::DEBUG);
 
-    LogManager::init(config).unwrap();
+    let lm = LogManager::init(config).unwrap();
+    let _guard = tracing::dispatcher::set_default(lm.dispatch());
 
     tracing::debug!("toml_debug_message_should_appear");
     tracing::trace!("toml_trace_message_should_not_appear");
