@@ -2,7 +2,8 @@ use crate::api::error::{
     ConnectionStillConnectedSnafu, DisconnectedSnafu, EnvironmentHasConnectionsSnafu,
     InvalidHandleSnafu, OdbcRuntimeSnafu, Required,
 };
-use crate::api::handle_registry::HandleId;
+use crate::api::handle_registry::{DescLookup, HandleId};
+use crate::api::types::DescriptorKind;
 use crate::api::{
     Connection, ConnectionState, Dbc, Env, Environment, OdbcResult, Statement, conn_from_handle,
     diagnostic::DiagnosticInfo,
@@ -14,6 +15,52 @@ use sf_core::protobuf::generated::database_driver_v1::{
     StatementNewRequest, StatementReleaseRequest,
 };
 use snafu::ResultExt;
+
+use super::runtime::GlobalsGuard;
+
+fn register_desc_handles(
+    g: &GlobalsGuard,
+    stmt_id: HandleId,
+) -> OdbcResult<(HandleId, HandleId, HandleId, HandleId)> {
+    let ard = g.desc_manager.add(DescLookup {
+        stmt_id,
+        kind: DescriptorKind::Ard,
+    })?;
+    let ird = match g.desc_manager.add(DescLookup {
+        stmt_id,
+        kind: DescriptorKind::Ird,
+    }) {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = g.desc_manager.get_for_delete(ard).map(|dg| dg.delete());
+            return Err(e);
+        }
+    };
+    let apd = match g.desc_manager.add(DescLookup {
+        stmt_id,
+        kind: DescriptorKind::Apd,
+    }) {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = g.desc_manager.get_for_delete(ard).map(|dg| dg.delete());
+            let _ = g.desc_manager.get_for_delete(ird).map(|dg| dg.delete());
+            return Err(e);
+        }
+    };
+    let ipd = match g.desc_manager.add(DescLookup {
+        stmt_id,
+        kind: DescriptorKind::Ipd,
+    }) {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = g.desc_manager.get_for_delete(ard).map(|dg| dg.delete());
+            let _ = g.desc_manager.get_for_delete(ird).map(|dg| dg.delete());
+            let _ = g.desc_manager.get_for_delete(apd).map(|dg| dg.delete());
+            return Err(e);
+        }
+    };
+    Ok((ard, ird, apd, ipd))
+}
 
 /// Allocate a new environment handle
 pub fn alloc_environment() -> OdbcResult<sql::Handle> {
@@ -87,12 +134,24 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
     let stmt = Statement::new(conn_id, stmt_handle, conn.metadata_id);
     let g = global().context(OdbcRuntimeSnafu)?;
     let stmt_id = g.stmt_registry.add(stmt)?;
+
+    let desc_handles = register_desc_handles(&g, stmt_id);
+    let (ard_handle, ird_handle, apd_handle, ipd_handle) = match desc_handles {
+        Ok(handles) => handles,
+        Err(e) => {
+            if let Ok(dg) = g.stmt_registry.get_for_delete(stmt_id) {
+                dg.delete();
+            }
+            return Err(e);
+        }
+    };
+
     let guard = g.stmt_registry.get(stmt_id)?;
     let mut inner = guard.inner.lock();
-    inner.ard.stmt_id = stmt_id;
-    inner.ird.stmt_id = stmt_id;
-    inner.apd.stmt_id = stmt_id;
-    inner.ipd.stmt_id = stmt_id;
+    inner.ard_handle = ard_handle;
+    inner.ird_handle = ird_handle;
+    inner.apd_handle = apd_handle;
+    inner.ipd_handle = ipd_handle;
 
     conn.child_statements.push(stmt_id);
     Ok(stmt_id.into())
@@ -130,6 +189,15 @@ fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
             }
         };
         let stmt_handle = delete_guard.value().stmt_handle;
+        let desc_handles = {
+            let inner = delete_guard.value().inner.lock();
+            [
+                inner.ard_handle,
+                inner.ird_handle,
+                inner.apd_handle,
+                inner.ipd_handle,
+            ]
+        };
         if let Err(e) = g.block_on(async |c| {
             c.statement_release(StatementReleaseRequest {
                 stmt_handle: Some(stmt_handle),
@@ -137,6 +205,11 @@ fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
             .await
         }) {
             tracing::warn!("free_connection: failed to release statement {stmt_handle:?}: {e:?}");
+        }
+        for desc_id in desc_handles {
+            if let Ok(dg) = g.desc_manager.get_for_delete(desc_id) {
+                dg.delete();
+            }
         }
         delete_guard.delete();
     }
@@ -197,6 +270,15 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     let stmt = delete_guard.value();
     let stmt_handle = stmt.stmt_handle;
     let conn_id = stmt.conn_id;
+    let desc_handles = {
+        let inner = stmt.inner.lock();
+        [
+            inner.ard_handle,
+            inner.ird_handle,
+            inner.apd_handle,
+            inner.ipd_handle,
+        ]
+    };
 
     // Release the server-side handle first; only delete on success so that
     // free_connection's cleanup loop can still find the handle on failure.
@@ -215,6 +297,11 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
                 .lock()
                 .child_statements
                 .retain(|id| *id != handle_id);
+        }
+        for desc_id in desc_handles {
+            if let Ok(dg) = g.desc_manager.get_for_delete(desc_id) {
+                dg.delete();
+            }
         }
         delete_guard.delete();
     }

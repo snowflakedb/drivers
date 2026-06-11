@@ -1,5 +1,5 @@
 use crate::api::bitmask::Bitmask;
-use crate::api::error::{InvalidDescriptorKindSnafu, OdbcRuntimeSnafu};
+use crate::api::error::OdbcRuntimeSnafu;
 use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::runtime::global;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
@@ -668,32 +668,12 @@ impl TryFrom<i16> for DescField {
     }
 }
 
-/// Discriminant tag placed at offset 0 in both `ArdDescriptor` and `IrdDescriptor`
-/// so that `desc_ref_from_handle` can determine the descriptor type from a raw handle.
-#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DescriptorKind {
-    Ard = 1,
-    Ird = 2,
-    Apd = 3,
-    Ipd = 4,
-}
-
-impl TryFrom<u8> for DescriptorKind {
-    type Error = OdbcError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(DescriptorKind::Ard),
-            2 => Ok(DescriptorKind::Ird),
-            3 => Ok(DescriptorKind::Apd),
-            4 => Ok(DescriptorKind::Ipd),
-            _ => {
-                tracing::error!("Invalid descriptor kind: {}", value);
-                InvalidDescriptorKindSnafu { kind: value }.fail()
-            }
-        }
-    }
+    Ard,
+    Ird,
+    Apd,
+    Ipd,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -951,13 +931,8 @@ impl TimestampSubtype {
 /// Application Row Descriptor (ARD).
 ///
 /// Stores column binding information and block-cursor header fields.
-/// A pointer to this struct is returned as the descriptor handle via
-/// `SQLGetStmtAttr(SQL_ATTR_APP_ROW_DESC)`.
-#[repr(C)]
 pub struct ArdDescriptor {
-    kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt_id: HandleId,
     pub bindings: HashMap<u16, Binding>,
     /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
     pub array_size: usize,
@@ -976,9 +951,7 @@ impl Default for ArdDescriptor {
 impl ArdDescriptor {
     pub fn new() -> Self {
         Self {
-            kind: DescriptorKind::Ard,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt_id: HandleId::default(),
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -1008,13 +981,8 @@ impl ArdDescriptor {
 ///
 /// Stores parameter binding information from the application's perspective:
 /// C data types, data buffer pointers, and indicator pointers.
-/// A pointer to this struct is returned as the descriptor handle via
-/// `SQLGetStmtAttr(SQL_ATTR_APP_PARAM_DESC)`.
-#[repr(C)]
 pub struct ApdDescriptor {
-    kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt_id: HandleId,
     pub records: HashMap<u16, ApdRecord>,
     /// `SQL_DESC_ARRAY_SIZE` — number of parameter sets (default 1).
     pub array_size: usize,
@@ -1033,9 +1001,7 @@ impl Default for ApdDescriptor {
 impl ApdDescriptor {
     pub fn new() -> Self {
         Self {
-            kind: DescriptorKind::Apd,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt_id: HandleId::default(),
             records: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -1055,13 +1021,8 @@ impl ApdDescriptor {
 /// Implementation Row Descriptor (IRD).
 ///
 /// Stores per-fetch status information written by the driver.
-/// A pointer to this struct is returned as the descriptor handle via
-/// `SQLGetStmtAttr(SQL_ATTR_IMP_ROW_DESC)`.
-#[repr(C)]
 pub struct IrdDescriptor {
-    kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt_id: HandleId,
     /// `SQL_DESC_COUNT` — number of columns in the result set.
     pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
@@ -1079,9 +1040,7 @@ impl Default for IrdDescriptor {
 impl IrdDescriptor {
     pub fn new() -> Self {
         Self {
-            kind: DescriptorKind::Ird,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt_id: HandleId::default(),
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -1093,13 +1052,8 @@ impl IrdDescriptor {
 ///
 /// Stores the implementation-side view of bound parameters: SQL data types,
 /// precision, scale, and parameter direction.
-/// A pointer to this struct is returned as the descriptor handle via
-/// `SQLGetStmtAttr(SQL_ATTR_IMP_PARAM_DESC)`.
-#[repr(C)]
 pub struct IpdDescriptor {
-    kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt_id: HandleId,
     pub records: HashMap<u16, IpdRecord>,
     /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
     pub array_status_ptr: *mut u16,
@@ -1116,9 +1070,7 @@ impl Default for IpdDescriptor {
 impl IpdDescriptor {
     pub fn new() -> Self {
         Self {
-            kind: DescriptorKind::Ipd,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt_id: HandleId::default(),
             records: HashMap::new(),
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -1127,44 +1079,6 @@ impl IpdDescriptor {
 
     pub fn desc_count(&self) -> u16 {
         self.records.keys().copied().max().unwrap_or(0)
-    }
-}
-
-/// A resolved descriptor reference returned by `desc_ref_from_handle`.
-pub enum DescriptorRef<'a> {
-    Ard(&'a mut ArdDescriptor),
-    Ird(&'a mut IrdDescriptor),
-    Apd(&'a mut ApdDescriptor),
-    Ipd(&'a mut IpdDescriptor),
-}
-
-/// Convert a descriptor handle (returned by `SQLGetStmtAttr`) back to a
-/// typed `DescriptorRef` by reading the `DescriptorKind` tag at offset 0.
-pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef<'a>> {
-    if handle.is_null() {
-        return Err(OdbcError::InvalidHandle {
-            location: snafu::location!(),
-        });
-    }
-    let raw_kind = unsafe { *(handle as *const u8) };
-    let kind = DescriptorKind::try_from(raw_kind)?;
-    match kind {
-        DescriptorKind::Ard => {
-            let desc = unsafe { &mut *(handle as *mut ArdDescriptor) };
-            Ok(DescriptorRef::Ard(desc))
-        }
-        DescriptorKind::Ird => {
-            let desc = unsafe { &mut *(handle as *mut IrdDescriptor) };
-            Ok(DescriptorRef::Ird(desc))
-        }
-        DescriptorKind::Apd => {
-            let desc = unsafe { &mut *(handle as *mut ApdDescriptor) };
-            Ok(DescriptorRef::Apd(desc))
-        }
-        DescriptorKind::Ipd => {
-            let desc = unsafe { &mut *(handle as *mut IpdDescriptor) };
-            Ok(DescriptorRef::Ipd(desc))
-        }
     }
 }
 
@@ -1649,6 +1563,10 @@ pub struct StatementInner {
     pub ird: IrdDescriptor,
     pub apd: ApdDescriptor,
     pub ipd: IpdDescriptor,
+    pub ard_handle: HandleId,
+    pub ird_handle: HandleId,
+    pub apd_handle: HandleId,
+    pub ipd_handle: HandleId,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
     /// `SQL_ATTR_CURSOR_TYPE` — default `ForwardOnly`.
@@ -1720,6 +1638,10 @@ impl Statement {
                 ird: IrdDescriptor::new(),
                 apd: ApdDescriptor::new(),
                 ipd: IpdDescriptor::new(),
+                ard_handle: HandleId::default(),
+                ird_handle: HandleId::default(),
+                apd_handle: HandleId::default(),
+                ipd_handle: HandleId::default(),
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
                 cursor_type: CursorType::ForwardOnly,
@@ -1788,6 +1710,24 @@ pub fn stmt_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Statement
         .context(OdbcRuntimeSnafu)?
         .stmt_registry
         .get(handle_id)
+}
+
+pub fn desc_from_handle(
+    desc_handle: sql::Handle,
+) -> OdbcResult<(HandleGuard<Statement>, DescriptorKind)> {
+    if desc_handle.is_null() {
+        return Err(OdbcError::InvalidHandle {
+            location: snafu::location!(),
+        });
+    }
+    let desc_id = HandleId::from(desc_handle);
+    let g = global().context(OdbcRuntimeSnafu)?;
+    let desc_guard = g.desc_manager.get(desc_id)?;
+    let stmt_id = desc_guard.stmt_id;
+    let kind = desc_guard.kind;
+    drop(desc_guard);
+    let stmt_guard = g.stmt_registry.get(stmt_id)?;
+    Ok((stmt_guard, kind))
 }
 
 #[cfg(test)]

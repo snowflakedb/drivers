@@ -1,39 +1,8 @@
 use crate::api::CDataType;
-use crate::api::error::OdbcRuntimeSnafu;
-use crate::api::handle_registry::HandleId;
-use crate::api::runtime::global;
-use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
+use crate::api::types::DescriptorKind;
+use crate::api::{DescField, OdbcResult, desc_from_handle};
 use odbc_sys as sql;
-use snafu::ResultExt;
 use tracing;
-
-/// Check if the owning statement is in a NeedData state (S8/S9/S10).
-///
-/// Uses `desc_ref_from_handle` to validate the descriptor handle (null
-/// and kind checks) and obtain a typed reference, then reads the
-/// back-pointer (HandleId) to the owning `Statement` to check its state.
-///
-/// ODBC spec allows ARD/APD/IPD access during S8-S10 (only IRD is
-/// restricted), but we block all four descriptor kinds to match
-/// reference driver behavior.
-fn check_need_data(desc_handle: sql::Handle) -> OdbcResult<()> {
-    let stmt_id = match desc_ref_from_handle(desc_handle)? {
-        DescriptorRef::Ard(desc) => desc.stmt_id,
-        DescriptorRef::Ird(desc) => desc.stmt_id,
-        DescriptorRef::Apd(desc) => desc.stmt_id,
-        DescriptorRef::Ipd(desc) => desc.stmt_id,
-    };
-    if stmt_id != HandleId::default() {
-        let guard = global()
-            .context(OdbcRuntimeSnafu)?
-            .stmt_registry
-            .get(stmt_id)?;
-        if guard.inner.lock().state.as_ref().is_need_data() {
-            return crate::api::error::InvalidDuringDaeSnafu.fail();
-        }
-    }
-    Ok(())
-}
 
 /// Get a descriptor field value
 pub fn get_desc_field(
@@ -51,8 +20,6 @@ pub fn get_desc_field(
         field_identifier
     );
 
-    check_need_data(desc_handle)?;
-
     if value_ptr.is_null() {
         tracing::error!("get_desc_field: value_ptr is null");
         return crate::api::error::NullPointerSnafu.fail();
@@ -64,13 +31,18 @@ pub fn get_desc_field(
     }
 
     let field = DescField::try_from(field_identifier)?;
-    let desc_ref = desc_ref_from_handle(desc_handle)?;
+    let (guard, kind) = desc_from_handle(desc_handle)?;
+    let inner = guard.inner.lock();
 
-    match desc_ref {
-        DescriptorRef::Ard(desc) => get_ard_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ird(desc) => get_ird_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Apd(desc) => get_apd_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ipd(desc) => get_ipd_field(desc, rec_number, field, value_ptr),
+    if inner.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
+    match kind {
+        DescriptorKind::Ard => get_ard_field(&inner.ard, rec_number, field, value_ptr),
+        DescriptorKind::Ird => get_ird_field(&inner.ird, rec_number, field, value_ptr),
+        DescriptorKind::Apd => get_apd_field(&inner.apd, rec_number, field, value_ptr),
+        DescriptorKind::Ipd => get_ipd_field(&inner.ipd, rec_number, field, value_ptr),
     }
 }
 
@@ -262,21 +234,24 @@ pub fn set_desc_field(
         field_identifier
     );
 
-    check_need_data(desc_handle)?;
-
     if rec_number < 0 {
         tracing::error!("set_desc_field: invalid negative rec_number {}", rec_number);
         return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
     let field = DescField::try_from(field_identifier)?;
-    let desc_ref = desc_ref_from_handle(desc_handle)?;
+    let (guard, kind) = desc_from_handle(desc_handle)?;
+    let mut inner = guard.inner.lock();
 
-    match desc_ref {
-        DescriptorRef::Ard(desc) => set_ard_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ird(desc) => set_ird_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Apd(desc) => set_apd_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ipd(desc) => set_ipd_field(desc, rec_number, field, value_ptr),
+    if inner.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
+    match kind {
+        DescriptorKind::Ard => set_ard_field(&mut inner.ard, rec_number, field, value_ptr),
+        DescriptorKind::Ird => set_ird_field(&mut inner.ird, rec_number, field, value_ptr),
+        DescriptorKind::Apd => set_apd_field(&mut inner.apd, rec_number, field, value_ptr),
+        DescriptorKind::Ipd => set_ipd_field(&mut inner.ipd, rec_number, field, value_ptr),
     }
 }
 

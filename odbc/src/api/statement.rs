@@ -1959,7 +1959,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
 
     let attr = StmtAttr::try_from(attribute)?;
     let guard = stmt_from_handle(statement_handle)?;
-    let mut inner = guard.inner.lock();
+    let inner = guard.inner.lock();
 
     if inner.state.as_ref().is_need_data() {
         return InvalidDuringDaeSnafu.fail();
@@ -1991,30 +1991,26 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::AppRowDesc => {
-            let ard_ptr = &mut inner.ard as *mut crate::api::ArdDescriptor as sql::Handle;
             unsafe {
-                *(value_ptr as *mut sql::Handle) = ard_ptr;
+                *(value_ptr as *mut sql::Handle) = inner.ard_handle.into();
             }
             Ok(())
         }
         StmtAttr::ImpRowDesc => {
-            let ird_ptr = &mut inner.ird as *mut crate::api::IrdDescriptor as sql::Handle;
             unsafe {
-                *(value_ptr as *mut sql::Handle) = ird_ptr;
+                *(value_ptr as *mut sql::Handle) = inner.ird_handle.into();
             }
             Ok(())
         }
         StmtAttr::AppParamDesc => {
-            let apd_ptr = &mut inner.apd as *mut crate::api::ApdDescriptor as sql::Handle;
             unsafe {
-                *(value_ptr as *mut sql::Handle) = apd_ptr;
+                *(value_ptr as *mut sql::Handle) = inner.apd_handle.into();
             }
             Ok(())
         }
         StmtAttr::ImpParamDesc => {
-            let ipd_ptr = &mut inner.ipd as *mut crate::api::IpdDescriptor as sql::Handle;
             unsafe {
-                *(value_ptr as *mut sql::Handle) = ipd_ptr;
+                *(value_ptr as *mut sql::Handle) = inner.ipd_handle.into();
             }
             Ok(())
         }
