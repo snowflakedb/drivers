@@ -20,7 +20,7 @@ use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encr
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -426,15 +426,22 @@ pub async fn download_single_file(
     };
 
     let output_data = match data.encryption_material.as_ref() {
-        Some(enc_material) => {
-            let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
-                detail: "encryption metadata headers missing from downloaded file",
-            })?;
-            let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
-                detail: "digest header missing from downloaded file",
-            })?;
-            decrypt_file_data(&raw_data, &enc_metadata, d, enc_material).context(DecryptionSnafu)?
-        }
+        Some(enc_material) => match (file_metadata, digest.as_deref()) {
+            (Some(enc_metadata), Some(d)) => {
+                decrypt_file_data(&raw_data, &enc_metadata, d, enc_material)
+                    .context(DecryptionSnafu)?
+            }
+            // The server advertises encryption material but the object carries no
+            // client-side-encryption headers (e.g. git stage objects on S3).
+            // Fall through to raw bytes, matching legacy connector behaviour.
+            _ => {
+                tracing::debug!(
+                    "encryption_material present but S3 encryption headers absent; \
+                     returning raw bytes"
+                );
+                raw_data
+            }
+        },
         None => raw_data,
     };
 
@@ -556,12 +563,6 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
         backtrace: snafu::Backtrace,
-    },
-    #[snafu(display("Missing decryption metadata: {detail}"))]
-    MissingDecryptionMetadata {
-        detail: &'static str,
-        #[snafu(implicit)]
-        location: Location,
     },
     #[snafu(display("File does not exist: {pattern}"))]
     NoFilesMatched {
