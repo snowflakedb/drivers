@@ -24,36 +24,15 @@ def pytest_runtest_setup(item):
         pytest.skip("Requires headless browser container (SF_TEST_HEADLESS_BROWSER=true)")
 
 
-@pytest.fixture(scope="module")
-def browser_params():
-    """Load external browser test parameters. Fails if credentials are missing."""
+def require_auth_params(*keys: str) -> dict[str, str]:
+    """Fetch required auth parameters, failing once with every missing key listed.
+
+    Only credentials belong here; connection coordinates (host/account/...) come
+    from the default test parameters via ``connection_factory``.
+    """
     params = get_test_parameters()
-    browser_user = params.get("SNOWFLAKE_TEST_OKTA_USER")
-    okta_password = params.get("SNOWFLAKE_TEST_OKTA_PASSWORD")
-    host = params.get("SNOWFLAKE_TEST_OKTA_HOST")
-    account = params.get("SNOWFLAKE_TEST_OKTA_ACCOUNT")
-
-    missing = []
-    if not browser_user:
-        missing.append("SNOWFLAKE_TEST_OKTA_USER")
-    if not okta_password:
-        missing.append("SNOWFLAKE_TEST_OKTA_PASSWORD")
-    if not host:
-        missing.append("SNOWFLAKE_TEST_OKTA_HOST")
-    if not account:
-        missing.append("SNOWFLAKE_TEST_OKTA_ACCOUNT")
-
+    values = {key: params.get(key) for key in keys}
+    missing = [key for key, value in values.items() if not value]
     if missing:
-        pytest.fail(f"Browser auth test credentials missing from parameters.json: {', '.join(missing)}")
-
-    return {
-        "host": host,
-        "account": account,
-        "browser_user": browser_user,
-        "okta_login": browser_user,
-        "okta_password": okta_password,
-        "role": "PUBLIC",
-        "database": params.get("SNOWFLAKE_TEST_DATABASE"),
-        "schema": params.get("SNOWFLAKE_TEST_SCHEMA"),
-        "warehouse": params.get("SNOWFLAKE_TEST_WAREHOUSE"),
-    }
+        pytest.fail(f"Auth test credentials missing from parameters.json: {', '.join(missing)}")
+    return values

@@ -292,5 +292,5 @@ TEST_CASE("should fail when login request is rejected after browser callback", "
 }
 
 // The full external browser flow against a real headless-Chrome browser is exercised by the
-// e2e test in tests/e2e/authentication/external_browser.cpp (run via ci/auth/run_auth_browser_odbc.sh).
+// e2e test in tests/e2e/authentication/external_browser.cpp (run via tests/auth/run_auth_browser.sh odbc).
 // The integration tests above only simulate the callback via raw sockets.
