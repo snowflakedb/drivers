@@ -21,13 +21,14 @@ from ..errors import Error
 
 
 if TYPE_CHECKING:
+    from .._async.connection import AsyncConnection
     from .._async.cursor import AsyncSnowflakeCursorBase
     from ..connection import Connection
     from ..cursor import SnowflakeCursorBase
 
 
 def route_exception(
-    connection: Connection | None,
+    connection: Connection | AsyncConnection | None,
     cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
     exc: Error,
 ) -> NoReturn:
@@ -54,7 +55,7 @@ class ErrorHandlerMixin:
         _apply_errorhandler(cls)
 
     @property
-    def _errorhandler_connection(self) -> Connection | None:
+    def _errorhandler_connection(self) -> Connection | AsyncConnection | None:
         return None
 
     @property

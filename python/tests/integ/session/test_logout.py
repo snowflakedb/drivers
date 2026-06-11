@@ -211,7 +211,7 @@ class TestAutoCleanupConfig:
         """Verify auto_cleanup defaults to True and atexit handler is registered."""
         from snowflake.connector.connection import Connection
 
-        with patch("snowflake.connector.connection.atexit") as mock_atexit:
+        with patch("snowflake.connector.connection._connection.atexit") as mock_atexit:
             # Given Snowflake Python client is created with default parameters
             conn = Connection(user="test", account="test")
 

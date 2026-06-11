@@ -27,25 +27,25 @@ class TestConnectionNumpyParameter:
         assert conn.config.numpy is None
 
     def test_numpy_true_sets_attribute(self, mock_db_api):
-        with patch("snowflake.connector.connection.check_dependency"):
+        with patch("snowflake.connector._internal.connection.connection.check_dependency"):
             conn = make_connection(mock_db_api, numpy=True)
         assert conn.config.numpy is True
 
     def test_numpy_true_without_numpy_installed_raises(self, mock_db_api):
         missing = MissingOptionalDependency("numpy")
-        with patch("snowflake.connector.connection.np", missing):
+        with patch("snowflake.connector._internal.connection.connection.np", missing):
             with pytest.raises(ProgrammingError) as exc_info:
                 make_connection(mock_db_api, numpy=True)
         assert exc_info.value.errno == ER_NO_NUMPY
 
     def test_numpy_false_without_numpy_installed_succeeds(self, mock_db_api):
         missing = MissingOptionalDependency("numpy")
-        with patch("snowflake.connector.connection.np", missing):
+        with patch("snowflake.connector._internal.connection.connection.np", missing):
             conn = make_connection(mock_db_api, numpy=False)
         assert conn.config.numpy is False
 
     def test_numpy_does_not_leak_to_rust_core(self, mock_db_api):
-        with patch("snowflake.connector.connection.check_dependency"):
+        with patch("snowflake.connector._internal.connection.connection.check_dependency"):
             make_connection(mock_db_api, numpy=True)
         for call in mock_db_api.connection_set_option_int.call_args_list:
             request = call.args[0] if call.args else call.kwargs.get("request")

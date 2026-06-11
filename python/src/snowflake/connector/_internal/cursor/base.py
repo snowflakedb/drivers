@@ -24,15 +24,15 @@ from .result_metadata import QueryResultStats, ResultMetadata
 
 
 if TYPE_CHECKING:
+    from ..._async.connection import AsyncConnection
     from ...connection import Connection
-    from ..arrow_stream_iterator import ArrowStreamIterator
 
 
 class CursorBaseMixin(ErrorHandlerMixin):
     """Zero-I/O cursor members shared by sync and async base cursor classes."""
 
-    # Initialized by ``__init__`` (subclasses set ``_result_set`` and ``_prefetch_hook``).
-    _connection: Connection
+    # Set by subclass ``__init__`` before ``super().__init__()``.
+    _connection: Connection | AsyncConnection
     _closed: bool
     _messages: list[tuple[type[Exception], ErrorValue]]
     _errorhandler: Callable[..., None]
@@ -40,13 +40,10 @@ class CursorBaseMixin(ErrorHandlerMixin):
     _query_result: QueryResult
     _rownumber: int
     _multi_statement: MultiStatementQueryResultState | None
-    _iterator: ArrowStreamIterator | None
     _statement_parameters: dict[str, Any]
     _binding_data: None | bytes
 
-    def __init__(self, connection: Connection) -> None:
-        # -- Core cursor state (identity, lifecycle, error handling) --
-        self._connection = connection
+    def __init__(self) -> None:
         self._closed = False
         self._messages = []
         self._errorhandler = Error.default_errorhandler
@@ -63,9 +60,6 @@ class CursorBaseMixin(ErrorHandlerMixin):
         # -- Multi-statement navigation (set by _handle_multi_statement_response, cleared on reset) --
         self._multi_statement = None
 
-        # -- Active iteration state (cleared on reset) --
-        self._iterator = None
-
         # -- Statement parameters (persists until explicitly changed) --
         self._statement_parameters = {}
 
@@ -75,12 +69,6 @@ class CursorBaseMixin(ErrorHandlerMixin):
     # ------------------------------------------------------------------
     # PEP 249 attributes
     # ------------------------------------------------------------------
-
-    @property
-    @pep249
-    def connection(self) -> Connection:
-        """The :class:`Connection` object that created this cursor."""
-        return self._connection
 
     @property
     @pep249
@@ -362,7 +350,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
     @property
     def timestamp_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._get_session_parameter("TIMESTAMP_OUTPUT_FORMAT")
+        return self._connection._session_parameters["TIMESTAMP_OUTPUT_FORMAT"]
 
     @property
     def timestamp_ltz_output_format(self) -> str | None:
@@ -370,7 +358,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        return self._connection._get_session_parameter("TIMESTAMP_LTZ_OUTPUT_FORMAT") or self.timestamp_output_format
+        return self._connection._session_parameters["TIMESTAMP_LTZ_OUTPUT_FORMAT"] or self.timestamp_output_format
 
     @property
     def timestamp_tz_output_format(self) -> str | None:
@@ -378,7 +366,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        return self._connection._get_session_parameter("TIMESTAMP_TZ_OUTPUT_FORMAT") or self.timestamp_output_format
+        return self._connection._session_parameters["TIMESTAMP_TZ_OUTPUT_FORMAT"] or self.timestamp_output_format
 
     @property
     def timestamp_ntz_output_format(self) -> str | None:
@@ -386,27 +374,27 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        return self._connection._get_session_parameter("TIMESTAMP_NTZ_OUTPUT_FORMAT") or self.timestamp_output_format
+        return self._connection._session_parameters["TIMESTAMP_NTZ_OUTPUT_FORMAT"] or self.timestamp_output_format
 
     @property
     def date_output_format(self) -> str | None:
         """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._get_session_parameter("DATE_OUTPUT_FORMAT")
+        return self._connection._session_parameters["DATE_OUTPUT_FORMAT"]
 
     @property
     def time_output_format(self) -> str | None:
         """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._get_session_parameter("TIME_OUTPUT_FORMAT")
+        return self._connection._session_parameters["TIME_OUTPUT_FORMAT"]
 
     @property
     def timezone(self) -> str | None:
         """The session's ``TIMEZONE`` parameter value."""
-        return self._connection._get_session_parameter("TIMEZONE")
+        return self._connection._session_parameters["TIMEZONE"]
 
     @property
     def binary_output_format(self) -> str | None:
         """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
-        return self._connection._get_session_parameter("BINARY_OUTPUT_FORMAT")
+        return self._connection._session_parameters["BINARY_OUTPUT_FORMAT"]
 
     # ------------------------------------------------------------------
     # Error handling
@@ -423,10 +411,6 @@ class CursorBaseMixin(ErrorHandlerMixin):
         if value is None:
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
-
-    @property
-    def _errorhandler_connection(self) -> Connection:
-        return self._connection
 
     # ------------------------------------------------------------------
     # Optional dependency checks

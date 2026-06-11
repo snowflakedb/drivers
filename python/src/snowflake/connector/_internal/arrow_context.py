@@ -21,6 +21,7 @@ from .extras import tzlocal, MissingOptionalDependency
 if TYPE_CHECKING:
     from numpy import datetime64, float64, int64, timedelta64
 
+    from .._async.connection import AsyncConnection
     from ..connection import Connection
 
 
@@ -74,9 +75,9 @@ class ArrowConverterContext:
         self._timezone = timezone
 
     @classmethod
-    def create(cls, connection: Connection) -> ArrowConverterContext:
+    def create(cls, connection: Connection | AsyncConnection) -> ArrowConverterContext:
         """Create a context by fetching the session timezone."""
-        tz = connection._get_session_parameter(PARAMETER_TIMEZONE)
+        tz = connection._session_parameters[PARAMETER_TIMEZONE]
         return cls(timezone=tz)
 
     @property

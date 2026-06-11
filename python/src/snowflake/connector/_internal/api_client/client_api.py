@@ -549,7 +549,7 @@ class AsyncCoreDriver:
     access (thread-safe, double-checked lock). Tests can inject a mock by
     assigning to the ``client`` setter.
 
-    Currently, exposes only the subset of methods the cursor layer needs;
+    Exposes the async methods needed by the async cursor and connection layers;
     extend as new async callers appear.
     """
 
@@ -572,6 +572,120 @@ class AsyncCoreDriver:
     @client.setter
     def client(self, client: AsyncDatabaseDriverClient | None) -> None:
         self._client = client
+
+    # =====================================================================
+    # Database lifecycle
+    # =====================================================================
+
+    async def database_new(self) -> DatabaseNewResponse:
+        return await self.client.database_new(DatabaseNewRequest())
+
+    async def database_init(self, db_handle: DatabaseHandle) -> DatabaseInitResponse:
+        return await self.client.database_init(DatabaseInitRequest(db_handle=db_handle))
+
+    async def database_release(self, db_handle: DatabaseHandle) -> DatabaseReleaseResponse:
+        return await self.client.database_release(DatabaseReleaseRequest(db_handle=db_handle))
+
+    # =====================================================================
+    # Connection lifecycle
+    # =====================================================================
+
+    async def connection_new(self) -> ConnectionNewResponse:
+        return await self.client.connection_new(ConnectionNewRequest())
+
+    async def connection_init(
+        self,
+        conn_handle: ConnectionHandle,
+        db_handle: DatabaseHandle,
+        wrapper_identity: WrapperIdentity,
+    ) -> ConnectionInitResponse:
+        return await self.client.connection_init(
+            ConnectionInitRequest(
+                conn_handle=conn_handle,
+                db_handle=db_handle,
+                wrapper_identity=wrapper_identity,
+            )
+        )
+
+    async def connection_set_options(
+        self,
+        conn_handle: ConnectionHandle,
+        options: dict[str, ConfigSetting],
+    ) -> ConnectionSetOptionsResponse:
+        return await self.client.connection_set_options(
+            ConnectionSetOptionsRequest(conn_handle=conn_handle, options=options)
+        )
+
+    async def connection_set_session_parameters(
+        self, conn_handle: ConnectionHandle, parameters: dict[str, str]
+    ) -> ConnectionSetSessionParametersResponse:
+        return await self.client.connection_set_session_parameters(
+            ConnectionSetSessionParametersRequest(conn_handle=conn_handle, parameters=parameters)
+        )
+
+    async def connection_close(self, conn_handle: ConnectionHandle) -> ConnectionCloseResponse:
+        return await self.client.connection_close(ConnectionCloseRequest(conn_handle=conn_handle))
+
+    async def connection_release(self, conn_handle: ConnectionHandle) -> ConnectionReleaseResponse:
+        return await self.client.connection_release(ConnectionReleaseRequest(conn_handle=conn_handle))
+
+    async def connection_is_closed(self, conn_handle: ConnectionHandle) -> ConnectionIsClosedResponse:
+        return await self.client.connection_is_closed(ConnectionIsClosedRequest(conn_handle=conn_handle))
+
+    async def connection_heartbeat(self, conn_handle: ConnectionHandle) -> ConnectionHeartbeatResponse:
+        return await self.client.connection_heartbeat(ConnectionHeartbeatRequest(conn_handle=conn_handle))
+
+    async def connection_get_query_status(
+        self, conn_handle: ConnectionHandle, query_id: str
+    ) -> ConnectionGetQueryStatusResponse:
+        return await self.client.connection_get_query_status(
+            ConnectionGetQueryStatusRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    async def connection_send_http(
+        self,
+        conn_handle: ConnectionHandle,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+    ) -> ConnectionSendHttpResponse:
+        return await self.client.connection_send_http(
+            ConnectionSendHttpRequest(
+                conn_handle=conn_handle,
+                method=method,
+                url=url,
+                headers=headers,
+                body=body,
+            )
+        )
+
+    async def connection_request_token(
+        self, conn_handle: ConnectionHandle, request_type: TokenRequestType.ValueType
+    ) -> ConnectionTokenResponse:
+        return await self.client.connection_request_token(
+            ConnectionTokenRequest(conn_handle=conn_handle, request_type=request_type)
+        )
+
+    # =====================================================================
+    # Telemetry
+    # =====================================================================
+
+    async def telemetry_send_api_usage(self, conn_handle: ConnectionHandle, api_method: str) -> TelemetrySendResponse:
+        return await self.client.telemetry_send_api_usage(
+            TelemetrySendApiUsageRequest(conn_handle=conn_handle, api_method=api_method)
+        )
+
+    async def telemetry_send_wrapper_error(
+        self, conn_handle: ConnectionHandle, exception_type: str, error_source: str
+    ) -> TelemetrySendResponse:
+        return await self.client.telemetry_send_wrapper_error(
+            TelemetrySendWrapperErrorRequest(
+                conn_handle=conn_handle,
+                exception_type=exception_type,
+                error_source=error_source,
+            )
+        )
 
     # =====================================================================
     # Statement lifecycle (cursor execute path)
@@ -631,6 +745,25 @@ class AsyncCoreDriver:
     ) -> ConnectionAbortQueryResponse:
         return await self.client.connection_abort_query(
             ConnectionAbortQueryRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    async def connection_get_info(
+        self,
+        conn_handle: ConnectionHandle,
+        include_master_token: bool = False,
+    ) -> ConnectionGetInfoResponse:
+        return await self.client.connection_get_info(
+            ConnectionGetInfoRequest(conn_handle=conn_handle, include_master_token=include_master_token)
+        )
+
+    async def connection_get_parameter(self, conn_handle: ConnectionHandle, key: str) -> ConnectionGetParameterResponse:
+        return await self.client.connection_get_parameter(
+            ConnectionGetParameterRequest(conn_handle=conn_handle, key=key)
+        )
+
+    async def connection_get_all_parameters(self, conn_handle: ConnectionHandle) -> ConnectionGetAllParametersResponse:
+        return await self.client.connection_get_all_parameters(
+            ConnectionGetAllParametersRequest(conn_handle=conn_handle)
         )
 
     # =====================================================================

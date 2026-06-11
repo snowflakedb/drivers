@@ -6,24 +6,24 @@ Async counterpart of :mod:`snowflake.connector.cursor._base`. Defines
 from __future__ import annotations
 
 import abc
-import asyncio
 import logging
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..._internal.api_client.client_api import async_core_driver
-from ..._internal.arrow_stream_utils import (
-    collect_arrow_table,
-    create_row_iterator,
-    create_table_iterator,
+from ..._internal.arrow_stream_async import (
+    AsyncArrowStreamIterator,
+    collect_arrow_table_async,
+    to_pandas_async,
 )
+from ..._internal.arrow_stream_utils import create_row_iterator, create_table_iterator
 from ..._internal.cursor import (
+    AsyncQueryResultWaiter,
     CursorBaseMixin,
     DictRow,
     MultiStatementQueryResultState,
     QueryResult,
-    QueryResultWaiter,
     ResultMetadata,
     Row,
 )
@@ -45,7 +45,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from ..._internal.statement_utils import async_statement
 from ...errors import NotSupportedError, ProgrammingError
-from ...result_batch import ResultBatch
+from ..result_batch import AsyncResultBatch
 from ._result_set_wrapper import AsyncResultSetWrapper
 
 
@@ -53,21 +53,12 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
-    from ..._internal.arrow_stream_iterator import ArrowStreamIterator
-    from ...connection import Connection
+    from ..connection import AsyncConnection
 
 logger = logging.getLogger(__name__)
 
-# Passed to next(iterator, default) so StopIteration does not cross to_thread.
-_ITER_DONE = object()
-
-
-def _next_or_default(iterator: Iterator[Any], default: object) -> Any:
-    """Typed ``next(iterator, default)`` for :func:`asyncio.to_thread`.
-
-    Mypy rejects the builtin ``next`` here because it is an overloaded function.
-    """
-    return next(iterator, default)
+# Distinguishes "stream exhausted" from a legitimate ``None`` row value.
+_FETCH_DONE = object()
 
 
 class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
@@ -77,14 +68,19 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     Concrete subclasses must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
     """
 
-    def __init__(self, connection: Connection) -> None:
+    _connection: AsyncConnection
+    _iterator: AsyncArrowStreamIterator | None
+
+    def __init__(self, connection: AsyncConnection) -> None:
         """
         Initialize a new cursor object.
 
         Args:
-            connection: Connection object that created this cursor
+            connection: AsyncConnection object that created this cursor
         """
-        super().__init__(connection)
+        self._connection = connection
+        super().__init__()
+        self._iterator = None
 
         # -- ResultSet guard (set by _execute, cleared on reset) --
         self._result_set = AsyncResultSetWrapper()
@@ -101,12 +97,26 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """Whether fetch methods return dicts instead of tuples."""
 
     # ------------------------------------------------------------------
+    # PEP 249 attributes
+    # ------------------------------------------------------------------
+
+    @property
+    @pep249
+    def connection(self) -> AsyncConnection:
+        """The :class:`AsyncConnection` object that created this cursor."""
+        return self._connection
+
+    # ------------------------------------------------------------------
     # Error handling
     # ------------------------------------------------------------------
 
     @property
     def _errorhandler_cursor(self) -> AsyncSnowflakeCursorBase:
         return self
+
+    @property
+    def _errorhandler_connection(self) -> AsyncConnection:
+        return self._connection
 
     # ------------------------------------------------------------------
     # Execution
@@ -362,10 +372,8 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         if not self._iterator:
             self._iterator = await self._create_row_iterator()
-        # Nanoarrow is sync C code with no async API. to_thread keeps the loop
-        # free while it fetches chunks and builds Python rows.
-        row = await asyncio.to_thread(_next_or_default, self._iterator, _ITER_DONE)
-        if row is _ITER_DONE:
+        row = await self._iterator.fetch_next(default=_FETCH_DONE)
+        if row is _FETCH_DONE:
             return None
         self._rownumber += 1
         return cast(Row | DictRow, row)
@@ -405,7 +413,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         if not self._iterator:
             self._iterator = await self._create_row_iterator()
-        rows = await asyncio.to_thread(self._iterator.fetch_many, size)
+        rows = await self._iterator.fetch_many(size)
         self._rownumber += len(rows)
         return rows
 
@@ -422,7 +430,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         if not self._iterator:
             self._iterator = await self._create_row_iterator()
-        rows = await asyncio.to_thread(self._iterator.fetch_all)
+        rows = await self._iterator.fetch_all()
         self._rownumber += len(rows)
         return rows
 
@@ -430,12 +438,15 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    async def _create_row_iterator(self) -> ArrowStreamIterator:
-        return create_row_iterator(
-            stream_ptr=await self._result_set.get_arrow_stream_ptr(),
-            connection=self._connection,
-            use_dict_result=self._use_dict_result,
-            use_numpy=bool(self._connection.config.numpy),
+    async def _create_row_iterator(self) -> AsyncArrowStreamIterator:
+        stream_ptr = await self._result_set.get_arrow_stream_ptr()
+        return AsyncArrowStreamIterator(
+            create_row_iterator(
+                stream_ptr=stream_ptr,
+                connection=self._connection,
+                use_dict_result=self._use_dict_result,
+                use_numpy=bool(self._connection.config.numpy),
+            )
         )
 
     @pep249
@@ -548,9 +559,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Returns:
             bool: True if closed, False otherwise
         """
-        # TODO(SNOW-3487088): replace asyncio.to_thread with a native async
-        # connection.is_closed once the connection layer is ported to async.
-        return self._closed or await asyncio.to_thread(self._connection.is_closed)
+        return self._closed or await self._connection.is_closed()
 
     @requires_open_cursor_not_connection
     async def reset(self, closing: bool = False) -> None:
@@ -608,16 +617,16 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         force_microsecond_precision: bool = False,
     ) -> AsyncIterator[Table]:
         """Fetch Arrow Tables in batches."""
-        iterator = create_table_iterator(
-            stream_ptr=await self._result_set.get_arrow_stream_ptr(),
-            connection=self._connection,
-            number_to_decimal=self._connection.arrow_number_to_decimal,
-            force_microsecond_precision=force_microsecond_precision,
+        stream_ptr = await self._result_set.get_arrow_stream_ptr()
+        iterator = AsyncArrowStreamIterator(
+            create_table_iterator(
+                stream_ptr=stream_ptr,
+                connection=self._connection,
+                number_to_decimal=self._connection.arrow_number_to_decimal,
+                force_microsecond_precision=force_microsecond_precision,
+            )
         )
-        while True:
-            batch = await asyncio.to_thread(_next_or_default, iterator, _ITER_DONE)
-            if batch is _ITER_DONE:
-                return
+        async for batch in iterator:
             yield pyarrow.Table.from_batches([batch])
 
     @requires_dependency(pyarrow)
@@ -630,15 +639,15 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         force_microsecond_precision: bool = False,
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
+        stream_ptr = await self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=await self._result_set.get_arrow_stream_ptr(),
+            stream_ptr=stream_ptr,
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
-        return await asyncio.to_thread(
-            collect_arrow_table,
-            table_iterator=iterator,
+        return await collect_arrow_table_async(
+            iterator,
             columns_metadata=self._query_result.description,
             force_return_table=force_return_table,
         )
@@ -649,7 +658,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     async def fetch_pandas_batches(self, **kwargs: Any) -> AsyncIterator[DataFrame]:
         """Fetch Pandas DataFrames in batches."""
         async for table in self.fetch_arrow_batches(**kwargs):
-            yield await asyncio.to_thread(table.to_pandas)
+            yield await to_pandas_async(table)
 
     @requires_dependency(pandas)
     @api_telemetry
@@ -657,7 +666,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     async def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
         table: Table = await self.fetch_arrow_all(force_return_table=True, **kwargs)
-        return await asyncio.to_thread(table.to_pandas)
+        return await to_pandas_async(table)
 
     # ------------------------------------------------------------------
     # Distributed fetch
@@ -666,12 +675,12 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @api_telemetry
     @requires_open
     @with_prefetch_hook
-    async def get_result_batches(self) -> list[ResultBatch] | None:
+    async def get_result_batches(self) -> list[AsyncResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
         result_chunks = await self._result_set.get_chunks()
         if result_chunks is None:
             return None
-        return ResultBatch.from_chunks(
+        return AsyncResultBatch.from_chunks(
             list(result_chunks.chunks),
             self._query_result.description,
             self._connection,
@@ -749,14 +758,12 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 while polling for query completion.
         """
         await self.reset()
-        # TODO(SNOW-3487088): replace asyncio.to_thread with a native async
-        # connection call once the connection layer is ported to async.
-        await asyncio.to_thread(self.connection.get_query_status_throw_if_error, sfqid)
+        await self.connection.get_query_status_throw_if_error(sfqid)
         self._query_result.sfqid = sfqid
-        waiter = QueryResultWaiter(self._connection, sfqid)
+        waiter = AsyncQueryResultWaiter(self._connection, sfqid)
 
         async def prefetch_hook() -> None:
-            await waiter.wait_async()
+            await waiter.wait()
             self._prefetch_hook = None
             await self.query_result(sfqid)
 
