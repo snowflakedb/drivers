@@ -395,6 +395,13 @@ pipeline {
         }
         failure {
             echo '✗ Reference driver coverage generation failed'
+            script {
+                node {
+                    checkout scm
+                    def slackFailure = load("${env.WORKSPACE}/ci/lib/jenkins_slack_failure.groovy")
+                    slackFailure.notifyFailure()
+                }
+            }
         }
     }
 }

@@ -382,6 +382,15 @@ pipeline {
     }
     
     post {
+        failure {
+            script {
+                node {
+                    checkout scm
+                    def slackFailure = load("${env.WORKSPACE}/ci/lib/jenkins_slack_failure.groovy")
+                    slackFailure.notifyFailure()
+                }
+            }
+        }
         always {
             script {
                 // Aggregate per-component coverage into the build description so the
