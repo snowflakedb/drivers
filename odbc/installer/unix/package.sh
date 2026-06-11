@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Package the Snowflake ODBC driver as an RPM.
+# Package the Snowflake ODBC driver as one or more formats.
 #
 # Assumes the driver has already been built (e.g. via the build script).
 # Must be run from the repository root.
@@ -9,7 +9,9 @@
 #   - fpm (Ruby gem: gem install fpm)
 #
 # Environment variables:
-#   PLATFORM - e.g. "linux-x86_64-glibc" or "linux-aarch64-glibc"
+#   PLATFORM    - e.g. "linux-x86_64-glibc" or "linux-aarch64-glibc"
+#   PKG_FORMATS - space-separated list of formats to produce: rpm deb tgz
+#                 (default: rpm — for backward compatibility)
 #
 set -euxo pipefail
 
@@ -37,19 +39,24 @@ fi
 COMMIT_HASH="${COMMIT_HASH:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 VERSION="${BASE_VERSION}-${COMMIT_HASH}"
 
+PKG_FORMATS="${PKG_FORMATS:-rpm}"
+
 echo "=== Platform: $PLATFORM ==="
+echo "=== Formats:  $PKG_FORMATS ==="
 
 case "$PLATFORM" in
     linux-x86_64-glibc)
         PLATFORM_TARGET="x86_64-unknown-linux-gnu"
         SYSTEM_ARCH="x86_64"
+        DEB_ARCH="amd64"
         ;;
     linux-aarch64-glibc)
         PLATFORM_TARGET="aarch64-unknown-linux-gnu"
         SYSTEM_ARCH="aarch64"
+        DEB_ARCH="arm64"
         ;;
     *)
-        echo "Unsupported platform for RPM: $PLATFORM"
+        echo "Unsupported platform: $PLATFORM"
         exit 1
         ;;
 esac
@@ -84,26 +91,62 @@ sed "s/__ODBC_API_VERSION__/${ODBC_API_VERSION}/g" \
     "$TEMPLATES_DIR/odbcinst.ini.template" > "$STAGE_DIR$ODBC_DIR/templates/odbcinst.ini.template"
 cp "$TEMPLATES_DIR/odbc.ini.template" "$STAGE_DIR$ODBC_DIR/templates/odbc.ini.template"
 
-RPM_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.rpm"
 mkdir -p "$BUILD_DIR"
 
-echo "=== Building RPM: $RPM_NAME ==="
-fpm -s dir \
-    -t rpm \
-    -n snowflake-odbc-ud \
-    -v "$BASE_VERSION" \
-    -C "$STAGE_DIR" \
-    -p "$BUILD_DIR/$RPM_NAME" \
-    -d unixODBC \
-    --url https://www.snowflake.net/ \
-    --description "Snowflake ODBC UD ($VERSION, Release)" \
-    --license "Commercial" \
-    --vendor "Snowflake Computing, Inc." \
-    --rpm-changelog "$RPM_SCRIPTS_DIR/changelog" \
-    --after-install "$RPM_SCRIPTS_DIR/after_install.sh" \
-    --before-remove "$RPM_SCRIPTS_DIR/before_remove.sh" \
-    "${ODBC_DIR:1}"
+for fmt in $PKG_FORMATS; do
+    case "$fmt" in
+        rpm)
+            RPM_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.rpm"
+            echo "=== Building RPM: $RPM_NAME ==="
+            fpm -s dir \
+                -t rpm \
+                -n snowflake-odbc-ud \
+                -v "$BASE_VERSION" \
+                -C "$STAGE_DIR" \
+                -p "$BUILD_DIR/$RPM_NAME" \
+                -d unixODBC \
+                --url https://www.snowflake.net/ \
+                --description "Snowflake ODBC UD ($VERSION, Release)" \
+                --license "Commercial" \
+                --vendor "Snowflake Computing, Inc." \
+                --rpm-changelog "$RPM_SCRIPTS_DIR/changelog" \
+                --after-install "$RPM_SCRIPTS_DIR/after_install.sh" \
+                --before-remove "$RPM_SCRIPTS_DIR/before_remove.sh" \
+                "${ODBC_DIR:1}"
+            echo "=== Successfully created RPM at $BUILD_DIR/$RPM_NAME ==="
+            ;;
+        deb)
+            DEB_NAME="snowflake-odbc-ud_${VERSION}_${DEB_ARCH}.deb"
+            echo "=== Building DEB: $DEB_NAME ==="
+            fpm -s dir \
+                -t deb \
+                -n snowflake-odbc-ud \
+                -v "$BASE_VERSION" \
+                -C "$STAGE_DIR" \
+                -p "$BUILD_DIR/$DEB_NAME" \
+                -a "$DEB_ARCH" \
+                -d unixodbc \
+                -d odbcinst \
+                --url https://www.snowflake.net/ \
+                --description "Snowflake ODBC UD ($VERSION, Release)" \
+                --license "Commercial" \
+                --vendor "Snowflake Computing, Inc." \
+                --after-install "$RPM_SCRIPTS_DIR/after_install.sh" \
+                --before-remove "$RPM_SCRIPTS_DIR/before_remove.sh" \
+                "${ODBC_DIR:1}"
+            echo "=== Successfully created DEB at $BUILD_DIR/$DEB_NAME ==="
+            ;;
+        tgz)
+            TGZ_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.tar.gz"
+            echo "=== Building TGZ: $TGZ_NAME ==="
+            tar -czf "$BUILD_DIR/$TGZ_NAME" -C "$STAGE_DIR" "${ODBC_DIR:1}"
+            echo "=== Successfully created TGZ at $BUILD_DIR/$TGZ_NAME ==="
+            ;;
+        *)
+            echo "Unknown format: $fmt (supported: rpm deb tgz)"
+            exit 1
+            ;;
+    esac
+done
 
 rm -rf "$STAGE_DIR"
-
-echo "=== Successfully created RPM at $BUILD_DIR/$RPM_NAME ==="
