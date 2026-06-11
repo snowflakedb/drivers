@@ -364,7 +364,7 @@ async fn fetch_fresh_stage_info_with_sql(
 }
 
 /// Builds an Arrow `RecordBatchReader` from the stored `RowsetData`.
-/// Called lazily by `result_set_get_stream` / `result_set_get_reader`.
+/// Called lazily by `result_set_get_stream`.
 pub(super) async fn build_reader_from_rowset_data(
     data: &RowsetData,
     http_client: Client,

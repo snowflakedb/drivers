@@ -9,7 +9,6 @@ use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_response::{Data, RowsetData, Stats};
 use crate::rest::snowflake::snowflake_get_query_result;
 use arrow::array::RecordBatchReader;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
 use snafu::{OptionExt, ResultExt};
 use tokio::sync::Mutex;
 
@@ -358,49 +357,17 @@ async fn snapshot_reader_inputs(
 // --- DatabaseDriverV1 impl ---
 
 impl DatabaseDriverV1 {
-    /// Builds and returns a fresh Arrow stream for this result set.
+    /// Builds a fresh Arrow [`RecordBatchReader`] for this result set, lazily
+    /// from the stored `RowsetData`, so it can be requested multiple times. The
+    /// protobuf layer wraps it in an `FFI_ArrowArrayStream` at the C boundary.
     ///
-    /// The stream is constructed lazily from the stored `RowsetData`.
-    /// Can be called multiple times — the source data is preserved.
+    /// Awaiting this only builds the reader and never blocks. Iterating it,
+    /// however, must happen in a synchronous context: chunked result sets pull
+    /// chunks via a blocking channel receiver, so draining from within an async
+    /// runtime would call `blocking_recv` and panic. Drain after returning from
+    /// `block_on` (keeping the runtime alive), on a dedicated `std::thread`, or
+    /// via `tokio::task::spawn_blocking`.
     pub async fn result_set_get_stream(
-        &self,
-        result_handle: Handle,
-    ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
-        let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "result_handle: ResultSet handle not found".to_string(),
-            }
-            .build()
-        })?;
-        let (data, http_client, prefetch_config) = snapshot_reader_inputs(&rs_ptr).await;
-
-        let reader = build_reader_from_rowset_data(
-            &data,
-            http_client,
-            &prefetch_config,
-            &self.wrapper_presets,
-        )
-        .await
-        .context(QueryResponseProcessingSnafu)?;
-
-        Ok(Box::new(FFI_ArrowArrayStream::new(reader)))
-    }
-
-    /// Builds and returns a fresh Arrow [`RecordBatchReader`] for this result
-    /// set -- the Rust-native counterpart of [`Self::result_set_get_stream`]
-    /// that skips the `FFI_ArrowArrayStream` wrapping. Built lazily from the
-    /// stored `RowsetData`, so it can be requested multiple times.
-    ///
-    /// Calling this method is async-safe: awaiting it (including inside a
-    /// `tokio` task or `block_on`) only builds the reader and never blocks.
-    ///
-    /// **Iterating** the returned reader is what must happen in a synchronous
-    /// context. For chunked result sets the reader downloads/parses chunks
-    /// lazily via a blocking channel receiver, so draining it from within an
-    /// async runtime would call `blocking_recv` and panic. Drain it after
-    /// returning from `block_on` (while keeping the runtime alive), on a
-    /// dedicated `std::thread`, or via `tokio::task::spawn_blocking`.
-    pub async fn result_set_get_reader(
         &self,
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
@@ -512,8 +479,8 @@ impl DatabaseDriverV1 {
 mod tests {
     use super::*;
     use crate::rest::snowflake::query_response::Data;
-    use arrow::array::{Array, Int64Array, StringArray};
-    use arrow::datatypes::DataType;
+    use arrow::array::{Array, Int64Array, RecordBatch, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
 
     const JSON_ROWSET: &str = r#"{
         "queryResultFormat": "json",
@@ -524,23 +491,45 @@ mod tests {
         ]
     }"#;
 
-    #[test]
-    fn result_set_get_reader_returns_reader_without_ffi() {
-        let driver = DatabaseDriverV1::new();
-        let data: Data = serde_json::from_str(JSON_ROWSET)
-            .expect("fixture must deserialize into query_response::Data");
-        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
-        let reader_ctx = ReaderContext {
-            http_client: reqwest::Client::new(),
-            prefetch_config: PrefetchConfig::default(),
-        };
-        let handle = driver.create_result_set(descriptor, data.into_rowset_data(), reader_ctx);
+    // Arrow metadata only; the rows ship separately as the base64 IPC stream.
+    const ARROW_DATA: &str = r#"{
+        "queryResultFormat": "arrow",
+        "rowtype": [
+            {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0},
+            {"name": "NAME", "type": "TEXT", "nullable": true, "length": 100, "byteLength": 400}
+        ]
+    }"#;
 
-        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
-        let reader: Box<dyn RecordBatchReader + Send + 'static> = runtime
-            .block_on(driver.result_set_get_reader(handle))
-            .expect("result_set_get_reader should succeed for an inline JSON rowset");
+    /// Two-row `ID`/`NAME` batch encoded as a base64 Arrow IPC stream.
+    fn arrow_ipc_rowset_base64() -> String {
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ID", DataType::Int64, false),
+            Field::new("NAME", DataType::Utf8, true),
+        ]));
+        let columns: Vec<Arc<dyn Array>> = vec![
+            Arc::new(Int64Array::from(vec![1_i64, 2])),
+            Arc::new(StringArray::from(vec!["alice", "bob"])),
+        ];
+        let batch = RecordBatch::try_new(Arc::clone(&schema), columns)
+            .expect("failed to build Arrow record batch fixture");
+
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
+                .expect("failed to create Arrow IPC stream writer");
+            writer.write(&batch).expect("failed to write Arrow batch");
+            writer.finish().expect("failed to finish Arrow IPC stream");
+        }
+        BASE64.encode(&buf)
+    }
+
+    /// Drains a `result_set_get_stream` reader and asserts the canonical
+    /// two-row `ID`/`NAME` fixture. Prefetched readers pull batches via
+    /// `blocking_recv`, which panics inside a Tokio runtime, so this drains in
+    /// a sync context — callers must keep their runtime alive across the call.
+    fn assert_id_name_reader(reader: Box<dyn RecordBatchReader + Send>) {
         let schema = reader.schema();
         assert_eq!(schema.fields().len(), 2);
         assert_eq!(schema.field(0).name(), "ID");
@@ -548,12 +537,9 @@ mod tests {
         assert_eq!(schema.field(1).name(), "NAME");
         assert_eq!(schema.field(1).data_type(), &DataType::Utf8);
 
-        // Drain in a synchronous context (outside the runtime): the chunked
-        // reader uses `blocking_recv` and would panic inside an async runtime.
         let batches = reader
             .collect::<Result<Vec<_>, _>>()
             .expect("draining the reader should not error");
-        drop(runtime);
 
         assert_eq!(batches.len(), 1);
         let batch = &batches[0];
@@ -572,5 +558,56 @@ mod tests {
             .expect("column 1 should be Utf8");
         assert_eq!(names.value(0), "alice");
         assert_eq!(names.value(1), "bob");
+    }
+
+    #[test]
+    fn result_set_get_stream_returns_reader_without_ffi() {
+        let driver = DatabaseDriverV1::new();
+        let data: Data = serde_json::from_str(JSON_ROWSET)
+            .expect("fixture must deserialize into query_response::Data");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+        };
+        let handle = driver.create_result_set(descriptor, data.into_rowset_data(), reader_ctx);
+
+        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+        let reader: Box<dyn RecordBatchReader + Send> = runtime
+            .block_on(driver.result_set_get_stream(handle))
+            .expect("result_set_get_stream should succeed for an inline JSON rowset");
+
+        assert_id_name_reader(reader);
+        drop(runtime);
+    }
+
+    #[test]
+    fn result_set_get_stream_reads_arrow_rowset() {
+        let driver = DatabaseDriverV1::new();
+        let data: Data = serde_json::from_str(ARROW_DATA)
+            .expect("fixture must deserialize into query_response::Data");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+        };
+        // `ArrowMultiChunk` routes through `PrefetchChunkReader` (the
+        // `blocking_recv` path in `prefetch.rs`), unlike `ArrowSingleChunk`,
+        // which hands back a plain `StreamReader`. An inline initial batch with
+        // no remote chunks keeps the test network-free while still exercising
+        // the Arrow prefetch/drain path.
+        let rowset_data = RowsetData::ArrowMultiChunk {
+            initial_base64_opt: Some(arrow_ipc_rowset_base64()),
+            chunk_download_data: Vec::new(),
+        };
+        let handle = driver.create_result_set(descriptor, rowset_data, reader_ctx);
+
+        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+        let reader: Box<dyn RecordBatchReader + Send> = runtime
+            .block_on(driver.result_set_get_stream(handle))
+            .expect("result_set_get_stream should succeed for an inline Arrow rowset");
+
+        assert_id_name_reader(reader);
+        drop(runtime);
     }
 }

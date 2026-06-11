@@ -24,6 +24,7 @@ use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::sql_state::sql_state_from_code;
+use arrow::array::RecordBatchReader;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -331,11 +332,19 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     }
 }
 
-impl From<Box<FFI_ArrowArrayStream>> for ResultSetGetStreamResponse {
-    fn from(stream: Box<FFI_ArrowArrayStream>) -> Self {
-        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(stream).into();
+/// Wraps a Rust-native `RecordBatchReader` in an Arrow C-stream and returns the
+/// FFI pointer the proto responses carry. Keeping this conversion in the
+/// protobuf layer lets the core API deal only in `RecordBatchReader`.
+pub(super) fn reader_to_arrow_stream_ptr(
+    reader: Box<dyn RecordBatchReader + Send>,
+) -> ArrowArrayStreamPtr {
+    Box::into_raw(Box::new(FFI_ArrowArrayStream::new(reader))).into()
+}
+
+impl From<Box<dyn RecordBatchReader + Send>> for ResultSetGetStreamResponse {
+    fn from(reader: Box<dyn RecordBatchReader + Send>) -> Self {
         ResultSetGetStreamResponse {
-            stream: Some(stream_ptr),
+            stream: Some(reader_to_arrow_stream_ptr(reader)),
         }
     }
 }
