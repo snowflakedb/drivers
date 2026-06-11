@@ -13,7 +13,10 @@
 # in odbc.ini) can come from three sources, in priority order:
 #
 #   1. The SF_DRIVER_NAME environment variable (useful for headless installs
-#      and CI: `sudo SF_DRIVER_NAME=... installer -pkg ... -target /`).
+#      and CI). NOTE: sudo resets the environment by default — use `sudo -E`
+#      to preserve env vars:
+#        sudo -E SF_DRIVER_NAME=MyDriver SF_ACCOUNT=myaccount installer \
+#             -pkg snowflake-odbc-ud-*.pkg -target /
 #   2. An interactive AppleScript dropdown shown to the logged-in console
 #      user when the pkg is launched from Installer.app
 #   3. The default "Snowflake ODBC UD" when neither of the above is
@@ -43,7 +46,7 @@ ODBC_FILE="$ODBC_DIR/odbc.ini"
 
 if [ -z "${SF_ACCOUNT:-}" ]; then
     echo "[WARN] SF_ACCOUNT is not set, please manually update $ODBC_FILE after installation"
-    SF_ACCOUNT=SF_ACCOUNT
+    SF_ACCOUNT="<your-account-locator>"
 fi
 
 # Show an AppleScript "choose from list" dropdown as the console user.
@@ -90,14 +93,22 @@ OSA
 }
 
 DRIVER_NAME="${SF_DRIVER_NAME:-}"
+_DRIVER_NAME_SOURCE="default"
 if [ -z "$DRIVER_NAME" ]; then
     DRIVER_NAME=$(prompt_driver_name)
+    if [ -n "$DRIVER_NAME" ]; then
+        _DRIVER_NAME_SOURCE="interactive prompt"
+    fi
 fi
 if [ -z "$DRIVER_NAME" ]; then
     DRIVER_NAME="$DEFAULT_DRIVER_NAME"
+else
+    if [ "${SF_DRIVER_NAME:-}" = "$DRIVER_NAME" ]; then
+        _DRIVER_NAME_SOURCE="SF_DRIVER_NAME env var"
+    fi
 fi
 
-echo "Registering ODBC driver as: $DRIVER_NAME"
+echo "Registering ODBC driver as: $DRIVER_NAME (source: $_DRIVER_NAME_SOURCE)"
 
 mkdir -p "$ODBC_DIR"
 
@@ -205,6 +216,10 @@ upsert_ini_kv() {
 
 write_ini_section "$ODBCINST_FILE" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
 write_ini_section "$ODBC_FILE"     "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
+
+# mktemp creates files with mode 0600; ensure the ini files are world-readable
+# so the installing user (and ODBC tools running as that user) can read them.
+chmod 644 "$ODBCINST_FILE" "$ODBC_FILE"
 
 # Maintain the iODBC index sections so SQLDrivers() / SQLDataSources() and
 # tools like ODBC Manager.app see our driver and DSN.
