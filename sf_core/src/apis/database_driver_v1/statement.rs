@@ -6,7 +6,7 @@ use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::multistatement;
-use super::query::perform_put_get_transfer;
+use super::query::{StageInfoRefreshContext, perform_put_get_transfer};
 use super::result_set::{
     ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
     response_to_descriptor,
@@ -21,7 +21,8 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, snowflake_abort_query, snowflake_query_with_client,
+    QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
+    snowflake_query_with_client,
 };
 
 use crate::config::rest_parameters::QueryParameters;
@@ -391,51 +392,61 @@ impl DatabaseDriverV1 {
 
         let data = response.data;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-
         if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
             return Ok(multi);
         }
+        let rowset_data = self
+            .extract_rowset_data(&conn_arc, data, Some((query, query_parameters)))
+            .await?;
+        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+    }
 
-        let rowset_data = match data.command.as_deref() {
+    /// Decodes the row data from a query response, dispatching PUT/GET when
+    /// `data.command` is set. `refresh_sql` (the original SQL + parameters)
+    /// lets the file manager re-issue the PUT/GET to refresh stage
+    /// credentials mid-transfer. Callers pass `Some` when they can supply the
+    /// originating SQL (the sync execute path always can; the async
+    /// result-fetch path only when the response carries `sqlText`) and `None`
+    /// otherwise, which disables stage-info refresh for that transfer.
+    async fn extract_rowset_data(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        data: query_response::Data,
+        refresh_sql: Option<(String, QueryParameters)>,
+    ) -> Result<query_response::RowsetData, ApiError> {
+        match data.command.as_deref() {
             Some(command) => {
-                // Build refresh context for PUT/GET so the file manager can
-                // recover from recoverable stage-info-expiry errors by
-                // re-issuing the original PUT/GET SQL. Covers:
-                // - S3 `ExpiredToken` (STS rotation, creds-only)
-                // - GCS 401 (bearer expired, creds-only)
-                // - GCS 400 in presigned mode (per-file URL expired, URL refresh)
-                // The refresher calls back into
-                // `RefreshContext::execute_with_refresh`, so a session-token
-                // expiry mid-batch is renewed transparently.
-                let stage_info_refresh_context = super::query::StageInfoRefreshContext {
-                    sql: query.clone(),
-                    query_parameters: query_parameters.clone(),
-                    conn: conn_arc.clone(),
-                };
+                // PUT/GET refresh context: lets the file manager re-issue
+                // this SQL when stage credentials expire mid-transfer.
+                let stage_info_refresh_context =
+                    refresh_sql.map(|(sql, query_parameters)| StageInfoRefreshContext {
+                        sql,
+                        query_parameters,
+                        conn: conn.clone(),
+                    });
                 // Late-bind `put_get_max_attempts` so post-init `set_option`
                 // overrides take effect (mirrors `LogoutConfig`).
                 let (put_get_max_attempts, use_s3_regional_url_session_param) = {
-                    let conn = conn_arc.lock().await;
-                    let put_get_max_attempts = conn.put_get_max_attempts();
-                    let use_s3_regional_url_session_param =
-                        conn.use_s3_regional_url_session_param().await;
-                    (put_get_max_attempts, use_s3_regional_url_session_param)
+                    let conn = conn.lock().await;
+                    (
+                        conn.put_get_max_attempts(),
+                        conn.use_s3_regional_url_session_param().await,
+                    )
                 };
                 perform_put_get_transfer(
                     command,
                     &data,
                     &self.wrapper_presets,
                     put_get_max_attempts,
-                    Some(stage_info_refresh_context),
+                    stage_info_refresh_context,
                     use_s3_regional_url_session_param,
                 )
                 .await
-                .context(QueryResponseProcessingSnafu)?
+                .context(QueryResponseProcessingSnafu)
             }
-            None => data.into_rowset_data(),
-        };
-        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
-        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+            None => Ok(data.into_rowset_data()),
+        }
     }
 
     /// Execute query asynchronously (non-blocking) — returns immediately with query_id.
@@ -541,54 +552,32 @@ impl DatabaseDriverV1 {
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
             let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-
             if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
                 return Ok(multi);
             }
 
-            let rowset_data = match data.command.as_deref() {
-                Some(command) => {
+            // Build a refresh context when the response carries the original
+            // SQL (`sqlText`). Async PUT/GET retrieval goes through
+            // `monitoring/queries/{queryId}/result` which populates `sqlText`;
+            // without it we cannot re-issue the command, so stage-info refresh
+            // is disabled for this path.
+            let refresh_sql = match data.command.as_deref() {
+                Some(_) => {
                     let (query_parameters, _http_client, _retry_policy) =
                         query_context(&conn_ptr).await?;
-                    // See `statement_execute` for the late-binding rationale.
-                    let (put_get_max_attempts, use_s3_regional_url_session_param) = {
-                        let conn = conn_ptr.lock().await;
-                        let put_get_max_attempts = conn.put_get_max_attempts();
-                        let use_s3_regional_url_session_param =
-                            conn.use_s3_regional_url_session_param().await;
-                        (put_get_max_attempts, use_s3_regional_url_session_param)
-                    };
-                    // Build a refresh context when the response carries the
-                    // original SQL (`sqlText`). Async PUT/GET retrieval goes
-                    // through `monitoring/queries/{queryId}/result` which
-                    // populates `sqlText`; without it we cannot re-issue the
-                    // command, so stage-info refresh is disabled for this path.
-                    let stage_info_refresh_context =
-                        data.sql_text
-                            .as_ref()
-                            .map(|sql| super::query::StageInfoRefreshContext {
-                                sql: sql.clone(),
-                                query_parameters: query_parameters.clone(),
-                                conn: conn_ptr.clone(),
-                            });
-                    if stage_info_refresh_context.is_none() {
-                        tracing::debug!(
-                            "async PUT/GET response missing sqlText; stage-info refresh disabled"
-                        );
+                    match data.sql_text.clone() {
+                        Some(sql) => Some((sql, query_parameters)),
+                        None => {
+                            tracing::debug!(
+                                "async PUT/GET response missing sqlText; stage-info refresh disabled"
+                            );
+                            None
+                        }
                     }
-                    perform_put_get_transfer(
-                        command,
-                        &data,
-                        &self.wrapper_presets,
-                        put_get_max_attempts,
-                        stage_info_refresh_context,
-                        use_s3_regional_url_session_param,
-                    )
-                    .await
-                    .context(QueryResponseProcessingSnafu)?
                 }
-                None => data.into_rowset_data(),
+                None => None,
             };
+            let rowset_data = self.extract_rowset_data(&conn_ptr, data, refresh_sql).await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
         }
