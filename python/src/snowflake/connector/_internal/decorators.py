@@ -8,16 +8,20 @@ to just the decorator façade.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
+import logging
 import types
 
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from contextvars import ContextVar
 from typing import Any, TypeVar, cast
 
 from .backward_compatibility import apply_backward_compatibility
 
+
+logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -45,6 +49,58 @@ def internal_api(func: F) -> F:
 def pep249(func: F) -> F:
     """Mark a method or property as defined by PEP 249 (required or optional)."""
     return func
+
+
+class _AwaitableContextManager:
+    """Wrapper returned by :func:`awaitable_context_manager` decorated functions.
+
+    Supports both ``await fn(...)`` and ``async with fn(...) as result:``.
+    The ``__aexit__`` delegates to the returned object's ``__aexit__``, so
+    the wrapped coroutine must return an async context manager.
+    """
+
+    def __init__(self, coro: Coroutine[Any, Any, Any]) -> None:
+        self._coro = coro
+        self._obj: Any = None
+
+    def __await__(self) -> Generator[Any, None, Any]:
+        return self._coro.__await__()
+
+    async def __aenter__(self) -> Any:
+        self._obj = await self._coro
+        return self._obj
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any:
+        if self._obj is not None:
+            return await self._obj.__aexit__(exc_type, exc_val, exc_tb)
+
+
+def awaitable_context_manager(func: F) -> F:
+    """Make an ``async def`` factory support both ``await`` and ``async with``.
+
+    The decorated function must return an object that implements
+    ``__aenter__`` / ``__aexit__`` (i.e. an async context manager).
+
+    Usage::
+
+        @awaitable_context_manager
+        async def connect(**kwargs):
+            conn = Connection(**kwargs)
+            await conn.open()
+            return conn
+
+
+        # Both patterns work:
+        conn = await connect(...)
+        async with connect(...) as conn:
+            ...
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> _AwaitableContextManager:
+        return _AwaitableContextManager(func(*args, **kwargs))
+
+    return cast(F, wrapper)
 
 
 def backward_compatibility(obj: T) -> T:
@@ -81,17 +137,50 @@ def backward_compatibility(obj: T) -> T:
 _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
-def _send_api_usage(self: Any, func: Callable[..., Any]) -> None:
-    """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
+def _telemetry_client_for(self: Any) -> Any:
+    from snowflake.connector._async.connection._connection import AsyncConnection
     from snowflake.connector._async.cursor._base import AsyncSnowflakeCursorBase as AsyncSnowflakeCursorBase
     from snowflake.connector.connection import Connection
     from snowflake.connector.cursor._base import SnowflakeCursorBase
 
+    if isinstance(self, (Connection, AsyncConnection)):
+        return self._telemetry_client
+    if isinstance(self, (SnowflakeCursorBase, AsyncSnowflakeCursorBase)):
+        return self._connection._telemetry_client
+    raise TypeError(f"Unexpected telemetry target: {type(self)!r}")
+
+
+def _schedule_async_telemetry(coro: Any) -> None:
+    """Fire-and-forget async telemetry when a sync decorated method runs under a loop."""
+    try:
+        asyncio.get_running_loop().create_task(coro)
+    except RuntimeError:
+        coro.close()
+        logger.debug("Skipped async telemetry with no running event loop", exc_info=True)
+
+
+def _send_api_usage(self: Any, func: Callable[..., Any]) -> None:
+    """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
+    from snowflake.connector._internal.telemetry import AsyncTelemetryClient
+
     api_name = f"{type(self).__name__}.{func.__name__}"
-    if isinstance(self, Connection):
-        self._telemetry_client.send_api_usage(api_name)
-    elif isinstance(self, (SnowflakeCursorBase, AsyncSnowflakeCursorBase)):
-        self._connection._telemetry_client.send_api_usage(api_name)
+    client = _telemetry_client_for(self)
+    if isinstance(client, AsyncTelemetryClient):
+        _schedule_async_telemetry(client.send_api_usage(api_name))
+    else:
+        client.send_api_usage(api_name)
+
+
+async def _send_api_usage_async(self: Any, func: Callable[..., Any]) -> None:
+    """Async counterpart of :func:`_send_api_usage`."""
+    from snowflake.connector._internal.telemetry import AsyncTelemetryClient
+
+    api_name = f"{type(self).__name__}.{func.__name__}"
+    client = _telemetry_client_for(self)
+    if isinstance(client, AsyncTelemetryClient):
+        await client.send_api_usage(api_name)
+    else:
+        client.send_api_usage(api_name)
 
 
 def api_telemetry(func: F) -> F:
@@ -111,7 +200,7 @@ def api_telemetry(func: F) -> F:
         @functools.wraps(func)
         async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
             if _TRACKING.get():
-                _send_api_usage(self, func)
+                await _send_api_usage_async(self, func)
                 _TRACKING.set(False)
                 try:
                     return await func(self, *args, **kwargs)
@@ -126,7 +215,7 @@ def api_telemetry(func: F) -> F:
         @functools.wraps(func)
         async def async_gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
             if _TRACKING.get():
-                _send_api_usage(self, func)
+                await _send_api_usage_async(self, func)
                 async for value in _suppress_tracking_async_generator(func(self, *args, **kwargs)):
                     yield value
             else:

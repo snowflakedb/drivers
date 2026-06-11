@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.binding_converters import ParamStyle
+from snowflake.connector._internal.connection import CURRENT_VERSION_SQL
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionGetInfoResponse,
@@ -197,7 +198,7 @@ class TestGetAutocommit:
         assert connection.get_autocommit() is False
 
     def test_get_autocommit_reads_from_sf_core(self, connection, mock_db_api):
-        """get_autocommit should read from sf_core via _get_session_parameter."""
+        """get_autocommit should read from sf_core via _session_parameters."""
         assert connection.get_autocommit() is False
         mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
         assert connection.get_autocommit() is True
@@ -730,7 +731,7 @@ class TestSnowflakeVersionProperty:
         connection.cursor = MagicMock(return_value=mock_cursor)
 
         assert connection.snowflake_version == "8.46.1"
-        mock_cursor.execute.assert_called_once_with("SELECT CURRENT_VERSION() AS version")
+        mock_cursor.execute.assert_called_once_with(CURRENT_VERSION_SQL)
 
     def test_strips_suffix_after_space(self, connection):
         """The legacy driver splits on space and takes the first part."""
@@ -996,7 +997,7 @@ class TestConnectionArrowProperties:
 
         # Snapshot/restore just this one dedup slot so the test is order-
         # independent without leaking state across the session.
-        key = ("snowflake.connector.connection", "Connection.arrow_number_to_decimal_setter")
+        key = ("snowflake.connector._internal.connection.connection", "ConnectionMixin.arrow_number_to_decimal_setter")
         was_warned = key in _BACKWARD_COMPAT_WARNED
         _BACKWARD_COMPAT_WARNED.discard(key)
         try:

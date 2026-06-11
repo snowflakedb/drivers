@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 
 from ...constants import QueryStatus
 from ...errors import DatabaseError
+from ..connection import ConnectionMixin
 
 
 if TYPE_CHECKING:
+    from ..._async.connection import AsyncConnection
     from ...connection import Connection
 
 _RETRY_PATTERN = [1, 1, 2, 3, 4, 8, 10]
@@ -34,7 +36,7 @@ def _advance_no_data_counter(status: QueryStatus, no_data_counter: int, sfqid: s
 
 
 def _poll_step(
-    connection: Connection,
+    connection: ConnectionMixin,
     sfqid: str,
     status: QueryStatus,
     no_data_counter: int,
@@ -55,7 +57,7 @@ def _poll_step(
 
 
 class QueryResultWaiter:
-    """Polls query status with capped exponential backoff until completion."""
+    """Sync waiter that polls query status with capped exponential backoff."""
 
     def __init__(self, connection: Connection, sfqid: str) -> None:
         self._connection = connection
@@ -74,14 +76,20 @@ class QueryResultWaiter:
                 return
             time.sleep(delay)
 
-    async def wait_async(self) -> None:
+
+class AsyncQueryResultWaiter:
+    """Async waiter that polls query status with capped exponential backoff."""
+
+    def __init__(self, connection: AsyncConnection, sfqid: str) -> None:
+        self._connection = connection
+        self._sfqid = sfqid
+
+    async def wait(self) -> None:
         """Await query completion. Raise on terminal error status."""
         no_data_counter = 0
         retry_idx = 0
         while True:
-            # TODO(SNOW-3487088): replace asyncio.to_thread with a native async
-            # connection call once the connection layer is ported to async.
-            status = await asyncio.to_thread(self._connection.get_query_status_throw_if_error, self._sfqid)
+            status = await self._connection.get_query_status_throw_if_error(self._sfqid)
             delay, no_data_counter, retry_idx = _poll_step(
                 self._connection, self._sfqid, status, no_data_counter, retry_idx
             )

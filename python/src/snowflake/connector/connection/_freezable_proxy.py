@@ -1,4 +1,4 @@
-"""Proxies that cache connection state at close time for post-close access."""
+"""Sync proxies that cache connection state at close time for post-close access."""
 
 from __future__ import annotations
 
@@ -6,13 +6,21 @@ import threading
 
 from typing import Any
 
-from .api_client.client_api import core_driver
+from .._internal.api_client.client_api import core_driver
+from .._internal.connection.freezable_proxy import ConnectionInfoProxyMixin, SessionParametersProxyMixin
+
+
+# ------------------------------------------------------------------
+# Base proxy
+# ------------------------------------------------------------------
 
 
 class FreezableProxy:
     """Dict-like proxy that fetches live values while open and serves cached values after freeze().
 
-    Subclasses implement _fetch_one (single key) and _fetch_all (bulk snapshot).
+    Subclasses implement _fetch_all (bulk snapshot).  Item access is provided by the
+    companion mixin (:class:`SessionParametersProxyMixin` or
+    :class:`ConnectionInfoProxyMixin`).
     Call freeze() before releasing the underlying handles.
     """
 
@@ -34,36 +42,29 @@ class FreezableProxy:
                 self._cache = self._fetch_all()
                 self._conn_handle = None
 
-    def _fetch_one(self, key: str) -> Any:
-        raise NotImplementedError
-
     def _fetch_all(self) -> dict[str, Any]:
         raise NotImplementedError
 
-    def __getitem__(self, key: str) -> Any:
-        if self._cache is not None:
-            return self._cache.get(key)
-        return self._fetch_one(key)
+
+# ------------------------------------------------------------------
+# Session parameters
+# ------------------------------------------------------------------
 
 
-class SessionParametersProxy(FreezableProxy):
+class SessionParametersProxy(FreezableProxy, SessionParametersProxyMixin):
     """Proxy for Snowflake session parameters (case-insensitive keys)."""
-
-    def _fetch_one(self, name: str) -> str | None:
-        response = core_driver.connection_get_parameter(conn_handle=self._conn_handle, key=name)
-        return response.value if response.value else None
 
     def _fetch_all(self) -> dict[str, str]:
         response = core_driver.connection_get_all_parameters(conn_handle=self._conn_handle)
         return {k.upper(): v for k, v in response.parameters.items()}
 
-    def __getitem__(self, name: str) -> str | None:
-        if self._cache is not None:
-            return self._cache.get(name.upper())
-        return self._fetch_one(name)
+
+# ------------------------------------------------------------------
+# Connection info
+# ------------------------------------------------------------------
 
 
-class ConnectionInfoProxy(FreezableProxy):
+class ConnectionInfoProxy(FreezableProxy, ConnectionInfoProxyMixin):
     """Proxy for any field in ConnectionGetInfoResponse.
 
     Supports all proto fields (role, database, schema, account, warehouse,
@@ -71,12 +72,6 @@ class ConnectionInfoProxy(FreezableProxy):
     While unfrozen, every field access triggers a connection_get_info RPC.
     This matches the pre-proxy behavior where each property did its own RPC.
     """
-
-    def _fetch_one(self, field: str) -> Any:
-        info = core_driver.connection_get_info(
-            conn_handle=self._conn_handle,
-        )
-        return getattr(info, field) if info.HasField(field) else None  # type: ignore[arg-type]
 
     def _fetch_all(self) -> dict[str, Any]:
         info = core_driver.connection_get_info(

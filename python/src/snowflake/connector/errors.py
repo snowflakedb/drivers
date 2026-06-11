@@ -43,6 +43,7 @@ from ._internal.decorators import backward_compatibility
 
 
 if TYPE_CHECKING:
+    from ._async.connection import AsyncConnection
     from ._async.cursor import AsyncSnowflakeCursorBase
     from .connection import Connection
     from .cursor import SnowflakeCursorBase
@@ -124,7 +125,7 @@ class Error(Exception):
 
     @staticmethod
     def hand_to_other_handler(
-        connection: Connection | None,
+        connection: Connection | AsyncConnection | None,
         cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
         error_class: type[Error] | type[Exception],
         error_value: ErrorValue,

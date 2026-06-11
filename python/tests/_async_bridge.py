@@ -7,7 +7,8 @@ in :class:`BlockingCursor`, which drives every coroutine / async-generator to
 completion on a dedicated background event loop and exposes the results through
 the ordinary blocking PEP 249 surface.
 
-A :class:`BlockingConnection` proxies a real (sync) connection but hands out
+:class:`BlockingConnection` opens an :class:`~snowflake.connector._async.connection.AsyncConnection`
+(via :func:`~snowflake.connector._async.connect_async`) and hands out
 :class:`BlockingCursor` instances from :meth:`cursor`, so tests that call
 ``connection.cursor()`` directly transparently get the async implementation.
 
@@ -23,6 +24,7 @@ import threading
 
 from typing import Any
 
+from snowflake.connector._async import connect_async
 from snowflake.connector._async.cursor import AsyncDictCursor as AsyncDictCursor
 from snowflake.connector._async.cursor import AsyncSnowflakeCursor as AsyncSnowflakeCursor
 from snowflake.connector.cursor import DictCursor as SyncDictCursor
@@ -75,112 +77,163 @@ class _LoopRunner:
             yield item
 
 
-class BlockingCursor:
-    """Synchronous facade over a single async cursor instance.
+def _blocking_method(facade: Any, async_obj: Any, loop: _LoopRunner, bound: Any) -> Any:
+    @functools.wraps(bound)
+    def blocking(*args: Any, **kwargs: Any) -> Any:
+        result = bound(*args, **kwargs)
+        if inspect.iscoroutine(result):
+            result = loop.run(result)
+        elif inspect.isasyncgen(result):
+            return loop.iterate(result)
+        return facade if result is async_obj else result
 
-    Method calls that return coroutines are awaited to completion; methods that
-    return async generators are surfaced as ordinary (sync) generators. Property
-    reads, data attributes, and plain sync methods pass straight through. When an
-    async method returns the underlying async cursor (``return self``), this
-    facade substitutes *itself* so identity assertions like ``cur.execute(...) is
-    cur`` keep holding.
-    """
+    return blocking
 
-    def __init__(self, async_cursor: Any, loop: _LoopRunner) -> None:
-        object.__setattr__(self, "_async_cursor", async_cursor)
+
+class _BlockingAsyncFacade:
+    """Synchronous facade over an async connection or cursor instance."""
+
+    def __init__(self, async_obj: Any, loop: _LoopRunner) -> None:
+        object.__setattr__(self, "_async_obj", async_obj)
         object.__setattr__(self, "_loop", loop)
 
     def __getattr__(self, name: str) -> Any:
-        if name in ("_async_cursor", "_loop"):
+        if name in ("_async_obj", "_loop"):
             raise AttributeError(name)
-        async_cursor = object.__getattribute__(self, "_async_cursor")
+        async_obj = object.__getattribute__(self, "_async_obj")
 
-        # Properties / data attributes resolve to their live value untouched —
-        # only class-level methods get the blocking treatment. This keeps
-        # callable-valued properties (e.g. ``errorhandler``) intact.
-        static = inspect.getattr_static(type(async_cursor), name, _MISSING)
+        static = inspect.getattr_static(type(async_obj), name, _MISSING)
         if isinstance(static, property) or static is _MISSING or not callable(static):
-            return getattr(async_cursor, name)
+            return getattr(async_obj, name)
 
-        bound = getattr(async_cursor, name)
-
-        @functools.wraps(bound)
-        def blocking(*args: Any, **kwargs: Any) -> Any:
-            result = bound(*args, **kwargs)
-            if inspect.iscoroutine(result):
-                result = self._loop.run(result)
-            elif inspect.isasyncgen(result):
-                return self._loop.iterate(result)
-            return self if result is async_cursor else result
-
-        return blocking
+        bound = getattr(async_obj, name)
+        return _blocking_method(self, async_obj, object.__getattribute__(self, "_loop"), bound)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_async_cursor", "_loop"):
+        if name in ("_async_obj", "_loop"):
             object.__setattr__(self, name, value)
         else:
-            setattr(self._async_cursor, name, value)
+            setattr(self._async_obj, name, value)
 
-    # -- iterator protocol --------------------------------------------------
+
+class BlockingCursor(_BlockingAsyncFacade):
+    """Synchronous facade over a single async cursor instance.
+
+    When an async method returns the underlying async cursor (``return self``),
+    this facade substitutes *itself* so identity assertions like ``cur.execute(...) is
+    cur`` keep holding.
+    """
 
     def __iter__(self) -> BlockingCursor:
         return self
 
     def __next__(self) -> Any:
+        loop = object.__getattribute__(self, "_loop")
+        async_cursor = object.__getattribute__(self, "_async_obj")
         try:
-            return self._loop.run(self._async_cursor.__anext__())
+            return loop.run(async_cursor.__anext__())
         except StopAsyncIteration:
             raise StopIteration from None
 
-    # -- context manager ----------------------------------------------------
-
     def __enter__(self) -> BlockingCursor:
-        self._loop.run(self._async_cursor.__aenter__())
+        loop = object.__getattribute__(self, "_loop")
+        async_cursor = object.__getattribute__(self, "_async_obj")
+        loop.run(async_cursor.__aenter__())
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any:
-        return self._loop.run(self._async_cursor.__aexit__(exc_type, exc_val, exc_tb))
+        loop = object.__getattribute__(self, "_loop")
+        async_cursor = object.__getattribute__(self, "_async_obj")
+        return loop.run(async_cursor.__aexit__(exc_type, exc_val, exc_tb))
 
 
-class BlockingConnection:
-    """Proxy around a real sync connection that vends :class:`BlockingCursor`.
+class BlockingConnection(_BlockingAsyncFacade):
+    """Proxy around an :class:`AsyncConnection` that vends :class:`BlockingCursor`."""
 
-    Everything except :meth:`cursor` delegates to the wrapped connection, so the
-    connection itself stays on the (out-of-scope, still-synchronous) sync path
-    while cursors created from it run the async implementation.
-    """
-
-    def __init__(self, connection: Any, loop: _LoopRunner) -> None:
-        object.__setattr__(self, "_connection", connection)
-        object.__setattr__(self, "_loop", loop)
-
-    def cursor(self, cursor_class: type = SyncSnowflakeCursor) -> BlockingCursor:
+    def _async_cursor_class(self, cursor_class: type) -> type:
         async_cls = _ASYNC_CURSOR_FOR.get(cursor_class)
         if async_cls is None:
             raise ValueError(f"No async cursor counterpart registered for {cursor_class!r}")
-        return BlockingCursor(async_cls(self._connection), self._loop)
+        return async_cls
 
-    def __getattr__(self, name: str) -> Any:
-        if name in ("_connection", "_loop"):
-            raise AttributeError(name)
-        return getattr(object.__getattribute__(self, "_connection"), name)
+    def cursor(self, cursor_class: type = SyncSnowflakeCursor) -> BlockingCursor:
+        async_connection = object.__getattribute__(self, "_async_obj")
+        loop = object.__getattribute__(self, "_loop")
+        async_cur = loop.run(async_connection.cursor(cursor_class=self._async_cursor_class(cursor_class)))
+        return BlockingCursor(async_cur, loop)
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in ("_connection", "_loop"):
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._connection, name, value)
+    def execute_string(
+        self,
+        sql_text: str,
+        remove_comments: bool = False,
+        return_cursors: bool = True,
+        cursor_class: type = SyncSnowflakeCursor,
+        **kwargs: Any,
+    ) -> Any:
+        async_connection = object.__getattribute__(self, "_async_obj")
+        loop = object.__getattribute__(self, "_loop")
+        result = loop.run(
+            async_connection.execute_string(
+                sql_text,
+                remove_comments=remove_comments,
+                return_cursors=return_cursors,
+                cursor_class=self._async_cursor_class(cursor_class),
+                **kwargs,
+            )
+        )
+        if not return_cursors:
+            return result
+        return [BlockingCursor(cur, loop) for cur in result]
+
+    def execute_stream(
+        self,
+        stream: Any,
+        remove_comments: bool = False,
+        cursor_class: type = SyncSnowflakeCursor,
+        **kwargs: Any,
+    ) -> Any:
+        async_connection = object.__getattribute__(self, "_async_obj")
+        loop = object.__getattribute__(self, "_loop")
+
+        def _stream() -> Any:
+            agen = async_connection.execute_stream(
+                stream,
+                remove_comments=remove_comments,
+                cursor_class=self._async_cursor_class(cursor_class),
+                **kwargs,
+            )
+            yield from (BlockingCursor(cur, loop) for cur in loop.iterate(agen))
+
+        return _stream()
 
     def __enter__(self) -> BlockingConnection:
-        self._connection.__enter__()
+        loop = object.__getattribute__(self, "_loop")
+        async_connection = object.__getattribute__(self, "_async_obj")
+        loop.run(async_connection.__aenter__())
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any:
-        return self._connection.__exit__(exc_type, exc_val, exc_tb)
+        loop = object.__getattribute__(self, "_loop")
+        async_connection = object.__getattribute__(self, "_async_obj")
+        return loop.run(async_connection.__aexit__(exc_type, exc_val, exc_tb))
+
+
+def maybe_blocking_async_connection(connection: Any) -> BlockingConnection:
+    """Open an :class:`AsyncConnection` and expose it through :class:`BlockingConnection`."""
+    loop = _LoopRunner.instance()
+
+    async def _open() -> Any:
+        # connect_async is @awaitable_context_manager — returns _AwaitableContextManager,
+        # not a bare coroutine, so it must be awaited inside an async helper.
+        return await connect_async(config=connection.config)
+
+    async_connection = loop.run(_open())
+    connection.close()
+    return BlockingConnection(async_connection, loop)
 
 
 def maybe_blocking_async(connection: Any, cursor_backend: str) -> Any:
     """Return *connection* unchanged for the sync backend, or wrapped for async."""
-    if cursor_backend == "async":
-        return BlockingConnection(connection, _LoopRunner.instance())
-    return connection
+    if cursor_backend != "async":
+        return connection
+    return maybe_blocking_async_connection(connection)

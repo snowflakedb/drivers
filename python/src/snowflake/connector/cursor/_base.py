@@ -65,6 +65,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
     """
 
+    _connection: Connection
+    _iterator: ArrowStreamIterator | None
+
     def __init__(self, connection: Connection) -> None:
         """
         Initialize a new cursor object.
@@ -72,12 +75,24 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Args:
             connection: Connection object that created this cursor
         """
-        super().__init__(connection)
+        self._connection = connection
+        super().__init__()
+        self._iterator = None
 
         # -- ResultSet guard (set by _execute, cleared on reset) --
         self._result_set = _ResultSetWrapper()
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
         self._prefetch_hook: Callable[[], None] | None = None
+
+    # ------------------------------------------------------------------
+    # PEP 249 attributes
+    # ------------------------------------------------------------------
+
+    @property
+    @pep249
+    def connection(self) -> Connection:
+        """The :class:`Connection` object that created this cursor."""
+        return self._connection
 
     # ------------------------------------------------------------------
     # Result format control
@@ -95,6 +110,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @property
     def _errorhandler_cursor(self) -> SnowflakeCursorBase:
         return self
+
+    @property
+    def _errorhandler_connection(self) -> Connection:
+        return self._connection
 
     # ------------------------------------------------------------------
     # Execution
@@ -422,8 +441,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
 
     def _create_row_iterator(self) -> ArrowStreamIterator:
+        stream_ptr = self._result_set.get_arrow_stream_ptr()
         return create_row_iterator(
-            stream_ptr=self._result_set.get_arrow_stream_ptr(),
+            stream_ptr=stream_ptr,
             connection=self._connection,
             use_dict_result=self._use_dict_result,
             use_numpy=bool(self._connection.config.numpy),
@@ -597,8 +617,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         force_microsecond_precision: bool = False,
     ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
+        stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=self._result_set.get_arrow_stream_ptr(),
+            stream_ptr=stream_ptr,
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -616,8 +637,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         force_microsecond_precision: bool = False,
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
+        stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=self._result_set.get_arrow_stream_ptr(),
+            stream_ptr=stream_ptr,
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,

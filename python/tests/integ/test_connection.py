@@ -13,6 +13,10 @@ import pytest
 from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import DictCursor
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
+from tests.conftest import run_against_sync_and_async_connection, skip_async_connection
+
+
+pytestmark = run_against_sync_and_async_connection
 
 
 # These tests heavily mutate the connection (close, autocommit, commit, rollback,
@@ -266,6 +270,7 @@ class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
 
     @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
+    @skip_async_connection("AsyncConnection has no _autocommit flag")
     def test_set_autocommit(self, connection):
         """Test that set_autocommit changes the autocommit flag."""
         connection.set_autocommit(False)
@@ -286,6 +291,7 @@ class TestConnectionAutocommitMethod:
     """Test Connection autocommit method."""
 
     @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
+    @skip_async_connection("autocommit awaits set_autocommit; a sync Mock cannot stand in for it")
     def test_autocommit_sets_flag_and_calls_set_autocommit(self, connection, monkeypatch):
         """Test that autocommit() delegates to set_autocommit."""
         mock_set_autocommit = Mock()
@@ -296,6 +302,7 @@ class TestConnectionAutocommitMethod:
         mock_set_autocommit.assert_called_once_with(True)
 
     @pytest.mark.skip_reference(reason="Reference driver _autocommit defaults to None, not True")
+    @skip_async_connection("AsyncConnection has no _autocommit flag")
     def test_autocommit_default_is_server_default(self, connection):
         """Test that autocommit defaults to the server default (true) when not explicitly set."""
         assert connection._autocommit is True
@@ -393,6 +400,7 @@ class TestExecuteString:
         assert len(cursors) == 1
         assert cursors[0].fetchone() == ("hello;world",)
 
+    @skip_async_connection("blocking async facade does not preserve concrete sync cursor types")
     def test_execute_string_with_cursor_class(self, connection):
         """Test execute_string with a custom cursor class."""
         cursors = connection.execute_string("SELECT 1 AS id", cursor_class=DictCursor)
@@ -454,6 +462,7 @@ class TestExecuteStream:
         assert cursors[0].fetchone() == ("first",)
         assert cursors[1].fetchone() == ("second",)
 
+    @skip_async_connection("blocking async facade does not preserve concrete sync cursor types")
     def test_execute_stream_with_cursor_class(self, connection):
         """Test execute_stream with a custom cursor class."""
         stream = StringIO("SELECT 1 AS id")
@@ -522,17 +531,17 @@ class TestCommitRollback:
 class TestAutocommitAlterSession:
     """Integration tests for set_autocommit ALTER SESSION."""
 
-    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_get_session_parameter methods")
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_session_parameters proxys")
     def test_set_autocommit_true_updates_session_parameter(self, connection):
         """Test that set_autocommit(True) sets the AUTOCOMMIT session parameter."""
         connection.set_autocommit(True)
-        assert connection._get_session_parameter("AUTOCOMMIT") == "true"
+        assert connection._session_parameters["AUTOCOMMIT"] == "true"
 
-    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_get_session_parameter methods")
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_session_parameters proxys")
     def test_set_autocommit_false_updates_session_parameter(self, connection):
         """Test that set_autocommit(False) sets the AUTOCOMMIT session parameter."""
         connection.set_autocommit(False)
-        assert connection._get_session_parameter("AUTOCOMMIT") == "false"
+        assert connection._session_parameters["AUTOCOMMIT"] == "false"
 
     def test_autocommit_on_persists_without_explicit_commit(self, connection, tmp_schema):
         """Test that with autocommit ON, each statement is committed automatically."""

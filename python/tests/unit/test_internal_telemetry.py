@@ -16,6 +16,8 @@ from tests.compatibility import is_new_driver
 
 pytestmark = pytest.mark.skipif(not is_new_driver(), reason="Requires universal driver")
 
+_CONN_HANDLE = ConnectionHandle(id=42)
+
 
 class TestConnectionInitIdentity:
     """Tests that wrapper identity fields are passed in connection_init."""
