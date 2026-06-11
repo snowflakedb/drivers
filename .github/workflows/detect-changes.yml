@@ -133,6 +133,7 @@ jobs:
               - 'jdbc_bridge/**'
               - 'tests/definitions/jdbc/**'
               - '.github/workflows/test-jdbc.yml'
+              - 'scripts/validate_behavior_differences.py'
             jdbc_e2e_integ:
               - 'jdbc/src/test/java/net/snowflake/client/api/**'
               - 'jdbc/src/test/java/net/snowflake/jdbc/**'
@@ -156,8 +157,7 @@ jobs:
               - 'odbc_tests/CMakeLists.txt'
               - 'odbc_tests/tests/CMakeLists.txt'
               - 'odbc_tests/common/**'
-              - 'odbc_tests/BehaviorDifferences.yaml'
-              - 'odbc_tests/validate_behavior_differences.py'
+              - 'scripts/validate_behavior_differences.py'
               - 'scripts/odbc/run_tests_unix.sh'
               - 'scripts/odbc/run_tests_windows.ps1'
               - 'ci/reference-odbc-version'
@@ -170,6 +170,7 @@ jobs:
               - '.github/workflows/_build-odbc-packages.yml'
             python:
               - 'python/**'
+              - 'scripts/validate_behavior_differences.py'
               - 'pep249_dbapi/**'
               - 'tests/definitions/python/**'
               - 'scripts/old_python/**'
@@ -193,6 +194,7 @@ jobs:
             nodejs:
               - 'nodejs/**'
               - '.github/workflows/test-nodejs.yml'
+              - 'scripts/validate_behavior_differences.py'
             nodejs_e2e_integ:
               - 'nodejs/tests/e2e/**'
               - '.github/workflows/test-nodejs.yml'
