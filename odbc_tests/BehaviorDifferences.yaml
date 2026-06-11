@@ -1236,3 +1236,32 @@ behavior_differences:
     is_breaking_change: true
     description: |
       Applications that match diagnostic message text against fixed substrings, or that surface `SQLGetDiagRec` output verbatim to end users / test oracles, will see additional trace content appended. Consumers that need the legacy shape must write `ErrorTraceEnabled=false` to `sf.odbc.ini` and point `SF_ODBC_INI` at it.
+
+  78:
+    name: "Stage-binding threshold comparison uses >= instead of >; arrayBindSupported and CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session params are respected"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    impact: medium
+    is_breaking_change: true
+    old_driver_behavior: |
+      The old driver reads the stage-bind threshold from the connection-string parameter
+      `StageBindThreshold` (not from the SESSION parameter `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD`).
+      ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD has no effect on the old driver.
+      The old driver does not implement the `arrayBindSupported` server hint: it always attempts
+      stage binding for INSERT when cell count > threshold, regardless of the query shape.
+    new_driver_behavior: |
+      The new driver reads `CLIENT_STAGE_ARRAY_BINDING_THRESHOLD` from the session parameters
+      returned by the server and applies a >= comparison (cells >= threshold). It also gates
+      stage binding on the server-provided `arrayBindSupported` hint from the prepare response;
+      when the server returns false (e.g. for bare SELECT, EXECUTE IMMEDIATE, multi-statement
+      queries) the driver falls back to inline JSON even if the cell count crosses the threshold.
+    description: |
+      1. Applications relying on `StageBindThreshold` in the connection string must migrate to
+         setting CLIENT_STAGE_ARRAY_BINDING_THRESHOLD via ALTER SESSION or account/role defaults.
+      2. Query shapes where the server returns arrayBindSupported=false (SELECT, EXECUTE IMMEDIATE,
+         multi-statement) that previously failed with "Bind variable ? not set." when stage binding
+         was forced will now transparently fall back to inline JSON in the new driver.
+      3. At the exact boundary (cells == threshold), the old driver used > and would take the JSON
+         path; the new driver uses >= and takes the stage path. Applications sensitive to the
+         boundary row count should be aware of this one-row difference in dispatch behavior.
