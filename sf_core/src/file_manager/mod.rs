@@ -15,6 +15,7 @@ pub use gcs_transfer::{
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
+use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
 use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
 use openssl::error::ErrorStack as OpenSslErrorStack;
@@ -35,6 +36,7 @@ const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIP
 
 pub async fn upload_files(
     data: &UploadData,
+    put_get_max_attempts: u32,
     mut refresher: Option<&mut dyn StageInfoRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
@@ -70,7 +72,8 @@ pub async fn upload_files(
             legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
         };
 
-        let result = upload_single_file(single_upload_data, &mut refresher).await?;
+        let result =
+            upload_single_file(single_upload_data, put_get_max_attempts, &mut refresher).await?;
         results.push(result);
     }
 
@@ -103,6 +106,7 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
 /// than returned here.
 pub async fn upload_single_file(
     data: SingleUploadData,
+    put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
@@ -110,7 +114,7 @@ pub async fn upload_single_file(
     let mut file_buffer = Vec::new();
     input_file.read_to_end(&mut file_buffer).context(IoSnafu)?;
 
-    upload_prepared_buffer(file_buffer, data, refresher).await
+    upload_prepared_buffer(file_buffer, data, put_get_max_attempts, refresher).await
 }
 
 /// Uploads an in-memory byte buffer to the stage location described by
@@ -129,7 +133,10 @@ pub async fn upload_in_memory_file(
     data: SingleUploadData,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
-    upload_prepared_buffer(buffer, data, refresher).await
+    // The in-memory path serves the bind-stage uploader, which is not driven
+    // by the session-level `put_get_max_attempts` knob; it keeps the default
+    // attempt count (its payloads are small and fast — see `upload_blob`).
+    upload_prepared_buffer(buffer, data, DEFAULT_PUT_GET_MAX_ATTEMPTS, refresher).await
 }
 
 /// Shared core of the upload path used by both `upload_single_file` (file
@@ -139,6 +146,7 @@ pub async fn upload_in_memory_file(
 async fn upload_prepared_buffer(
     buffer: Vec<u8>,
     data: SingleUploadData,
+    put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     let (prepared, file_metadata) = preprocess_file_before_upload(buffer, &data)?;
@@ -149,6 +157,7 @@ async fn upload_prepared_buffer(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            put_get_max_attempts,
             refresher,
         )
         .await
@@ -158,6 +167,7 @@ async fn upload_prepared_buffer(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            put_get_max_attempts,
             refresher,
         )
         .await
@@ -167,6 +177,7 @@ async fn upload_prepared_buffer(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            put_get_max_attempts,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -348,6 +359,7 @@ fn auto_detect_source_compression(
 
 pub async fn download_files(
     mut data: DownloadData,
+    put_get_max_attempts: u32,
     mut refresher: Option<&mut dyn StageInfoRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
@@ -378,7 +390,13 @@ pub async fn download_files(
             flavor: data.flavor.clone(),
         };
 
-        let result = download_single_file(single_download_data, index, &mut refresher).await?;
+        let result = download_single_file(
+            single_download_data,
+            put_get_max_attempts,
+            index,
+            &mut refresher,
+        )
+        .await?;
         results.push(result);
     }
 
@@ -393,6 +411,7 @@ pub async fn download_files(
 /// cache after a 400-triggered URL refresh. Non-GCS branches ignore it.
 pub async fn download_single_file(
     data: SingleDownloadData,
+    put_get_max_attempts: u32,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
@@ -404,14 +423,20 @@ pub async fn download_single_file(
     } = match data.stage_info.location_type {
         LocationType::S3 => {
             // `data.presigned_url` is GCS-only; S3 ignores it (uses STS creds).
-            download_from_s3(&data.stage_info, data.src_location.as_str(), refresher)
-                .await
-                .context(S3DownloadSnafu)?
+            download_from_s3(
+                &data.stage_info,
+                data.src_location.as_str(),
+                put_get_max_attempts,
+                refresher,
+            )
+            .await
+            .context(S3DownloadSnafu)?
         }
         LocationType::Gcs => download_from_gcs(
             &data.stage_info,
             data.src_location.as_str(),
             data.presigned_url.as_deref(),
+            put_get_max_attempts,
             per_file_index,
             refresher,
         )
@@ -419,9 +444,13 @@ pub async fn download_single_file(
         .context(GcsDownloadSnafu)?,
         LocationType::Azure => {
             // `data.presigned_url` is GCS-only; Azure ignores it (uses SAS).
-            download_from_azure(&data.stage_info, data.src_location.as_str())
-                .await
-                .context(AzureDownloadSnafu)?
+            download_from_azure(
+                &data.stage_info,
+                data.src_location.as_str(),
+                put_get_max_attempts,
+            )
+            .await
+            .context(AzureDownloadSnafu)?
         }
     };
 

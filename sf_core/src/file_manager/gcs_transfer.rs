@@ -49,6 +49,7 @@ pub async fn upload_to_gcs_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client()?;
@@ -109,7 +110,7 @@ pub async fn upload_to_gcs_or_skip(
                     return Ok(UploadStatus::Skipped);
                 }
 
-                upload_to_gcs(&client, &url, token, prepared, wire_retry_400)
+                upload_to_gcs(&client, &url, token, prepared, wire_retry_400, max_attempts)
                     .await
                     .map_err(map_gcs_request_error_for_attempt)?;
                 Ok(UploadStatus::Uploaded)
@@ -221,6 +222,7 @@ pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
+    max_attempts: u32,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
@@ -270,6 +272,7 @@ pub async fn download_from_gcs(
                     },
                     Method::GET,
                     wire_retry_400,
+                    max_attempts,
                 )
                 .await
                 .map_err(map_gcs_request_error_for_attempt)
@@ -523,6 +526,7 @@ async fn upload_to_gcs(
     token: Option<&str>,
     prepared: PreparedUpload,
     using_presigned_url: bool,
+    max_attempts: u32,
 ) -> Result<(), GcsRequestError> {
     let encryption_data_str = prepared
         .encryption_metadata
@@ -565,6 +569,7 @@ async fn upload_to_gcs(
         },
         Method::PUT,
         using_presigned_url,
+        max_attempts,
     )
     .await?;
 
@@ -585,13 +590,13 @@ async fn upload_to_gcs(
 /// presigned URL — blind retry against the same dead URL would just burn
 /// the retry budget. The legacy no-refresher path keeps 400 retryable to
 /// preserve today's behavior for callers that don't pass a refresher.
-fn gcs_retry_policy(using_presigned_url: bool) -> RetryPolicy {
+fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> RetryPolicy {
     let mut extra = vec![403];
     if using_presigned_url {
         extra.push(400);
     }
     RetryPolicy {
-        max_attempts: 6,
+        max_attempts,
         backoff: BackoffConfig {
             base: Duration::from_secs(1),
             factor: 2.0,
@@ -611,12 +616,13 @@ async fn gcs_request_with_retry<F>(
     build_request: F,
     method: Method,
     using_presigned_url: bool,
+    max_attempts: u32,
 ) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
     let ctx = HttpContext::new(method, "gcs-transfer");
-    let policy = gcs_retry_policy(using_presigned_url);
+    let policy = gcs_retry_policy(using_presigned_url, max_attempts);
 
     let response = http_execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
         .await
@@ -1164,6 +1170,7 @@ pub enum GcsDownloadError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
 
@@ -1426,7 +1433,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_403() {
-        let policy = gcs_retry_policy(false);
+        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             policy.extra_retryable_statuses.contains(&403),
             "403 should be retryable for GCS (matches JDBC/ODBC)"
@@ -1435,7 +1442,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_400_for_presigned_urls() {
-        let policy = gcs_retry_policy(true);
+        let policy = gcs_retry_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             policy.extra_retryable_statuses.contains(&400),
             "400 should be retryable when using presigned URLs"
@@ -1444,7 +1451,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_excludes_400_without_presigned_urls() {
-        let policy = gcs_retry_policy(false);
+        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             !policy.extra_retryable_statuses.contains(&400),
             "400 should not be retryable without presigned URLs"
@@ -1485,7 +1492,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = gcs_retry_policy(false);
+        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert_eq!(
             policy.max_elapsed,
             Duration::from_secs(600),
@@ -1499,8 +1506,8 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_max_attempts() {
-        let policy = gcs_retry_policy(false);
-        assert_eq!(policy.max_attempts, 6);
+        assert_eq!(gcs_retry_policy(false, 25).max_attempts, 25);
+        assert_eq!(gcs_retry_policy(false, 1).max_attempts, 1);
     }
 
     // ---------------------------------------------------------------
@@ -2014,9 +2021,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_for_skip(digest);
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
     }
@@ -2038,9 +2052,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_for_skip(digest);
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", false, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
     }
@@ -2057,9 +2078,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_for_skip("local-digest-value");
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Uploaded);
     }
@@ -2075,9 +2103,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_for_skip("local-digest-value");
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Uploaded);
     }
@@ -2093,9 +2128,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_for_skip("local-digest-value");
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", false, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
     }
@@ -2107,9 +2149,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_for_skip("local-digest-value");
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", false, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Uploaded);
     }
@@ -2131,9 +2180,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_cse_for_skip(digest);
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
     }
@@ -2153,9 +2209,16 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = make_prepared_cse_for_skip("local-plaintext-sha256");
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Uploaded);
     }
@@ -2182,9 +2245,16 @@ mod tests {
             digest: EMPTY_SHA256_B64.to_string(),
             encryption_metadata: None,
         };
-        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
-            .await
-            .unwrap();
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
     }

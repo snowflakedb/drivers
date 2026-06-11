@@ -56,6 +56,8 @@ pub struct StageInfoRefreshContext {
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
 ///
+/// `put_get_max_attempts` bounds the per-file HTTP/transport retry loop.
+///
 /// When `stage_info_refresh_context` is `Some`, recoverable stage-info-expiry
 /// errors during a file transfer trigger a re-issue of the original PUT/GET
 /// SQL to obtain a fresh `StageInfoSnapshot` (creds + presigned URLs) and the
@@ -75,6 +77,7 @@ pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
+    put_get_max_attempts: u32,
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
@@ -98,9 +101,10 @@ pub(super) async fn perform_put_get_transfer(
                     use_s3_regional_url_session_param,
                 )
                 .context(FileTransferPreparationSnafu)?;
-            let upload_results = upload_files(&file_upload_data, refresher_handle)
-                .await
-                .context(FileUploadSnafu)?;
+            let upload_results =
+                upload_files(&file_upload_data, put_get_max_attempts, refresher_handle)
+                    .await
+                    .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
@@ -116,9 +120,10 @@ pub(super) async fn perform_put_get_transfer(
                         FileTransferPreparationSnafu.into_error(e)
                     }
                 })?;
-            let download_results = download_files(file_download_data, refresher_handle)
-                .await
-                .context(FileDownloadSnafu)?;
+            let download_results =
+                download_files(file_download_data, put_get_max_attempts, refresher_handle)
+                    .await
+                    .context(FileDownloadSnafu)?;
             Ok(RowsetData::Download(download_results))
         }
         _ => UnsupportedCommandSnafu {

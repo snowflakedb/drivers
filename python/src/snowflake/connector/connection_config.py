@@ -201,6 +201,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     proxy_user: str | None = None
     """Proxy server username for Basic auth"""
 
+    put_get_max_attempts: int | None = 6
+    """Maximum total attempts for a single PUT/GET file transfer (1 = no retry). Default: 6"""
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 

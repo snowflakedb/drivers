@@ -412,15 +412,20 @@ impl DatabaseDriverV1 {
                     query_parameters: query_parameters.clone(),
                     conn: conn_arc.clone(),
                 };
-                let use_s3_regional_url_session_param = conn_arc
-                    .lock()
-                    .await
-                    .use_s3_regional_url_session_param()
-                    .await;
+                // Late-bind `put_get_max_attempts` so post-init `set_option`
+                // overrides take effect (mirrors `LogoutConfig`).
+                let (put_get_max_attempts, use_s3_regional_url_session_param) = {
+                    let conn = conn_arc.lock().await;
+                    let put_get_max_attempts = conn.put_get_max_attempts();
+                    let use_s3_regional_url_session_param =
+                        conn.use_s3_regional_url_session_param().await;
+                    (put_get_max_attempts, use_s3_regional_url_session_param)
+                };
                 perform_put_get_transfer(
                     command,
                     &data,
                     &self.wrapper_presets,
+                    put_get_max_attempts,
                     Some(stage_info_refresh_context),
                     use_s3_regional_url_session_param,
                 )
@@ -545,11 +550,14 @@ impl DatabaseDriverV1 {
                 Some(command) => {
                     let (query_parameters, _http_client, _retry_policy) =
                         query_context(&conn_ptr).await?;
-                    let use_s3_regional_url_session_param = conn_ptr
-                        .lock()
-                        .await
-                        .use_s3_regional_url_session_param()
-                        .await;
+                    // See `statement_execute` for the late-binding rationale.
+                    let (put_get_max_attempts, use_s3_regional_url_session_param) = {
+                        let conn = conn_ptr.lock().await;
+                        let put_get_max_attempts = conn.put_get_max_attempts();
+                        let use_s3_regional_url_session_param =
+                            conn.use_s3_regional_url_session_param().await;
+                        (put_get_max_attempts, use_s3_regional_url_session_param)
+                    };
                     // Build a refresh context when the response carries the
                     // original SQL (`sqlText`). Async PUT/GET retrieval goes
                     // through `monitoring/queries/{queryId}/result` which
@@ -572,6 +580,7 @@ impl DatabaseDriverV1 {
                         command,
                         &data,
                         &self.wrapper_presets,
+                        put_get_max_attempts,
                         stage_info_refresh_context,
                         use_s3_regional_url_session_param,
                     )
