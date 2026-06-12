@@ -270,7 +270,7 @@ class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
 
     @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
-    @skip_async_connection("AsyncConnection has no _autocommit flag")
+    @skip_async_connection("aio Connection has no _autocommit flag")
     def test_set_autocommit(self, connection):
         """Test that set_autocommit changes the autocommit flag."""
         connection.set_autocommit(False)
@@ -302,7 +302,7 @@ class TestConnectionAutocommitMethod:
         mock_set_autocommit.assert_called_once_with(True)
 
     @pytest.mark.skip_reference(reason="Reference driver _autocommit defaults to None, not True")
-    @skip_async_connection("AsyncConnection has no _autocommit flag")
+    @skip_async_connection("aio Connection has no _autocommit flag")
     def test_autocommit_default_is_server_default(self, connection):
         """Test that autocommit defaults to the server default (true) when not explicitly set."""
         assert connection._autocommit is True

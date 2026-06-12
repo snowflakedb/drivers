@@ -21,7 +21,7 @@ from .extras import tzlocal, MissingOptionalDependency
 if TYPE_CHECKING:
     from numpy import datetime64, float64, int64, timedelta64
 
-    from .._async.connection import AsyncConnection
+    from ..aio.connection import Connection as AsyncConnection
     from ..connection import Connection
 
 

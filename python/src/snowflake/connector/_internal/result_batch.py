@@ -5,15 +5,15 @@ from __future__ import annotations
 from enum import Enum, unique
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from snowflake.connector._internal.errorhandler import ErrorHandlerMixin
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ColumnMetadata, ResultChunk
-from snowflake.connector.errors import InterfaceError
+from ..errors import InterfaceError
+from .errorhandler import ErrorHandlerMixin
+from .protobuf_gen.database_driver_v1_pb2 import ColumnMetadata, ResultChunk
 
 
 if TYPE_CHECKING:
-    from snowflake.connector._async.connection import AsyncConnection
-    from snowflake.connector._internal.cursor.result_metadata import ResultMetadata
-    from snowflake.connector.connection import Connection
+    from ..aio.connection import Connection as AsyncConnection
+    from ..connection import Connection
+    from .cursor.result_metadata import ResultMetadata
 
 
 _ResultBatchT = TypeVar("_ResultBatchT", bound="ResultBatchMixin")

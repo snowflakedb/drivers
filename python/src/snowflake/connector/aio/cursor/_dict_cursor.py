@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from ..._internal.cursor import DictRow
 from ..._internal.decorators import api_telemetry
-from ._base import AsyncSnowflakeCursorBase
+from ._base import SnowflakeCursorBase
 
 
-class AsyncDictCursor(AsyncSnowflakeCursorBase):
+class DictCursor(SnowflakeCursorBase):
     """Cursor returning results as dictionaries with column names as keys.
 
     Usage::

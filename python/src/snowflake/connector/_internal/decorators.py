@@ -16,7 +16,7 @@ import types
 
 from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from contextvars import ContextVar
-from typing import Any, TypeVar, cast
+from typing import Any, Generic, ParamSpec, Protocol, TypeVar, cast
 
 from .backward_compatibility import apply_backward_compatibility
 
@@ -24,6 +24,7 @@ from .backward_compatibility import apply_backward_compatibility
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
 
 # Generic pass-through: functions, classes, and descriptors all round-trip
 # through ``@backward_compatibility`` as the same logical type (a class stays
@@ -51,7 +52,14 @@ def pep249(func: F) -> F:
     return func
 
 
-class _AwaitableContextManager:
+class _AsyncContextManagerLike(Protocol):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any: ...
+
+
+R = TypeVar("R", bound=_AsyncContextManagerLike)
+
+
+class _AwaitableContextManager(Generic[R]):
     """Wrapper returned by :func:`awaitable_context_manager` decorated functions.
 
     Supports both ``await fn(...)`` and ``async with fn(...) as result:``.
@@ -59,14 +67,14 @@ class _AwaitableContextManager:
     the wrapped coroutine must return an async context manager.
     """
 
-    def __init__(self, coro: Coroutine[Any, Any, Any]) -> None:
+    def __init__(self, coro: Coroutine[Any, Any, R]) -> None:
         self._coro = coro
-        self._obj: Any = None
+        self._obj: R | None = None
 
-    def __await__(self) -> Generator[Any, None, Any]:
+    def __await__(self) -> Generator[Any, None, R]:
         return self._coro.__await__()
 
-    async def __aenter__(self) -> Any:
+    async def __aenter__(self) -> R:
         self._obj = await self._coro
         return self._obj
 
@@ -75,7 +83,9 @@ class _AwaitableContextManager:
             return await self._obj.__aexit__(exc_type, exc_val, exc_tb)
 
 
-def awaitable_context_manager(func: F) -> F:
+def awaitable_context_manager(
+    func: Callable[P, Coroutine[Any, Any, R]],
+) -> Callable[P, _AwaitableContextManager[R]]:
     """Make an ``async def`` factory support both ``await`` and ``async with``.
 
     The decorated function must return an object that implements
@@ -97,10 +107,10 @@ def awaitable_context_manager(func: F) -> F:
     """
 
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> _AwaitableContextManager:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> _AwaitableContextManager[R]:
         return _AwaitableContextManager(func(*args, **kwargs))
 
-    return cast(F, wrapper)
+    return wrapper
 
 
 def backward_compatibility(obj: T) -> T:
@@ -138,8 +148,8 @@ _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
 def _telemetry_client_for(self: Any) -> Any:
-    from snowflake.connector._async.connection._connection import AsyncConnection
-    from snowflake.connector._async.cursor._base import AsyncSnowflakeCursorBase as AsyncSnowflakeCursorBase
+    from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+    from snowflake.connector.aio.cursor._base import SnowflakeCursorBase as AsyncSnowflakeCursorBase
     from snowflake.connector.connection import Connection
     from snowflake.connector.cursor._base import SnowflakeCursorBase
 

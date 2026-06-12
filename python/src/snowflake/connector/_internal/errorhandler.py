@@ -21,8 +21,8 @@ from ..errors import Error
 
 
 if TYPE_CHECKING:
-    from .._async.connection import AsyncConnection
-    from .._async.cursor import AsyncSnowflakeCursorBase
+    from ..aio.connection import Connection as AsyncConnection
+    from ..aio.cursor import SnowflakeCursorBase as AsyncSnowflakeCursorBase
     from ..connection import Connection
     from ..cursor import SnowflakeCursorBase
 

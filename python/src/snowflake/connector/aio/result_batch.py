@@ -23,19 +23,19 @@ if TYPE_CHECKING:
     from pyarrow import Table
 
     from ..cursor import ResultMetadata
-    from .connection import AsyncConnection
+    from .connection import Connection
 
 
-class AsyncResultBatch(ResultBatchMixin):
+class ResultBatch(ResultBatchMixin):
     """Async counterpart of :class:`~snowflake.connector.result_batch.ResultBatch`."""
 
-    _connection: AsyncConnection | None
+    _connection: Connection | None
 
     def __init__(
         self,
         chunk: ResultChunk,
         description: list[ResultMetadata],
-        connection: AsyncConnection | None,
+        connection: Connection | None,
         columns: list[ColumnMetadata] | None = None,
     ) -> None:
         super().__init__(chunk, description, connection, columns)
@@ -45,25 +45,25 @@ class AsyncResultBatch(ResultBatchMixin):
     # ------------------------------------------------------------------
 
     @property
-    def connection(self) -> AsyncConnection | None:
+    def connection(self) -> Connection | None:
         return self._connection
 
     @connection.setter
-    def connection(self, value: AsyncConnection | None) -> None:
+    def connection(self, value: Connection | None) -> None:
         self._connection = value
 
     # ------------------------------------------------------------------
     # Connection resolution
     # ------------------------------------------------------------------
 
-    def _resolve_connection(self, connection: AsyncConnection | None = None) -> AsyncConnection:
-        return cast("AsyncConnection", self._require_connection(connection))
+    def _resolve_connection(self, connection: Connection | None = None) -> Connection:
+        return cast("Connection", self._require_connection(connection))
 
     # ------------------------------------------------------------------
     # Data fetching
     # ------------------------------------------------------------------
 
-    async def _fetch_arrow_stream_ptr(self, connection: AsyncConnection) -> int:
+    async def _fetch_arrow_stream_ptr(self, connection: Connection) -> int:
         response = await async_core_driver.database_fetch_chunk(
             db_handle=connection.db_handle,  # type: ignore[arg-type]
             chunk=self._chunk,
@@ -71,14 +71,14 @@ class AsyncResultBatch(ResultBatchMixin):
         )
         return get_stream_ptr(response)
 
-    async def _take_arrow_stream_ptr(self, connection: AsyncConnection) -> int:
+    async def _take_arrow_stream_ptr(self, connection: Connection) -> int:
         if self._arrow_stream_ptr is None:
             await self.populate_data(connection=connection)
         stream_ptr = cast(int, self._arrow_stream_ptr)
         self._arrow_stream_ptr = None
         return stream_ptr
 
-    async def populate_data(self, connection: AsyncConnection | None = None, **kwargs: Any) -> AsyncResultBatch:
+    async def populate_data(self, connection: Connection | None = None, **kwargs: Any) -> ResultBatch:
         conn = self._resolve_connection(connection)
         self._arrow_stream_ptr = await self._fetch_arrow_stream_ptr(conn)
         return self
@@ -88,7 +88,7 @@ class AsyncResultBatch(ResultBatchMixin):
 
     async def create_iter(
         self,
-        connection: AsyncConnection | None = None,
+        connection: Connection | None = None,
         iter_unit: IterUnit | str = IterUnit.ROW_UNIT,
         structure: IterTableStructure | str = IterTableStructure.PANDAS,
         use_dict_result: bool = False,
@@ -124,7 +124,7 @@ class AsyncResultBatch(ResultBatchMixin):
     @requires_dependency(pyarrow)
     async def to_arrow(
         self,
-        connection: AsyncConnection | None = None,
+        connection: Connection | None = None,
         number_to_decimal: bool = False,
         force_microsecond_precision: bool = False,
     ) -> Table:
@@ -143,7 +143,7 @@ class AsyncResultBatch(ResultBatchMixin):
     @requires_dependency(pandas)
     async def to_pandas(
         self,
-        connection: AsyncConnection | None = None,
+        connection: Connection | None = None,
         number_to_decimal: bool = False,
         force_microsecond_precision: bool = False,
     ) -> DataFrame:
@@ -155,4 +155,4 @@ class AsyncResultBatch(ResultBatchMixin):
         return await to_pandas_async(table)
 
 
-__all__ = ["IterUnit", "IterTableStructure", "AsyncResultBatch"]
+__all__ = ["IterUnit", "IterTableStructure", "ResultBatch"]

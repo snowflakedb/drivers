@@ -42,18 +42,18 @@ from ...constants import QueryStatus
 from ...errors import Error, ProgrammingError
 from ...telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ...version import __version__
-from ..cursor import AsyncCursorInstance, AsyncCursorType, AsyncDictCursor, AsyncSnowflakeCursor
-from ._freezable_proxy import AsyncConnectionInfoProxy, AsyncSessionParametersProxy
+from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
+from ._freezable_proxy import _ConnectionInfoProxy, _SessionParametersProxy
 
 
 logger = logging.getLogger(__name__)
 
 
-class AsyncConnection(ConnectionMixin):
+class Connection(ConnectionMixin):
     """Async connection objects represent a database connection."""
 
-    _session_parameters: AsyncSessionParametersProxy
-    _connection_info: AsyncConnectionInfoProxy
+    _session_parameters: _SessionParametersProxy
+    _connection_info: _ConnectionInfoProxy
 
     # ------------------------------------------------------------------
     # Initialization
@@ -72,7 +72,7 @@ class AsyncConnection(ConnectionMixin):
 
         Unlike :class:`~snowflake.connector.connection.Connection`, this does not
         perform any I/O.  Call :meth:`connect`, use
-        :func:`~snowflake.connector._async.connect_async`, or ``async with`` to
+        :func:`~snowflake.connector.aio.connect`, or ``async with`` to
         establish the session.
         """
         super().__init__(
@@ -86,8 +86,8 @@ class AsyncConnection(ConnectionMixin):
         self.conn_handle: ConnectionHandle | None = None
         self._ever_opened = False
         self._close_lock = asyncio.Lock()
-        self._session_parameters = AsyncSessionParametersProxy(None)
-        self._connection_info = AsyncConnectionInfoProxy(None)
+        self._session_parameters = _SessionParametersProxy(None)
+        self._connection_info = _ConnectionInfoProxy(None)
         self._telemetry_client: AsyncTelemetryClient | None = None
 
     # ------------------------------------------------------------------
@@ -134,8 +134,8 @@ class AsyncConnection(ConnectionMixin):
         self.conn_handle = conn_handle
         self.db_handle = db_handle
         self._ever_opened = True
-        self._session_parameters = AsyncSessionParametersProxy(conn_handle)
-        self._connection_info = AsyncConnectionInfoProxy(conn_handle)
+        self._session_parameters = _SessionParametersProxy(conn_handle)
+        self._connection_info = _ConnectionInfoProxy(conn_handle)
         self._telemetry_client = AsyncTelemetryClient(conn_handle)
 
     # ------------------------------------------------------------------
@@ -216,14 +216,14 @@ class AsyncConnection(ConnectionMixin):
     @pep249
     @api_telemetry
     @requires_open
-    async def cursor(self, cursor_class: AsyncCursorType = AsyncSnowflakeCursor) -> AsyncCursorInstance:
+    async def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
         return cursor_class(self)
 
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> AsyncConnection:
+    async def __aenter__(self) -> Connection:
         await self.connect()
         return self
 
@@ -301,9 +301,9 @@ class AsyncConnection(ConnectionMixin):
         sql_text: str,
         remove_comments: bool = False,
         return_cursors: bool = True,
-        cursor_class: AsyncCursorType = AsyncSnowflakeCursor,
+        cursor_class: CursorType = SnowflakeCursor,
         **kwargs: Any,
-    ) -> Iterable[AsyncCursorInstance]:
+    ) -> Iterable[CursorInstance]:
         stream = StringIO(sql_text)
         stream_generator = self.execute_stream(stream, remove_comments=remove_comments, cursor_class=cursor_class)
         if return_cursors:
@@ -317,9 +317,9 @@ class AsyncConnection(ConnectionMixin):
         self,
         stream: StringIO,
         remove_comments: bool = False,
-        cursor_class: AsyncCursorType = AsyncSnowflakeCursor,
+        cursor_class: CursorType = SnowflakeCursor,
         **kwargs: Any,
-    ) -> AsyncGenerator[AsyncCursorInstance, None]:
+    ) -> AsyncGenerator[CursorInstance, None]:
         for sql, is_put_or_get in split_statements(stream, remove_comments=remove_comments):
             if not sql:
                 continue
@@ -352,7 +352,7 @@ class AsyncConnection(ConnectionMixin):
         return self._connection_info[field]
 
     @property
-    def _errorhandler_connection(self) -> AsyncConnection:
+    def _errorhandler_connection(self) -> Connection:
         return self
 
     # ------------------------------------------------------------------
@@ -360,7 +360,7 @@ class AsyncConnection(ConnectionMixin):
     # ------------------------------------------------------------------
 
     async def snowflake_version(self) -> str:
-        cur = await self.cursor(AsyncDictCursor)
+        cur = await self.cursor(DictCursor)
         async with cur:
             await cur.execute(CURRENT_VERSION_SQL)
             row: dict[str, Any] = await cur.fetchone()  # type: ignore[assignment]
@@ -399,3 +399,6 @@ class AsyncConnection(ConnectionMixin):
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
+
+
+SnowflakeConnection = Connection

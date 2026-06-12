@@ -54,7 +54,7 @@ class TelemetryClient:
 
 
 class AsyncTelemetryClient:
-    """Async counterpart of :class:`TelemetryClient` for :class:`AsyncConnection`.
+    """Async counterpart of :class:`TelemetryClient` for :class:`~snowflake.connector.aio.Connection`.
 
     Uses :data:`~snowflake.connector._internal.api_client.client_api.async_core_driver`
     so telemetry RPCs do not block the event loop.

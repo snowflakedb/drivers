@@ -1,0 +1,35 @@
+"""
+PEP 249 Database API 2.0 Cursor Objects (async)
+
+This package defines the async cursor classes as specified in PEP 249.
+
+Hierarchy:
+    SnowflakeCursorBase
+    ├── SnowflakeCursor  — returns tuple rows
+    └── DictCursor       — returns dict rows
+"""
+
+from __future__ import annotations
+
+from ..._internal.cursor import DictRow, QueryResultStats, ResultMetadata, ResultMetadataV2, Row
+from ._base import SnowflakeCursorBase
+from ._dict_cursor import DictCursor
+from ._snowflake_cursor import SnowflakeCursor
+
+
+CursorType = type[SnowflakeCursor] | type[DictCursor]
+CursorInstance = SnowflakeCursor | DictCursor
+
+
+__all__ = [
+    "CursorInstance",
+    "CursorType",
+    "DictCursor",
+    "DictRow",
+    "QueryResultStats",
+    "ResultMetadata",
+    "ResultMetadataV2",
+    "Row",
+    "SnowflakeCursor",
+    "SnowflakeCursorBase",
+]
