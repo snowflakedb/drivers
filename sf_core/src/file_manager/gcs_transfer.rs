@@ -545,7 +545,10 @@ async fn upload_to_gcs(
         .transpose()
         .context(SerializationSnafu)?;
 
-    let data = prepared.data;
+    let data = prepared
+        .data
+        .into_bytes()
+        .map_err(|source| GcsRequestError::SourceIo { source })?;
     let digest = prepared.digest;
 
     gcs_request_with_retry(
@@ -951,6 +954,8 @@ where
 /// `GcsDownloadError` via `From` impls.
 #[derive(Debug, Snafu)]
 enum GcsRequestError {
+    #[snafu(display("Failed to read upload source data"))]
+    SourceIo { source: std::io::Error },
     #[snafu(display("GCS HTTP error"))]
     Http { source: reqwest::Error },
     #[snafu(display("GCS request failed: HTTP {status_code}: {body}"))]
@@ -970,6 +975,10 @@ enum GcsRequestError {
 impl From<GcsRequestError> for GcsUploadError {
     fn from(e: GcsRequestError) -> Self {
         match e {
+            GcsRequestError::SourceIo { source } => GcsUploadError::SourceIo {
+                source,
+                location: Location::default(),
+            },
             GcsRequestError::Http { source } => GcsUploadError::Http {
                 source,
                 location: Location::default(),
@@ -1003,6 +1012,12 @@ impl From<GcsRequestError> for GcsUploadError {
 impl From<GcsRequestError> for GcsDownloadError {
     fn from(e: GcsRequestError) -> Self {
         match e {
+            // SourceIo is upload-only (reading the PUT body); if it ever fires on
+            // the download path it's a logic bug, but we still need a total mapping.
+            GcsRequestError::SourceIo { source } => GcsDownloadError::RetryExhausted {
+                detail: format!("unexpected upload-source IO error on download path: {source}"),
+                location: Location::default(),
+            },
             GcsRequestError::Http { source } => GcsDownloadError::Http {
                 source,
                 location: Location::default(),
@@ -1038,6 +1053,12 @@ impl From<GcsRequestError> for GcsDownloadError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum GcsUploadError {
+    #[snafu(display("Failed to read upload source data"))]
+    SourceIo {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("GCS HTTP error"))]
     Http {
         source: reqwest::Error,
@@ -1171,7 +1192,9 @@ pub enum GcsDownloadError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
-    use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
+    use crate::file_manager::types::{
+        ByteSource, RefreshFuture, StageInfoCache, StageInfoSnapshot,
+    };
     use crate::sensitive::SensitiveString;
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
@@ -1957,7 +1980,7 @@ mod tests {
     /// irrelevant — the skip branch never gets to PUT them.
     fn make_prepared_for_skip(digest: &str) -> PreparedUpload {
         PreparedUpload {
-            data: b"payload-bytes".to_vec(),
+            data: ByteSource::Bytes(b"payload-bytes".to_vec()),
             digest: digest.to_string(),
             encryption_metadata: None,
         }
@@ -1970,7 +1993,7 @@ mod tests {
     /// the remote digest matches.
     fn make_prepared_cse_for_skip(digest: &str) -> PreparedUpload {
         PreparedUpload {
-            data: b"would-be-ciphertext-bytes".to_vec(),
+            data: ByteSource::Bytes(b"would-be-ciphertext-bytes".to_vec()),
             digest: digest.to_string(),
             encryption_metadata: Some(EncryptedFileMetadata {
                 encrypted_key: "ZW5jLWtleQ==".to_string(),
@@ -2241,7 +2264,7 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = PreparedUpload {
-            data: Vec::new(),
+            data: ByteSource::Bytes(Vec::new()),
             digest: EMPTY_SHA256_B64.to_string(),
             encryption_metadata: None,
         };

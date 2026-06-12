@@ -2,11 +2,11 @@ use flate2::{Compression, GzBuilder, bufread::GzDecoder};
 use snafu::{Location, ResultExt, Snafu};
 use std::io::{Read, Write};
 
-// PUT/GET compression
 pub fn compress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
-    // Use GzBuilder to create gzip with a zeroed timestamp for consistent normalization
+    // mtime=0 keeps gzip output deterministic (otherwise the header carries the
+    // current time, which breaks byte-for-byte reproducibility).
     let mut encoder = GzBuilder::new()
-        .mtime(0) // Set timestamp to 0 for consistent normalization
+        .mtime(0)
         .write(Vec::new(), Compression::best());
 
     encoder.write_all(&input_data).context(DataWritingSnafu)?;

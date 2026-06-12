@@ -460,7 +460,7 @@ impl Data {
     /// application, so no wrapper flavor or compression-detection preset is
     /// needed. Only `stage_info`, `encryption_material`, and `overwrite` are
     /// read from the server response; everything else is fixed for this path:
-    /// - `filename` / `file_path` are always `"0"` (one CSV file per request)
+    /// - `filename` / `source` are always `"0"` (one CSV file per request)
     /// - `auto_compress` is `true` (stage binding uses server-side compress)
     /// - `source_compression` is `None` (CSV payload is sent uncompressed)
     pub fn to_bind_stage_upload_data(
@@ -499,7 +499,9 @@ impl Data {
         let overwrite = self.overwrite.unwrap_or(false);
 
         Ok(file_manager::SingleUploadData {
-            file_path: "0".to_string(),
+            // In-memory upload: `upload_in_memory_file` supplies the CSV bytes
+            // directly and ignores `source`; this only labels the logical source.
+            source: file_manager::ByteSource::Path("0".into()),
             filename: "0".to_string(),
             stage_info,
             encryption_material,

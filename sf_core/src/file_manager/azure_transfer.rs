@@ -159,7 +159,10 @@ async fn upload_to_azure(
         .transpose()
         .context(azure_upload_error::SerializationSnafu)?;
 
-    let data = prepared.data;
+    let data = prepared
+        .data
+        .into_bytes()
+        .context(azure_upload_error::SourceIoSnafu)?;
     let digest = prepared.digest;
     let full_url = build_sas_url(url, sas_token);
 
@@ -472,6 +475,12 @@ impl From<AzureRequestError> for AzureDownloadError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum AzureUploadError {
+    #[snafu(display("Failed to read upload source data"))]
+    SourceIo {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Azure HTTP error: {detail}"))]
     Http {
         detail: String,
@@ -563,6 +572,7 @@ pub enum AzureDownloadError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+    use crate::file_manager::types::ByteSource;
     use crate::sensitive::SensitiveString;
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -867,7 +877,7 @@ mod tests {
         });
 
         let prepared = PreparedUpload {
-            data: b"hello world".to_vec(),
+            data: ByteSource::Bytes(b"hello world".to_vec()),
             digest: "0".repeat(64),
             encryption_metadata: None,
         };
