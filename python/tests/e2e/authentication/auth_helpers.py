@@ -14,6 +14,7 @@ from snowflake.connector.errors import DatabaseError
 # `requires_browser` marker.
 PROVIDE_CREDENTIALS_SCRIPT = "/externalbrowser/provideBrowserCredentials.js"
 CLEAN_BROWSER_SCRIPT = "/externalbrowser/cleanBrowserProcesses.js"
+TOTP_GENERATOR_SCRIPT = "/externalbrowser/totpGenerator.js"
 CHROMIUM_DEBUG_PORT = 9222
 
 
@@ -45,6 +46,119 @@ def verify_login_error(exception, keywords):
 def clean_browser_processes():
     """Kill any lingering Chromium processes from previous test runs."""
     subprocess.run(["node", CLEAN_BROWSER_SCRIPT], timeout=15, capture_output=True)
+
+
+def is_totp_retryable_error(exc: Exception) -> bool:
+    """Return True when the error indicates an expired/invalid TOTP code."""
+    msg = str(exc)
+    return "TOTP Invalid" in msg or "invalid passcode" in msg.lower()
+
+
+TOTP_STEP_SECONDS = 30
+
+# Passcodes already sent to Snowflake in this pytest process. Snowflake rejects
+# TOTP replay within a time window, so serial MFA tests must not reuse codes.
+_USED_TOTP_CODES: set[str] = set()
+
+
+def get_totp_codes(seed: str) -> list[str]:
+    """Generate TOTP passcodes via the headless browser container helper."""
+    result = subprocess.run(
+        ["node", TOTP_GENERATOR_SCRIPT, seed],
+        timeout=40,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise RuntimeError(f"totpGenerator.js failed (rc={result.returncode}): {stderr}")
+
+    codes = result.stdout.strip().split()
+    if not codes:
+        raise RuntimeError("totpGenerator.js produced no TOTP codes")
+    return codes
+
+
+def _fresh_totp_codes(seed: str) -> list[str]:
+    return [code for code in get_totp_codes(seed) if code not in _USED_TOTP_CODES]
+
+
+def _sleep_to_next_totp_window() -> None:
+    """Block until the next 30s TOTP window (plus a 1s buffer)."""
+    wait = TOTP_STEP_SECONDS - (time.time() % TOTP_STEP_SECONDS)
+    if wait > 0:
+        wait += 1.0
+        print(f"[mfa-helper] Waiting {wait:.0f}s for next TOTP window")
+        time.sleep(wait)
+
+
+def acquire_totp_passcode(seed: str, *, max_windows: int = 3) -> str:
+    """Return one unused TOTP passcode, advancing to the next window if needed."""
+    for window_idx in range(max_windows):
+        fresh = _fresh_totp_codes(seed)
+        if fresh:
+            passcode = fresh[0]
+            _USED_TOTP_CODES.add(passcode)
+            return passcode
+        if window_idx < max_windows - 1:
+            print(f"[mfa-helper] No unused codes in window {window_idx + 1}, advancing")
+            _sleep_to_next_totp_window()
+    raise RuntimeError(f"No unused TOTP passcodes available after {max_windows} windows")
+
+
+def connect_with_totp_retry(
+    connection_factory: Callable,
+    totp_seed: str,
+    *,
+    passcode_in_password: bool = False,
+    max_windows: int = 3,
+    **connect_kwargs,
+):
+    """Connect using USERNAME_PASSWORD_MFA with TOTP dedup across tests.
+
+    Snowflake rejects reused TOTP codes within a time window. Codes already
+    consumed in this pytest process are skipped; when exhausted, waits for the
+    next 30s window before regenerating (totpGenerator yields 2-3 codes per window).
+    """
+    last_error = None
+    base_password = connect_kwargs.get("password")
+
+    for window_idx in range(max_windows):
+        fresh_codes = _fresh_totp_codes(totp_seed)
+        if not fresh_codes:
+            if window_idx >= max_windows - 1:
+                break
+            print(f"[mfa-helper] No unused codes in window {window_idx + 1}, advancing")
+            _sleep_to_next_totp_window()
+            continue
+
+        for code_idx, passcode in enumerate(fresh_codes):
+            _USED_TOTP_CODES.add(passcode)
+            kwargs = dict(connect_kwargs)
+            if passcode_in_password:
+                kwargs["password"] = base_password + passcode
+                kwargs["passcode_in_password"] = True
+            else:
+                kwargs["passcode"] = passcode
+
+            try:
+                return connection_factory(**kwargs)
+            except Exception as e:
+                last_error = e
+                if is_totp_retryable_error(e):
+                    print(
+                        f"[mfa-helper] TOTP code {code_idx + 1}/{len(fresh_codes)} "
+                        f"in window {window_idx + 1} failed, retrying"
+                    )
+                    continue
+                raise
+
+        if window_idx < max_windows - 1:
+            _sleep_to_next_totp_window()
+
+    raise AssertionError(
+        f"Failed to connect after {max_windows} TOTP windows. Last error: {last_error}"
+    ) from last_error
 
 
 def provide_browser_credentials(scenario: str, login: str, password: str):
