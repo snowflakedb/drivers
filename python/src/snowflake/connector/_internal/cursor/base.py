@@ -224,16 +224,18 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return QueryBindings(json=binary_data_ptr)
 
     def _prepare_query(
-        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None
+        self,
+        operation: str,
+        parameters: Sequence[Any] | dict[str, Any] | None,
+        _force_qmark_paramstyle: bool = False,
     ) -> tuple[str, QueryBindings | None]:
         """Prepare query and bindings based on paramstyle.
 
         Args:
-            operation: SQL statement
-            parameters: Parameters to bind (sequence or dict)
-
-        Returns:
-            Tuple of (query string, QueryBindings or None)
+            _force_qmark_paramstyle: If True, treat the call as qmark
+                regardless of the connection's configured paramstyle. Used by
+                callers (e.g. snowflake.core) that emit ``?`` placeholders
+                while connections may default to pyformat.
 
         Raises:
             ProgrammingError: If dict parameters used with server-side binding
@@ -241,7 +243,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
         if parameters is None:
             return operation, None
 
-        paramstyle = self._connection.paramstyle
+        paramstyle = ParamStyle.QMARK if _force_qmark_paramstyle else self._connection.paramstyle
 
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
