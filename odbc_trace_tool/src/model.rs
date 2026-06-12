@@ -294,6 +294,34 @@ pub struct GetData {
     pub buffer_length: Option<i64>,
     pub value: Option<String>,
     pub indicator: Option<i64>,
+    /// Live-captured buffer value for obscured (non-string) C types.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::captured_value::option"
+    )]
+    pub captured: Option<crate::captured_value::CapturedValue>,
+    /// IR operation sequence number; populated when flattening for capture
+    /// emission and never serialized (the tree's `Operation.seq` is canonical).
+    #[serde(skip)]
+    pub seq: Option<u64>,
+}
+
+impl Default for GetData {
+    fn default() -> Self {
+        Self {
+            return_code: ReturnCode::Success,
+            handle: None,
+            column_number: None,
+            target_type: None,
+            target_type_name: None,
+            buffer_length: None,
+            value: None,
+            indicator: None,
+            captured: None,
+            seq: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -941,6 +969,8 @@ mod raw {
             value: first_string(&output).or_else(|| string_by_name(&output, "Buffer")),
             indicator: output_int_at(&output, 5)
                 .or_else(|| output_int_by_name(&output, "Strlen Or Ind")),
+            captured: None,
+            seq: None,
         })
     }
 

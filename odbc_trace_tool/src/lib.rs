@@ -1,3 +1,4 @@
+pub mod captured_value;
 pub mod compare;
 pub mod generator;
 pub mod ir;

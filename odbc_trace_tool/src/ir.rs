@@ -9,6 +9,12 @@ use crate::model::{HandleType, OdbcCall, TraceHeader, TraceLog, TracedCall};
 
 pub type SeqNum = u64;
 
+fn enrich_op_seq(op: &mut Operation) {
+    if let OdbcCall::GetData(ref mut gd) = op.call {
+        gd.seq = Some(op.seq);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
     pub seq: SeqNum,
@@ -295,6 +301,7 @@ impl IrBuilder {
             total_operations: total,
         };
         ir.resolve_all_handles();
+        ir.enrich_seq();
         ir
     }
 
@@ -476,12 +483,57 @@ impl TraceIr {
         }
     }
 
+    /// Set `GetData.seq` from `Operation.seq` for every operation in the tree.
+    /// Called during IR construction so all consumers automatically get
+    /// seq-enriched calls without a separate post-processing step.
+    fn enrich_seq(&mut self) {
+        for root in &mut self.roots {
+            root.enrich_seq_ops();
+        }
+        for op in &mut self.unscoped_operations {
+            enrich_op_seq(op);
+        }
+    }
+
     /// Flatten all calls in sequence order (for consumers that need a linear list).
     pub fn flatten_calls(&self) -> Vec<OdbcCall> {
         self.all_operations_sorted()
             .into_iter()
             .map(|op| op.call.clone())
             .collect()
+    }
+
+    /// Write live-captured values into `GetData.captured` on operations whose
+    /// `seq` appears in `by_seq`.
+    pub fn apply_captured_values(
+        &mut self,
+        by_seq: &HashMap<SeqNum, crate::captured_value::CapturedValue>,
+    ) {
+        fn apply_to_ops(
+            ops: &mut [Operation],
+            by_seq: &HashMap<SeqNum, crate::captured_value::CapturedValue>,
+        ) {
+            for op in ops {
+                if let OdbcCall::GetData(ref mut gd) = op.call {
+                    if let Some(val) = by_seq.get(&op.seq) {
+                        gd.captured = Some(val.clone());
+                    }
+                }
+            }
+        }
+
+        fn walk_nodes(
+            nodes: &mut [HandleNode],
+            by_seq: &HashMap<SeqNum, crate::captured_value::CapturedValue>,
+        ) {
+            for node in nodes {
+                apply_to_ops(&mut node.operations, by_seq);
+                walk_nodes(&mut node.children, by_seq);
+            }
+        }
+
+        apply_to_ops(&mut self.unscoped_operations, by_seq);
+        walk_nodes(&mut self.roots, by_seq);
     }
 
     /// Collect DBC nodes paired with the env they were allocated under, if any.
@@ -598,6 +650,10 @@ pub enum SplitMode {
 pub fn load_ir_yaml(path: &std::path::Path) -> std::io::Result<TraceIr> {
     let content = std::fs::read_to_string(path)?;
     serde_yaml::from_str(&content)
+        .map(|mut ir: TraceIr| {
+            ir.enrich_seq();
+            ir
+        })
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))
 }
 
@@ -610,6 +666,22 @@ impl HandleNode {
     pub fn has_truncated_sql(&self) -> bool {
         self.operations.iter().any(|op| op.call.has_truncated_sql())
             || self.children.iter().any(|c| c.has_truncated_sql())
+    }
+
+    /// Set `GetData.seq` from `Operation.seq` for every operation in this subtree.
+    fn enrich_seq_ops(&mut self) {
+        if let Some(op) = &mut self.alloc {
+            enrich_op_seq(op);
+        }
+        if let Some(op) = &mut self.free {
+            enrich_op_seq(op);
+        }
+        for op in &mut self.operations {
+            enrich_op_seq(op);
+        }
+        for child in &mut self.children {
+            child.enrich_seq_ops();
+        }
     }
 
     /// Replace raw handle addresses with logical names in all operations.
@@ -1174,5 +1246,85 @@ b6dcc-1 1234-5678\tEXIT  SQLExecDirectW  with return code 0 (SQL_SUCCESS)\n\
         let (_, sub) = &splits[0];
         assert_eq!(sub.roots[0].handle_type, HandleType::Dbc);
         assert_eq!(sub.roots[0].children[0].handle_type, HandleType::Stmt);
+    }
+
+    #[test]
+    fn apply_captured_values_sets_getdata_by_seq() {
+        use std::collections::HashMap;
+
+        use crate::captured_value::{CapturedValue, DoubleVal};
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let mut ir = TraceIr {
+            header: TraceHeader::default(),
+            roots: vec![],
+            unscoped_operations: vec![Operation {
+                seq: 7,
+                call: OdbcCall::GetData(GetData {
+                    return_code: ReturnCode::Success,
+                    handle: Some("0xstmt".to_string()),
+                    column_number: Some(1),
+                    target_type: Some(8),
+                    target_type_name: Some("SQL_C_DOUBLE".to_string()),
+                    buffer_length: Some(8),
+                    value: None,
+                    indicator: Some(8),
+                    captured: None,
+                    seq: None,
+                }),
+                entry_line: None,
+                exit_line: None,
+            }],
+            total_operations: 1,
+        };
+
+        let mut by_seq = HashMap::new();
+        by_seq.insert(7, CapturedValue::Double(DoubleVal::Finite(2.5)));
+        ir.apply_captured_values(&by_seq);
+
+        let OdbcCall::GetData(gd) = &ir.unscoped_operations[0].call else {
+            panic!("expected GetData");
+        };
+        assert_eq!(
+            gd.captured,
+            Some(CapturedValue::Double(DoubleVal::Finite(2.5)))
+        );
+    }
+
+    #[test]
+    fn getdata_seq_not_serialized_in_ir_yaml() {
+        use crate::captured_value::{CapturedValue, DoubleVal};
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let ir = TraceIr {
+            header: TraceHeader::default(),
+            roots: vec![],
+            unscoped_operations: vec![Operation {
+                seq: 1,
+                call: OdbcCall::GetData(GetData {
+                    return_code: ReturnCode::Success,
+                    handle: Some("0xstmt".to_string()),
+                    column_number: Some(1),
+                    target_type: Some(8),
+                    target_type_name: Some("SQL_C_DOUBLE".to_string()),
+                    buffer_length: Some(8),
+                    value: None,
+                    indicator: Some(8),
+                    captured: Some(CapturedValue::Double(DoubleVal::Finite(1.0))),
+                    seq: Some(99),
+                }),
+                entry_line: None,
+                exit_line: None,
+            }],
+            total_operations: 1,
+        };
+
+        let yaml = serde_yaml::to_string(&ir).expect("serialize");
+        let loaded: TraceIr = serde_yaml::from_str(&yaml).expect("deserialize");
+        let OdbcCall::GetData(gd) = &loaded.unscoped_operations[0].call else {
+            panic!("expected GetData");
+        };
+        assert!(gd.captured.is_some());
+        assert_eq!(gd.seq, None, "transient GetData.seq must not round-trip");
     }
 }
