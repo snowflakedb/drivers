@@ -6,6 +6,11 @@ mod s3_transfer;
 mod path_expansion;
 pub mod types;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod internal {
+    pub use super::encryption::{EncryptionError, decrypt_ciphertext_to_writer, encrypt_file_data};
+}
+
 pub use self::types::*;
 pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::{
@@ -17,14 +22,16 @@ use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
-use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
+use encryption::{
+    EncryptionError, compute_sha256_digest, decrypt_ciphertext_to_writer, encrypt_file_data,
+};
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 /// Message string emitted in the PUT result's `message` column when the
 /// upload outcome is `Skipped` under `PutGetResultsetFlavor::Odbc`. Mirrors
@@ -33,6 +40,15 @@ use std::path::Path;
 /// `Python` flavor leaves the `message` column empty for skipped uploads,
 /// matching the historical universal-driver behaviour.
 const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIPPED";
+
+/// Bytes read from the source for compression auto-detection. Every
+/// `CompressionType` we currently detect has its magic at offset 0 (gzip 0–1,
+/// bzip2 0–2, zstd 0–3, parquet/ORC 0–3), so 16 bytes would suffice today.
+/// The 512-byte buffer is future-proofing: the `infer` crate's archive
+/// matchers read up to ~265 bytes (e.g. tar's `ustar` at offset 257), so if
+/// we ever map one of those archive kinds to a `CompressionType` the buffer
+/// already covers it. 512 is O(1) regardless of file size.
+const COMPRESSION_DETECT_PREFIX_LEN: usize = 512;
 
 pub async fn upload_files(
     data: &UploadData,
@@ -60,8 +76,9 @@ pub async fn upload_files(
     // presigned URL).
     for file_location in file_locations {
         let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
+        let path = PathBuf::from(&file_location.path);
         let single_upload_data = SingleUploadData {
-            file_path: file_location.path,
+            source: ByteSource::Path(path),
             filename: file_location.filename,
             stage_info,
             encryption_material: data.encryption_material.clone(),
@@ -109,25 +126,21 @@ pub async fn upload_single_file(
     put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
-    let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
-
-    let mut file_buffer = Vec::new();
-    input_file.read_to_end(&mut file_buffer).context(IoSnafu)?;
-
-    upload_prepared_buffer(file_buffer, data, put_get_max_attempts, refresher).await
+    // `preprocess_file_before_upload` reads a `ByteSource::Path` itself
+    // (streaming), so `upload_single_file` no longer pre-reads the file.
+    upload_prepared_source(data.source.clone(), data, put_get_max_attempts, refresher).await
 }
 
 /// Uploads an in-memory byte buffer to the stage location described by
-/// `data`. Skips the disk read that [`upload_single_file`] performs and
-/// delegates to the shared cloud-upload path, so encryption, compression,
-/// SHA-256 digesting, and the per-cloud (S3 / GCS / Azure) dispatch behave
-/// identically.
+/// `data`. Skips the `ByteSource::Path` disk read that [`upload_single_file`]
+/// delegates and instead wraps the buffer in `ByteSource::Bytes`, sharing the
+/// same cloud-upload path so encryption, compression, SHA-256 digesting, and
+/// the per-cloud (S3 / GCS / Azure) dispatch behave identically.
 ///
-/// `data.file_path` is consulted by `preprocess_file_before_upload` only to
-/// fill the `source` column of the upload result on the legacy
-/// `PutGetResultsetFlavor::Odbc + Windows` path; callers that do not surface
+/// The upload result's `source` column is derived from `data.source` /
+/// `data.filename` (see `upload_result_source`); callers that do not surface
 /// the upload result back to the user (notably the large-bindings stage
-/// uploader) may set it to the same value as `data.filename`.
+/// uploader) need not set a meaningful `data.source`.
 pub async fn upload_in_memory_file(
     buffer: Vec<u8>,
     data: SingleUploadData,
@@ -136,20 +149,26 @@ pub async fn upload_in_memory_file(
     // The in-memory path serves the bind-stage uploader, which is not driven
     // by the session-level `put_get_max_attempts` knob; it keeps the default
     // attempt count (its payloads are small and fast — see `upload_blob`).
-    upload_prepared_buffer(buffer, data, DEFAULT_PUT_GET_MAX_ATTEMPTS, refresher).await
+    upload_prepared_source(
+        ByteSource::Bytes(buffer),
+        data,
+        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        refresher,
+    )
+    .await
 }
 
 /// Shared core of the upload path used by both `upload_single_file` (file
-/// source) and `upload_in_memory_file` (in-memory source). Splitting the
-/// disk read off lets both callers reuse the same preprocess + cloud
-/// dispatch with no behavior drift.
-async fn upload_prepared_buffer(
-    buffer: Vec<u8>,
+/// source) and `upload_in_memory_file` (in-memory source). Taking the
+/// `ByteSource` as a parameter lets both callers reuse the same preprocess +
+/// cloud dispatch with no behavior drift.
+async fn upload_prepared_source(
+    source: ByteSource,
     data: SingleUploadData,
     put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
-    let (prepared, file_metadata) = preprocess_file_before_upload(buffer, &data)?;
+    let (prepared, file_metadata) = preprocess_file_before_upload(source, &data)?;
 
     let status = match data.stage_info.location_type {
         LocationType::S3 => upload_to_s3_or_skip(
@@ -227,13 +246,19 @@ fn upload_result_message(status: UploadStatus, flavor: &PutGetResultsetFlavor) -
 /// inside the helper so the unit tests can exercise both branches on
 /// any host.
 fn upload_result_source(
-    file_path: &str,
+    source: &ByteSource,
     filename: &str,
     flavor: &PutGetResultsetFlavor,
     is_windows: bool,
 ) -> String {
-    match (is_windows, flavor) {
-        (true, PutGetResultsetFlavor::Odbc) => file_path.replace('\\', "/"),
+    match (is_windows, flavor, source) {
+        // Windows ODBC parity: emit the original local path (with forward
+        // slashes) for the result's `source` column. For in-memory uploads
+        // there is no local path, so fall back to the basename like every
+        // other (flavor, host) combination.
+        (true, PutGetResultsetFlavor::Odbc, ByteSource::Path(p)) => {
+            p.display().to_string().replace('\\', "/")
+        }
         _ => filename.to_string(),
     }
 }
@@ -241,55 +266,65 @@ fn upload_result_source(
 /// Sets file metadata, compresses the file if needed, and optionally encrypts the data.
 /// For SSE stages (no encryption material), the data is uploaded without client-side encryption.
 fn preprocess_file_before_upload(
-    mut file_buffer: Vec<u8>,
+    source: ByteSource,
     data: &SingleUploadData,
 ) -> Result<(PreparedUpload, UploadMetadata), FileManagerError> {
-    let source_size = file_buffer.len() as i64;
+    let (prefix, source_size) = read_prefix_and_size(&source)?;
 
     let source_compression = get_source_compression(
         data.filename.as_str(),
-        file_buffer.as_slice(),
+        &prefix,
         &data.source_compression,
         data.legacy_odbc_compression_autodetect,
     )
     .context(CompressionTypeSnafu)?;
 
-    let source = upload_result_source(
-        data.file_path.as_str(),
+    let result_source = upload_result_source(
+        &data.source,
         data.filename.as_str(),
         &data.flavor,
         cfg!(windows),
     );
     let mut target = data.filename.clone();
 
-    let target_compression = if data.auto_compress && source_compression == CompressionType::None {
-        file_buffer = compress_data(file_buffer).context(CompressionSnafu)?;
-        target = format!("{}.gz", data.filename);
-        CompressionType::Gzip
-    } else {
-        source_compression.clone()
-    };
+    let (upload_source, target_compression) =
+        if data.auto_compress && source_compression == CompressionType::None {
+            let bytes = source.into_bytes().context(IoSnafu)?;
+            let compressed = compress_data(bytes).context(CompressionSnafu)?;
+            target = format!("{}.gz", data.filename);
+            (ByteSource::Bytes(compressed), CompressionType::Gzip)
+        } else {
+            (source, source_compression.clone())
+        };
 
     let prepared = match &data.encryption_material {
-        Some(material) => {
-            encrypt_file_data(file_buffer.as_slice(), material).context(EncryptionSnafu)?
-        }
+        Some(material) => encrypt_file_data(upload_source, material).context(EncryptionSnafu)?,
         None => {
-            let digest = compute_sha256_digest(&file_buffer).context(DigestComputationSnafu)?;
+            let bytes = upload_source.into_bytes().context(IoSnafu)?;
+            let digest = compute_sha256_digest(&bytes).context(DigestComputationSnafu)?;
             PreparedUpload {
-                data: file_buffer,
+                data: ByteSource::Bytes(bytes),
                 digest,
                 encryption_metadata: None,
             }
         }
     };
 
-    let target_size = prepared.data.len() as i64;
+    let target_size = match &prepared.data {
+        ByteSource::Bytes(b) => b.len() as i64,
+        // Both branches above always produce `ByteSource::Bytes`; PR-2 will
+        // change that for the streaming-PUT path. Until then, a `Path` here
+        // is a programmer bug — fail loudly rather than stat the disk and
+        // emit a confusing `IoSnafu` for "preprocessing produced a path".
+        ByteSource::Path(_) => {
+            unreachable!("preprocess_file_before_upload always produces ByteSource::Bytes")
+        }
+    };
 
     Ok((
         prepared,
         UploadMetadata {
-            source,
+            source: result_source,
             target,
             source_size,
             source_compression,
@@ -297,6 +332,33 @@ fn preprocess_file_before_upload(
             target_compression,
         },
     ))
+}
+
+/// Reads the first `COMPRESSION_DETECT_PREFIX_LEN` bytes for compression
+/// auto-detect, plus the source's total byte count.
+///
+/// For `ByteSource::Path` this opens the file once for the prefix + metadata
+/// read; the upload path opens it again later (in `encrypt_file_data` for
+/// CSE stages, or `into_bytes()` for SSE stages). If the file changes between
+/// opens, `source_size` reported here can disagree with the bytes actually
+/// uploaded — that's the cost of streaming. The pre-streaming code did one
+/// `read_to_end`, which was atomic but defeated the entire memory bound.
+fn read_prefix_and_size(source: &ByteSource) -> Result<(Vec<u8>, i64), FileManagerError> {
+    match source {
+        ByteSource::Path(p) => {
+            let f = File::open(p).context(IoSnafu)?;
+            let size = f.metadata().context(IoSnafu)?.len() as i64;
+            let mut prefix = Vec::with_capacity(COMPRESSION_DETECT_PREFIX_LEN);
+            f.take(COMPRESSION_DETECT_PREFIX_LEN as u64)
+                .read_to_end(&mut prefix)
+                .context(IoSnafu)?;
+            Ok((prefix, size))
+        }
+        ByteSource::Bytes(b) => {
+            let prefix = b[..b.len().min(COMPRESSION_DETECT_PREFIX_LEN)].to_vec();
+            Ok((prefix, b.len() as i64))
+        }
+    }
 }
 
 /// Uses user-specified compression type or auto-detects the compression type based on the file name and content.
@@ -454,43 +516,110 @@ pub async fn download_single_file(
         }
     };
 
-    let output_data = match data.encryption_material.as_ref() {
-        Some(enc_material) => match (file_metadata, digest.as_deref()) {
-            (Some(enc_metadata), Some(d)) => {
-                decrypt_file_data(&raw_data, &enc_metadata, d, enc_material)
-                    .context(DecryptionSnafu)?
-            }
-            // The server advertises encryption material but the object carries no
-            // client-side-encryption headers (e.g. git stage objects on S3).
-            // Fall through to raw bytes, matching legacy connector behaviour.
-            _ => {
-                tracing::debug!(
-                    "encryption_material present but S3 encryption headers absent; \
-                     returning raw bytes"
-                );
-                raw_data
-            }
-        },
-        None => raw_data,
-    };
-
     let filename = Path::new(&data.src_location)
         .file_name()
         .unwrap_or(std::ffi::OsStr::new(&data.src_location));
     let output_path = Path::new(&data.local_location).join(filename);
+    // Atomic write via a sibling `.part` temp file: plaintext is decrypted (or
+    // copied, on the SSE branch) into the temp path, the digest is verified at
+    // finalize time, and only on success do we `rename` to `output_path`. On
+    // failure we `remove_file` the temp; the destination is never created, so
+    // concurrent FS observers (file watchers, antivirus, scripts) see no
+    // partial plaintext at the user-visible path. This restores parity with
+    // the pre-streaming behaviour where digest verification preceded any
+    // write to disk.
+    let partial_path = {
+        let mut s = output_path.as_os_str().to_owned();
+        s.push(".part");
+        PathBuf::from(s)
+    };
 
-    let mut output_file = File::create(&output_path).context(IoSnafu)?;
-    output_file.write_all(&output_data).context(IoSnafu)?;
+    let output_byte_len: i64 = match (
+        data.encryption_material.as_ref(),
+        file_metadata,
+        digest.as_deref(),
+    ) {
+        // Client-side-encrypted object: stream-decrypt into the temp path,
+        // verifying the SHA-256 digest at finalize time.
+        (Some(enc_material), Some(enc_metadata), Some(d)) => {
+            let mut output_file = File::create(&partial_path).context(IoSnafu)?;
+            match decrypt_ciphertext_to_writer(
+                raw_data.as_slice(),
+                &enc_metadata,
+                d,
+                enc_material,
+                &mut output_file,
+            ) {
+                Ok(n) => {
+                    drop(output_file);
+                    if let Err(e) = std::fs::rename(&partial_path, &output_path) {
+                        let _ = std::fs::remove_file(&partial_path);
+                        return Err(e).context(IoSnafu);
+                    }
+                    n
+                }
+                Err(e) => {
+                    drop(output_file);
+                    if let Err(rm_err) = std::fs::remove_file(&partial_path) {
+                        tracing::warn!(
+                            "failed to remove partial download {}: {}",
+                            partial_path.display(),
+                            rm_err
+                        );
+                    }
+                    return Err(e).context(DecryptionSnafu);
+                }
+            }
+        }
+        // Two non-decrypting cases share the raw-copy path:
+        //   * SSE stage — no `encryption_material`; server-side decryption
+        //     already happened, so the cloud bytes are the plaintext.
+        //   * `encryption_material` present but the object carries no
+        //     client-side-encryption headers (e.g. git stage objects on S3) —
+        //     fall through to raw bytes, matching legacy connector behaviour.
+        // Same atomic-rename pattern: `std::io::copy` can fail mid-stream and we
+        // don't want a partial copy visible at the destination.
+        (enc_material, _, _) => {
+            if enc_material.is_some() {
+                tracing::debug!(
+                    "encryption_material present but S3 encryption headers absent; \
+                     writing raw bytes"
+                );
+            }
+            let mut output_file = File::create(&partial_path).context(IoSnafu)?;
+            match std::io::copy(&mut raw_data.as_slice(), &mut output_file) {
+                Ok(_) => {
+                    drop(output_file);
+                    if let Err(e) = std::fs::rename(&partial_path, &output_path) {
+                        let _ = std::fs::remove_file(&partial_path);
+                        return Err(e).context(IoSnafu);
+                    }
+                    raw_data.len() as i64
+                }
+                Err(e) => {
+                    drop(output_file);
+                    if let Err(rm_err) = std::fs::remove_file(&partial_path) {
+                        tracing::warn!(
+                            "failed to remove partial download {}: {}",
+                            partial_path.display(),
+                            rm_err
+                        );
+                    }
+                    return Err(e).context(IoSnafu);
+                }
+            }
+        }
+    };
 
     tracing::info!(
         "File downloaded to '{}' ({} bytes)",
         output_path.display(),
-        output_data.len()
+        output_byte_len
     );
 
     Ok(DownloadResult {
         file: data.src_location,
-        size: download_result_size(cloud_byte_count, output_data.len() as i64, &data.flavor),
+        size: download_result_size(cloud_byte_count, output_byte_len, &data.flavor),
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
     })
@@ -668,7 +797,7 @@ mod tests {
         // produce; must be normalised to forward slashes to match legacy.
         assert_eq!(
             upload_result_source(
-                WINDOWS_BACKSLASH_PATH,
+                &ByteSource::Path(PathBuf::from(WINDOWS_BACKSLASH_PATH)),
                 BASENAME,
                 &PutGetResultsetFlavor::Odbc,
                 true,
@@ -681,7 +810,7 @@ mod tests {
         // filesystem traversal). This is the case that broke PR4 in CI.
         assert_eq!(
             upload_result_source(
-                WINDOWS_MIXED_PATH,
+                &ByteSource::Path(PathBuf::from(WINDOWS_MIXED_PATH)),
                 BASENAME,
                 &PutGetResultsetFlavor::Odbc,
                 true,
@@ -691,7 +820,7 @@ mod tests {
         // Already-normalised input must be returned unchanged.
         assert_eq!(
             upload_result_source(
-                WINDOWS_FORWARD_SLASH_PATH,
+                &ByteSource::Path(PathBuf::from(WINDOWS_FORWARD_SLASH_PATH)),
                 BASENAME,
                 &PutGetResultsetFlavor::Odbc,
                 true,
@@ -708,7 +837,12 @@ mod tests {
             WINDOWS_FORWARD_SLASH_PATH,
         ] {
             assert_eq!(
-                upload_result_source(full_path, BASENAME, &PutGetResultsetFlavor::Python, true),
+                upload_result_source(
+                    &ByteSource::Path(PathBuf::from(full_path)),
+                    BASENAME,
+                    &PutGetResultsetFlavor::Python,
+                    true,
+                ),
                 BASENAME,
                 "Python on Windows must continue stripping directories from `{full_path}`",
             );
@@ -719,7 +853,12 @@ mod tests {
     fn upload_result_source_non_windows_returns_basename_for_both_flavors() {
         for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
             assert_eq!(
-                upload_result_source(UNIX_FULL_PATH, BASENAME, &flavor, false),
+                upload_result_source(
+                    &ByteSource::Path(PathBuf::from(UNIX_FULL_PATH)),
+                    BASENAME,
+                    &flavor,
+                    false,
+                ),
                 BASENAME,
                 "{flavor:?} on non-Windows must always return the basename — \
                  legacy ODBC's `find_last_of('/')` worked correctly on Unix paths",
@@ -737,9 +876,34 @@ mod tests {
         for is_windows in [false, true] {
             for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
                 assert_eq!(
-                    upload_result_source(BASENAME, BASENAME, &flavor, is_windows),
+                    upload_result_source(
+                        &ByteSource::Path(PathBuf::from(BASENAME)),
+                        BASENAME,
+                        &flavor,
+                        is_windows,
+                    ),
                     BASENAME,
                     "is_windows={is_windows}, flavor={flavor:?} must return {BASENAME}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn upload_result_source_bytes_source_falls_back_to_basename() {
+        // For in-memory uploads there is no local path; even Windows ODBC
+        // (the only flavor/host combo that would emit a path) must fall
+        // back to the basename.
+        for is_windows in [false, true] {
+            for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+                assert_eq!(
+                    upload_result_source(
+                        &ByteSource::Bytes(Vec::new()),
+                        BASENAME,
+                        &flavor,
+                        is_windows,
+                    ),
+                    BASENAME,
                 );
             }
         }
@@ -1019,13 +1183,15 @@ mod tests {
         let payload = b"PAR1\x00\x01\x02\x03some-parquet-bytes-go-here".to_vec();
         let data = passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Python, false);
 
-        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
 
         assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(metadata.source_compression, CompressionType::Parquet);
         assert_eq!(
-            prepared.data, payload,
+            prepared.data.into_bytes().unwrap(),
+            payload,
             "payload must pass through bit-identical (no gzip wrap)",
         );
     }
@@ -1035,13 +1201,15 @@ mod tests {
         let payload = b"ORC\x00\x01\x02some-orc-bytes-go-here".to_vec();
         let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false);
 
-        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
 
         assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
         assert_eq!(metadata.source_compression, CompressionType::Orc);
         assert_eq!(
-            prepared.data, payload,
+            prepared.data.into_bytes().unwrap(),
+            payload,
             "payload must pass through bit-identical"
         );
     }
@@ -1060,13 +1228,15 @@ mod tests {
             ..passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Python, false)
         };
 
-        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
 
         assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(metadata.source_compression, CompressionType::Parquet);
         assert_eq!(
-            prepared.data, payload,
+            prepared.data.into_bytes().unwrap(),
+            payload,
             "payload must pass through bit-identical (no gzip wrap)",
         );
     }
@@ -1079,13 +1249,15 @@ mod tests {
             ..passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false)
         };
 
-        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
 
         assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
         assert_eq!(metadata.source_compression, CompressionType::Orc);
         assert_eq!(
-            prepared.data, payload,
+            prepared.data.into_bytes().unwrap(),
+            payload,
             "payload must pass through bit-identical"
         );
     }
@@ -1099,11 +1271,12 @@ mod tests {
         let payload = b"PAR1\x00\x01\x02\x03more-bytes".to_vec();
         let data = passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Odbc, true);
 
-        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
 
         assert_eq!(metadata.target, "data.parquet");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
-        assert_eq!(prepared.data, payload);
+        assert_eq!(prepared.data.into_bytes().unwrap(), payload);
     }
 
     #[test]
@@ -1111,11 +1284,75 @@ mod tests {
         let payload = b"ORC\x00\x01\x02more-bytes".to_vec();
         let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Odbc, true);
 
-        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
 
         assert_eq!(metadata.target, "data.orc");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
-        assert_eq!(prepared.data, payload);
+        assert_eq!(prepared.data.into_bytes().unwrap(), payload);
+    }
+
+    // Prefix-read coverage: the 512-byte prefix window must be wide enough
+    // to cover non-zero-offset magic bytes (e.g. tar's `ustar` at offset 257).
+    // No `CompressionType` currently uses a non-zero offset, but the constant
+    // is sized for future archive matchers. This test pins the contract: a
+    // file larger than 512 bytes yields a prefix of exactly
+    // COMPRESSION_DETECT_PREFIX_LEN bytes, and that prefix covers at least
+    // offset 257 so a future matcher with magic there would see it.
+    #[test]
+    fn read_prefix_and_size_covers_non_zero_offset_up_to_512_bytes() {
+        use std::io::Write;
+
+        let file_len = 600usize;
+        let mut data = vec![0u8; file_len];
+        // Write a sentinel at offset 257 (tar's `ustar` position) and at
+        // offset COMPRESSION_DETECT_PREFIX_LEN - 1 (last byte of the window).
+        data[257] = 0xAA;
+        data[COMPRESSION_DETECT_PREFIX_LEN - 1] = 0xBB;
+        // Byte just outside the window must NOT appear in the prefix.
+        data[COMPRESSION_DETECT_PREFIX_LEN] = 0xCC;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&data)
+            .unwrap();
+
+        let (prefix, size) =
+            read_prefix_and_size(&ByteSource::Path(path)).expect("read_prefix_and_size");
+
+        assert_eq!(size, file_len as i64);
+        assert_eq!(
+            prefix.len(),
+            COMPRESSION_DETECT_PREFIX_LEN,
+            "prefix must be exactly COMPRESSION_DETECT_PREFIX_LEN bytes"
+        );
+        assert_eq!(
+            prefix[257], 0xAA,
+            "prefix must cover offset 257 (tar ustar position)"
+        );
+        assert_eq!(
+            prefix[COMPRESSION_DETECT_PREFIX_LEN - 1],
+            0xBB,
+            "prefix must include the last byte of the window"
+        );
+        assert!(
+            !prefix.contains(&0xCC),
+            "prefix must not contain bytes beyond the window"
+        );
+    }
+
+    #[test]
+    fn read_prefix_and_size_bytes_source_truncates_to_window() {
+        // ByteSource::Bytes also caps the prefix at COMPRESSION_DETECT_PREFIX_LEN.
+        let data: Vec<u8> = (0..600u16).map(|i| (i % 251) as u8).collect();
+        let (prefix, size) = read_prefix_and_size(&ByteSource::Bytes(data.clone()))
+            .expect("read_prefix_and_size for Bytes");
+
+        assert_eq!(size, 600);
+        assert_eq!(prefix.len(), COMPRESSION_DETECT_PREFIX_LEN);
+        assert_eq!(&prefix[..], &data[..COMPRESSION_DETECT_PREFIX_LEN]);
     }
 
     fn passthrough_upload_data(
@@ -1123,8 +1360,10 @@ mod tests {
         flavor: PutGetResultsetFlavor,
         legacy_odbc_compression_autodetect: bool,
     ) -> SingleUploadData {
+        // Tests that call preprocess_file_before_upload directly pass a
+        // ByteSource::Bytes so they don't depend on the filesystem.
         SingleUploadData {
-            file_path: format!("/tmp/{filename}"),
+            source: ByteSource::Bytes(Vec::new()),
             filename: filename.to_string(),
             stage_info: dummy_stage_info(),
             encryption_material: None,

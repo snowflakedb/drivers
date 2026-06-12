@@ -2,6 +2,7 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+use sf_core::file_manager::types::ByteSource;
 use sf_core::file_manager::{
     CloudCredentials, DownloadData, GcsDownloadError, GcsUploadError, LocationType, PreparedUpload,
     RefreshFuture, StageInfo, StageInfoCache, StageInfoRefresher, StageInfoSnapshot,
@@ -1244,7 +1245,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
     });
 
     let prepared = PreparedUpload {
-        data: b"test-bytes".to_vec(),
+        data: ByteSource::Bytes(b"test-bytes".to_vec()),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
@@ -1333,7 +1334,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
     });
 
     let prepared = PreparedUpload {
-        data: b"test-bytes".to_vec(),
+        data: ByteSource::Bytes(b"test-bytes".to_vec()),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
@@ -1413,7 +1414,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
     });
 
     let prepared = PreparedUpload {
-        data: b"test-bytes".to_vec(),
+        data: ByteSource::Bytes(b"test-bytes".to_vec()),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
@@ -1487,7 +1488,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
     });
 
     let prepared = PreparedUpload {
-        data: b"test-bytes".to_vec(),
+        data: ByteSource::Bytes(b"test-bytes".to_vec()),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };

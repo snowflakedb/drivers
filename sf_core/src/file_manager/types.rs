@@ -4,6 +4,7 @@ use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
 use snafu::{Location, Snafu};
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 /// Result of an upload-or-skip operation.
@@ -18,6 +19,25 @@ impl fmt::Display for UploadStatus {
         match self {
             UploadStatus::Uploaded => f.write_str("UPLOADED"),
             UploadStatus::Skipped => f.write_str("SKIPPED"),
+        }
+    }
+}
+
+/// The source of bytes for a file upload. `Path` streams from disk;
+/// `Bytes` is an in-memory buffer (used by tests and for ciphertext output
+/// from the encryption stage).
+#[derive(Debug, Clone)]
+pub enum ByteSource {
+    Path(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+impl ByteSource {
+    /// Reads the entire source into a `Vec<u8>`.
+    pub fn into_bytes(self) -> std::io::Result<Vec<u8>> {
+        match self {
+            ByteSource::Path(p) => std::fs::read(p),
+            ByteSource::Bytes(b) => Ok(b),
         }
     }
 }
@@ -46,7 +66,7 @@ pub struct UploadData {
 
 // TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
 pub struct SingleUploadData {
-    pub file_path: String,
+    pub source: ByteSource,
     pub filename: String,
     pub stage_info: StageInfo,
     pub encryption_material: Option<EncryptionMaterial>,
@@ -99,14 +119,10 @@ pub struct SingleDownloadData {
 }
 
 /// Bytes plus metadata returned by the cloud transfer layer for a single
-/// downloaded blob.
-///
-/// `cloud_byte_count` is the on-cloud (pre-decryption) byte count of the
-/// blob — typically the value reported by the storage layer's
-/// `Content-Length` header. For `PutGetResultsetFlavor::Odbc` it becomes
-/// the value of the GET result's `size` column (legacy `srcFileSize`
-/// parity); for `Python` we keep reporting the post-decryption buffer
-/// length out of `download_single_file`.
+/// downloaded blob. `data` holds the raw cloud bytes (ciphertext for
+/// encrypted stages, plaintext for SSE). `cloud_byte_count` is the on-cloud
+/// byte count — under `PutGetResultsetFlavor::Odbc` it becomes the GET
+/// result's `size` column (legacy `srcFileSize` parity).
 #[derive(Debug)]
 pub struct DownloadResponse {
     pub data: Vec<u8>,
@@ -240,7 +256,7 @@ pub struct EncryptionMaterial {
 /// For server-side encryption (SSE): contains raw data with no encryption metadata.
 #[derive(Debug, Clone)]
 pub struct PreparedUpload {
-    pub data: Vec<u8>,
+    pub data: ByteSource,
     /// SHA-256 digest of the data (always present for integrity verification).
     pub digest: String,
     /// Client-side encryption metadata. `None` for SSE stages.
