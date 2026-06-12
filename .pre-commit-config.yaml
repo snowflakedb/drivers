@@ -57,6 +57,15 @@ repos:
         pass_filenames: false
         files: ^python/(pyproject\.toml|uv\.lock)$
         language: system
+    -   id: no-snowflake-namespace-init
+        name: No __init__.py in snowflake namespace package
+        description: >
+          snowflake is a PEP 420 namespace package shared across multiple
+          distributions. An __init__.py in python/src/snowflake/ would
+          break other snowflake.* packages installed in the same environment.
+        entry: 'python/src/snowflake/__init__\.py'
+        language: fail
+        files: ^python/src/snowflake/__init__\.py$
     -   id: python-no-assert-in-production
         name: No assert statements in production code
         description: Ensure no assert statements are used in python/src (production code only)
