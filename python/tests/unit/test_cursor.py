@@ -10,7 +10,7 @@ import pytest
 from snowflake.connector._internal.api_client.client_api import core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
-from snowflake.connector._internal.errorcode import ER_NO_PYARROW
+from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_NO_PYARROW
 from snowflake.connector._internal.extras import (
     MissingOptionalDependency,
 )
@@ -2196,3 +2196,102 @@ class TestExecuteAsync:
         result = cursor.execute_async("SELECT 1")
 
         assert result["queryId"] is None
+
+
+class TestParamsAliasAndForceQmark:
+    """Unit tests for the legacy ``params``/``seqparams`` aliases and
+    ``_force_qmark_paramstyle`` overrides on execute()/executemany().
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        cur = SnowflakeCursor(mock_connection)
+        yield cur
+        cur.close()
+
+    def test_execute_accepts_params_alias(self, cursor, mock_core_client):
+        """execute(params=...) is treated as execute(parameters=...)."""
+        cursor.execute("SELECT ?", params=(1,), _force_qmark_paramstyle=True)
+
+        request = mock_core_client.statement_execute_query.call_args.args[0]
+        assert request.bindings is not None
+
+    def test_execute_rejects_both_parameters_and_params(self, cursor, mock_core_client):
+        """Passing both parameters= and params= raises ProgrammingError."""
+        with pytest.raises(ProgrammingError, match="both 'parameters' and 'params'") as exc_info:
+            cursor.execute("SELECT ?", parameters=(1,), params=(2,))
+
+        assert exc_info.value.errno == ER_INVALID_VALUE
+        mock_core_client.statement_execute_query.assert_not_called()
+
+    def test_force_qmark_paramstyle_overrides_pyformat(self, cursor, mock_core_client):
+        """_force_qmark_paramstyle=True bypasses pyformat client-side
+        interpolation: a `%s` query is sent verbatim to the server with
+        bindings, instead of being interpolated locally."""
+        # Connection paramstyle is pyformat (set by fixture). Without the
+        # flag, "SELECT %s" with parameters=(1,) would interpolate to
+        # "SELECT 1" and bindings=None.
+        cursor.execute("SELECT %s", parameters=(1,), _force_qmark_paramstyle=True)
+
+        request = mock_core_client.statement_execute_query.call_args.args[0]
+        assert request.bindings is not None  # qmark path took over
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "SELECT %s"  # SQL untouched
+
+    def test_executemany_accepts_seqparams_alias(self, cursor, mock_core_client):
+        """executemany(seqparams=...) is treated as executemany(seq_of_parameters=...)."""
+        cursor.executemany(
+            "INSERT INTO t VALUES (?)",
+            seqparams=[(1,), (2,)],
+            _force_qmark_paramstyle=True,
+        )
+
+        # Server-side array-binding path: a single execute_query call.
+        assert mock_core_client.statement_execute_query.call_count == 1
+        request = mock_core_client.statement_execute_query.call_args.args[0]
+        assert request.bindings is not None
+
+    def test_executemany_rejects_both_seq_aliases(self, cursor, mock_core_client):
+        """Passing both seq_of_parameters and seqparams raises ProgrammingError."""
+        with pytest.raises(ProgrammingError, match="both 'seq_of_parameters' and 'seqparams'") as exc_info:
+            cursor.executemany(
+                "INSERT INTO t VALUES (?)",
+                seq_of_parameters=[(1,)],
+                seqparams=[(2,)],
+            )
+
+        assert exc_info.value.errno == ER_INVALID_VALUE
+        mock_core_client.statement_execute_query.assert_not_called()
+
+    def test_executemany_force_qmark_paramstyle(self, cursor, mock_core_client):
+        """_force_qmark_paramstyle=True must be threaded through executemany()
+        into the recursive execute() call. Connection paramstyle is pyformat;
+        without the flag, executemany() would interpolate each row
+        client-side (3 individual execute_query calls, bindings=None). With
+        the flag the array-binding path runs (1 call, bindings non-None,
+        SQL untouched)."""
+        cursor.executemany(
+            "INSERT INTO t VALUES (%s)",
+            [(1,), (2,), (3,)],
+            _force_qmark_paramstyle=True,
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        request = mock_core_client.statement_execute_query.call_args.args[0]
+        assert request.bindings is not None  # flag survived to inner execute()
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated

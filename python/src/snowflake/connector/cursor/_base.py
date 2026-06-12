@@ -14,6 +14,7 @@ from .._internal.arrow_stream_utils import (
     create_row_iterator,
     create_table_iterator,
 )
+from .._internal.binding_converters import ParamStyle
 from .._internal.cursor import (
     Args,
     CursorBaseMixin,
@@ -54,6 +55,24 @@ if TYPE_CHECKING:
     from ..connection import Connection
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_alias(
+    canonical: object,
+    alias: object,
+    canonical_name: str,
+    alias_name: str,
+) -> object:
+    """Return the resolved value from a canonical/legacy-alias pair.
+
+    Raises ProgrammingError if both are provided.
+    """
+    if canonical is not None and alias is not None:
+        raise ProgrammingError(
+            msg=f"Cannot supply both '{canonical_name}' and '{alias_name}'; pass one only.",
+            errno=ER_INVALID_VALUE,
+        )
+    return alias if alias is not None else canonical
 
 
 class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
@@ -172,6 +191,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
+        *,
+        params: Sequence[Any] | dict[str, Any] | None = None,
+        _force_qmark_paramstyle: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -185,26 +207,40 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
+            params: Legacy alias for ``parameters`` (kwarg-only). Cannot be
+                supplied together with ``parameters``.
+            _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
+                the connection's paramstyle is pyformat/format. Used by
+                callers that emit ``?`` placeholders unconditionally.
         """
+        parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
+
         if num_statements is not None:
             # TODO Create a global known parameters registry
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
         self.reset()
-        return self._execute(operation, parameters, _is_put_get, **kwargs)
+        return self._execute(
+            operation,
+            parameters,
+            _is_put_get,
+            _force_qmark_paramstyle=_force_qmark_paramstyle,
+            **kwargs,
+        )
 
     def _execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        _force_qmark_paramstyle: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
-        query, bindings = self._prepare_query(operation, parameters)
+        query, bindings = self._prepare_query(operation, parameters, _force_qmark_paramstyle=_force_qmark_paramstyle)
 
         with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             if self._statement_parameters:
@@ -274,7 +310,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @pep249
     @api_telemetry
     @requires_open
-    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
+    def executemany(
+        self,
+        operation: str,
+        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        *,
+        seqparams: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        _force_qmark_paramstyle: bool = False,
+    ) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
@@ -285,14 +328,22 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Args:
             operation (str): SQL statement (typically INSERT, UPDATE, or DELETE)
             seq_of_parameters (sequence): Sequence of parameter sequences or dicts
+            seqparams: Legacy alias for ``seq_of_parameters`` (kwarg-only).
+                Cannot be supplied together with ``seq_of_parameters``.
+            _force_qmark_paramstyle: If True, treat as qmark even when the
+                connection's paramstyle is pyformat/format.
 
         Raises:
             InterfaceError: If parameter sequences have inconsistent lengths
         """
+        seq_of_parameters = _resolve_alias(  # type: ignore[assignment]
+            seq_of_parameters, seqparams, "seq_of_parameters", "seqparams"
+        )
+
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
 
-        paramstyle = self._connection.paramstyle
+        paramstyle = ParamStyle.QMARK if _force_qmark_paramstyle else self._connection.paramstyle
         first_params = seq_of_parameters[0]
 
         # Execute individually for:
@@ -303,7 +354,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             total_rowcount = 0
             unknown_rowcount = False
             for params in seq_of_parameters:
-                self._execute(operation, params)  # no reset between calls
+                self._execute(
+                    operation,
+                    params,
+                    _force_qmark_paramstyle=_force_qmark_paramstyle,
+                )  # no reset between calls
                 rc = self._query_result.rowcount
                 if rc is None or rc == -1:
                     unknown_rowcount = True
@@ -318,7 +373,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         transposed = self._build_array_binding_params(operation, seq_of_parameters, first_params)
 
         # Execute using array binding (existing path handles list values)
-        self.execute(operation, transposed)
+        self.execute(operation, transposed, _force_qmark_paramstyle=_force_qmark_paramstyle)
 
     @api_telemetry
     @requires_open
