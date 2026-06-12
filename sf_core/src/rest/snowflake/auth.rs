@@ -77,11 +77,6 @@ pub struct AuthRequestData {
         skip_serializing_if = "Option::is_none"
     )]
     pub ext_authn_duo_method: Option<String>,
-    #[serde(
-        rename = "CLIENT_REQUEST_MFA_TOKEN",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub client_request_mfa_token: Option<bool>,
     #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
     pub passcode: Option<SensitiveString>,
     #[serde(rename = "AUTHENTICATOR", skip_serializing_if = "Option::is_none")]

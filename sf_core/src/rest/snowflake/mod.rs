@@ -666,7 +666,14 @@ pub async fn auth_request_data(
                 } else {
                     set_duo_authn_fields(&mut data, passcode_in_password, passcode.clone());
                     if store_temp_cred {
-                        data.client_request_mfa_token = Some(store_temp_cred);
+                        // Reference connector sends this inside SESSION_PARAMETERS, not as a
+                        // top-level login field — the server ignores the top-level form.
+                        data.session_parameters
+                            .get_or_insert_with(HashMap::new)
+                            .insert(
+                                "CLIENT_REQUEST_MFA_TOKEN".to_string(),
+                                serde_json::Value::Bool(true),
+                            );
                     }
                 }
             }
