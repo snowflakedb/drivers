@@ -22,7 +22,7 @@ class ResultSetWrapperBase:
     invocation builds a fresh Arrow stream from the stored ``RowsetData``.
 
     Sync and async specializations live in :mod:`snowflake.connector.cursor._result_set_wrapper`
-    and :mod:`snowflake.connector._async.cursor._result_set_wrapper` respectively.
+    and :mod:`snowflake.connector.aio.cursor._result_set_wrapper` respectively.
     """
 
     __slots__ = ("_handle",)

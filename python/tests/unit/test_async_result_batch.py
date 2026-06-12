@@ -1,10 +1,10 @@
-"""Unit tests for AsyncResultBatch."""
+"""Unit tests for the aio ResultBatch."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from snowflake.connector._async.result_batch import AsyncResultBatch
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ResultChunk
+from snowflake.connector.aio.result_batch import ResultBatch
 
 
 def _make_description(*names: str) -> list:
@@ -16,12 +16,12 @@ class TestAsyncFromChunks:
         chunks = [ResultChunk(), ResultChunk()]
         desc = _make_description("A")
         conn = MagicMock()
-        batches = AsyncResultBatch.from_chunks(chunks, desc, conn)
+        batches = ResultBatch.from_chunks(chunks, desc, conn)
 
         assert len(batches) == 2
         for batch in batches:
-            assert isinstance(batch, AsyncResultBatch)
+            assert isinstance(batch, ResultBatch)
             assert batch.connection is conn
 
     def test_returns_none_when_chunks_unavailable(self):
-        assert AsyncResultBatch.from_chunks(None, _make_description("ID"), MagicMock()) is None
+        assert ResultBatch.from_chunks(None, _make_description("ID"), MagicMock()) is None

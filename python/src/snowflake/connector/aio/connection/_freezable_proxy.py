@@ -15,7 +15,7 @@ from ..._internal.connection.freezable_proxy import ConnectionInfoProxyMixin, Se
 # ------------------------------------------------------------------
 
 
-class AsyncFreezableProxy:
+class _FreezableProxy:
     """Dict-like proxy that fetches live values while open and serves cached values after freeze().
 
     Subclasses implement :meth:`_fetch_all` (bulk snapshot, async).  Item access is
@@ -55,7 +55,7 @@ class AsyncFreezableProxy:
 # ------------------------------------------------------------------
 
 
-class AsyncSessionParametersProxy(AsyncFreezableProxy, SessionParametersProxyMixin):
+class _SessionParametersProxy(_FreezableProxy, SessionParametersProxyMixin):
     """Proxy for Snowflake session parameters (case-insensitive keys)."""
 
     async def _fetch_all(self) -> dict[str, str]:
@@ -68,7 +68,7 @@ class AsyncSessionParametersProxy(AsyncFreezableProxy, SessionParametersProxyMix
 # ------------------------------------------------------------------
 
 
-class AsyncConnectionInfoProxy(AsyncFreezableProxy, ConnectionInfoProxyMixin):
+class _ConnectionInfoProxy(_FreezableProxy, ConnectionInfoProxyMixin):
     """Proxy for any field in ConnectionGetInfoResponse.
 
     Supports all proto fields (role, database, schema, account, warehouse,

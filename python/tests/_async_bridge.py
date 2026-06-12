@@ -1,14 +1,14 @@
 """Test-only blocking facade that runs the async cursor through the sync API.
 
-The async cursor (``snowflake.connector._async.cursor``) is a coroutine-based
+The async cursor (``snowflake.connector.aio.cursor``) is a coroutine-based
 duplicate of the sync cursor. To exercise it with the *existing* synchronous
 ``test_cursor.py`` suite — without rewriting any test — we wrap an async cursor
 in :class:`BlockingCursor`, which drives every coroutine / async-generator to
 completion on a dedicated background event loop and exposes the results through
 the ordinary blocking PEP 249 surface.
 
-:class:`BlockingConnection` opens an :class:`~snowflake.connector._async.connection.AsyncConnection`
-(via :func:`~snowflake.connector._async.connect_async`) and hands out
+:class:`BlockingConnection` opens an :class:`~snowflake.connector.aio.Connection`
+(via :func:`~snowflake.connector.aio.connect`) and hands out
 :class:`BlockingCursor` instances from :meth:`cursor`, so tests that call
 ``connection.cursor()`` directly transparently get the async implementation.
 
@@ -24,9 +24,9 @@ import threading
 
 from typing import Any
 
-from snowflake.connector._async import connect_async
-from snowflake.connector._async.cursor import AsyncDictCursor as AsyncDictCursor
-from snowflake.connector._async.cursor import AsyncSnowflakeCursor as AsyncSnowflakeCursor
+from snowflake.connector.aio import connect
+from snowflake.connector.aio.cursor import DictCursor as AsyncDictCursor
+from snowflake.connector.aio.cursor import SnowflakeCursor as AsyncSnowflakeCursor
 from snowflake.connector.cursor import DictCursor as SyncDictCursor
 from snowflake.connector.cursor import SnowflakeCursor as SyncSnowflakeCursor
 
@@ -148,7 +148,7 @@ class BlockingCursor(_BlockingAsyncFacade):
 
 
 class BlockingConnection(_BlockingAsyncFacade):
-    """Proxy around an :class:`AsyncConnection` that vends :class:`BlockingCursor`."""
+    """Proxy around an aio :class:`~snowflake.connector.aio.Connection` that vends :class:`BlockingCursor`."""
 
     def _async_cursor_class(self, cursor_class: type) -> type:
         async_cls = _ASYNC_CURSOR_FOR.get(cursor_class)
@@ -219,13 +219,13 @@ class BlockingConnection(_BlockingAsyncFacade):
 
 
 def maybe_blocking_async_connection(connection: Any) -> BlockingConnection:
-    """Open an :class:`AsyncConnection` and expose it through :class:`BlockingConnection`."""
+    """Open an aio :class:`~snowflake.connector.aio.Connection` and expose it through :class:`BlockingConnection`."""
     loop = _LoopRunner.instance()
 
     async def _open() -> Any:
         # connect_async is @awaitable_context_manager — returns _AwaitableContextManager,
         # not a bare coroutine, so it must be awaited inside an async helper.
-        return await connect_async(config=connection.config)
+        return await connect(config=connection.config)
 
     async_connection = loop.run(_open())
     connection.close()

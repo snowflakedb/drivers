@@ -24,7 +24,7 @@ from .result_metadata import QueryResultStats, ResultMetadata
 
 
 if TYPE_CHECKING:
-    from ..._async.connection import AsyncConnection
+    from ...aio.connection import Connection as AsyncConnection
     from ...connection import Connection
 
 

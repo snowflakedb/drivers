@@ -12,7 +12,7 @@ from .type_codes import FIXED
 if TYPE_CHECKING:
     from pyarrow import Schema, Table
 
-    from .._async.connection import AsyncConnection
+    from ..aio.connection import Connection as AsyncConnection
     from ..connection import Connection
     from .cursor.result_metadata import ResultMetadata
 

@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 
 from ...constants import QueryStatus
 from ...errors import DatabaseError
-from ..connection import ConnectionMixin
 
 
 if TYPE_CHECKING:
-    from ..._async.connection import AsyncConnection
+    from ...aio.connection import Connection as AsyncConnection
     from ...connection import Connection
+    from ..connection import ConnectionMixin
 
 _RETRY_PATTERN = [1, 1, 2, 3, 4, 8, 10]
 _NO_DATA_MAX_RETRY = 24

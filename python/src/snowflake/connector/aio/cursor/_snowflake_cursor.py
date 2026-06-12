@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from ..._internal.cursor import Row
 from ..._internal.decorators import api_telemetry
-from ._base import AsyncSnowflakeCursorBase
+from ._base import SnowflakeCursorBase
 
 
-class AsyncSnowflakeCursor(AsyncSnowflakeCursorBase):
+class SnowflakeCursor(SnowflakeCursorBase):
     """Cursor returning results as tuples (default).
 
     This is the standard cursor returned by ``connection.cursor()``.

@@ -133,13 +133,13 @@ def mock_async_db_api():
 
 @pytest.fixture
 def async_connection(mock_async_db_api):
-    """Create an AsyncConnection with a mocked async db_api."""
-    from snowflake.connector._async.connection._connection import AsyncConnection
+    """Create an async Connection with a mocked async db_api."""
+    from snowflake.connector.aio.connection._connection import Connection
 
     with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
 
         async def _make():
-            conn = AsyncConnection(user="test_user", account="test_account")
+            conn = Connection(user="test_user", account="test_account")
             await conn.connect()
             return conn
 
@@ -369,63 +369,63 @@ class TestApiTelemetryFailureIsolation:
 
 
 class TestAsyncConnectionApiTelemetry:
-    """Tests that AsyncConnection public methods send api_usage telemetry."""
+    """Tests that aio Connection public methods send api_usage telemetry."""
 
     def test_cursor_sends_telemetry(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.cursor())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "AsyncConnection.cursor" in methods
+        assert "Connection.cursor" in methods
 
     def test_close_sends_telemetry(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.close())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "AsyncConnection.close" in methods
+        assert "Connection.close" in methods
 
     def test_commit_suppresses_inner_calls(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.commit())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "AsyncConnection.commit" in methods
-        assert "AsyncConnection.cursor" not in methods
-        assert "AsyncSnowflakeCursor.execute" not in methods
-        assert "AsyncSnowflakeCursor.close" not in methods
+        assert "Connection.commit" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+        assert "SnowflakeCursor.close" not in methods
 
     def test_rollback_suppresses_inner_calls(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.rollback())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "AsyncConnection.rollback" in methods
-        assert "AsyncConnection.cursor" not in methods
-        assert "AsyncSnowflakeCursor.execute" not in methods
+        assert "Connection.rollback" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
 
     def test_api_method_uses_runtime_class_name(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_api_usage.reset_mock()
         _run_async(async_connection.close())
 
         req = mock_async_db_api.telemetry_send_api_usage.call_args[0][0]
-        assert req.api_method == "AsyncConnection.close"
+        assert req.api_method == "Connection.close"
 
 
 class TestAsyncCursorApiTelemetry:
-    """Tests that async cursor public methods send api_usage telemetry."""
+    """Tests that aio SnowflakeCursor public methods send api_usage telemetry."""
 
     def test_execute_sends_telemetry(self, async_cursor, mock_async_db_api):
         _run_async(async_cursor.execute("SELECT 1"))
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "AsyncSnowflakeCursor.execute" in methods
+        assert "SnowflakeCursor.execute" in methods
 
     def test_close_sends_telemetry(self, async_cursor, mock_async_db_api):
         _run_async(async_cursor.close())
 
         methods = _get_api_methods(mock_async_db_api)
-        assert "AsyncSnowflakeCursor.close" in methods
+        assert "SnowflakeCursor.close" in methods
 
 
 class TestAsyncApiTelemetryFailureIsolation:

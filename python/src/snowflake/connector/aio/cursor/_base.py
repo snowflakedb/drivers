@@ -45,15 +45,15 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from ..._internal.statement_utils import async_statement
 from ...errors import NotSupportedError, ProgrammingError
-from ..result_batch import AsyncResultBatch
-from ._result_set_wrapper import AsyncResultSetWrapper
+from ..result_batch import ResultBatch
+from ._result_set_wrapper import _ResultSetWrapper
 
 
 if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
-    from ..connection import AsyncConnection
+    from ..connection import Connection
 
 logger = logging.getLogger(__name__)
 
@@ -61,29 +61,29 @@ logger = logging.getLogger(__name__)
 _FETCH_DONE = object()
 
 
-class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
+class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
 
     Concrete subclasses must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
     """
 
-    _connection: AsyncConnection
+    _connection: Connection
     _iterator: AsyncArrowStreamIterator | None
 
-    def __init__(self, connection: AsyncConnection) -> None:
+    def __init__(self, connection: Connection) -> None:
         """
         Initialize a new cursor object.
 
         Args:
-            connection: AsyncConnection object that created this cursor
+            connection: Connection object that created this cursor
         """
         self._connection = connection
         super().__init__()
         self._iterator = None
 
         # -- ResultSet guard (set by _execute, cleared on reset) --
-        self._result_set = AsyncResultSetWrapper()
+        self._result_set = _ResultSetWrapper()
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
         self._prefetch_hook: Callable[[], Awaitable[None]] | None = None
 
@@ -102,8 +102,8 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     @property
     @pep249
-    def connection(self) -> AsyncConnection:
-        """The :class:`AsyncConnection` object that created this cursor."""
+    def connection(self) -> Connection:
+        """The :class:`Connection` object that created this cursor."""
         return self._connection
 
     # ------------------------------------------------------------------
@@ -111,11 +111,11 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
 
     @property
-    def _errorhandler_cursor(self) -> AsyncSnowflakeCursorBase:
+    def _errorhandler_cursor(self) -> SnowflakeCursorBase:
         return self
 
     @property
-    def _errorhandler_connection(self) -> AsyncConnection:
+    def _errorhandler_connection(self) -> Connection:
         return self._connection
 
     # ------------------------------------------------------------------
@@ -170,7 +170,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
         **kwargs: Any,
-    ) -> AsyncSnowflakeCursorBase:
+    ) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
         Resets the cursor state before the execution.
@@ -196,7 +196,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         **kwargs: Any,
-    ) -> AsyncSnowflakeCursorBase:
+    ) -> SnowflakeCursorBase:
         """Execute query logic."""
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
@@ -450,12 +450,12 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         )
 
     @pep249
-    def __aiter__(self) -> AsyncSnowflakeCursorBase:
+    def __aiter__(self) -> SnowflakeCursorBase:
         """
         Return the cursor itself as an async iterator.
 
         Returns:
-            AsyncSnowflakeCursorBase: Self
+            SnowflakeCursorBase: Self
         """
         return self
 
@@ -486,7 +486,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @pep249
     @api_telemetry
     @requires_open
-    async def nextset(self) -> AsyncSnowflakeCursorBase | None:
+    async def nextset(self) -> SnowflakeCursorBase | None:
         """
         Skip to the next available result set, discarding remaining rows from current set.
 
@@ -494,7 +494,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         multiple result sets. Call nextset() to advance to the next query's results.
 
         Returns:
-            AsyncSnowflakeCursorBase: Self if next set is available.
+            SnowflakeCursorBase: Self if next set is available.
             None: If no more result sets are available.
 
         Raises:
@@ -539,12 +539,12 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # Context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> AsyncSnowflakeCursorBase:
+    async def __aenter__(self) -> SnowflakeCursorBase:
         """
         Enter the runtime context for the cursor.
 
         Returns:
-            AsyncSnowflakeCursorBase: Self
+            SnowflakeCursorBase: Self
         """
         return self
 
@@ -675,12 +675,12 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @api_telemetry
     @requires_open
     @with_prefetch_hook
-    async def get_result_batches(self) -> list[AsyncResultBatch] | None:
+    async def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
         result_chunks = await self._result_set.get_chunks()
         if result_chunks is None:
             return None
-        return AsyncResultBatch.from_chunks(
+        return ResultBatch.from_chunks(
             list(result_chunks.chunks),
             self._query_result.description,
             self._connection,
@@ -693,7 +693,7 @@ class AsyncSnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     @api_telemetry
     @requires_open
-    async def query_result(self, qid: str) -> AsyncSnowflakeCursorBase:
+    async def query_result(self, qid: str) -> SnowflakeCursorBase:
         """
         Fetch the result of a previously executed query by its Snowflake Query ID.
 

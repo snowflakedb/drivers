@@ -40,7 +40,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "async_connection_parity: also run this test against AsyncConnection "
+        "async_connection_parity: also run this test against the aio Connection "
         "(see run_against_sync_and_async_connection)",
     )
     config.addinivalue_line(
@@ -95,7 +95,7 @@ def connection_backend(request):
     """Select the connection implementation under test: ``"sync"`` (default) or ``"async"``.
 
     Parametrized indirectly by :data:`run_against_sync_and_async_connection`.
-    When ``"async"``, connection fixtures hand out an :class:`AsyncConnection`
+    When ``"async"``, connection fixtures hand out an :class:`~snowflake.connector.aio.Connection`
     behind :class:`BlockingConnection` so synchronous tests exercise the async
     connection unchanged.
     """
@@ -110,7 +110,7 @@ def pytest_generate_tests(metafunc):
     simply run once unparametrized, so the marker is safe on a whole module.
 
     Async parametrization is universal-driver only: the reference connector has
-    no ``_async`` package and the blocking async bridge lives under ``tests/``.
+    no ``aio`` package and the blocking async bridge lives under ``tests/``.
     """
     if not IS_UNIVERSAL_DRIVER:
         return
@@ -146,7 +146,7 @@ def _wrap_for_async_backends(
 run_against_sync_and_async = pytest.mark.async_cursor_parity
 
 # Apply as a class decorator or module-level ``pytestmark`` to run connection
-# integration tests against BOTH sync :class:`Connection` and :class:`AsyncConnection`.
+# integration tests against BOTH sync :class:`Connection` and aio :class:`Connection`.
 run_against_sync_and_async_connection = pytest.mark.async_connection_parity
 
 
@@ -164,7 +164,7 @@ def skip_async_connection(reason: str):
     """Mark a test to be skipped only under the async connection backend.
 
     Use for tests that assert on sync-only connection internals (e.g.
-    ``connection._autocommit``) which do not exist on :class:`AsyncConnection`.
+    ``connection._autocommit``) which do not exist on the aio :class:`~snowflake.connector.aio.Connection`.
     """
     return pytest.mark.skip_async_connection(reason=reason)
 
@@ -196,7 +196,7 @@ def connection(request, connector_adapter, connection_backend, cursor_backend):
     When ``cursor_backend == "async"`` the connection is wrapped so its cursors
     run the async cursor implementation (see ``run_against_sync_and_async``).
     When ``connection_backend == "async"`` the connection itself is an
-    :class:`AsyncConnection` behind :class:`BlockingConnection`.
+    aio :class:`~snowflake.connector.aio.Connection` behind :class:`BlockingConnection`.
 
     Tests that mutate connection state (close, autocommit, commit/rollback,
     set_autocommit, etc.) must use ``function_connection`` instead — this

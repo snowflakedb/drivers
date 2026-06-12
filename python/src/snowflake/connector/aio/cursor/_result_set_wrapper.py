@@ -14,7 +14,7 @@ from ..._internal.statement_utils import get_stream_ptr
 logger = logging.getLogger(__name__)
 
 
-class AsyncResultSetWrapper(ResultSetWrapperBase):
+class _ResultSetWrapper(ResultSetWrapperBase):
     """Async result-set handle owner."""
 
     async def replace(self, new_handle: ResultSetHandle | None) -> None:
