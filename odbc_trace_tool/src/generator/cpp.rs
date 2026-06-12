@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Write as FmtWrite;
 
+use crate::generator::getdata_codec;
 use crate::generator::validate::{validate_call, MissingRequired};
 use crate::model::{HandleType, OdbcCall, ReturnCode};
 use crate::query_map::QueryMap;
@@ -12,6 +13,9 @@ pub struct GeneratorConfig {
     pub tag: String,
     pub query_map: Option<QueryMap>,
     pub allow_unsupported: bool,
+    /// When true, emit a capture harness that records obscured GetData values
+    /// to JSON instead of asserting them.
+    pub capture_mode: bool,
 }
 
 impl Default for GeneratorConfig {
@@ -21,6 +25,7 @@ impl Default for GeneratorConfig {
             tag: "replay".to_string(),
             query_map: None,
             allow_unsupported: false,
+            capture_mode: false,
         }
     }
 }
@@ -376,6 +381,12 @@ impl<'a> GenContext<'a> {
         self.writeln("#include <cstring>");
         self.writeln("#include <string>");
         self.writeln("#include <vector>");
+        if self.config.capture_mode {
+            self.writeln("#include <cmath>");
+            self.writeln("#include <cstdio>");
+            self.writeln("#include <fstream>");
+            self.writeln("#include \"picojson.h\"");
+        }
         self.writeln("#include \"ODBCConfig.hpp\"");
         self.writeln("#include \"odbc_cast.hpp\"");
         self.writeln("#include \"odbc_matchers.hpp\"");
@@ -394,11 +405,27 @@ impl<'a> GenContext<'a> {
 
     fn emit_config_install(&mut self) {
         self.writeln("auto config = DataSourceConfig::Snowflake().install();");
+        if self.config.capture_mode {
+            self.writeln("picojson::object captured_values;");
+        }
         self.writeln("");
     }
 
     fn emit_test_close(&mut self) {
         self.emit_env_cleanup_epilogue();
+        if self.config.capture_mode {
+            self.writeln("// Write captured GetData values (wrapper gates apply on ctest exit 0)");
+            self.writeln("{");
+            self.indent += 1;
+            self.writeln("const char* out_path = std::getenv(\"CAPTURE_OUTPUT_PATH\");");
+            self.writeln("REQUIRE(out_path != nullptr);");
+            self.writeln("std::ofstream out(out_path);");
+            self.writeln("REQUIRE(out.good());");
+            self.writeln("out << picojson::value(captured_values).serialize() << std::endl;");
+            self.indent -= 1;
+            self.writeln("}");
+            self.writeln("");
+        }
         if self.skipped_col_attr_undocumented > 0 {
             self.writeln(&format!(
                 "// skipped {} SQLColAttribute call(s) with undocumented field id",
@@ -882,6 +909,29 @@ impl<'a> GenContext<'a> {
                             );
                         }
                         self.writeln(&format!("CHECK(ind == {ind_val});"));
+                        if !self.config.capture_mode {
+                            if let Some(ref captured) = call.captured {
+                                for line in
+                                    getdata_codec::captured_assert_lines(target_type, captured)
+                                {
+                                    self.writeln(&line);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if !self.config.capture_mode {
+                if let Some(ref captured) = call.captured {
+                    for line in getdata_codec::captured_assert_lines(target_type, captured) {
+                        self.writeln(&line);
+                    }
+                }
+            }
+
+            if self.config.capture_mode && getdata_codec::is_obscured_target(target_type) {
+                if let Some(seq) = call.seq {
+                    for line in getdata_codec::capture_record_lines(seq, target_type) {
+                        self.writeln(&line);
                     }
                 }
             }
@@ -1195,8 +1245,21 @@ impl<'a> GenContext<'a> {
         }
 
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        // Pin the returned numeric attribute. The Windows DM logs it either as a
+        // bare integer (`numeric_attribute`) or as a symbolic ODBC constant
+        // (`numeric_attribute_name`, e.g. `SQL_DESC_CONCISE_TYPE` -> `SQL_VARCHAR`).
+        // Emit a value check from whichever the parser captured; the symbolic
+        // name is a header-defined constant so it compiles directly. Only emit
+        // for `SQL_`-prefixed names to stay compile-safe against names the target
+        // headers might not define.
         if let Some(val) = call.numeric_attribute {
             self.writeln(&format!("CHECK(numAttr == {val});"));
+        } else if let Some(name) = call
+            .numeric_attribute_name
+            .as_deref()
+            .filter(|n| n.starts_with("SQL_"))
+        {
+            self.writeln(&format!("CHECK(numAttr == {name});"));
         }
 
         self.indent -= 1;
@@ -1390,9 +1453,7 @@ mod tests {
         let trace = iodbc::parse_str(SAMPLE_TRACE).expect("Failed to parse sample trace");
         let config = GeneratorConfig {
             test_name: "SELECT 1".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
-            allow_unsupported: false,
+            ..Default::default()
         };
 
         let calls: Vec<_> = trace.calls.iter().map(|tc| tc.call.clone()).collect();
@@ -1427,9 +1488,7 @@ mod tests {
         let trace = iodbc::parse_str(SAMPLE_TRACE).expect("Failed to parse sample trace");
         let config = GeneratorConfig {
             test_name: "SELECT 1".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
-            allow_unsupported: false,
+            ..Default::default()
         };
 
         let calls: Vec<_> = trace.calls.iter().map(|tc| tc.call.clone()).collect();
@@ -1493,8 +1552,8 @@ mod tests {
                 target_type: Some(-8),
                 target_type_name: Some("SQL_C_WCHAR".to_string()),
                 buffer_length: Some(131074),
-                value: None,
                 indicator: Some(-4),
+                ..Default::default()
             }),
             OdbcCall::GetData(GetData {
                 return_code: crate::model::ReturnCode::Success,
@@ -1503,16 +1562,15 @@ mod tests {
                 target_type: Some(-8),
                 target_type_name: Some("SQL_C_WCHAR".to_string()),
                 buffer_length: Some(262146),
-                value: None,
                 indicator: Some(2),
+                ..Default::default()
             }),
         ];
 
         let config = GeneratorConfig {
             test_name: "lob streaming".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
 
         let output = generate(&calls, &config).expect("generate");
@@ -1547,6 +1605,137 @@ mod tests {
     }
 
     #[test]
+    fn col_attribute_pins_symbolic_numeric_attribute_name() {
+        use crate::model::{ColAttribute, OdbcCall};
+
+        // Windows DM rendered the returned attribute as a symbolic constant, so
+        // the parser populated `numeric_attribute_name` and left the integer
+        // `numeric_attribute` null. The generator must still pin the value.
+        let calls = vec![OdbcCall::ColAttribute(ColAttribute {
+            return_code: crate::model::ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(1),
+            field_identifier: Some("SQL_DESC_CONCISE_TYPE".to_string()),
+            field_identifier_value: Some(2),
+            buffer_length: None,
+            string_length: None,
+            numeric_attribute: None,
+            numeric_attribute_name: Some("SQL_DECIMAL".to_string()),
+            character_value: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "colattr".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("CHECK(numAttr == SQL_DECIMAL);"),
+            "must pin the symbolic numeric attribute when only the name is captured; output:\n{output}",
+        );
+    }
+
+    #[test]
+    fn col_attribute_skips_non_sql_numeric_attribute_name() {
+        use crate::model::{ColAttribute, OdbcCall};
+
+        // A name the target headers might not define must not be emitted, to
+        // keep the generated test compile-safe (mirrors the SQLGetInfo policy).
+        let calls = vec![OdbcCall::ColAttribute(ColAttribute {
+            return_code: crate::model::ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(1),
+            field_identifier: Some("SQL_DESC_CONCISE_TYPE".to_string()),
+            field_identifier_value: Some(2),
+            buffer_length: None,
+            string_length: None,
+            numeric_attribute: None,
+            numeric_attribute_name: Some("<unknown>".to_string()),
+            character_value: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "colattr".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("CHECK(numAttr =="),
+            "must not pin a non-SQL_ symbolic name; output:\n{output}",
+        );
+    }
+
+    #[test]
+    fn col_attribute_pins_integer_numeric_attribute() {
+        use crate::model::{ColAttribute, OdbcCall};
+
+        // The original path: Windows DM logged the returned attribute as a raw
+        // integer (numeric_attribute is set, numeric_attribute_name is absent).
+        // The generator must emit CHECK(numAttr == <value>).
+        let calls = vec![OdbcCall::ColAttribute(ColAttribute {
+            return_code: crate::model::ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(1),
+            field_identifier: Some("SQL_DESC_CONCISE_TYPE".to_string()),
+            field_identifier_value: Some(2),
+            buffer_length: None,
+            string_length: None,
+            numeric_attribute: Some(12),
+            numeric_attribute_name: None,
+            character_value: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "colattr".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("CHECK(numAttr == 12);"),
+            "must pin the raw integer numeric attribute; output:\n{output}",
+        );
+    }
+
+    #[test]
+    fn col_attribute_emits_no_check_when_numeric_attribute_absent() {
+        use crate::model::{ColAttribute, OdbcCall};
+
+        // When neither numeric_attribute nor numeric_attribute_name is present
+        // (e.g. the DM only recorded a string value for this field), no numAttr
+        // CHECK should be emitted.
+        let calls = vec![OdbcCall::ColAttribute(ColAttribute {
+            return_code: crate::model::ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(1),
+            field_identifier: Some("SQL_DESC_TYPE_NAME".to_string()),
+            field_identifier_value: Some(14),
+            buffer_length: None,
+            string_length: None,
+            numeric_attribute: None,
+            numeric_attribute_name: None,
+            character_value: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "colattr".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("CHECK(numAttr =="),
+            "must not emit a numAttr check when neither field is present; output:\n{output}",
+        );
+    }
+
+    #[test]
     fn get_info_emits_value_check_for_stable_info_types() {
         use crate::model::{GetInfo, OdbcCall};
 
@@ -1561,9 +1750,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "getinfo".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1606,9 +1794,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "unstable".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1647,9 +1834,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "numeric".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1693,9 +1879,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "missing".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1734,9 +1919,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "raw int error".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1775,9 +1959,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "unknown info type".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1819,9 +2002,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "no info type".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
 
         let err = generate(&calls, &config)
@@ -1851,15 +2033,13 @@ mod tests {
             target_type: Some(-8),
             target_type_name: None,
             buffer_length: Some(256),
-            value: None,
-            indicator: None,
+            ..Default::default()
         })];
 
         let config = GeneratorConfig {
             test_name: "no target type".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let err = generate(&calls, &config)
             .expect_err("generator must reject a SQLGetData with no target_type_name");
@@ -1889,9 +2069,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "raw int".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1923,9 +2102,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "err".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -1970,9 +2148,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "env leaks".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -2022,9 +2199,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "env freed".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -2058,13 +2234,13 @@ mod tests {
             buffer_length: Some(1024),
             value: Some("hello".to_string()),
             indicator: Some(5),
+            ..Default::default()
         })];
 
         let config = GeneratorConfig {
             test_name: "narrow getdata".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -2103,13 +2279,13 @@ mod tests {
             buffer_length: Some(2048),
             value: Some("1".to_string()),
             indicator: Some(2),
+            ..Default::default()
         })];
 
         let config = GeneratorConfig {
             test_name: "wide getdata".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -2153,13 +2329,13 @@ mod tests {
             buffer_length: Some(2048),
             value: Some("CJK ??? emoji ??".to_string()),
             indicator: Some(32),
+            ..Default::default()
         })];
 
         let config = GeneratorConfig {
             test_name: "wide getdata lossy".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -2196,15 +2372,14 @@ mod tests {
             target_type: Some(-8),
             target_type_name: Some("SQL_C_WCHAR".to_string()),
             buffer_length: Some(2048),
-            value: None,
             indicator: Some(42),
+            ..Default::default()
         })];
 
         let config = GeneratorConfig {
             test_name: "wide getdata none".to_string(),
-            tag: "replay".to_string(),
-            query_map: None,
             allow_unsupported: true,
+            ..Default::default()
         };
         let output = generate(&calls, &config).expect("generate");
 
@@ -2236,9 +2411,8 @@ mod tests {
 
         let config = GeneratorConfig {
             test_name: "mapped query".to_string(),
-            tag: "replay".to_string(),
             query_map: Some(qm),
-            allow_unsupported: false,
+            ..Default::default()
         };
 
         let calls: Vec<_> = trace.calls.iter().map(|tc| tc.call.clone()).collect();
@@ -2251,6 +2425,120 @@ mod tests {
         assert!(
             !output.contains("sqlchar(\"SELECT 1\")"),
             "original query should be replaced"
+        );
+    }
+
+    #[test]
+    fn capture_mode_records_obscured_getdata_by_seq() {
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::GetData(GetData {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(8),
+            target_type: Some(8),
+            target_type_name: Some("SQL_C_DOUBLE".to_string()),
+            buffer_length: Some(8),
+            value: None,
+            indicator: Some(8),
+            seq: Some(42),
+            captured: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "capture".to_string(),
+            tag: "capture".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            capture_mode: true,
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("picojson"),
+            "capture harness includes picojson; output:\n{output}"
+        );
+        assert!(
+            output.contains("\"42\""),
+            "capture harness keys by seq; output:\n{output}"
+        );
+        assert!(
+            output.contains("captured_values"),
+            "capture harness declares accumulator; output:\n{output}"
+        );
+        assert!(
+            output.contains("CAPTURE_OUTPUT_PATH"),
+            "capture harness writes JSON at end; output:\n{output}"
+        );
+        assert!(
+            !output.contains("CHECK(*reinterpret_cast<double*>"),
+            "capture mode must not assert obscured values; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn generate_emits_captured_double_assert() {
+        use crate::captured_value::{CapturedValue, DoubleVal};
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::GetData(GetData {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(8),
+            target_type: Some(8),
+            target_type_name: Some("SQL_C_DOUBLE".to_string()),
+            buffer_length: Some(8),
+            value: None,
+            indicator: Some(8),
+            captured: Some(CapturedValue::Double(DoubleVal::Finite(2.5))),
+            seq: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "double assert".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("CHECK((*reinterpret_cast<double*>(buf.data())) == 2.5);"),
+            "exact double assert from captured; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn generate_emits_captured_bytes_with_min_ind() {
+        use crate::captured_value::CapturedValue;
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::GetData(GetData {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(9),
+            target_type: Some(-2),
+            target_type_name: Some("SQL_C_BINARY".to_string()),
+            buffer_length: Some(16),
+            value: None,
+            indicator: Some(4),
+            captured: Some(CapturedValue::Bytes("deadbeef".to_string())),
+            seq: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "bytes assert".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("std::min<size_t>(static_cast<size_t>(ind), buf.size())"),
+            "binary assert caps by buffer size; output:\n{output}"
+        );
+        assert!(
+            output.contains("0xde, 0xad, 0xbe, 0xef"),
+            "binary assert uses hex literal; output:\n{output}"
         );
     }
 }

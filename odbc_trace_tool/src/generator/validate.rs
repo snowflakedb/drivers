@@ -223,8 +223,7 @@ mod tests {
                 target_type: Some(1),
                 target_type_name: None,
                 buffer_length: Some(256),
-                value: None,
-                indicator: None,
+                ..Default::default()
             }),
             "SQLGetData",
             "target_type_name",
@@ -241,8 +240,7 @@ mod tests {
                 target_type: Some(1),
                 target_type_name: Some("SQL_C_CHAR".to_string()),
                 buffer_length: None,
-                value: None,
-                indicator: None,
+                ..Default::default()
             }),
             "SQLGetData",
             "buffer_length",

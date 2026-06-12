@@ -1,3 +1,4 @@
+mod captured_value;
 mod compare;
 mod generator;
 mod ir;
@@ -54,6 +55,22 @@ enum Commands {
         /// Emit C++ with TODO comments for unsupported ODBC calls instead of failing.
         #[arg(long, default_value = "false")]
         allow_unsupported: bool,
+
+        /// Emit a capture harness (records obscured GetData values to JSON) instead
+        /// of a replay test with value assertions.
+        #[arg(long, default_value = "false")]
+        emit_capture_harness: bool,
+    },
+
+    /// Apply live-captured GetData values from a harness JSON file into an IR YAML.
+    ApplyCapture {
+        /// Path to the IR YAML file to update in place.
+        #[arg(short, long)]
+        ir: PathBuf,
+
+        /// Path to the seq-keyed JSON map written by the capture harness.
+        #[arg(long)]
+        values: PathBuf,
     },
 
     /// Extract SQL queries from a trace and write a YAML mapping file.
@@ -169,6 +186,7 @@ fn main() {
             test_name,
             tag,
             allow_unsupported,
+            emit_capture_harness,
         } => {
             let (calls, entry_lines) = load_calls_with_lines(&input, &format);
 
@@ -178,10 +196,15 @@ fn main() {
             let qm = load_or_create_query_map(&qm_path, &calls);
 
             let config = generator::cpp::GeneratorConfig {
-                test_name,
+                test_name: if emit_capture_harness {
+                    format!("capture {test_name}")
+                } else {
+                    test_name
+                },
                 tag,
                 query_map: Some(qm),
                 allow_unsupported,
+                capture_mode: emit_capture_harness,
             };
             let cpp_output = match generator::cpp::generate_with_lines(
                 &calls,
@@ -198,13 +221,6 @@ fn main() {
                     process::exit(1);
                 }
                 Err(generator::cpp::GenerateError::MissingRequired(missing)) => {
-                    // Fail-fast: the parser produced an IR with at least one
-                    // required field missing, and substituting a default
-                    // would silently emit a different valid ODBC call (e.g.
-                    // `SQLGetInfo(dbc0, 0, ...)` for a lost InfoType). Report
-                    // every offending call so users can fix the upstream
-                    // trace/parser in one pass, then exit with a distinct
-                    // code so regenerate scripts and CI catch this.
                     eprintln!(
                             "error: trace tool refused to generate code because the IR is missing required fields:"
                         );
@@ -218,13 +234,56 @@ fn main() {
                 }
             };
 
-            let out_path = output.unwrap_or_else(|| default_sibling_path(&input, "test.cpp"));
+            let out_path = if emit_capture_harness {
+                output.unwrap_or_else(|| {
+                    PathBuf::from("odbc_tests/tests/capture_harness/capture.cpp")
+                })
+            } else {
+                output.unwrap_or_else(|| default_sibling_path(&input, "test.cpp"))
+            };
+
+            if let Some(parent) = out_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("Error creating output directory: {e}");
+                    process::exit(1);
+                }
+            }
 
             if let Err(e) = std::fs::write(&out_path, &cpp_output) {
                 eprintln!("Error writing output file: {e}");
                 process::exit(1);
             }
             println!("Generated test written to {}", out_path.display());
+        }
+        Commands::ApplyCapture { ir, values } => {
+            let json = std::fs::read_to_string(&values).unwrap_or_else(|e| {
+                eprintln!("Error reading capture values {}: {e}", values.display());
+                process::exit(1);
+            });
+            let by_seq = captured_value::parse_capture_map(&json).unwrap_or_else(|e| {
+                eprintln!("Error parsing capture values: {e}");
+                process::exit(1);
+            });
+
+            let mut trace_ir = ir::load_ir_yaml(&ir).unwrap_or_else(|e| {
+                eprintln!("Error loading IR YAML {}: {e}", ir.display());
+                process::exit(1);
+            });
+            trace_ir.apply_captured_values(&by_seq);
+
+            let yaml = serde_yaml::to_string(&trace_ir).unwrap_or_else(|e| {
+                eprintln!("Error serializing IR: {e}");
+                process::exit(1);
+            });
+            if let Err(e) = std::fs::write(&ir, &yaml) {
+                eprintln!("Error writing IR {}: {e}", ir.display());
+                process::exit(1);
+            }
+            println!(
+                "Applied {} captured value(s) to {}",
+                by_seq.len(),
+                ir.display()
+            );
         }
         Commands::Split {
             input,

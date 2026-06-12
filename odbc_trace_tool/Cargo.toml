@@ -11,6 +11,7 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 serde_yaml = "0.9"
 snafu = { version = "0.8", features = ["rust_1_65"] }
 tracing = "0.1"
@@ -18,4 +19,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 encoding_rs = "0.8"
 
 [dev-dependencies]
+serde_json = "1"
 tempfile = "3"
