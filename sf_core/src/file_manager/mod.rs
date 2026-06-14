@@ -1355,6 +1355,49 @@ mod tests {
         assert_eq!(&prefix[..], &data[..COMPRESSION_DETECT_PREFIX_LEN]);
     }
 
+    // Determinism pin for `auto_compress = true`. The post-compression
+    // SHA-256 digest is the value Snowflake stores as the remote
+    // `x-ms-meta-sfcdigest` header (Azure) and the equivalent on GCS;
+    // the skip-on-content-match optimization across UD and the legacy
+    // Python connector compares this digest. If the gzip output is not
+    // byte-stable across calls with identical input, the digest changes
+    // every upload and the optimization silently never fires on the
+    // default (auto_compress) path. This test pins both bytes and digest.
+    #[test]
+    fn preprocess_auto_compress_is_byte_deterministic_across_calls() {
+        let payload = b"some payload that will be gzipped in preprocess".to_vec();
+        let data = passthrough_upload_data("data.csv", PutGetResultsetFlavor::Python, false);
+
+        let (a, meta_a) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+        let (b, meta_b) =
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+
+        assert_eq!(
+            meta_a.target, "data.csv.gz",
+            "auto_compress should produce a .gz target"
+        );
+        assert_eq!(meta_a.target_compression, CompressionType::Gzip);
+        assert_eq!(meta_a.target, meta_b.target);
+        assert_eq!(meta_a.target_compression, meta_b.target_compression);
+
+        let bytes_a = a.data.into_bytes().unwrap();
+        let bytes_b = b.data.into_bytes().unwrap();
+        assert_eq!(
+            bytes_a, bytes_b,
+            "gzip output must be byte-identical across calls with the same input"
+        );
+        assert_eq!(
+            a.digest, b.digest,
+            "post-compression digest must be stable; otherwise content-match skip never fires"
+        );
+        assert_ne!(
+            bytes_a, payload,
+            "sanity: compressed bytes should differ from the raw payload (this test would be \
+             vacuous on a passthrough path)"
+        );
+    }
+
     fn passthrough_upload_data(
         filename: &str,
         flavor: PutGetResultsetFlavor,
