@@ -256,6 +256,90 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
+  jdbc_parity_tests:
+    needs: detect-changes
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
+    name: JDBC Date,Time,Timestamp Parity Tests (informational, non-blocking)
+    # Informational job: runs DateTimeParityTest, the single-JVM oracle that diffs
+    # universal-driver against snowflake-jdbc 4.0.1. New parity gaps are expected while the
+    # driver is still being built out, so failures here must NOT block PRs. Kept out of
+    # jdbc-status's `needs` and continue-on-error: true so the workflow stays green even
+    # when this job fails. Promote to required once the matrix is consistently clean.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # parityTest requires HotSpot — universal-driver's jdbc_bridge::sflogger_layer overflows
+      # the stack on OpenJ9 (see build.gradle comment on the parityTest task). Temurin is
+      # HotSpot-based.
+      - name: Set up Java 8 (Temurin/HotSpot)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
+
+      - name: Restore Gradle cache
+        id: gradle-cache-parity
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-jdbc-
+            ${{ runner.os }}-gradle-
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Build Rust components
+        run: cargo build --package jdbc_bridge
+
+      - name: Make gradlew executable
+        run: chmod +x jdbc/gradlew
+
+      - name: Run JDBC parity tests
+        run: |
+          cd jdbc
+          ./gradlew parityTest
+
+      - name: Upload parity test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-parity-artifacts
+          path: |
+            jdbc/build/test-results/parityTest/**/*.xml
+            jdbc/build/reports/tests/parityTest/**
+          if-no-files-found: warn
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "jdbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   jdbc-status:
     needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference]
     if: always()
