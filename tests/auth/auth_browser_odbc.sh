@@ -1,10 +1,15 @@
 #!/bin/bash
 #
-# ODBC authentication E2E tests requiring a headless browser.
-# Runs inside the snowdrivers-test-external-browser-universal-driver Docker image.
+# ODBC authentication E2E tests requiring a headless browser container.
+# Runs USERNAME_PASSWORD_MFA (TOTP via totpGenerator.js) and external-browser
+# (headless Chromium) suites inside snowdrivers-test-external-browser-universal-driver.
 #
-# Local usage (requires parameters_preprod.json in repo root,
-# from ./scripts/decode_secrets.sh preprod parameters_preprod.json):
+# Local usage (requires parameters_preprod.json in repo root and VPN for preprod):
+#
+#   ./scripts/decode_secrets.sh preprod parameters_preprod.json
+#   ./tests/auth/run_auth_browser_local.sh odbc
+#
+# Or with a pre-built image:
 #
 #   docker run --rm --platform linux/amd64 \
 #     -v "$PWD:/mnt/host" -e WORKSPACE_ROOT=/mnt/host \
@@ -21,7 +26,7 @@ cd "${WORKSPACE_ROOT}"
 cargo build
 export DRIVER_PATH="${CARGO_TARGET_DIR}/debug/libsfodbc.so"
 
-echo "=== Configuring & building ODBC e2e external browser test ==="
+echo "=== Configuring & building ODBC e2e auth browser tests ==="
 CCACHE_ARGS=""
 if command -v ccache &>/dev/null; then
     CCACHE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
@@ -45,8 +50,8 @@ if [ ! -d cmake-build ]; then
         ${CCACHE_ARGS} \
         .
 fi
-cmake --build cmake-build --target e2e_authentication_external_browser -- -j 16
+cmake --build cmake-build --target e2e_authentication_external_browser e2e_authentication_mfa_auth -- -j 16
 
 echo ""
 echo "=== Running ODBC auth browser E2E tests ==="
-ctest -C Debug --test-dir cmake-build --output-on-failure -R e2e_authentication_external_browser
+ctest -C Debug --test-dir cmake-build --output-on-failure -R "e2e_authentication_(external_browser|mfa_auth)"

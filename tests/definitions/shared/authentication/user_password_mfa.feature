@@ -19,13 +19,13 @@ Feature: Username Password MFA Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
-  @core_e2e @python_e2e @jdbc_e2e
+  @core_e2e @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should fail authentication when wrong password is provided
     Given Authentication is set to username_password_mfa and user is provided but password is skipped or invalid
     When Trying to Connect
     Then There is error returned
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should reuse cached MFA token without passcode
     Given Authentication is set to username_password_mfa and MFA token has been cached from a previous connection
     When Trying to Connect without passcode
