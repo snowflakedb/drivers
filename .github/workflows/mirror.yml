@@ -33,6 +33,7 @@ concurrency:
 
 permissions:
   contents: read
+  deployments: write
 
 env:
   MIRROR_DESTINATION_URL: https://github.com/snowflakedb/universal-driver
@@ -44,6 +45,11 @@ jobs:
   mirror-main:
     name: Mirror main
     runs-on: ubuntu-latest
+    environment:
+      name: snowflakedb-mirror
+      url: https://github.com/snowflakedb/universal-driver
+      # Skip deployment record on dry runs
+      deployment: ${{ github.event.inputs.dry_run != 'true' }}
     steps:
       - name: Checkout source (full history)
         uses: actions/checkout@v4
