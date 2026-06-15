@@ -9,7 +9,14 @@ steps:
       - github_check:
           name: "Skill Validation"
     command: |
-      sf ai skills bridge --lenient
+      # `sf ai skills bridge` is a precommit hook: it exits non-zero whenever it
+      # creates a symlink. .agents/skills/ is gitignored (recreated, never
+      # committed), so on a clean/cold CI checkout the first run creates them and
+      # exits non-zero — which would abort the step under bash -e before `check`
+      # runs. Re-run once: bridge is idempotent, so the second run is a no-op
+      # (exit 0) once creation succeeded. A genuine, persistent failure fails
+      # both runs and still fails the step (unlike `|| true`).
+      sf ai skills bridge --lenient || sf ai skills bridge --lenient
       sf ai skills check --context=ci --format=junit
 
   - label: "Skill Eval"
@@ -22,7 +29,11 @@ steps:
       - github_check:
           name: "Skill Eval"
     command: |
-      sf ai skills bridge --lenient
+      # See Skill Validation: bridge exits non-zero when it (re)creates the
+      # gitignored .agents/skills/ symlinks on a clean/cold checkout, which would
+      # abort the step under bash -e. Re-run once (idempotent): the second run is
+      # a no-op after a successful create, but a persistent failure still fails.
+      sf ai skills bridge --lenient || sf ai skills bridge --lenient
       PYTHON=$$(command -v python3.8 2>/dev/null || command -v python3)
       $$PYTHON -m pip install pyyaml --quiet --user
       $$PYTHON ci/skill_eval_runner.py
