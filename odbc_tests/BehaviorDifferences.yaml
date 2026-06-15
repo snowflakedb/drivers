@@ -1265,3 +1265,29 @@ behavior_differences:
       3. At the exact boundary (cells == threshold), the old driver used > and would take the JSON
          path; the new driver uses >= and takes the stage path. Applications sensitive to the
          boundary row count should be aware of this one-row difference in dispatch behavior.
+
+  79:
+    name: "SQL_C_WCHAR fetch encoding under iODBC depends on the source column type in the old driver"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    impact: low
+    is_breaking_change: true
+    old_driver_behavior: |
+      Under iODBC (where the DM uses a 4-byte SQLWCHAR), the old driver's SQLGetData
+      with TargetType=SQL_C_WCHAR does NOT use a uniform code-unit width. The buffer
+      encoding depends on the Snowflake source column type:
+        - String-family columns (VARCHAR / TEXT / CHAR / VARIANT / OBJECT / ARRAY, and
+          DATE / TIME / TIMESTAMP rendered to text) are written as UTF-32 (4 bytes per
+          code unit); the indicator reports byte_count = char_count * 4.
+        - Numeric columns (INTEGER / NUMBER / FIXED / FLOAT / REAL) rendered to text are
+          written as UTF-16 (2 bytes per code unit); the indicator reports
+          byte_count = char_count * 2 — the same shape the DM would expect under
+          unixODBC, not the 4-byte iODBC width.
+      This mirrors the source-type-dependent inconsistency already documented for the
+      truncation indicator in BD#23 (string source vs binary source), but here it is the
+      result-buffer encoding width itself that varies.
+    new_driver_behavior: |
+      The new driver honours DriverManagerEncoding (read once from sf.odbc.ini via
+      SF_ODBC_INI) uniformly: under iODBC every SQL_C_WCHAR fetch is UTF-32 regardless of
+      the source column type, so the indicator is always char_count * 4.
