@@ -479,3 +479,40 @@ rules:
               tmp.write(payload)
               return tmp.name
       ```
+
+  - id: ud-py-statement-parameter-name-registry
+    rule: |
+      **OBJECTIVE**: Keep statement-level parameter names centralized and in sync with sf_core's `param_registry`. Ad-hoc string literals for statement parameters drift from the canonical registry, hide new parameters from reviewers, and make it easy to typo a name that the server will reject at runtime.
+
+      **REQUIREMENT**: `snowflake.connector.constants.StatementParameterName` is the single registry of known statement-scoped parameter names (those with `ParamScope::Statement` in `sf_core/src/config/param_registry.rs`). Every statement parameter name used in Python driver code MUST be defined there before use.
+
+      When calling `set_statement_parameter`, `_set_statement_parameter`, or otherwise supplying a statement parameter key (including via `execute(..., num_statements=...)` which forwards to `MULTI_STATEMENT_COUNT`), reference `StatementParameterName.<MEMBER>` — never a raw string literal such as `"MULTI_STATEMENT_COUNT"` or `"ASYNC_EXECUTION"`.
+
+      When adding support for a new statement parameter:
+      1. Confirm it exists in sf_core's `param_registry` with `ParamScope::Statement`.
+      2. Add a matching `StatementParameterName` member in `python/src/snowflake/connector/constants.py` (UPPER_SNAKE_CASE name, string value equal to the canonical server name).
+      3. Use only the registry member at call sites.
+
+      Flag these patterns in review:
+      - `set_statement_parameter("…", …)` or `await set_statement_parameter("…", …)` with a string literal first argument.
+      - `_set_statement_parameter("…", …)` with a string literal.
+      - New string constants or module-level variables duplicating statement parameter names outside `StatementParameterName`.
+      - Docstring examples showing raw string keys instead of `StatementParameterName` members (update examples when touching the code).
+
+      Exempt: generated code under `_internal/protobuf_gen/` and `_internal/nanoarrow_cpp/`.
+
+      ❌ **BAD:**
+      ```python
+      cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+      await cursor.set_statement_parameter("ASYNC_EXECUTION", True)
+      self._set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      from snowflake.connector.constants import StatementParameterName
+
+      cursor.set_statement_parameter(StatementParameterName.MULTI_STATEMENT_COUNT, 3)
+      await cursor.set_statement_parameter(StatementParameterName.ASYNC_EXECUTION, True)
+      self._set_statement_parameter(StatementParameterName.MULTI_STATEMENT_COUNT, num_statements)
+      ```
