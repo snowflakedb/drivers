@@ -61,9 +61,13 @@ runs:
       uses: actions/cache/restore@v5
       with:
         path: .ccache
-        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+        # Include run_id in key so save always creates a new entry (GHA cache
+        # is immutable — same key = no overwrite). Restore-keys prefix ensures
+        # we still get the most recent match from a prior run.
+        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-${{ github.run_id }}
         restore-keys: |
-          ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-
+          ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-
+          ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-
 
     # vcpkg's binary cache stores prebuilt packages keyed by an ABI hash that
     # depends on the vcpkg version. When the runner image bumps vcpkg the ABI
@@ -114,14 +118,15 @@ runs:
         key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
     - name: Save ccache
-      if: inputs.mode == 'save' && inputs.kind == 'ccache' && inputs.cache-hit != 'true'
+      # Always save — key includes run_id so it's always unique.
+      if: inputs.mode == 'save' && inputs.kind == 'ccache'
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'
       uses: actions/cache/save@v5
       with:
         path: .ccache
-        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-${{ github.run_id }}
 
     - name: Save vcpkg binary cache
       if: inputs.mode == 'save' && inputs.kind == 'vcpkg' && inputs.cache-hit != 'true'

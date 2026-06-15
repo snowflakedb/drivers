@@ -43,15 +43,45 @@ try {
     }
     if (Get-Command ccache -ErrorAction SilentlyContinue) {
         $cmakeArgs += @("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", "-DCMAKE_C_COMPILER_LAUNCHER=ccache")
+        # Use /Z7 (embedded debug info) instead of /Zi (shared PDB). /Zi produces a
+        # shared .pdb that serializes parallel writes — ccache marks all /Zi calls as
+        # uncacheable because the PDB is a side effect it cannot track. /Z7 embeds
+        # debug info in each .obj, making compilations independent and cacheable.
+        $cmakeArgs += "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded"
     }
     if ($env:VCPKG_INSTALLATION_ROOT) {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
     }
     cmake @cmakeArgs .
+
+    if (Get-Command ccache -ErrorAction SilentlyContinue) {
+        # Write ccache.conf to force depend_mode (env var CCACHE_DEPEND doesn't work on 4.13.6)
+        $ccacheConf = Join-Path $env:CCACHE_DIR "ccache.conf"
+        Set-Content -Path $ccacheConf -Value "depend_mode = true"
+        Write-Host "run_tests: wrote depend_mode=true to $ccacheConf"
+        Write-Host "=== ccache directory contents ==="
+        Get-ChildItem $env:CCACHE_DIR -Recurse | Measure-Object | Select-Object -ExpandProperty Count | ForEach-Object { Write-Host "  Total files in .ccache: $_" }
+        $cacheFiles = Get-ChildItem (Join-Path $env:CCACHE_DIR "??") -ErrorAction SilentlyContinue
+        if ($cacheFiles) {
+            Write-Host "  Cache subdirectories with content: $($cacheFiles.Count)"
+        } else {
+            Write-Host "  Cache subdirectories: NONE (empty cache)"
+        }
+        Write-Host "=== ccache stats BEFORE build ==="
+        ccache --show-stats
+        Write-Host "=== ccache config (selected) ==="
+        ccache --show-config | Select-String "depend_mode|sloppiness|compiler_check|hash_dir"
+    }
+
     if ($useNinja) {
         cmake --build cmake-build --parallel ($NPROC)
     } else {
         cmake --build cmake-build --config Debug --parallel ($NPROC)
+    }
+
+    if (Get-Command ccache -ErrorAction SilentlyContinue) {
+        Write-Host "=== ccache stats AFTER build ==="
+        ccache --show-stats
     }
 
     # --- Schema lifecycle: pre-create a shared schema for all test processes ---

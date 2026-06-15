@@ -34,5 +34,9 @@ runs:
         CCACHE_DIR=${{ github.workspace }}/.ccache
         CCACHE_BASEDIR=${{ github.workspace }}
         CCACHE_MAXSIZE=1G
+        CCACHE_SLOPPINESS=include_file_mtime,time_macros,pch_defines,clang_index_store
+        CCACHE_COMPILERCHECK=content
+        CCACHE_DEPEND=true
+        CCACHE_NOHASHDIR=true
         VCPKG_BINARY_SOURCES=clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite
         EOF

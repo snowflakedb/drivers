@@ -84,7 +84,18 @@ cmake -B cmake-build \
     -D DRIVER_TYPE="${DRIVER_TYPE}" \
     ${CCACHE_ARGS} \
     .
+
+if command -v ccache &>/dev/null; then
+    echo "=== ccache stats BEFORE build ==="
+    ccache --show-stats
+fi
+
 cmake --build cmake-build -- -j $((NPROC * 2))
+
+if command -v ccache &>/dev/null; then
+    echo "=== ccache stats AFTER build ==="
+    ccache --show-stats
+fi
 
 # --- Schema lifecycle: pre-create a shared schema for all test processes ----------
 SCHEMA_TOOL="./cmake-build/tools/schema_tool"
