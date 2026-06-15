@@ -1,0 +1,64 @@
+# Routing-accuracy eval set for: jdbc-test-reviewer
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "review jdbc tests"
+    notes: "Exact trigger phrase from the skill description."
+
+  - prompt: "can you review my jdbc test file, StatementTest.java"
+    notes: "Direct request matching 'review my jdbc test file' trigger phrase."
+
+  - prompt: "is this jdbc test flaky"
+    notes: "Exact trigger phrase from the skill description."
+
+  - prompt: "check this java test for flakiness — it uses Thread.sleep everywhere"
+    notes: "Matches 'check this java test for flakiness' trigger phrase and names a flaky-test anti-pattern the skill explicitly handles."
+
+  - prompt: "jdbc test review on the stuff I changed in this branch"
+    notes: "Matches 'jdbc test review' trigger phrase; the 'branch diff' workflow is the skill's default file-discovery path."
+
+  - prompt: "this test keeps passing locally but fails in CI, it's in jdbc/src/test/java/com/example/ConnectionTest.java — can you take a look"
+    notes: "Indirect/contextual — describes a classic flaky-test symptom for a JDBC test file without using the exact trigger phrase."
+
+  - prompt: "getDefaultConnection().createStatement().execute() in my test is causing weird intermittent failures, help"
+    notes: "Describes shared-session mutation, a High flaky-test anti-pattern the skill detects, without saying 'review'. Contextually implies a JDBC test."
+
+  - prompt: "do I need try-with-resources around this ResultSet in my test?"
+    notes: "Borderline: asks a resource-management question specific to JDBC test code, which is a core review category in the skill."
+
+  - prompt: "is this test flaky? it has Thread.sleep and ALTER SESSION on the shared connection"
+    notes: "Borderline: terse and doesn't say 'jdbc', but names two specific JDBC test anti-patterns from the skill's detection table."
+
+  - prompt: "@SkipNewDriver annotation — do I need to add anything to BehaviorDifferences.yaml"
+    notes: "Asks about the behavioral-differences cross-check that is unique to this skill's Step 3 and Step 4 review workflow."
+
+  - prompt: "my wiremock server is on port 8080 in the test, is that a problem"
+    notes: "Hardcoded WireMock port is a Medium finding explicitly in the skill's flaky-test anti-pattern table."
+
+  - prompt: "quick jdbc test check plz"
+    notes: "Abbreviated shorthand — typo-level terse request that still names 'jdbc test' and 'check'."
+
+should_not_trigger:
+  - prompt: "can you review this before I open a PR — just want a final sanity check on the code"
+    reason: "Routes to end-of-task-self-review. No 'jdbc' or 'test' signal; this is a general pre-PR review request."
+
+  - prompt: "review my odbc test for flakiness, it's in odbc/src/test/c/StatementTest.c"
+    reason: "ODBC tests (C/C++) are explicitly out of scope for this skill. Should route to an odbc-test-reviewer or general review."
+
+  - prompt: "there's a resource leak in the jdbc connection pool — can you look at the production code in jdbc/src/main/java"
+    reason: "Non-test production code is explicitly out of scope. Routes to general /review. Keywords 'jdbc' and 'resource leak' make this confusable."
+
+  - prompt: "what version of snowflake-jdbc should I bump to in the pom.xml"
+    reason: "Maven POM / dependency version decisions are explicitly out of scope. Routes to general conversation or no skill."
+
+  - prompt: "how do I benchmark jdbc query latency in my tests"
+    reason: "Performance benchmarking is explicitly out of scope. Uses 'jdbc' and 'tests' keywords but is asking about benchmarking, not test quality."
+
+  - prompt: "our CI is flaky — jobs keep timing out in the build pipeline but the tests themselves seem fine"
+    reason: "Uses 'flaky' keyword but describes CI infrastructure instability, not JDBC test code quality. Routes to general conversation or no skill."
+
+  - prompt: "review this java test — it's for the kafka connector, not the jdbc driver"
+    reason: "Java test review request but explicitly for a different component (Kafka connector). Out of this skill's JDBC domain scope."
