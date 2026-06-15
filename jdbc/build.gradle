@@ -287,6 +287,10 @@ def configureCommonTestTask = { t ->
 
 test {
     configureCommonTestTask(delegate)
+    // Parity tests need a special harness with two URLClassLoaders and system properties wired
+    // in by the parityTest task; running them under the default test task fails immediately on
+    // a missing parity.newClasspath property. Excluded by package.
+    exclude '**/e2e/parity/**'
 }
 
 tasks.register('referenceTest', Test) {
@@ -297,6 +301,10 @@ tasks.register('referenceTest', Test) {
     // Tests that reference symbols only present in this module's SnowflakeDriver
     // (not on the legacy snowflake-jdbc artifact) must be excluded from this run.
     exclude '**/SnowflakeDriverVersionTest.class'
+    // Parity tests are designed to be invoked only via the parityTest task; their harness
+    // assumes both drivers are loaded into isolated URLClassLoaders, which the legacy-driver
+    // reference run does not provide.
+    exclude '**/e2e/parity/**'
     // Isolate old-driver reference tests from this module's main runtime deps.
     // Keep only test output/resources + test-only runtime deps + old JDBC driver deps.
     classpath = sourceSets.test.output +
@@ -332,6 +340,58 @@ jacocoTestReport {
                 '**/DriverVersion.class'
             ])
         }))
+    }
+}
+
+// Single-JVM parity oracle: loads universal-driver and snowflake-jdbc 4.0.1 into isolated
+// URLClassLoaders so DateTimeParityTest can hit both drivers side-by-side and diff their output
+// directly (instead of running the suite twice and reconciling JUnit XML).
+//
+// REQUIRES HOTSPOT (Temurin / Oracle / Liberica). On Eclipse OpenJ9 the universal-driver's
+// jdbc_bridge::sflogger_layer crashes with `operating system stack overflow` on the first JNI
+// event because its JNI sequence leaves a pending Java exception that subsequent calls never
+// clear. That is a real jdbc_bridge bug, not a parity-test bug, and it reproduces with the
+// regular `:test` task on OpenJ9 too. Track the fix separately; the matrix needs HotSpot today.
+tasks.register('parityTest', Test) {
+    configureCommonTestTask(delegate)
+    testClassesDirs = sourceSets.test.output.classesDirs
+
+    // Keep universal-driver off the test JVM's system classloader so each driver lives only
+    // inside its own URLClassLoader. Stricter isolation; not required for correctness but
+    // avoids classloader-confused JNI lookups if the bridge ever sets a thread-context loader
+    // we didn't expect.
+    classpath = sourceSets.test.output +
+            (sourceSets.test.runtimeClasspath - sourceSets.main.output)
+
+    dependsOn(processResources)
+
+    def newClasspath = sourceSets.main.runtimeClasspath
+            .collect { it.absolutePath }.join(File.pathSeparator)
+    def oldClasspath = configurations.referenceTestsOldDriver
+            .collect { it.absolutePath }.join(File.pathSeparator)
+
+    systemProperty 'parity.newClasspath', newClasspath
+    systemProperty 'parity.oldClasspath', oldClasspath
+
+    include '**/DateTimeParityTest.class'
+    shouldRunAfter test
+
+    doFirst {
+        // Fail fast with a clear message before the JVM forks on OpenJ9. The actual error from
+        // the bridge is unhelpful (a deep stack overflow inside `nativeHandleMessage`).
+        def vmName = System.getProperty('java.vm.name') ?: ''
+        if (vmName.contains('OpenJ9')) {
+            throw new GradleException(
+                "parityTest does not run on OpenJ9 (current java.vm.name='" + vmName + "'). " +
+                "Use HotSpot (e.g. Temurin or Oracle JDK). The universal-driver's JNI bridge " +
+                "currently crashes with a stack overflow on OpenJ9 because of a defect in " +
+                "jdbc_bridge::sflogger_layer; that is not a parity-test bug.")
+        }
+    }
+
+    reports {
+        junitXml.required = true
+        html.required = true
     }
 }
 
