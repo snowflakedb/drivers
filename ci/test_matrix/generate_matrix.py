@@ -408,11 +408,13 @@ def _build_core_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | Non
     """
     Build a row for the consolidated rust-core test job.
 
-    sf_core has no Cloud axis (tests use a single E2E_TLS_SERVER and don't
-    parameterize over cloud providers). Returns None for any (OS, Arch) pair
-    that GHA doesn't run today.
+    The `Cloud` axis selects which `parameters_${cloud}.json.gpg` the
+    test process decodes (via `scripts/decode_secrets.sh`) and gets
+    exported as the `cloud_provider` env var so test code can gate on
+    the active cloud. Returns None for any (OS, Arch) pair that GHA
+    doesn't run today.
     """
-    os_, arch = combo["OS"], combo["Arch"]
+    os_, arch, cloud = combo["OS"], combo["Arch"], combo["Cloud"]
     runner = GHA_RUNNER.get((os_, arch))
     if runner is None:
         return None
@@ -429,6 +431,7 @@ def _build_core_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | Non
     row: dict[str, Any] = {
         "name": name,
         "os": runner,  # GitHub Actions runner label
+        "cloud_provider": cloud,
         "trigger_level": trigger,
         "cargo_flags": platform["cargo_flags"],
         "coverage": platform["coverage"],

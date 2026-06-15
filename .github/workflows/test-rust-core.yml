@@ -56,6 +56,11 @@ jobs:
   #                          existing matrix dimension is preserved.
   #   - windows_arm_active:  'true' if pict includes the windows-arm-nonfips lane.
   #   - windows_x86_active:  'true' if pict includes the windows-x86 lane.
+  #   - windows_arm_cloud:   cloud_provider of the windows-arm-nonfips lane
+  #                          (single source of truth from the model; the job is
+  #                          non-matrixed so it can't read matrix.cloud_provider).
+  #                          Falls back to 'aws' when the lane is absent.
+  #   - windows_x86_cloud:   cloud_provider of the windows-x86 lane (same scheme).
   load-core-matrix:
     needs: scope-label-gate
     runs-on: ubuntu-latest
@@ -64,6 +69,8 @@ jobs:
       test_matrix: ${{ steps.split.outputs.test_matrix }}
       windows_arm_active: ${{ steps.split.outputs.windows_arm_active }}
       windows_x86_active: ${{ steps.split.outputs.windows_x86_active }}
+      windows_arm_cloud: ${{ steps.split.outputs.windows_arm_cloud }}
+      windows_x86_cloud: ${{ steps.split.outputs.windows_x86_cloud }}
     steps:
       - uses: actions/checkout@v4
       - id: read
@@ -85,6 +92,12 @@ jobs:
           # just skip the whole job if pict didn't include the lane on this trigger).
           echo "windows_arm_active=$(printf '%s' "$FULL" | jq -r '[.[] | select(.name == "windows-arm-nonfips")] | length > 0')" >> "$GITHUB_OUTPUT"
           echo "windows_x86_active=$(printf '%s' "$FULL" | jq -r '[.[] | select(.name == "windows-x86")] | length > 0')" >> "$GITHUB_OUTPUT"
+          # Cloud of each windows lane, threaded through as a scalar so the
+          # non-matrixed windows jobs derive their cloud from the model rather
+          # than hardcoding it. Fall back to 'aws' when the lane isn't present
+          # (job is skipped via the *_active gate in that case anyway).
+          echo "windows_arm_cloud=$(printf '%s' "$FULL" | jq -r 'map(select(.name == "windows-arm-nonfips"))[0].cloud_provider // "aws"')" >> "$GITHUB_OUTPUT"
+          echo "windows_x86_cloud=$(printf '%s' "$FULL" | jq -r 'map(select(.name == "windows-x86"))[0].cloud_provider // "aws"')" >> "$GITHUB_OUTPUT"
 
   # Format job intentionally has no Rust target cache: `cargo fmt --check` does not
   # compile the crate, it only parses source files. A cache would add restore overhead
@@ -222,7 +235,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
@@ -255,12 +268,18 @@ jobs:
       - name: Run tests with coverage
         id: run_rust_tests
         continue-on-error: ${{ github.event_name == 'merge_group' }}
+        # Expose `cloud_provider` so test code can gate on it (e.g.,
+        # skip Azure-only tests on `aws`/`gcp` lanes).
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Rerun tests with coverage
         if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
@@ -361,7 +380,7 @@ jobs:
           linkage: dynamic
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
@@ -427,6 +446,8 @@ jobs:
         id: run_rust_tests_windows_arm64
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
+        env:
+          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
@@ -434,6 +455,8 @@ jobs:
       - name: Rerun tests (Windows ARM64)
         if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
+        env:
+          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
@@ -441,6 +464,8 @@ jobs:
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
         shell: cmd
+        env:
+          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
@@ -559,7 +584,7 @@ jobs:
           linkage: dynamic
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
@@ -628,6 +653,8 @@ jobs:
         id: run_rust_tests_x86
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
+        env:
+          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
@@ -635,6 +662,8 @@ jobs:
       - name: Rerun tests (Windows x86)
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
+        env:
+          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
@@ -642,6 +671,8 @@ jobs:
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
         shell: cmd
+        env:
+          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"

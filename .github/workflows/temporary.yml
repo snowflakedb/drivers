@@ -321,6 +321,8 @@ jobs:
       # `put_get` is the module name under tests/e2e and tests/integration in
       # sf_core, so the test-name filter selects only those suites.
       - name: Run sf_core put/get tests
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo test --package sf_core --all-features --test e2e_tests put_get -- --nocapture

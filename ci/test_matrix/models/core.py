@@ -1,8 +1,14 @@
 """Rust core (sf_core) coverage model — see models/__init__.py for the schema."""
 
 PARAMS = {
-    "OS":   ["ubuntu", "macos", "windows"],
-    "Arch": ["x64", "arm", "x86"],
+    "OS":    ["ubuntu", "macos", "windows"],
+    "Arch":  ["x64", "arm", "x86"],
+    # Backing-cloud axis. Each cell decodes a different
+    # `parameters_${Cloud}.json.gpg` and exports `cloud_provider` as
+    # an env var to the test process so tests can gate on it.
+    # PR / merge-queue cells are pinned to `aws`; gcp and azure
+    # appear only at pairwise / nightly trigger levels.
+    "Cloud": ["aws", "gcp", "azure"],
 }
 
 
@@ -28,14 +34,14 @@ def is_valid(c):
 CONSTRAINTS = [is_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64"},
-    {"OS": "macos",   "Arch": "arm"},
-    {"OS": "windows", "Arch": "arm"},
-    {"OS": "windows", "Arch": "x86"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws"},
+    {"OS": "macos",   "Arch": "arm", "Cloud": "aws"},
+    {"OS": "windows", "Arch": "arm", "Cloud": "aws"},
+    {"OS": "windows", "Arch": "x86", "Cloud": "aws"},
 ]
 
 MERGE_QUEUE_CELLS = [
-    {"OS": "ubuntu", "Arch": "x64"},
+    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws"},
 ]
 
 JSON_CELLS = {"pr": [], "merge": [], "nightly": []}

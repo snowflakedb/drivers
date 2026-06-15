@@ -1157,10 +1157,16 @@ class CoreMatrixTests(unittest.TestCase):
             {"ubuntu-x64", "macos-arm", "windows-arm-nonfips", "windows-x86"},
         )
 
-    def test_no_cloud_provider_field(self) -> None:
-        # Core has no Cloud axis (single E2E_TLS_SERVER for every cell).
+    def test_pr_cells_pinned_to_aws(self) -> None:
+        # PR and merge-queue cells run on `aws` only. Other clouds
+        # (gcp, azure) appear at pairwise / nightly trigger levels.
         for r in self.gha:
-            self.assertNotIn("cloud_provider", r, r["name"])
+            if r["trigger_level"] in ("pr", "merge_queue"):
+                self.assertEqual(
+                    r["cloud_provider"], "aws",
+                    f"row {r['name']} at trigger {r['trigger_level']!r} "
+                    f"must be aws-pinned (got {r['cloud_provider']!r})",
+                )
 
     def test_coverage_only_on_unix(self) -> None:
         cov_runners = {r["os"] for r in self.gha if r.get("coverage")}
