@@ -100,6 +100,9 @@ fn normalize_connection_string_option(
         "CLIENT_STORE_TEMPORARY_CREDENTIAL" => {
             Some(("client_store_temporary_credential".to_owned(), value.into()))
         }
+        "DISABLE_PARALLEL_USER_PROMPT" => {
+            Some(("disable_parallel_user_prompt".to_owned(), value.into()))
+        }
         "LOGIN_TIMEOUT" => Some(("authentication_timeout".to_owned(), value.into())),
         "PASSCODEINPASSWORD" => Some(("passcodeInPassword".to_owned(), value.into())),
         "PRIV_KEY_FILE" => Some(("private_key_file".to_owned(), value.into())),
@@ -1615,6 +1618,27 @@ mod tests {
             Some("true")
         );
         assert!(!options.contains_key("CLIENT_STORE_TEMPORARY_CREDENTIAL"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_disable_parallel_user_prompt() {
+        for input_value in ["true", "false", "1", "0"] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                "DISABLE_PARALLEL_USER_PROMPT".to_owned(),
+                input_value.to_owned(),
+            )]));
+
+            assert_eq!(
+                config_string(&options, "disable_parallel_user_prompt"),
+                Some(input_value),
+                "value {input_value:?} should pass through unchanged"
+            );
+            // The original upper-case key must not survive normalization.
+            assert!(
+                !options.contains_key("DISABLE_PARALLEL_USER_PROMPT"),
+                "upper-case key must be consumed by normalize"
+            );
+        }
     }
 
     #[test]
