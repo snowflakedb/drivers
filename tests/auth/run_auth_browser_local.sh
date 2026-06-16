@@ -6,6 +6,7 @@
 # Usage:
 #   ./tests/auth/run_auth_browser_local.sh python
 #   ./tests/auth/run_auth_browser_local.sh odbc
+#   ./tests/auth/run_auth_browser_local.sh jdbc
 
 set -euo pipefail
 

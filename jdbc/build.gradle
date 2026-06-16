@@ -224,7 +224,19 @@ testlogger {
 }
 
 def configureCommonTestTask = { t ->
-    t.useJUnitPlatform()
+    t.useJUnitPlatform {
+        def includeTags = System.getenv('GRADLE_INCLUDE_TAGS')?.trim()
+        def excludeTags = System.getenv('GRADLE_EXCLUDE_TAGS')?.trim()
+        if (includeTags) {
+            includeTags.split(',').each { tag -> it.includeTags tag.trim() }
+        }
+        if (excludeTags) {
+            excludeTags.split(',').each { tag -> it.excludeTags tag.trim() }
+        }
+        if (!includeTags && !excludeTags) {
+            it.excludeTags 'requires_browser'
+        }
+    }
     t.minHeapSize = '1g'
     t.maxHeapSize = '4g'
 
@@ -245,7 +257,16 @@ def configureCommonTestTask = { t ->
                   System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
                   'libjdbc_bridge.so'
     t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
-    t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
+    // PARAMETER_PATH defaults to the checked-in parameters.json but may be overridden by the
+    // environment (e.g. tests/auth/auth_browser_jdbc.sh points it at parameters_preprod.json).
+    t.environment 'PARAMETER_PATH', System.getenv('PARAMETER_PATH') ?: file('../parameters.json').absolutePath
+
+    // Suppress the real browser launch for headless runs so EXTERNALBROWSER WireMock integration
+    // tests can simulate the callback. The auth-browser e2e suite sets SF_TEST_HEADLESS_BROWSER=true
+    // and needs the real opener, so leave the opener untouched in that case.
+    if (System.getenv('SF_TEST_HEADLESS_BROWSER') != 'true') {
+        t.environment 'SF_TEST_BROWSER_OPENER', 'noop'
+    }
 
     def rawRetryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
     def retryCount = rawRetryCount?.trim()

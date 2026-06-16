@@ -1,5 +1,6 @@
 package net.snowflake.client.api.metadata;
 
+import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;

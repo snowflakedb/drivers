@@ -1,5 +1,7 @@
 package net.snowflake.client.api.datasource;
 
+import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
+import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
@@ -43,7 +45,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   @Test
   void shouldAuthenticateUsingPatAsPassword() throws Exception {
     SnowflakeDataSource ds = createDataSource();
-    ds.setPassword(TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
+    ds.setPassword(TestParameters.get("SNOWFLAKE_TEST_PAT"));
 
     try (Connection conn = ds.getConnection()) {
       assertSimpleQuerySucceeds(conn);
@@ -55,7 +57,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   void shouldAuthenticateUsingPatAsToken() throws Exception {
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("PROGRAMMATIC_ACCESS_TOKEN");
-    ds.setToken(TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
+    ds.setToken(TestParameters.get("SNOWFLAKE_TEST_PAT"));
 
     try (Connection conn = ds.getConnection()) {
       assertSimpleQuerySucceeds(conn);
@@ -67,7 +69,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   void shouldAuthenticateUsingPatAsTokenWithLowercaseAuthenticator() throws Exception {
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("programmatic_access_token");
-    ds.setToken(TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
+    ds.setToken(TestParameters.get("SNOWFLAKE_TEST_PAT"));
 
     try (Connection conn = ds.getConnection()) {
       assertSimpleQuerySucceeds(conn);

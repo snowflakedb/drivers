@@ -1,5 +1,7 @@
 package net.snowflake.client.api.datasource;
 
+import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
+import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;

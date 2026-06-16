@@ -7,6 +7,7 @@ Local usage (requires parameters_preprod.json in repo root):
   ./scripts/decode_secrets.sh preprod parameters_preprod.json
   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh python
   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh odbc
+  DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh jdbc
 
 Or build & run locally without a pre-built image:
   ./tests/auth/run_auth_browser_local.sh python
@@ -16,7 +17,7 @@ Or build & run locally without a pre-built image:
 import groovy.transform.Field
 import com.snowflake.DevEnvUtils
 
-@Field String AUTH_BROWSER_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-development-docker-drivers-local/snowflakedb/snowdrivers-test-external-browser-universal-driver:2'
+@Field String AUTH_BROWSER_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-development-docker-drivers-local/snowflakedb/snowdrivers-test-external-browser-universal-driver:3'
 
 def isMergeQueue() {
   return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
@@ -24,12 +25,14 @@ def isMergeQueue() {
 
 @Field def runPython = false
 @Field def runOdbc = false
+@Field def runJdbc = false
 
 def detectChanges() {
   // For main branch builds (and cron), run everything.
   if (env.CHANGE_ID == null) {
     runPython = true
     runOdbc = true
+    runJdbc = true
     return
   }
 
@@ -41,8 +44,8 @@ def detectChanges() {
   echo "Changed files (${changedFiles.size()}):"
   changedFiles.each { echo "  ${it}" }
 
-  // Shared Rust core — affects sf_core compilation, which both the Python connector
-  // and the ODBC driver build from source. Include the workspace-level deps of sf_core.
+  // Shared Rust core — affects sf_core compilation, which the Python connector, the ODBC driver,
+  // and the JDBC bridge all build from source. Include the workspace-level deps of sf_core.
   def corePatterns = [
     'sf_core/', 'proto_utils/', 'error_trace/', 'error_trace_derive/', 'proto_generator/',
     'Cargo.lock', 'rust-toolchain.toml',
@@ -52,13 +55,15 @@ def detectChanges() {
     if (corePatterns.any { file.startsWith(it) || file == it }) {
       runPython = true
       runOdbc = true
+      runJdbc = true
       break
     }
-    // Job definition or the shared container scripts affect both wrappers.
+    // Job definition or the shared container scripts affect all wrappers.
     if (file == 'ci/Jenkinsfile.auth-browser-tests' ||
         file.startsWith('tests/auth/')) {
       runPython = true
       runOdbc = true
+      runJdbc = true
     }
     // The Python connector / tests.
     if (file.startsWith('python/') ||
@@ -70,11 +75,17 @@ def detectChanges() {
         file.startsWith('odbc_tests/')) {
       runOdbc = true
     }
+    // The JDBC driver / bridge / tests.
+    if (file.startsWith('jdbc/') ||
+        file.startsWith('jdbc_bridge/')) {
+      runJdbc = true
+    }
   }
 
   echo "=== Auth Browser Tests Change Detection ==="
   echo "  Run Python: ${runPython}"
   echo "  Run ODBC: ${runOdbc}"
+  echo "  Run JDBC: ${runJdbc}"
 }
 
 def authenticateDocker() {
@@ -135,6 +146,21 @@ pipeline {
                 sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
               }
               sh label: 'Run ODBC auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh odbc"
+            }
+          }
+        }
+        stage('JDBC') {
+          when {
+            expression { runJdbc }
+          }
+          agent { label 'build-node-extra-large' }
+          steps {
+            script {
+              authenticateDocker()
+              withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+              }
+              sh label: 'Run JDBC auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh jdbc"
             }
           }
         }

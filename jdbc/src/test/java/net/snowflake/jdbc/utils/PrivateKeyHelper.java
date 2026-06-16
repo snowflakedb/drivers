@@ -21,8 +21,6 @@ import org.bouncycastle.operator.InputDecryptorProvider;
 import org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemWriter;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 @Getter
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
@@ -32,17 +30,10 @@ public class PrivateKeyHelper {
   private final String password;
 
   public static PrivateKeyHelper fromParameters(Path keyFile) throws Exception {
-    JSONObject params = TestParameters.get();
-
-    String password = params.getString("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
-    JSONArray keyLines = params.getJSONArray("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
-
-    StringBuilder keyContent = new StringBuilder();
-    for (int i = 0; i < keyLines.length(); i++) {
-      keyContent.append(keyLines.getString(i)).append("\n");
-    }
-
-    Files.write(keyFile, keyContent.toString().getBytes(StandardCharsets.UTF_8));
+    String password = TestParameters.get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
+    String keyContent =
+        String.join("\n", TestParameters.getList("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS"));
+    Files.write(keyFile, keyContent.getBytes(StandardCharsets.UTF_8));
 
     return new PrivateKeyHelper(keyFile, password);
   }

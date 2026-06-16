@@ -1,5 +1,7 @@
 package net.snowflake.client.api.datasource;
 
+import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
+import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -10,10 +12,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
-import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class DataSourceConnectionTests extends SnowflakeIntegrationTestBase {
+public class DataSourceConnectionTests {
 
   @Test
   public void testConnectUsingDataSourceWithExplicitUrl() throws Exception {

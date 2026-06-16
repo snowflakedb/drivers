@@ -1,5 +1,7 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
+import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
@@ -16,7 +18,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   void shouldAuthenticateUsingPatAsPassword() throws Exception {
     // Given Authentication is set to password and valid PAT token is provided
     Properties props = loadConnectionProperties();
-    props.setProperty("password", TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
+    props.setProperty("password", TestParameters.get("SNOWFLAKE_TEST_PAT"));
 
     // When Trying to Connect
     String url = buildJdbcUrl(props);
@@ -32,7 +34,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
     Properties props = loadConnectionProperties();
     props.remove("password");
     props.setProperty("authenticator", "PROGRAMMATIC_ACCESS_TOKEN");
-    props.setProperty("token", TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
+    props.setProperty("token", TestParameters.get("SNOWFLAKE_TEST_PAT"));
 
     // When Trying to Connect
     String url = buildJdbcUrl(props);
@@ -49,7 +51,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
     Properties props = loadConnectionProperties();
     props.remove("password");
     props.setProperty("authenticator", "programmatic_access_token");
-    props.setProperty("token", TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
+    props.setProperty("token", TestParameters.get("SNOWFLAKE_TEST_PAT"));
 
     // When Trying to Connect
     String url = buildJdbcUrl(props);

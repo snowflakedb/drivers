@@ -22,7 +22,7 @@ source "${SCRIPT_DIR}/auth_browser_common.sh"
 
 WRAPPER="${1:-}"
 if [ -z "$WRAPPER" ] || [ ! -f "${SCRIPT_DIR}/auth_browser_${WRAPPER}.sh" ]; then
-    echo "Usage: $0 <python|odbc>" >&2
+    echo "Usage: $0 <python|odbc|jdbc>" >&2
     exit 1
 fi
 
