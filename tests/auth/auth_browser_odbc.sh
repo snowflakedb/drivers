@@ -1,20 +1,8 @@
 #!/bin/bash
 #
 # ODBC authentication E2E tests requiring a headless browser container.
-# Runs USERNAME_PASSWORD_MFA (TOTP via totpGenerator.js) and external-browser
-# (headless Chromium) suites inside snowdrivers-test-external-browser-universal-driver.
-#
-# Local usage (requires parameters_preprod.json in repo root and VPN for preprod):
-#
-#   ./scripts/decode_secrets.sh preprod parameters_preprod.json
-#   ./tests/auth/run_auth_browser_local.sh odbc
-#
-# Or with a pre-built image:
-#
-#   docker run --rm --platform linux/amd64 \
-#     -v "$PWD:/mnt/host" -e WORKSPACE_ROOT=/mnt/host \
-#     snowdrivers-test-external-browser-universal-driver:1 \
-#     bash /mnt/host/tests/auth/auth_browser_odbc.sh
+# Runs the external-browser (headless Chromium) suite inside
+# snowdrivers-test-external-browser-universal-driver.
 
 set -euo pipefail
 

@@ -2,13 +2,30 @@ FROM node:20-bookworm
 
 WORKDIR /mnt/host
 
-# Browser, Python, ODBC, and C++ build utilities
+# Common tools & C/C++ build essentials
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium jq \
-    python3 python3-dev python3-pip python3-pytest python3-venv \
+    curl ca-certificates wget jq \
     build-essential pkg-config libssl-dev protobuf-compiler \
-    curl ca-certificates wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Browser
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-dev python3-pip python3-pytest python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# ODBC
+RUN apt-get update && apt-get install -y --no-install-recommends \
     unixodbc unixodbc-dev odbcinst \
+    && rm -rf /var/lib/apt/lists/*
+
+# Java
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
 
 # CMake >= 4.0 (required by odbc_tests CMakeLists)

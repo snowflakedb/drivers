@@ -1,5 +1,7 @@
 package net.snowflake.jdbc.e2e.session;
 
+import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
+import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,10 +10,9 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Properties;
-import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-class SessionParametersTests extends SnowflakeIntegrationTestBase {
+class SessionParametersTests {
 
   @Test
   void shouldForwardUnrecognizedConnectionOptionAsSessionParameter() throws Exception {
