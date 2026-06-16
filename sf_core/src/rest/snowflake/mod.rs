@@ -7,6 +7,7 @@ pub mod heartbeat;
 pub mod logout;
 mod native_okta;
 mod oauth;
+pub mod prompt_lock;
 /// Re-export of the browser-launcher closure type so that
 /// `crate::config::rest_parameters::OAuthAuthorizationCodeConfig` can
 /// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory
@@ -479,6 +480,7 @@ pub async fn auth_request_data(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<&dyn TokenCache>,
+    prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -565,10 +567,16 @@ pub async fn auth_request_data(
                     url: login_parameters.server_url.clone(),
                 })
                 .context(OAuthFlowSnafu)?;
-            let acquired =
-                oauth::run_oauth_authorization_code(client, &server_url, cfg, token_cache)
-                    .await
-                    .context(OAuthFlowSnafu)?;
+            let acquired = oauth::run_oauth_authorization_code(
+                client,
+                &server_url,
+                cfg,
+                token_cache,
+                login_parameters.disable_parallel_user_prompt,
+                prompt_locks,
+            )
+            .await
+            .context(OAuthFlowSnafu)?;
             data.login_name = Some(cfg.username.clone());
             data.token = Some(acquired.access_token);
             data.authenticator = Some(authenticator::OAUTH.to_string());
@@ -691,7 +699,7 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters, None, None).await
 }
 
 async fn send_login_request(
@@ -797,6 +805,7 @@ pub async fn snowflake_login_with_client(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<&dyn TokenCache>,
+    prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -813,9 +822,61 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let login_request_data =
-        auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
+    // For interactive auth methods (external browser and MFA) that write a
+    // token to the cache, acquire a per-<user, host> prompt-lock so that only
+    // one connection in a pool drives the interactive step.  Waiters block
+    // here, then re-read the cache inside `auth_request_data` (the existing
+    // cache lookups serve as the post-lock double-check).  The lock is held
+    // across `auth_request_data` + `send_login_request` + the EXT_AUTHN retry
+    // block so the token is fully persisted before waiters proceed.
+    // OAuth Authorization Code is serialized inside `run_oauth_authorization_code`.
+    let _prompt_guard: Option<prompt_lock::PromptGuard> = if let Some(locks) = prompt_locks {
+        match &login_parameters.login_method {
+            LoginMethod::ExternalBrowser {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } if prompt_lock::is_eligible(
+                true,
+                login_parameters.disable_parallel_user_prompt,
+                username,
+            ) =>
+            {
+                let host = extract_host_from_url(&login_parameters.server_url).unwrap_or_default();
+                tracing::debug!(%host, %username, "Acquiring external-browser prompt lock");
+                Some(prompt_lock::acquire(locks, &host, username, TokenType::IdToken).await)
+            }
+            LoginMethod::UserPasswordMfa {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } if prompt_lock::is_eligible(
+                true,
+                login_parameters.disable_parallel_user_prompt,
+                username,
+            ) =>
+            {
+                let host = extract_host_from_url(&login_parameters.server_url).unwrap_or_default();
+                tracing::debug!(%host, %username, "Acquiring MFA prompt lock");
+                Some(prompt_lock::acquire(locks, &host, username, TokenType::MfaToken).await)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    // Build the login request data (handles all auth methods including Okta SAML exchange).
+    // For prompt-locked callers the existing cache lookups inside this function
+    // (lines for ID token / MFA token) serve as the post-lock double-check.
+    let login_request_data = auth_request_data(
+        client,
+        login_parameters,
+        session_parameters,
+        token_cache,
+        prompt_locks,
+    )
+    .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
     let login_request = AuthRequest {
         data: login_request_data,
@@ -861,9 +922,14 @@ pub async fn snowflake_login_with_client(
                     token_type,
                     token_cache,
                 );
-                let retry_data =
-                    auth_request_data(client, login_parameters, session_parameters, token_cache)
-                        .await?;
+                let retry_data = auth_request_data(
+                    client,
+                    login_parameters,
+                    session_parameters,
+                    token_cache,
+                    prompt_locks,
+                )
+                .await?;
                 let retry_request = AuthRequest { data: retry_data };
                 auth_response =
                     send_login_request(client, login_parameters, &retry_request).await?;
@@ -908,9 +974,14 @@ pub async fn snowflake_login_with_client(
             }
             if should_retry {
                 tracing::debug!("Retrying login after OAuth refresh");
-                let retry_data =
-                    auth_request_data(client, login_parameters, session_parameters, token_cache)
-                        .await?;
+                let retry_data = auth_request_data(
+                    client,
+                    login_parameters,
+                    session_parameters,
+                    token_cache,
+                    prompt_locks,
+                )
+                .await?;
                 let retry_request = AuthRequest { data: retry_data };
                 auth_response =
                     send_login_request(client, login_parameters, &retry_request).await?;
@@ -2274,6 +2345,7 @@ mod tests {
             client_info: test_client_info(),
             session_parameters: None,
             spcs_token: None,
+            disable_parallel_user_prompt: false,
         }
     }
 
@@ -2614,7 +2686,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None))
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
@@ -2641,7 +2713,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None))
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
             .unwrap();
 
         assert_eq!(data.client_app_id, "PythonConnector");
@@ -2660,7 +2732,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None))
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));

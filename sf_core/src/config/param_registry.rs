@@ -85,6 +85,7 @@ pub mod param_names {
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
+    pub const DISABLE_PARALLEL_USER_PROMPT: ParamKey = ParamKey("disable_parallel_user_prompt");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
     pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
     pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
@@ -465,6 +466,23 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
         description: "Enable MFA token caching for USERNAME_PASSWORD_MFA authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
+        aliases: &["DISABLE_PARALLEL_USER_PROMPT"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(true)),
+        sensitive: false,
+        description: "When true (default), enables process-global serialization of interactive auth \
+                      prompts (external browser, MFA, OAuth) so that only one prompt is shown per \
+                      <user, host> when clientStoreTemporaryCredential is enabled. Set to false to \
+                      allow each concurrent connection to show its own prompt.",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -1483,6 +1501,26 @@ mod tests {
                 param.canonical_name
             );
         }
+    }
+
+    #[test]
+    fn disable_parallel_user_prompt_registered_with_correct_defaults() {
+        let r = registry();
+
+        let def = r
+            .resolve("DISABLE_PARALLEL_USER_PROMPT")
+            .expect("DISABLE_PARALLEL_USER_PROMPT alias should resolve");
+        assert_eq!(def.canonical_name, "disable_parallel_user_prompt");
+        assert_eq!(def.value_type, ValueType::Bool);
+        // Default is true: locking is ON by default.
+        let default_val = def.default.expect("param must have a default")();
+        assert_eq!(default_val, Setting::Bool(true));
+        assert!(def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+
+        // Canonical name also resolves.
+        assert!(r.resolve("disable_parallel_user_prompt").is_some());
     }
 
     #[test]

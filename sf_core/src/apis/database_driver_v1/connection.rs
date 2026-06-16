@@ -302,6 +302,7 @@ impl DatabaseDriverV1 {
                     &login_parameters,
                     init_params.as_ref(),
                     token_cache.map(|c| c as &dyn TokenCache),
+                    Some(&self.prompt_locks),
                 )
                 .await
                 .context(LoginSnafu)?;

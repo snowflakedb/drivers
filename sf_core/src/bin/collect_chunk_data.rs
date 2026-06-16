@@ -337,6 +337,7 @@ fn build_login_params(
         client_info,
         session_parameters: None,
         spcs_token: None,
+        disable_parallel_user_prompt: false,
     })
 }
 
