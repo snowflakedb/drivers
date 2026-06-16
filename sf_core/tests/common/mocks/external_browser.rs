@@ -108,6 +108,60 @@ pub fn login_failure() -> Mock {
         })))
 }
 
+/// Login request that fails for a specific browser callback token value.
+///
+/// Use when multiple concurrent connections are in flight and each carries a
+/// distinct callback token so the failure stub targets only the intended
+/// connection.
+pub fn login_failure_with_token(token: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "EXTERNALBROWSER",
+                "TOKEN": token
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390100",
+            "message": "Invalid credentials"
+        })))
+}
+
+/// Successful login response for a specific browser callback token value.
+///
+/// Use when multiple concurrent connections are in flight and each carries a
+/// distinct callback token so the success stub targets only the intended
+/// connection.
+pub fn login_success_with_token(token: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "EXTERNALBROWSER",
+                "TOKEN": token
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token",
+                "masterToken": "mock_master_token",
+                "sessionId": 12345,
+                "validityInSeconds": 3600,
+                "masterValidityInSeconds": 14400,
+                "parameters": [],
+                "sessionInfo": {
+                    "databaseName": "test_database",
+                    "schemaName": "test_schema",
+                    "warehouseName": "test_warehouse",
+                    "roleName": "test_role"
+                }
+            }
+        })))
+}
+
 // ─── Cached ID Token Login ──────────────────────────────────────────────────
 
 /// Successful login using a cached SSO ID token (no PROOF_KEY in request).
@@ -156,6 +210,40 @@ pub fn login_success_with_id_token_in_response() -> Mock {
                 "sessionId": 12345,
                 "idToken": "server_issued_id_token",
                 "idTokenValidityInSeconds": 3600,
+                "validityInSeconds": 3600,
+                "masterValidityInSeconds": 14400,
+                "parameters": [],
+                "sessionInfo": {
+                    "databaseName": "test_database",
+                    "schemaName": "test_schema",
+                    "warehouseName": "test_warehouse",
+                    "roleName": "test_role"
+                }
+            }
+        })))
+}
+
+// ─── Cached ID Token Login (generic — any token value) ──────────────────────
+
+/// Successful login using a cached SSO ID token where the exact token value
+/// was produced dynamically (e.g., returned in the `idToken` field of a
+/// previous EB login response).  Unlike `login_success_with_cached_id_token`
+/// this stub matches ANY `AUTHENTICATOR=ID_TOKEN` request so callers do not
+/// need to hard-code the specific token string.
+pub fn login_success_for_cached_id_token_flow() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "ID_TOKEN"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token_cached",
+                "masterToken": "mock_master_token_cached",
+                "sessionId": 12346,
                 "validityInSeconds": 3600,
                 "masterValidityInSeconds": 14400,
                 "parameters": [],

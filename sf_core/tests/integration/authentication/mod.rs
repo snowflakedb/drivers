@@ -4,6 +4,7 @@ pub mod native_okta;
 pub mod oauth;
 pub mod odbc_client_identity;
 pub mod os_details;
+pub mod parallel_user_prompt_locking;
 pub mod private_key_auth;
 pub mod spcs_token;
 pub mod user_password;

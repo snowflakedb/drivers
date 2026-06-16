@@ -1,0 +1,26 @@
+{
+  "name": "Successful login using a cached SSO ID token (AUTHENTICATOR=ID_TOKEN)",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'ID_TOKEN')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token_2",
+        "masterToken": "mock_master_token_2",
+        "sessionId": 12346,
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": true}
+        ]
+      }
+    }
+  }
+}
