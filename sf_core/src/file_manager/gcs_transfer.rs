@@ -1129,36 +1129,26 @@ enum GcsRequestError {
 impl From<GcsRequestError> for GcsUploadError {
     fn from(e: GcsRequestError) -> Self {
         match e {
-            GcsRequestError::SourceIo { source } => GcsUploadError::SourceIo {
-                source,
-                location: Location::default(),
-            },
-            GcsRequestError::Http { source } => GcsUploadError::Http {
-                source,
-                location: Location::default(),
-            },
-            GcsRequestError::GcsHttp { status_code, body } => GcsUploadError::GcsHttp {
-                status_code,
-                body,
-                location: Location::default(),
-            },
-            GcsRequestError::TokenExpired => GcsUploadError::TokenExpired {
-                location: Location::default(),
-            },
-            GcsRequestError::PresignedUrlExpired => GcsUploadError::PresignedUrlExpired {
-                location: Location::default(),
-            },
-            GcsRequestError::MissingGcsCredentials => GcsUploadError::MissingGcsCredentials {
-                location: Location::default(),
-            },
-            GcsRequestError::RetryExhausted { detail } => GcsUploadError::RetryExhausted {
-                detail,
-                location: Location::default(),
-            },
-            GcsRequestError::Serialization { source } => GcsUploadError::Serialization {
-                source,
-                location: Location::default(),
-            },
+            GcsRequestError::SourceIo { source } => {
+                gcs_upload_error::SourceIoSnafu.into_error(source)
+            }
+            GcsRequestError::Http { source } => gcs_upload_error::HttpSnafu.into_error(source),
+            GcsRequestError::GcsHttp { status_code, body } => {
+                gcs_upload_error::GcsHttpSnafu { status_code, body }.build()
+            }
+            GcsRequestError::TokenExpired => gcs_upload_error::TokenExpiredSnafu.build(),
+            GcsRequestError::PresignedUrlExpired => {
+                gcs_upload_error::PresignedUrlExpiredSnafu.build()
+            }
+            GcsRequestError::MissingGcsCredentials => {
+                gcs_upload_error::MissingGcsCredentialsSnafu.build()
+            }
+            GcsRequestError::RetryExhausted { detail } => {
+                gcs_upload_error::RetryExhaustedSnafu { detail }.build()
+            }
+            GcsRequestError::Serialization { source } => {
+                gcs_upload_error::SerializationSnafu.into_error(source)
+            }
         }
     }
 }
@@ -1168,38 +1158,29 @@ impl From<GcsRequestError> for GcsDownloadError {
         match e {
             // SourceIo is upload-only (reading the PUT body); if it ever fires on
             // the download path it's a logic bug, but we still need a total mapping.
-            GcsRequestError::SourceIo { source } => GcsDownloadError::RetryExhausted {
+            GcsRequestError::SourceIo { source } => gcs_download_error::RetryExhaustedSnafu {
                 detail: format!("unexpected upload-source IO error on download path: {source}"),
-                location: Location::default(),
-            },
-            GcsRequestError::Http { source } => GcsDownloadError::Http {
-                source,
-                location: Location::default(),
-            },
-            GcsRequestError::GcsHttp { status_code, body } => GcsDownloadError::GcsHttp {
-                status_code,
-                body,
-                location: Location::default(),
-            },
-            GcsRequestError::TokenExpired => GcsDownloadError::TokenExpired {
-                location: Location::default(),
-            },
-            GcsRequestError::PresignedUrlExpired => GcsDownloadError::PresignedUrlExpired {
-                location: Location::default(),
-            },
-            GcsRequestError::MissingGcsCredentials => GcsDownloadError::MissingGcsCredentials {
-                location: Location::default(),
-            },
-            GcsRequestError::RetryExhausted { detail } => GcsDownloadError::RetryExhausted {
-                detail,
-                location: Location::default(),
-            },
+            }
+            .build(),
+            GcsRequestError::Http { source } => gcs_download_error::HttpSnafu.into_error(source),
+            GcsRequestError::GcsHttp { status_code, body } => {
+                gcs_download_error::GcsHttpSnafu { status_code, body }.build()
+            }
+            GcsRequestError::TokenExpired => gcs_download_error::TokenExpiredSnafu.build(),
+            GcsRequestError::PresignedUrlExpired => {
+                gcs_download_error::PresignedUrlExpiredSnafu.build()
+            }
+            GcsRequestError::MissingGcsCredentials => {
+                gcs_download_error::MissingGcsCredentialsSnafu.build()
+            }
+            GcsRequestError::RetryExhausted { detail } => {
+                gcs_download_error::RetryExhaustedSnafu { detail }.build()
+            }
             // Serialization is upload-only; if it ever fires on the download
             // path it's a logic bug, but we still need a total mapping.
-            GcsRequestError::Serialization { source } => GcsDownloadError::Deserialization {
-                source,
-                location: Location::default(),
-            },
+            GcsRequestError::Serialization { source } => {
+                gcs_download_error::DeserializationSnafu.into_error(source)
+            }
         }
     }
 }

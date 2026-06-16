@@ -548,28 +548,19 @@ enum AzureRequestError {
 impl From<AzureRequestError> for AzureUploadError {
     fn from(e: AzureRequestError) -> Self {
         match e {
-            AzureRequestError::Http { detail } => AzureUploadError::Http {
-                detail,
-                location: Location::default(),
-            },
-            AzureRequestError::AzureHttp { status_code, body } => AzureUploadError::AzureHttp {
-                status_code,
-                body,
-                location: Location::default(),
-            },
-            AzureRequestError::MissingAzureCredentials => {
-                AzureUploadError::MissingAzureCredentials {
-                    location: Location::default(),
-                }
+            AzureRequestError::Http { detail } => azure_upload_error::HttpSnafu { detail }.build(),
+            AzureRequestError::AzureHttp { status_code, body } => {
+                azure_upload_error::AzureHttpSnafu { status_code, body }.build()
             }
-            AzureRequestError::MissingMetadata { field } => AzureUploadError::MissingMetadata {
-                field,
-                location: Location::default(),
-            },
-            AzureRequestError::RetryExhausted { detail } => AzureUploadError::RetryExhausted {
-                detail,
-                location: Location::default(),
-            },
+            AzureRequestError::MissingAzureCredentials => {
+                azure_upload_error::MissingAzureCredentialsSnafu.build()
+            }
+            AzureRequestError::MissingMetadata { field } => {
+                azure_upload_error::MissingMetadataSnafu { field }.build()
+            }
+            AzureRequestError::RetryExhausted { detail } => {
+                azure_upload_error::RetryExhaustedSnafu { detail }.build()
+            }
         }
     }
 }
@@ -577,28 +568,21 @@ impl From<AzureRequestError> for AzureUploadError {
 impl From<AzureRequestError> for AzureDownloadError {
     fn from(e: AzureRequestError) -> Self {
         match e {
-            AzureRequestError::Http { detail } => AzureDownloadError::Http {
-                detail,
-                location: Location::default(),
-            },
-            AzureRequestError::AzureHttp { status_code, body } => AzureDownloadError::AzureHttp {
-                status_code,
-                body,
-                location: Location::default(),
-            },
-            AzureRequestError::MissingAzureCredentials => {
-                AzureDownloadError::MissingAzureCredentials {
-                    location: Location::default(),
-                }
+            AzureRequestError::Http { detail } => {
+                azure_download_error::HttpSnafu { detail }.build()
             }
-            AzureRequestError::MissingMetadata { field } => AzureDownloadError::MissingMetadata {
-                field,
-                location: Location::default(),
-            },
-            AzureRequestError::RetryExhausted { detail } => AzureDownloadError::RetryExhausted {
-                detail,
-                location: Location::default(),
-            },
+            AzureRequestError::AzureHttp { status_code, body } => {
+                azure_download_error::AzureHttpSnafu { status_code, body }.build()
+            }
+            AzureRequestError::MissingAzureCredentials => {
+                azure_download_error::MissingAzureCredentialsSnafu.build()
+            }
+            AzureRequestError::MissingMetadata { field } => {
+                azure_download_error::MissingMetadataSnafu { field }.build()
+            }
+            AzureRequestError::RetryExhausted { detail } => {
+                azure_download_error::RetryExhaustedSnafu { detail }.build()
+            }
         }
     }
 }
