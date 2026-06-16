@@ -1,3 +1,4 @@
+use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::types::{
     CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
     PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
@@ -134,6 +135,16 @@ async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str)
 }
 
 /// Upload data to Azure with retry logic.
+///
+/// Streams the body without buffering the whole file in memory:
+/// - `ByteSource::Path` opens the file on each retry attempt via
+///   `tokio::fs::File` and wraps it in a streaming `reqwest::Body` — the
+///   file content is never fully resident in memory at the same time.
+/// - `ByteSource::Bytes` (the usual case after client-side encryption) uses
+///   the already-in-memory ciphertext directly. It is an `Arc`-backed
+///   `bytes::Bytes`, so the per-retry clone in `body_for` is an O(1)
+///   reference-count bump — no copy of the ciphertext.
+///
 /// Sets encryption metadata headers only when client-side encryption was used.
 async fn upload_to_azure(
     client: &reqwest::Client,
@@ -159,20 +170,22 @@ async fn upload_to_azure(
         .transpose()
         .context(azure_upload_error::SerializationSnafu)?;
 
-    let data = prepared
-        .data
-        .into_bytes()
-        .context(azure_upload_error::SourceIoSnafu)?;
+    let source = prepared.data;
     let digest = prepared.digest;
     let full_url = build_sas_url(url, sas_token);
 
-    azure_request_with_retry(
+    azure_upload_with_retry(
         || {
+            // Build the streaming body via the shared helper:
+            //   ByteSource::Path → fresh tokio::fs::File on each retry attempt;
+            //   ByteSource::Bytes → O(1) Arc clone of the in-memory ciphertext.
+            let body = cloud_http::body_for(&source).context(azure_upload_error::SourceIoSnafu)?;
+
             let mut req = client
                 .put(&full_url)
                 .header("x-ms-blob-type", "BlockBlob")
                 .header(AZURE_META_SFC_DIGEST, &digest)
-                .body(data.clone());
+                .body(body);
 
             if let Some(ref enc_str) = encryption_data_str {
                 req = req.header(AZURE_META_ENCRYPTIONDATA, enc_str);
@@ -180,9 +193,8 @@ async fn upload_to_azure(
             if let Some(ref md_str) = mat_desc_str {
                 req = req.header(AZURE_META_MATDESC, md_str);
             }
-            req
+            Ok(req)
         },
-        Method::PUT,
         max_attempts,
     )
     .await?;
@@ -239,8 +251,70 @@ where
     }
 
     let status_code = response.status().as_u16();
-    let body = read_error_body(response).await;
+    // Azure error bodies often echo the request URL — scrub SAS signatures.
+    // TODO(SNOW-3406377): SAS-signature redaction is done ad-hoc via
+    // `sanitize_sas` at each call site that surfaces an Azure error body or
+    // transport string. Once a centralized secure-logging / redaction layer
+    // exists, route these through it instead of string-scrubbing here, so the
+    // redaction policy lives in one place rather than being re-applied (and
+    // potentially missed) per call site.
+    let body = sanitize_sas(cloud_http::read_error_body(response).await);
     Err(AzureRequestError::AzureHttp { status_code, body })
+}
+
+/// Adapter that wires `AzureUploadError` variants into the shared
+/// [`cloud_http::upload_with_retry`] loop. Azure has no special-status hook
+/// (unlike GCS' 401), but it does run `sanitize_sas` on every transport-error
+/// string before surfacing it.
+struct AzureUploadRetry;
+
+impl UploadRetryAdapter for AzureUploadRetry {
+    type Err = AzureUploadError;
+    type BuildErr = AzureUploadError;
+
+    fn on_build_err(&self, e: AzureUploadError) -> AzureUploadError {
+        e
+    }
+
+    fn on_http_failure(&self, status_code: u16, body: String) -> AzureUploadError {
+        // Azure error bodies often echo the request URL, so scrub SAS signatures
+        // before stuffing the body into the user-facing error variant.
+        azure_upload_error::AzureHttpSnafu {
+            status_code,
+            body: sanitize_sas(body),
+        }
+        .build()
+    }
+
+    fn on_transport(&self, e: reqwest::Error) -> AzureUploadError {
+        azure_upload_error::HttpSnafu {
+            detail: sanitize_sas(e.to_string()),
+        }
+        .build()
+    }
+
+    fn on_exhausted(&self, detail: String) -> AzureUploadError {
+        azure_upload_error::RetryExhaustedSnafu {
+            detail: format!("Azure upload {detail}"),
+        }
+        .build()
+    }
+}
+
+/// Executes an Azure upload with retry, accepting a **fallible** request-builder closure.
+///
+/// Unlike `azure_request_with_retry`, the closure may return `Err(AzureUploadError)`
+/// (e.g. if the source file cannot be opened on a retry attempt). A build failure
+/// is treated as non-retryable and propagated immediately.
+async fn azure_upload_with_retry<F>(
+    build_request: F,
+    max_attempts: u32,
+) -> Result<(), AzureUploadError>
+where
+    F: Fn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
+{
+    let policy = azure_retry_policy(max_attempts);
+    cloud_http::upload_with_retry(&policy, &AzureUploadRetry, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
@@ -365,16 +439,73 @@ fn try_get_header(
     }
 }
 
-async fn read_error_body(response: reqwest::Response) -> String {
-    let body = match response.text().await {
-        Ok(text) => text,
-        Err(e) => {
-            tracing::warn!("Failed to read Azure error response body: {}", e);
-            return format!("<could not read body: {}>", e);
+/// Downloads a file from Azure, streams the response body without buffering the
+/// full ciphertext in memory, and returns a [`CloudStreamingDownload`] that the
+/// caller uses to read the body via a sync `Read` interface.
+///
+/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
+/// The public `download_from_azure` keeps the old `DownloadResponse` shape for
+/// the integration-test / retry-test surface.
+///
+/// Marked `pub` so the cfg-gated `file_manager::internal` re-export can surface
+/// it to integration tests; the parent module `azure_transfer` is itself private,
+/// so this is not part of the crate's public API.
+pub async fn download_from_azure_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    max_attempts: u32,
+) -> Result<CloudStreamingDownload, AzureDownloadError> {
+    let client = create_azure_client()?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+    let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
+    let full_url = build_sas_url(&url, sas_token.reveal());
+
+    let response =
+        azure_request_with_retry(|| client.get(&full_url), Method::GET, max_attempts).await?;
+
+    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
+    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+
+    let headers = response.headers();
+    let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
+
+    let cse_info = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
+        Some(encryption_data_str) => {
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
+                .context(azure_download_error::DeserializationSnafu)?;
+
+            let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
+                azure_download_error::MissingMetadataSnafu {
+                    field: AZURE_META_MATDESC,
+                },
+            )?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(azure_download_error::DeserializationSnafu)?;
+
+            // A CSE object always carries its content digest alongside the
+            // encryption headers — require it here so the decrypt path receives
+            // metadata and digest as one inseparable unit.
+            let digest = digest.context(azure_download_error::MissingMetadataSnafu {
+                field: AZURE_META_SFC_DIGEST,
+            })?;
+
+            Some(CseDownloadInfo {
+                metadata: EncryptedFileMetadata {
+                    encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                    iv: enc_data.content_encryption_iv,
+                    material_desc,
+                },
+                digest,
+            })
         }
+        None => None,
     };
-    // Scrub SAS tokens (sig=…) from Azure error responses which may echo the request URL.
-    sanitize_sas(body)
+
+    Ok(CloudStreamingDownload {
+        cloud_byte_count,
+        cse_info,
+        reader: cloud_http::spawn_byte_stream_producer(response),
+    })
 }
 
 /// Removes SAS token signature values from a string to prevent credential leakage in logs.
@@ -574,6 +705,7 @@ mod tests {
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::file_manager::types::ByteSource;
     use crate::sensitive::SensitiveString;
+    use bytes::Bytes;
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -877,7 +1009,7 @@ mod tests {
         });
 
         let prepared = PreparedUpload {
-            data: ByteSource::Bytes(b"hello world".to_vec()),
+            data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
             digest: "0".repeat(64),
             encryption_metadata: None,
         };

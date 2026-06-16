@@ -1,6 +1,7 @@
+use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::types::{
-    CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
+    CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
+    PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
     build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
@@ -218,14 +219,18 @@ pub async fn upload_to_gcs_or_skip(
 /// - 401 → `refresher.refresh()` (coalesced) → retry with rotated bearer.
 /// - 400 in presigned mode → `refresher.refresh_url()` (no coalesce) →
 ///   re-pick `presigned_urls[per_file_index]` from the new snapshot, retry.
-pub async fn download_from_gcs(
+///
+/// Returns the successful response (headers available, body not yet consumed);
+/// shared by `download_from_gcs` (buffered) and `download_from_gcs_streaming`
+/// so both download paths get this 401/400 refresh handling.
+async fn gcs_get_with_refresh(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
     max_attempts: u32,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
-) -> Result<DownloadResponse, GcsDownloadError> {
+) -> Result<reqwest::Response, GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     // Either presigned-URL source enables the 400-handling: the URL may
@@ -358,6 +363,31 @@ pub async fn download_from_gcs(
         }
     };
 
+    Ok(response)
+}
+
+/// Downloads a file from GCS into a buffered `DownloadResponse` (full body held
+/// in memory). Used by the buffered consumers and the integration/retry tests;
+/// `download_from_gcs_streaming` is the no-buffering variant. Both share
+/// `gcs_get_with_refresh` for token/URL-refresh-aware response acquisition.
+pub async fn download_from_gcs(
+    stage_info: &StageInfo,
+    filename: &str,
+    per_file_presigned_url: Option<&str>,
+    max_attempts: u32,
+    per_file_index: usize,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<DownloadResponse, GcsDownloadError> {
+    let response = gcs_get_with_refresh(
+        stage_info,
+        filename,
+        per_file_presigned_url,
+        max_attempts,
+        per_file_index,
+        refresher,
+    )
+    .await?;
+
     let headers = response.headers();
     let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
 
@@ -377,22 +407,8 @@ pub async fn download_from_gcs(
 
     let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
-            let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
                 .context(gcs_download_error::DeserializationSnafu)?;
-
-            let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
-                .as_str()
-                .context(gcs_download_error::MissingMetadataSnafu {
-                    field: "WrappedContentKey.EncryptedKey",
-                })?
-                .to_string();
-
-            let iv = enc_data["ContentEncryptionIV"]
-                .as_str()
-                .context(gcs_download_error::MissingMetadataSnafu {
-                    field: "ContentEncryptionIV",
-                })?
-                .to_string();
 
             let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
                 gcs_download_error::MissingMetadataSnafu {
@@ -403,8 +419,8 @@ pub async fn download_from_gcs(
                 .context(gcs_download_error::DeserializationSnafu)?;
 
             Some(EncryptedFileMetadata {
-                encrypted_key,
-                iv,
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
                 material_desc,
             })
         }
@@ -515,6 +531,16 @@ async fn check_file_exists_gcs(
 }
 
 /// Upload data to GCS with retry logic.
+///
+/// Streams the body without buffering the whole file in memory:
+/// - `ByteSource::Path` opens the file on each retry attempt via
+///   `tokio::fs::File` and wraps it in a streaming `reqwest::Body` — the
+///   file content is never fully resident in memory at the same time.
+/// - `ByteSource::Bytes` (the usual case after client-side encryption) uses
+///   the already-in-memory ciphertext directly. It is an `Arc`-backed
+///   `bytes::Bytes`, so the per-retry clone in `body_for` is an O(1)
+///   reference-count bump — no copy of the ciphertext.
+///
 /// Sets encryption metadata headers only when client-side encryption was used.
 ///
 /// Returns the internal `GcsRequestError` so the attempt-error mapper can
@@ -545,19 +571,21 @@ async fn upload_to_gcs(
         .transpose()
         .context(SerializationSnafu)?;
 
-    let data = prepared
-        .data
-        .into_bytes()
-        .map_err(|source| GcsRequestError::SourceIo { source })?;
+    let source = prepared.data;
     let digest = prepared.digest;
 
-    gcs_request_with_retry(
+    gcs_upload_with_retry(
         || {
+            // Build the streaming body via the shared helper:
+            //   ByteSource::Path → fresh tokio::fs::File on each retry attempt;
+            //   ByteSource::Bytes → O(1) Arc clone of the in-memory ciphertext.
+            let body = cloud_http::body_for(&source).context(SourceIoSnafu)?;
+
             let mut req = client
                 .put(url)
                 .header(GCS_META_SFC_DIGEST, &digest)
                 .header("content-encoding", "")
-                .body(data.clone());
+                .body(body);
 
             if let Some(ref enc_str) = encryption_data_str {
                 req = req.header(GCS_META_ENCRYPTIONDATA, enc_str);
@@ -568,9 +596,8 @@ async fn upload_to_gcs(
             if let Some(t) = token {
                 req = req.bearer_auth(t);
             }
-            req
+            Ok(req)
         },
-        Method::PUT,
         using_presigned_url,
         max_attempts,
     )
@@ -641,8 +668,64 @@ where
     }
 
     let status_code = response.status().as_u16();
-    let body = read_error_body(response).await;
+    let body = cloud_http::read_error_body(response).await;
     Err(GcsRequestError::GcsHttp { status_code, body })
+}
+
+/// Adapter that wires `GcsRequestError` variants into the shared
+/// [`cloud_http::upload_with_retry`] loop. The 401 special-case is GCS-only
+/// — Snowflake's GS layer drives token refresh from a `TokenExpired` error,
+/// so the upload path must propagate it eagerly (as `GcsRequestError::TokenExpired`)
+/// rather than retrying, letting `upload_to_gcs_or_skip` orchestrate the refresh.
+struct GcsUploadRetry;
+
+impl UploadRetryAdapter for GcsUploadRetry {
+    type Err = GcsRequestError;
+    type BuildErr = GcsRequestError;
+
+    fn on_build_err(&self, e: GcsRequestError) -> GcsRequestError {
+        e
+    }
+
+    fn on_special_status(&self, status: StatusCode) -> Option<GcsRequestError> {
+        (status == StatusCode::UNAUTHORIZED).then_some(GcsRequestError::TokenExpired)
+    }
+
+    fn on_http_failure(&self, status_code: u16, body: String) -> GcsRequestError {
+        GcsRequestError::GcsHttp { status_code, body }
+    }
+
+    fn on_transport(&self, e: reqwest::Error) -> GcsRequestError {
+        GcsRequestError::Http { source: e }
+    }
+
+    fn on_exhausted(&self, detail: String) -> GcsRequestError {
+        GcsRequestError::RetryExhausted {
+            detail: format!("GCS upload {detail}"),
+        }
+    }
+}
+
+/// Executes a GCS upload with retry, accepting a **fallible** request-builder closure.
+///
+/// Unlike `gcs_request_with_retry`, the closure may return `Err(GcsRequestError)`
+/// (e.g. if the source file cannot be opened on a retry attempt). A build failure
+/// is treated as non-retryable and propagated immediately — it indicates a local
+/// problem (missing file, permission denied) rather than a transient network error.
+///
+/// Returns `GcsRequestError` so the caller (`upload_to_gcs`) keeps the same
+/// token-refresh dispatch (`map_gcs_request_error_for_attempt`) as the
+/// non-streaming path.
+async fn gcs_upload_with_retry<F>(
+    build_request: F,
+    using_presigned_url: bool,
+    max_attempts: u32,
+) -> Result<(), GcsRequestError>
+where
+    F: Fn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
+{
+    let policy = gcs_retry_policy(using_presigned_url, max_attempts);
+    cloud_http::upload_with_retry(&policy, &GcsUploadRetry, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> GcsRequestError {
@@ -775,14 +858,85 @@ fn try_get_header(
     }
 }
 
-async fn read_error_body(response: reqwest::Response) -> String {
-    match response.text().await {
-        Ok(text) => text,
-        Err(e) => {
-            tracing::warn!("Failed to read GCS error response body: {}", e);
-            format!("<could not read body: {}>", e)
+/// Downloads a file from GCS, streams the response body without buffering the
+/// full ciphertext in memory, and returns a [`CloudStreamingDownload`] that the
+/// caller can use to read the body via a sync `Read` interface.
+///
+/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
+/// The public `download_from_gcs` keeps the old `DownloadResponse` shape for
+/// the integration-test / retry-test surface.
+///
+/// The body is streamed from the HTTP response through a tokio-spawned producer
+/// task into a `std::sync::mpsc::sync_channel`. `StreamReader` consumes from
+/// the channel, implementing `Read` so `decrypt_ciphertext_to_writer` (which is
+/// sync) can consume the body without blocking the async runtime.
+///
+/// Marked `pub` so the cfg-gated `file_manager::internal` re-export can surface
+/// it to integration tests; the parent module `gcs_transfer` is itself private,
+/// so this is not part of the crate's public API.
+pub async fn download_from_gcs_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    per_file_presigned_url: Option<&str>,
+    max_attempts: u32,
+    per_file_index: usize,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<CloudStreamingDownload, GcsDownloadError> {
+    let response = gcs_get_with_refresh(
+        stage_info,
+        filename,
+        per_file_presigned_url,
+        max_attempts,
+        per_file_index,
+        refresher,
+    )
+    .await?;
+
+    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
+    // Falls back to 0 when the header is absent; mod.rs uses the actual written
+    // byte count as a fallback for the Python flavor.
+    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+
+    let headers = response.headers();
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
+
+    let cse_info = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
+        Some(encryption_data_str) => {
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
+
+            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
+                gcs_download_error::MissingMetadataSnafu {
+                    field: GCS_META_MATDESC,
+                },
+            )?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
+
+            // A CSE object always carries its content digest alongside the
+            // encryption headers — require it here so the decrypt path receives
+            // metadata and digest as one inseparable unit.
+            let digest = digest.context(gcs_download_error::MissingMetadataSnafu {
+                field: GCS_META_SFC_DIGEST,
+            })?;
+
+            Some(CseDownloadInfo {
+                metadata: EncryptedFileMetadata {
+                    encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                    iv: enc_data.content_encryption_iv,
+                    material_desc,
+                },
+                digest,
+            })
         }
-    }
+        None => None,
+    };
+
+    Ok(CloudStreamingDownload {
+        cloud_byte_count,
+        cse_info,
+        reader: cloud_http::spawn_byte_stream_producer(response),
+    })
 }
 
 // --- Reactive recovery scaffolding (mirror s3_transfer.rs) ---
@@ -1196,6 +1350,7 @@ mod tests {
         ByteSource, RefreshFuture, StageInfoCache, StageInfoSnapshot,
     };
     use crate::sensitive::SensitiveString;
+    use bytes::Bytes;
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
@@ -1980,7 +2135,7 @@ mod tests {
     /// irrelevant — the skip branch never gets to PUT them.
     fn make_prepared_for_skip(digest: &str) -> PreparedUpload {
         PreparedUpload {
-            data: ByteSource::Bytes(b"payload-bytes".to_vec()),
+            data: ByteSource::Bytes(Bytes::from_static(b"payload-bytes")),
             digest: digest.to_string(),
             encryption_metadata: None,
         }
@@ -1993,7 +2148,7 @@ mod tests {
     /// the remote digest matches.
     fn make_prepared_cse_for_skip(digest: &str) -> PreparedUpload {
         PreparedUpload {
-            data: ByteSource::Bytes(b"would-be-ciphertext-bytes".to_vec()),
+            data: ByteSource::Bytes(Bytes::from_static(b"would-be-ciphertext-bytes")),
             digest: digest.to_string(),
             encryption_metadata: Some(EncryptedFileMetadata {
                 encrypted_key: "ZW5jLWtleQ==".to_string(),
@@ -2264,7 +2419,7 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = PreparedUpload {
-            data: ByteSource::Bytes(Vec::new()),
+            data: ByteSource::Bytes(Bytes::new()),
             digest: EMPTY_SHA256_B64.to_string(),
             encryption_metadata: None,
         };

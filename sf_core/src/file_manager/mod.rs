@@ -1,4 +1,5 @@
 mod azure_transfer;
+mod cloud_http;
 mod encryption;
 mod gcs_transfer;
 mod s3_transfer;
@@ -8,7 +9,10 @@ pub mod types;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod internal {
+    pub use super::azure_transfer::download_from_azure_streaming;
+    pub use super::cloud_http::{CloudStreamingDownload, CseDownloadInfo, StreamReader};
     pub use super::encryption::{EncryptionError, decrypt_ciphertext_to_writer, encrypt_file_data};
+    pub use super::gcs_transfer::download_from_gcs_streaming;
 }
 
 pub use self::types::*;
@@ -21,10 +25,13 @@ use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
-use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
+use azure_transfer::{
+    AzureDownloadError, AzureUploadError, download_from_azure_streaming, upload_to_azure_or_skip,
+};
 use encryption::{
     EncryptionError, compute_sha256_digest, decrypt_ciphertext_to_writer, encrypt_file_data,
 };
+use gcs_transfer::download_from_gcs_streaming;
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
@@ -150,7 +157,7 @@ pub async fn upload_in_memory_file(
     // by the session-level `put_get_max_attempts` knob; it keeps the default
     // attempt count (its payloads are small and fast — see `upload_blob`).
     upload_prepared_source(
-        ByteSource::Bytes(buffer),
+        ByteSource::Bytes(buffer.into()),
         data,
         DEFAULT_PUT_GET_MAX_ATTEMPTS,
         refresher,
@@ -168,7 +175,17 @@ async fn upload_prepared_source(
     put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
-    let (prepared, file_metadata) = preprocess_file_before_upload(source, &data)?;
+    // `preprocess_file_before_upload` reads the source file from disk and
+    // AES-encrypts it (blocking I/O + CPU-bound); run it off the async executor
+    // via `spawn_blocking`. `data` is moved in and handed back out so the
+    // cloud dispatch below can keep using it without cloning.
+    let (data, preprocessed) = tokio::task::spawn_blocking(move || {
+        let result = preprocess_file_before_upload(source, &data);
+        (data, result)
+    })
+    .await
+    .context(BlockingTaskSnafu)?;
+    let (prepared, file_metadata) = preprocessed?;
 
     let status = match data.stage_info.location_type {
         LocationType::S3 => upload_to_s3_or_skip(
@@ -292,7 +309,7 @@ fn preprocess_file_before_upload(
             let bytes = source.into_bytes().context(IoSnafu)?;
             let compressed = compress_data(bytes).context(CompressionSnafu)?;
             target = format!("{}.gz", data.filename);
-            (ByteSource::Bytes(compressed), CompressionType::Gzip)
+            (ByteSource::Bytes(compressed.into()), CompressionType::Gzip)
         } else {
             (source, source_compression.clone())
         };
@@ -303,7 +320,7 @@ fn preprocess_file_before_upload(
             let bytes = upload_source.into_bytes().context(IoSnafu)?;
             let digest = compute_sha256_digest(&bytes).context(DigestComputationSnafu)?;
             PreparedUpload {
-                data: ByteSource::Bytes(bytes),
+                data: ByteSource::Bytes(bytes.into()),
                 digest,
                 encryption_metadata: None,
             }
@@ -471,51 +488,21 @@ pub async fn download_files(
 /// position in `DownloadData.presigned_urls` / `DownloadData.src_locations`.
 /// The GCS branch uses it to re-pick `presigned_urls[i]` from the refresher
 /// cache after a 400-triggered URL refresh. Non-GCS branches ignore it.
+///
+/// For GCS and Azure, the response body is streamed directly into the
+/// decrypt/write operation via `decrypt_ciphertext_to_writer` without buffering
+/// the full ciphertext in memory. The blocking decrypt call runs in
+/// `tokio::task::spawn_blocking` so the async runtime thread is free while the
+/// blocking channel receive waits for the next chunk from the async producer.
+///
+/// For S3, the existing `DownloadResponse { data: Vec<u8> }` path is preserved
+/// (S3 streaming is a follow-up optimization).
 pub async fn download_single_file(
-    data: SingleDownloadData,
+    mut data: SingleDownloadData,
     put_get_max_attempts: u32,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
-    let DownloadResponse {
-        data: raw_data,
-        digest,
-        file_metadata,
-        cloud_byte_count,
-    } = match data.stage_info.location_type {
-        LocationType::S3 => {
-            // `data.presigned_url` is GCS-only; S3 ignores it (uses STS creds).
-            download_from_s3(
-                &data.stage_info,
-                data.src_location.as_str(),
-                put_get_max_attempts,
-                refresher,
-            )
-            .await
-            .context(S3DownloadSnafu)?
-        }
-        LocationType::Gcs => download_from_gcs(
-            &data.stage_info,
-            data.src_location.as_str(),
-            data.presigned_url.as_deref(),
-            put_get_max_attempts,
-            per_file_index,
-            refresher,
-        )
-        .await
-        .context(GcsDownloadSnafu)?,
-        LocationType::Azure => {
-            // `data.presigned_url` is GCS-only; Azure ignores it (uses SAS).
-            download_from_azure(
-                &data.stage_info,
-                data.src_location.as_str(),
-                put_get_max_attempts,
-            )
-            .await
-            .context(AzureDownloadSnafu)?
-        }
-    };
-
     let filename = Path::new(&data.src_location)
         .file_name()
         .unwrap_or(std::ffi::OsStr::new(&data.src_location));
@@ -534,80 +521,262 @@ pub async fn download_single_file(
         PathBuf::from(s)
     };
 
-    let output_byte_len: i64 = match (
-        data.encryption_material.as_ref(),
-        file_metadata,
-        digest.as_deref(),
-    ) {
-        // Client-side-encrypted object: stream-decrypt into the temp path,
-        // verifying the SHA-256 digest at finalize time.
-        (Some(enc_material), Some(enc_metadata), Some(d)) => {
-            let mut output_file = File::create(&partial_path).context(IoSnafu)?;
-            match decrypt_ciphertext_to_writer(
-                raw_data.as_slice(),
-                &enc_metadata,
-                d,
-                enc_material,
-                &mut output_file,
-            ) {
-                Ok(n) => {
-                    drop(output_file);
-                    if let Err(e) = std::fs::rename(&partial_path, &output_path) {
-                        let _ = std::fs::remove_file(&partial_path);
-                        return Err(e).context(IoSnafu);
+    // GCS and Azure use the streaming path: no intermediate Vec<u8> for ciphertext.
+    // S3 retains the DownloadResponse Vec<u8> path (its streaming is a separate effort).
+    //
+    // In every branch we verify the SHA-256 digest at finalize time rather than
+    // pre-checking it: pre-verification would require buffering the full ciphertext,
+    // which defeats the streaming refactor. The integrity guarantee is preserved
+    // (a tampered byte still yields DigestMismatch); only the failure-mode timing
+    // differs. We absorb that by writing to `partial_path` and renaming on success
+    // — the user-visible destination only ever appears as a complete, verified
+    // artefact, even if a concurrent FS observer is racing.
+    // Extract enc_material before the match so all three arms can move it into
+    // their spawn_blocking closure without cloning EncryptionMaterial's strings.
+    let enc_material = data.encryption_material.take();
+    let (cloud_byte_count, output_byte_len) = match data.stage_info.location_type {
+        LocationType::S3 => {
+            let DownloadResponse {
+                data: raw_data,
+                digest,
+                file_metadata,
+                cloud_byte_count,
+            } = download_from_s3(
+                &data.stage_info,
+                data.src_location.as_str(),
+                put_get_max_attempts,
+                refresher,
+            )
+            .await
+            .context(S3DownloadSnafu)?;
+
+            let output_byte_len: i64 =
+                match (enc_material.as_ref(), file_metadata, digest.as_deref()) {
+                    // Client-side-encrypted object: decrypt into the temp path,
+                    // verifying the SHA-256 digest at finalize time.
+                    (Some(enc_material), Some(enc_metadata), Some(d)) => {
+                        let mut output_file = File::create(&partial_path).context(IoSnafu)?;
+                        match decrypt_ciphertext_to_writer(
+                            raw_data.as_slice(),
+                            &enc_metadata,
+                            d,
+                            enc_material,
+                            &mut output_file,
+                        ) {
+                            Ok(n) => {
+                                drop(output_file);
+                                finalize_rename(&partial_path, &output_path).context(IoSnafu)?;
+                                n
+                            }
+                            Err(e) => {
+                                drop(output_file);
+                                warn_remove_partial(&partial_path);
+                                return Err(e).context(DecryptionSnafu);
+                            }
+                        }
                     }
-                    n
-                }
-                Err(e) => {
-                    drop(output_file);
-                    if let Err(rm_err) = std::fs::remove_file(&partial_path) {
-                        tracing::warn!(
-                            "failed to remove partial download {}: {}",
-                            partial_path.display(),
-                            rm_err
-                        );
+                    // Two non-decrypting cases share the raw-copy path:
+                    //   * SSE stage — no `encryption_material`; the cloud bytes are
+                    //     already plaintext (server-side decryption).
+                    //   * `encryption_material` present but the object carries no
+                    //     client-side-encryption headers (e.g. git stage objects on
+                    //     S3) — fall through to raw bytes, matching legacy connector
+                    //     behaviour (SNOW git-stage fix).
+                    (enc_material, _, _) => {
+                        if enc_material.is_some() {
+                            tracing::debug!(
+                                "encryption_material present but S3 encryption headers absent; \
+                             writing raw bytes"
+                            );
+                        }
+                        let mut output_file = File::create(&partial_path).context(IoSnafu)?;
+                        match std::io::copy(&mut raw_data.as_slice(), &mut output_file) {
+                            Ok(_) => {
+                                drop(output_file);
+                                finalize_rename(&partial_path, &output_path).context(IoSnafu)?;
+                                raw_data.len() as i64
+                            }
+                            Err(e) => {
+                                drop(output_file);
+                                warn_remove_partial(&partial_path);
+                                return Err(e).context(IoSnafu);
+                            }
+                        }
                     }
-                    return Err(e).context(DecryptionSnafu);
-                }
-            }
+                };
+            (cloud_byte_count, output_byte_len)
         }
-        // Two non-decrypting cases share the raw-copy path:
-        //   * SSE stage — no `encryption_material`; server-side decryption
-        //     already happened, so the cloud bytes are the plaintext.
-        //   * `encryption_material` present but the object carries no
-        //     client-side-encryption headers (e.g. git stage objects on S3) —
-        //     fall through to raw bytes, matching legacy connector behaviour.
-        // Same atomic-rename pattern: `std::io::copy` can fail mid-stream and we
-        // don't want a partial copy visible at the destination.
-        (enc_material, _, _) => {
-            if enc_material.is_some() {
-                tracing::debug!(
-                    "encryption_material present but S3 encryption headers absent; \
-                     writing raw bytes"
-                );
-            }
-            let mut output_file = File::create(&partial_path).context(IoSnafu)?;
-            match std::io::copy(&mut raw_data.as_slice(), &mut output_file) {
-                Ok(_) => {
-                    drop(output_file);
-                    if let Err(e) = std::fs::rename(&partial_path, &output_path) {
-                        let _ = std::fs::remove_file(&partial_path);
-                        return Err(e).context(IoSnafu);
+
+        LocationType::Gcs => {
+            // TODO(SNOW-3406377): GCS/Azure download arms below are ~70 lines each
+            // and differ only in the streaming-download fn called and the error
+            // context constructor — extract a shared helper, and fold the
+            // `cloud_byte_count_hint > 0 ? hint : cloud_bytes_read` fallback onto
+            // `CloudStreamingDownload`. Deferred from this PR to keep diff scoped.
+            let dl = download_from_gcs_streaming(
+                &data.stage_info,
+                data.src_location.as_str(),
+                data.presigned_url.as_deref(),
+                put_get_max_attempts,
+                per_file_index,
+                refresher,
+            )
+            .await
+            .context(GcsDownloadSnafu)?;
+
+            let cloud_byte_count_hint = dl.cloud_byte_count;
+            let cse_info = dl.cse_info;
+            let reader = dl.reader;
+            // Running total of on-cloud ciphertext bytes pulled off the wire,
+            // read back after the blocking decrypt task joins. Used as the
+            // `cloud_byte_count` fallback when Content-Length is absent.
+            let cloud_bytes_read = reader.bytes_read_handle();
+            let partial_path2 = partial_path.clone();
+            let output_path2 = output_path.clone();
+            // Blocking decrypt/write in a spawn_blocking task so the async runtime
+            // thread is free to run the GCS producer that feeds the channel reader.
+            let output_byte_len =
+                tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
+                    match (enc_material.as_ref(), cse_info) {
+                        (Some(enc_material), Some(cse)) => {
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match decrypt_ciphertext_to_writer(
+                                reader,
+                                &cse.metadata,
+                                &cse.digest,
+                                enc_material,
+                                &mut output_file,
+                            ) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(DecryptionSnafu)
+                                }
+                            }
+                        }
+                        // Client expects CSE (it has encryption material) but the
+                        // object carried no CSE headers — a server/contract error.
+                        (Some(_), None) => MissingDecryptionMetadataSnafu {
+                            detail: "encryption metadata headers missing from downloaded file",
+                        }
+                        .fail(),
+                        (None, _) => {
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match std::io::copy(&mut { reader }, &mut output_file) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n as i64)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(IoSnafu)
+                                }
+                            }
+                        }
                     }
-                    raw_data.len() as i64
-                }
-                Err(e) => {
-                    drop(output_file);
-                    if let Err(rm_err) = std::fs::remove_file(&partial_path) {
-                        tracing::warn!(
-                            "failed to remove partial download {}: {}",
-                            partial_path.display(),
-                            rm_err
-                        );
+                })
+                .await
+                .context(BlockingTaskSnafu)??;
+
+            // Use Content-Length hint as cloud_byte_count; if absent (chunked TE),
+            // fall back to the on-cloud ciphertext bytes actually pulled off the
+            // wire. We must NOT fall back to output_byte_len here: for CSE objects
+            // that is the decrypted *plaintext* length, which under-reports the
+            // on-cloud size by the AES-CBC PKCS#7 padding delta (1–16 bytes) and
+            // violates the documented "on-cloud (pre-decryption) byte count" contract.
+            let cloud_byte_count = if cloud_byte_count_hint > 0 {
+                cloud_byte_count_hint
+            } else {
+                cloud_bytes_read.load(std::sync::atomic::Ordering::Relaxed) as i64
+            };
+            (cloud_byte_count, output_byte_len)
+        }
+
+        LocationType::Azure => {
+            let dl = download_from_azure_streaming(
+                &data.stage_info,
+                data.src_location.as_str(),
+                put_get_max_attempts,
+            )
+            .await
+            .context(AzureDownloadSnafu)?;
+
+            let cloud_byte_count_hint = dl.cloud_byte_count;
+            let cse_info = dl.cse_info;
+            let reader = dl.reader;
+            let cloud_bytes_read = reader.bytes_read_handle();
+            let partial_path2 = partial_path.clone();
+            let output_path2 = output_path.clone();
+
+            let output_byte_len =
+                tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
+                    match (enc_material.as_ref(), cse_info) {
+                        (Some(enc_material), Some(cse)) => {
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match decrypt_ciphertext_to_writer(
+                                reader,
+                                &cse.metadata,
+                                &cse.digest,
+                                enc_material,
+                                &mut output_file,
+                            ) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(DecryptionSnafu)
+                                }
+                            }
+                        }
+                        // Client expects CSE (it has encryption material) but the
+                        // object carried no CSE headers — a server/contract error.
+                        (Some(_), None) => MissingDecryptionMetadataSnafu {
+                            detail: "encryption metadata headers missing from downloaded file",
+                        }
+                        .fail(),
+                        (None, _) => {
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match std::io::copy(&mut { reader }, &mut output_file) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n as i64)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(IoSnafu)
+                                }
+                            }
+                        }
                     }
-                    return Err(e).context(IoSnafu);
-                }
-            }
+                })
+                .await
+                .context(BlockingTaskSnafu)??;
+
+            let cloud_byte_count = if cloud_byte_count_hint > 0 {
+                cloud_byte_count_hint
+            } else {
+                // Same CSE caveat as the GCS arm: fall back to on-cloud ciphertext
+                // bytes, never the decrypted plaintext length (output_byte_len).
+                cloud_bytes_read.load(std::sync::atomic::Ordering::Relaxed) as i64
+            };
+            (cloud_byte_count, output_byte_len)
         }
     };
 
@@ -623,6 +792,30 @@ pub async fn download_single_file(
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
     })
+}
+
+/// Best-effort cleanup of the `<output_path>.part` temp file when an
+/// atomic-rename download fails mid-stream. Logs (rather than ignoring) the
+/// removal error so a subsequent disk-full failure on the same path is at
+/// least diagnosable.
+fn warn_remove_partial(partial_path: &Path) {
+    if let Err(rm_err) = std::fs::remove_file(partial_path) {
+        tracing::warn!(
+            "failed to remove partial download {}: {}",
+            partial_path.display(),
+            rm_err
+        );
+    }
+}
+
+/// Atomically promotes the verified `<output>.part` temp file to its final
+/// destination. On rename failure (cross-device link, destination is a
+/// directory, AV holding the handle on Windows, …) the partial is
+/// best-effort-removed via [`warn_remove_partial`] so a failed finalize never
+/// orphans a `.part` file beside the user-visible path. The rename error is
+/// returned unchanged for the caller to `.context(IoSnafu)`.
+fn finalize_rename(partial_path: &Path, output_path: &Path) -> std::io::Result<()> {
+    std::fs::rename(partial_path, output_path).inspect_err(|_| warn_remove_partial(partial_path))
 }
 
 /// Returns the `size` column value for a completed download, gated on the
@@ -722,9 +915,21 @@ pub enum FileManagerError {
         location: Location,
         backtrace: snafu::Backtrace,
     },
+    #[snafu(display("Missing decryption metadata: {detail}"))]
+    MissingDecryptionMetadata {
+        detail: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("File does not exist: {pattern}"))]
     NoFilesMatched {
         pattern: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Blocking task failed: {source}"))]
+    BlockingTask {
+        source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -733,6 +938,7 @@ pub enum FileManagerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
 
     #[test]
     fn upload_result_message_odbc_skipped_uses_legacy_literal() {
@@ -898,7 +1104,7 @@ mod tests {
             for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
                 assert_eq!(
                     upload_result_source(
-                        &ByteSource::Bytes(Vec::new()),
+                        &ByteSource::Bytes(Bytes::new()),
                         BASENAME,
                         &flavor,
                         is_windows,
@@ -1184,7 +1390,8 @@ mod tests {
         let data = passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Python, false);
 
         let (prepared, metadata) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload.clone())), &data)
+                .unwrap();
 
         assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
@@ -1202,7 +1409,8 @@ mod tests {
         let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false);
 
         let (prepared, metadata) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload.clone())), &data)
+                .unwrap();
 
         assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
@@ -1229,7 +1437,8 @@ mod tests {
         };
 
         let (prepared, metadata) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload.clone())), &data)
+                .unwrap();
 
         assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
@@ -1250,7 +1459,8 @@ mod tests {
         };
 
         let (prepared, metadata) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload.clone())), &data)
+                .unwrap();
 
         assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
@@ -1272,7 +1482,8 @@ mod tests {
         let data = passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Odbc, true);
 
         let (prepared, metadata) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload.clone())), &data)
+                .unwrap();
 
         assert_eq!(metadata.target, "data.parquet");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
@@ -1285,7 +1496,8 @@ mod tests {
         let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Odbc, true);
 
         let (prepared, metadata) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload.clone())), &data)
+                .unwrap();
 
         assert_eq!(metadata.target, "data.orc");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
@@ -1347,7 +1559,7 @@ mod tests {
     fn read_prefix_and_size_bytes_source_truncates_to_window() {
         // ByteSource::Bytes also caps the prefix at COMPRESSION_DETECT_PREFIX_LEN.
         let data: Vec<u8> = (0..600u16).map(|i| (i % 251) as u8).collect();
-        let (prefix, size) = read_prefix_and_size(&ByteSource::Bytes(data.clone()))
+        let (prefix, size) = read_prefix_and_size(&ByteSource::Bytes(Bytes::from(data.clone())))
             .expect("read_prefix_and_size for Bytes");
 
         assert_eq!(size, 600);
@@ -1369,9 +1581,11 @@ mod tests {
         let data = passthrough_upload_data("data.csv", PutGetResultsetFlavor::Python, false);
 
         let (a, meta_a) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone().into()), &data)
+                .unwrap();
         let (b, meta_b) =
-            preprocess_file_before_upload(ByteSource::Bytes(payload.clone()), &data).unwrap();
+            preprocess_file_before_upload(ByteSource::Bytes(payload.clone().into()), &data)
+                .unwrap();
 
         assert_eq!(
             meta_a.target, "data.csv.gz",
@@ -1406,7 +1620,7 @@ mod tests {
         // Tests that call preprocess_file_before_upload directly pass a
         // ByteSource::Bytes so they don't depend on the filesystem.
         SingleUploadData {
-            source: ByteSource::Bytes(Vec::new()),
+            source: ByteSource::Bytes(Bytes::new()),
             filename: filename.to_string(),
             stage_info: dummy_stage_info(),
             encryption_material: None,

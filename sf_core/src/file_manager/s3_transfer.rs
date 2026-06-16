@@ -799,6 +799,7 @@ pub enum DownloadFileError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+    use bytes::Bytes;
 
     #[test]
     fn s3_retry_policy_max_attempts() {
@@ -1284,7 +1285,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn put_object_sends_unsigned_payload_for_unencrypted_upload() {
         assert_put_sends_unsigned_payload(PreparedUpload {
-            data: ByteSource::Bytes(b"hello world".to_vec()),
+            data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
             digest: "0".repeat(64),
             encryption_metadata: None,
         })
@@ -1297,7 +1298,7 @@ mod tests {
         // attaches three extra metadata headers before signing — confirm
         // the override still applies on that path.
         assert_put_sends_unsigned_payload(PreparedUpload {
-            data: ByteSource::Bytes(b"hello world".to_vec()),
+            data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
             digest: "0".repeat(64),
             encryption_metadata: Some(EncryptedFileMetadata {
                 encrypted_key: "k".to_string(),

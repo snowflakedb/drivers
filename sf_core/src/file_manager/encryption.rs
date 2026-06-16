@@ -163,7 +163,7 @@ pub fn encrypt_file_data(
         // ~file_size; a future refactor that wants true streaming end-to-end
         // would spill the ciphertext to a temp file and return ByteSource::Path
         // here, which the cloud upload paths already know how to stream.
-        data: ByteSource::Bytes(encrypted_data),
+        data: ByteSource::Bytes(encrypted_data.into()),
         digest,
         encryption_metadata: Some(metadata),
     })
@@ -323,6 +323,7 @@ pub enum EncryptionError {
 mod tests {
     use super::*;
     use crate::sensitive::SensitiveString;
+    use bytes::Bytes;
 
     fn test_material() -> EncryptionMaterial {
         // 32-byte master key (AES-256), Base64-encoded as the wire format.
@@ -339,7 +340,11 @@ mod tests {
         let plaintext = b"the quick brown fox jumps over the lazy dog";
         let material = test_material();
 
-        let prepared = encrypt_file_data(ByteSource::Bytes(plaintext.to_vec()), &material).unwrap();
+        let prepared = encrypt_file_data(
+            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
+            &material,
+        )
+        .unwrap();
 
         let expected = compute_sha256_digest(plaintext).unwrap();
         assert_eq!(prepared.digest, expected);
@@ -355,8 +360,16 @@ mod tests {
         let plaintext = b"identical content";
         let material = test_material();
 
-        let first = encrypt_file_data(ByteSource::Bytes(plaintext.to_vec()), &material).unwrap();
-        let second = encrypt_file_data(ByteSource::Bytes(plaintext.to_vec()), &material).unwrap();
+        let first = encrypt_file_data(
+            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
+            &material,
+        )
+        .unwrap();
+        let second = encrypt_file_data(
+            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
+            &material,
+        )
+        .unwrap();
 
         // Fresh IV per upload => different ciphertext bytes ...
         assert_ne!(
@@ -373,7 +386,11 @@ mod tests {
         let plaintext = b"round-trip payload";
         let material = test_material();
 
-        let prepared = encrypt_file_data(ByteSource::Bytes(plaintext.to_vec()), &material).unwrap();
+        let prepared = encrypt_file_data(
+            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
+            &material,
+        )
+        .unwrap();
         let metadata = prepared.encryption_metadata.unwrap();
 
         let ciphertext = prepared.data.into_bytes().unwrap();
@@ -395,7 +412,11 @@ mod tests {
         let plaintext = b"payload to tamper-check";
         let material = test_material();
 
-        let prepared = encrypt_file_data(ByteSource::Bytes(plaintext.to_vec()), &material).unwrap();
+        let prepared = encrypt_file_data(
+            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
+            &material,
+        )
+        .unwrap();
         let metadata = prepared.encryption_metadata.unwrap();
         let wrong_digest = compute_sha256_digest(b"different content").unwrap();
 
