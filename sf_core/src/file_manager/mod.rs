@@ -550,60 +550,72 @@ pub async fn download_single_file(
             .await
             .context(S3DownloadSnafu)?;
 
-            let output_byte_len: i64 =
-                match (enc_material.as_ref(), file_metadata, digest.as_deref()) {
-                    // Client-side-encrypted object: decrypt into the temp path,
-                    // verifying the SHA-256 digest at finalize time.
-                    (Some(enc_material), Some(enc_metadata), Some(d)) => {
-                        let mut output_file = File::create(&partial_path).context(IoSnafu)?;
-                        match decrypt_ciphertext_to_writer(
-                            raw_data.as_slice(),
-                            &enc_metadata,
-                            d,
-                            enc_material,
-                            &mut output_file,
-                        ) {
-                            Ok(n) => {
-                                drop(output_file);
-                                finalize_rename(&partial_path, &output_path).context(IoSnafu)?;
-                                n
+            let partial_path2 = partial_path.clone();
+            let output_path2 = output_path.clone();
+
+            // The decrypt/copy + file writes are blocking (and decrypt is
+            // CPU-bound); run them off the async executor in `spawn_blocking`,
+            // mirroring the GCS/Azure streaming arms below.
+            let output_byte_len =
+                tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
+                    match (enc_material.as_ref(), file_metadata, digest.as_deref()) {
+                        // Client-side-encrypted object: decrypt into the temp path,
+                        // verifying the SHA-256 digest at finalize time.
+                        (Some(enc_material), Some(enc_metadata), Some(d)) => {
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match decrypt_ciphertext_to_writer(
+                                raw_data.as_slice(),
+                                &enc_metadata,
+                                d,
+                                enc_material,
+                                &mut output_file,
+                            ) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(DecryptionSnafu)
+                                }
                             }
-                            Err(e) => {
-                                drop(output_file);
-                                warn_remove_partial(&partial_path);
-                                return Err(e).context(DecryptionSnafu);
+                        }
+                        // Two non-decrypting cases share the raw-copy path:
+                        //   * SSE stage — no `encryption_material`; the cloud bytes are
+                        //     already plaintext (server-side decryption).
+                        //   * `encryption_material` present but the object carries no
+                        //     client-side-encryption headers (e.g. git stage objects on
+                        //     S3) — fall through to raw bytes, matching legacy connector
+                        //     behaviour (SNOW git-stage fix).
+                        (enc_material, _, _) => {
+                            if enc_material.is_some() {
+                                tracing::debug!(
+                                    "encryption_material present but S3 encryption headers absent; \
+                                 writing raw bytes"
+                                );
+                            }
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match std::io::copy(&mut raw_data.as_slice(), &mut output_file) {
+                                Ok(_) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(raw_data.len() as i64)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(IoSnafu)
+                                }
                             }
                         }
                     }
-                    // Two non-decrypting cases share the raw-copy path:
-                    //   * SSE stage — no `encryption_material`; the cloud bytes are
-                    //     already plaintext (server-side decryption).
-                    //   * `encryption_material` present but the object carries no
-                    //     client-side-encryption headers (e.g. git stage objects on
-                    //     S3) — fall through to raw bytes, matching legacy connector
-                    //     behaviour (SNOW git-stage fix).
-                    (enc_material, _, _) => {
-                        if enc_material.is_some() {
-                            tracing::debug!(
-                                "encryption_material present but S3 encryption headers absent; \
-                             writing raw bytes"
-                            );
-                        }
-                        let mut output_file = File::create(&partial_path).context(IoSnafu)?;
-                        match std::io::copy(&mut raw_data.as_slice(), &mut output_file) {
-                            Ok(_) => {
-                                drop(output_file);
-                                finalize_rename(&partial_path, &output_path).context(IoSnafu)?;
-                                raw_data.len() as i64
-                            }
-                            Err(e) => {
-                                drop(output_file);
-                                warn_remove_partial(&partial_path);
-                                return Err(e).context(IoSnafu);
-                            }
-                        }
-                    }
-                };
+                })
+                .await
+                .context(BlockingTaskSnafu)??;
             (cloud_byte_count, output_byte_len)
         }
 
