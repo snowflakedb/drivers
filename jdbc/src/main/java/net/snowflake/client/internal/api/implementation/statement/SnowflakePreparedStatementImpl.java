@@ -386,6 +386,12 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ParameterMetaData getParameterMetaData() throws SQLException {
+    // TODO(SNOW-2881699): Implement parameter metadata for parity with the reference snowflake-jdbc
+    // driver. The reference driver backs ParameterMetaData with the server-side describe response
+    // (SFStatementMetaData#getNumberOfBinds plus per-bind type info). This driver has no describe
+    // round-trip in the core API yet, so getParameterMetaData() is unsupported for now. Adding it
+    // requires a core describe capability before the parameter count and per-parameter type methods
+    // can be answered correctly.
     throw new SQLFeatureNotSupportedException("getParameterMetaData not supported");
   }
 
