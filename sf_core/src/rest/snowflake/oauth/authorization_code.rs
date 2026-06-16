@@ -155,6 +155,8 @@ pub(crate) async fn run_oauth_authorization_code(
     server_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
+    disable_parallel_user_prompt: bool,
+    prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     // The launcher rides on the config (Arc'd factory ⇒ each call mints
     // a fresh `FnOnce` so the retry-on-failure path can rebuild one).
@@ -166,7 +168,16 @@ pub(crate) async fn run_oauth_authorization_code(
         .as_ref()
         .map(|factory| factory())
         .unwrap_or_else(default_browser_launch);
-    run_authorization_code_flow(client, server_url, config, token_cache, launch_browser).await
+    run_authorization_code_flow(
+        client,
+        server_url,
+        config,
+        token_cache,
+        launch_browser,
+        disable_parallel_user_prompt,
+        prompt_locks,
+    )
+    .await
 }
 
 #[tracing::instrument(skip(client, config, token_cache, launch_browser), fields(username = %config.username))]
@@ -176,6 +187,8 @@ async fn run_authorization_code_flow(
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
     launch_browser: BrowserLaunchFn,
+    disable_parallel_user_prompt: bool,
+    prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     tracing::info!("Starting OAuth authorization code flow");
 
@@ -185,7 +198,37 @@ async fn run_authorization_code_flow(
     // wait, the IdP token exchange and any refresh exchange.
     let deadline = FlowDeadline::new(config.flow_options.authentication_timeout_secs);
 
-    // 1. Cache short-circuit.
+    // Acquire the per-<user, idp-host> prompt-lock when serializing concurrent
+    // interactive auth flows.  The lock is held across the cache re-check and
+    // the entire interactive flow + persist so that waiters find the token in
+    // the cache once the lock is released (double-checked locking).
+    // Lock key uses the IdP token-URL host.
+    let _prompt_guard = if let Some(locks) = prompt_locks {
+        if super::super::prompt_lock::is_eligible(
+            config.client_store_temporary_credential,
+            disable_parallel_user_prompt,
+            &config.username,
+        ) {
+            let host = token_url.host_str().unwrap_or_default();
+            Some(
+                super::super::prompt_lock::acquire(
+                    locks,
+                    host,
+                    &config.username,
+                    crate::token_cache::TokenType::OAuthAccessToken,
+                )
+                .await,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // 1. Cache short-circuit (also acts as the post-lock double-check for
+    //    waiters: if another thread already acquired and persisted a token,
+    //    this returns it without re-running the interactive flow).
     if let Some(cached) = try_cache_short_circuit(
         client,
         &token_url,
@@ -898,9 +941,16 @@ mod tests {
 
         let config = cfg_with_token_url(token_url);
         let client = reqwest::Client::new();
-        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
-            .await
-            .expect("cache hit");
+        let acquired = run_oauth_authorization_code(
+            &client,
+            &server_url(),
+            &config,
+            Some(&cache),
+            false,
+            None,
+        )
+        .await
+        .expect("cache hit");
         assert_eq!(acquired.access_token.reveal(), "CACHED-AT");
         assert!(acquired.refresh_token.is_none());
         assert!(acquired.dpop_jwk_json.is_none());
@@ -928,9 +978,16 @@ mod tests {
         let config = cfg_with_token_url(token_url.clone());
 
         let client = reqwest::Client::new();
-        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
-            .await
-            .expect("refresh succeeds");
+        let acquired = run_oauth_authorization_code(
+            &client,
+            &server_url(),
+            &config,
+            Some(&cache),
+            false,
+            None,
+        )
+        .await
+        .expect("refresh succeeds");
 
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
         assert_eq!(
@@ -972,6 +1029,8 @@ mod tests {
             &config_short,
             Some(&cache),
             launch,
+            false,
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -1029,9 +1088,10 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let acquired = run_authorization_code_flow(&client, &server_url(), &config, None, launch)
-            .await
-            .expect("interactive flow succeeds");
+        let acquired =
+            run_authorization_code_flow(&client, &server_url(), &config, None, launch, false, None)
+                .await
+                .expect("interactive flow succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-FRESH");
         assert_eq!(
             acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
@@ -1068,9 +1128,10 @@ mod tests {
             })
         });
         let client = reqwest::Client::new();
-        let err = run_authorization_code_flow(&client, &server_url(), &config, None, launch)
-            .await
-            .expect_err("must fail with IdpError");
+        let err =
+            run_authorization_code_flow(&client, &server_url(), &config, None, launch, false, None)
+                .await
+                .expect_err("must fail with IdpError");
         assert!(matches!(err, OAuthError::IdpError { .. }), "got {err:?}");
     }
 
@@ -1103,9 +1164,10 @@ mod tests {
             })
         });
         let client = reqwest::Client::new();
-        let err = run_authorization_code_flow(&client, &server_url(), &config, None, launch)
-            .await
-            .expect_err("must fail with state mismatch");
+        let err =
+            run_authorization_code_flow(&client, &server_url(), &config, None, launch, false, None)
+                .await
+                .expect_err("must fail with state mismatch");
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
     }
     // ─── Step 2.4 coverage additions ─────────────────────────────────────
@@ -1235,6 +1297,8 @@ mod tests {
             &config,
             None,
             loopback_redirect_with("THE-CODE"),
+            false,
+            None,
         )
         .await
         .expect("flow succeeds after one DPoP-nonce retry");
@@ -1307,6 +1371,8 @@ mod tests {
                 &config,
                 None,
                 loopback_redirect_with("CODE-OK"),
+                false,
+                None,
             )
             .await
             .unwrap_or_else(|e| panic!("enable={enable} flow failed: {e:?}"));
@@ -1347,9 +1413,16 @@ mod tests {
         token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
-        let _ = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
-            .await
-            .expect("refresh succeeds");
+        let _ = run_oauth_authorization_code(
+            &client,
+            &server_url(),
+            &config,
+            Some(&cache),
+            false,
+            None,
+        )
+        .await
+        .expect("refresh succeeds");
 
         let stored_rt =
             token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache))
@@ -1384,9 +1457,16 @@ mod tests {
         token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-STALE", Some(&cache));
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
-        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
-            .await
-            .expect("refresh without new RT still succeeds");
+        let acquired = run_oauth_authorization_code(
+            &client,
+            &server_url(),
+            &config,
+            Some(&cache),
+            false,
+            None,
+        )
+        .await
+        .expect("refresh without new RT still succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
         assert!(acquired.refresh_token.is_none());
 
@@ -1427,6 +1507,8 @@ mod tests {
             &config,
             Some(&cache),
             loopback_redirect_with("CODE"),
+            false,
+            None,
         )
         .await
         .expect("faulting cache must not abort the flow");
@@ -1466,6 +1548,8 @@ mod tests {
             &config,
             None,
             loopback_redirect_with("CODE"),
+            false,
+            None,
         )
         .await
         .expect("scope-less AC succeeds");
@@ -1495,9 +1579,16 @@ mod tests {
         let config = cfg_with_token_url(token_url);
         assert!(config.scope.is_none());
         let client = reqwest::Client::new();
-        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
-            .await
-            .expect("refresh without scope succeeds");
+        let acquired = run_oauth_authorization_code(
+            &client,
+            &server_url(),
+            &config,
+            Some(&cache),
+            false,
+            None,
+        )
+        .await
+        .expect("refresh without scope succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
     }
 
@@ -1542,6 +1633,8 @@ mod tests {
             &config,
             None,
             loopback_redirect_with(AUTH_CODE),
+            false,
+            None,
         )
         .await
         .expect("happy path");

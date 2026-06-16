@@ -10,6 +10,7 @@ use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::LogManager;
+use crate::rest::snowflake::prompt_lock::PromptLockMap;
 use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
@@ -77,6 +78,11 @@ pub struct DriverProviders {
     /// Owns the `SdkTracerProvider`, `SessionRegistry`, and OS details.
     pub log_manager: Option<LogManager>,
     pub wrapper_presets: WrapperPresets,
+    /// Inject a shared prompt-lock map so that multiple `DatabaseDriverV1`
+    /// instances (each created by a separate `SnowflakeTestClient`) serialize
+    /// interactive-auth prompts against the same lock entries.  Production code
+    /// always uses `..Default::default()` and gets a fresh map.
+    pub prompt_locks: Option<Arc<PromptLockMap>>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -89,6 +95,9 @@ pub struct DatabaseDriverV1 {
     platforms: tokio::sync::OnceCell<Vec<String>>,
     log_manager: Option<LogManager>,
     pub(super) wrapper_presets: WrapperPresets,
+    /// Process-global per-`(host, user, token-type)` prompt locks.
+    /// Shared across all connections on this driver instance.
+    pub(crate) prompt_locks: Arc<PromptLockMap>,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -113,6 +122,9 @@ impl DatabaseDriverV1 {
             platforms: tokio::sync::OnceCell::const_new(),
             log_manager: providers.log_manager,
             wrapper_presets: providers.wrapper_presets,
+            prompt_locks: providers
+                .prompt_locks
+                .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
         }
     }
 

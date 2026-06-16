@@ -90,6 +90,14 @@ class ConnectionConfig(ConnectionConfigMixin):
     custom_root_store_path: str | None = None
     """Path to custom root certificate store"""
 
+    disable_parallel_user_prompt: bool | None = True
+    """When true (default), enables process-global serialization of interactive auth prompts (external browser, MFA,
+    OAuth) so that only one prompt is shown per <user, host> when clientStoreTemporaryCredential is enabled. Set to
+    false to allow each concurrent connection to show its own prompt..
+
+    Default: True
+    """
+
     disable_saml_url_check: bool | None = False
     """Skip the Okta SAML URL host-match safety check. Default: False"""
 

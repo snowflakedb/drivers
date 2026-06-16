@@ -212,6 +212,7 @@ pub struct LoginParameters {
     pub client_info: ClientInfo,
     pub session_parameters: Option<HashMap<String, String>>,
     pub spcs_token: Option<String>,
+    pub disable_parallel_user_prompt: bool,
 }
 
 impl LoginParameters {
@@ -240,6 +241,11 @@ impl LoginParameters {
             client_info: ClientInfo::from_settings(settings)?,
             session_parameters: None,
             spcs_token: None,
+            disable_parallel_user_prompt: resolve_bool_param(
+                settings,
+                param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
+                true,
+            ),
         })
     }
 }

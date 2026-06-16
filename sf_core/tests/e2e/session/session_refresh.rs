@@ -102,15 +102,17 @@ fn should_refresh_session_proactively() {
             client_info: client_info.clone(),
             session_parameters: None,
             spcs_token: None,
+            disable_parallel_user_prompt: false,
         };
 
         let http_client = create_tls_client_with_config(TlsConfig::insecure())
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
-        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None, None)
-            .await
-            .expect("Login should succeed");
+        let login_result =
+            snowflake_login_with_client(&http_client, &login_parameters, None, None, None)
+                .await
+                .expect("Login should succeed");
 
         let original_session_token = login_result.tokens.session_token.clone();
 

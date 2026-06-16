@@ -36,6 +36,7 @@ pub struct ConnectionConfig {
     pub session: SessionContext,
     pub tls: TlsConfig,
     pub proxy: ProxyConfig,
+    pub disable_parallel_user_prompt: bool,
 }
 
 #[derive(Debug)]
@@ -523,6 +524,10 @@ impl ConnectionConfig {
             role: settings.get_string(ROLE),
         };
 
+        let disable_parallel_user_prompt = settings
+            .get_bool(DISABLE_PARALLEL_USER_PROMPT)
+            .unwrap_or(true);
+
         Ok(Self {
             server: ServerConfig {
                 account,
@@ -532,6 +537,7 @@ impl ConnectionConfig {
             session,
             tls,
             proxy,
+            disable_parallel_user_prompt,
         })
     }
 }
@@ -656,6 +662,7 @@ impl LoginParameters {
             client_info,
             session_parameters,
             spcs_token,
+            disable_parallel_user_prompt: config.disable_parallel_user_prompt,
         }
     }
 }
