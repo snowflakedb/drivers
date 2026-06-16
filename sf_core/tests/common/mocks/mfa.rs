@@ -95,6 +95,30 @@ pub fn login_success_with_cached_token() -> Mock {
         })))
 }
 
+// ─── Successful MFA Login with a specific cached token value ─────────────────
+
+/// Successful login where the request carries a cached MFA token with an exact
+/// known value.  Use this when the cached token was stored by a previous login
+/// (e.g., `login_success_with_mfa_token` returns `mfaToken:"mock_mfa_token_from_server"`).
+pub fn login_success_with_cached_token_value(token: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
+                "TOKEN": token
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token_cached_mfa",
+                "masterToken": "mock_master_token_cached_mfa",
+                "sessionId": 12346
+            }
+        })))
+}
+
 // ─── Generic successful MFA login (no specific field matching) ───────────────
 
 pub fn login_success() -> Mock {

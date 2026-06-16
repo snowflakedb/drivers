@@ -112,7 +112,7 @@ impl SnowflakeTestClient {
         Self::with_int_tests_params_and_client(server_url, database_driver_client_with(providers))
     }
 
-    fn with_int_tests_params_and_client(
+    pub fn with_int_tests_params_and_client(
         server_url: Option<&str>,
         client: DatabaseDriverClient,
     ) -> Self {

@@ -1,0 +1,26 @@
+{
+  "name": "Successful MFA login using a cached MFA token (TOKEN field present)",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'USERNAME_PASSWORD_MFA' && @.TOKEN)]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token_2",
+        "masterToken": "mock_master_token_2",
+        "sessionId": 12346,
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": true}
+        ]
+      }
+    }
+  }
+}
