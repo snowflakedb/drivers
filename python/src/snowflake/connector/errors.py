@@ -213,7 +213,24 @@ class OperationalError(DatabaseError):
     and not necessarily under the control of the programmer.
     """
 
-    pass
+    #: HTTP status code, set when this error represents a raw HTTP failure
+    #: surfaced by ``SnowflakeRestful.fetch(..., raise_raw_http_failure=True)``.
+    #: ``None`` for operational errors that are not HTTP failures.
+    http_status: int | None = None
+
+    @classmethod
+    def from_http_response(cls, status_code: int, response_body: bytes) -> OperationalError:
+        """Build an error representing a raw HTTP failure (status >= 400).
+
+        The HTTP status is attached as :attr:`http_status` so consumers can
+        branch on it without parsing the message string. (The old driver raised
+        a vendored ``requests`` ``HTTPError`` carrying ``.response.status_code``;
+        this is the universal-driver equivalent.)
+        """
+        # Truncate body to avoid flooding error messages with large payloads.
+        error = cls(msg=f"HTTP {status_code}: {response_body[:200]!r}")
+        error.http_status = status_code
+        return error
 
 
 class IntegrityError(DatabaseError):

@@ -437,6 +437,7 @@ impl ConnectionGetInfoResponse {
             } else {
                 None
             },
+            user_agent: info.user_agent,
         }
     }
 }

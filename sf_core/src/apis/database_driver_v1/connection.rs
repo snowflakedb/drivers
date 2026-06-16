@@ -1397,6 +1397,8 @@ pub struct ConnectionInfo {
     pub warehouse: Option<String>,
     /// The master token for session renewal (redacted in Debug output)
     pub master_token: Option<SensitiveString>,
+    /// The User-Agent string built by the core for this client
+    pub user_agent: Option<String>,
 }
 
 fn setting_as_display_string(setting: &Setting) -> Option<String> {
@@ -1517,6 +1519,11 @@ impl DatabaseDriverV1 {
                     .or_else(|| get_session_or_setting(&conn, "WAREHOUSE", param_names::WAREHOUSE));
                 drop(final_names);
 
+                let user_agent = conn
+                    .client_info
+                    .as_ref()
+                    .map(crate::rest::snowflake::user_agent);
+
                 Ok(ConnectionInfo {
                     host,
                     port,
@@ -1530,6 +1537,7 @@ impl DatabaseDriverV1 {
                     schema,
                     warehouse,
                     master_token,
+                    user_agent,
                 })
             }
             None => InvalidArgumentSnafu {
@@ -2988,6 +2996,31 @@ mod tests {
         assert_eq!(params.get("TIMEZONE").unwrap(), "America/Los_Angeles");
         assert_eq!(params.get("QUERY_TAG").unwrap(), "test_tag");
         assert_eq!(params.len(), 2);
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_get_info_user_agent_reflects_client_info() {
+        use crate::config::rest_parameters::test_fixtures::test_client_info;
+
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        // No client_info set: user_agent must be None.
+        let info = ds.connection_get_info(handle).await.unwrap();
+        assert_eq!(info.user_agent, None);
+
+        // Inject a ClientInfo and verify the UA string is populated.
+        let ci = test_client_info();
+        let expected_ua = crate::rest::snowflake::user_agent(&ci);
+        if let Some(conn_ptr) = ds.connections.get_obj(handle) {
+            let mut conn = conn_ptr.lock().await;
+            conn.client_info = Some(ci);
+        }
+
+        let info = ds.connection_get_info(handle).await.unwrap();
+        assert_eq!(info.user_agent, Some(expected_ua));
 
         ds.connection_release(handle).unwrap();
     }
