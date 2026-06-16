@@ -1,6 +1,7 @@
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use snafu::{Location, Snafu};
 use std::fmt;
@@ -29,7 +30,7 @@ impl fmt::Display for UploadStatus {
 #[derive(Debug, Clone)]
 pub enum ByteSource {
     Path(PathBuf),
-    Bytes(Vec<u8>),
+    Bytes(Bytes),
 }
 
 impl ByteSource {
@@ -37,7 +38,7 @@ impl ByteSource {
     pub fn into_bytes(self) -> std::io::Result<Vec<u8>> {
         match self {
             ByteSource::Path(p) => std::fs::read(p),
-            ByteSource::Bytes(b) => Ok(b),
+            ByteSource::Bytes(b) => Ok(b.to_vec()),
         }
     }
 }

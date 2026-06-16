@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
@@ -1245,7 +1246,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
     });
 
     let prepared = PreparedUpload {
-        data: ByteSource::Bytes(b"test-bytes".to_vec()),
+        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
@@ -1334,7 +1335,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
     });
 
     let prepared = PreparedUpload {
-        data: ByteSource::Bytes(b"test-bytes".to_vec()),
+        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
@@ -1414,7 +1415,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
     });
 
     let prepared = PreparedUpload {
-        data: ByteSource::Bytes(b"test-bytes".to_vec()),
+        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
@@ -1488,7 +1489,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
     });
 
     let prepared = PreparedUpload {
-        data: ByteSource::Bytes(b"test-bytes".to_vec()),
+        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         digest: "test-digest".to_string(),
         encryption_metadata: None,
     };
