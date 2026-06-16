@@ -165,8 +165,16 @@ def setupRust(platform) {
     env
     if ! command -v rustup >/dev/null 2>&1; then
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      source $HOME/.cargo/env
     fi
+    # Put the rustup/cargo proxies on PATH unconditionally - not only on the
+    # fresh-install path above. Recent macOS agent AMIs ship rustup already
+    # installed (so the install branch is skipped) but do NOT add ~/.cargo/bin
+    # to PATH for the non-login shell `sh` runs in, so the `cargo --version`
+    # below failed with exit 127 (command not found). Sourcing the env file
+    # (with a PATH export fallback) is safe whether rustup was just installed
+    # or pre-existed.
+    [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
+    export PATH="\$HOME/.cargo/bin:\$PATH"
     # IMPORTANT: this assumes `cargo` is the rustup proxy binary.
     # Our earlier rustup check/install ensures that is true on clean agents.
     # Running `cargo --version` in this repo causes rustup to read
@@ -196,6 +204,8 @@ def run_cargo_command(platform, command) {
 
   if (platform == 'windows-aarch64') {
     sh """
+      [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
+      export PATH="\$HOME/.cargo/bin:\$PATH"
       cargo xwin ${command}
     """
     return
@@ -210,6 +220,8 @@ def run_cargo_command(platform, command) {
   }
 
   sh """
+    [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
+    export PATH="\$HOME/.cargo/bin:\$PATH"
     cargo ${command}
   """
 }
@@ -345,14 +357,17 @@ pipeline {
                       // Each platform still reports individual pass/fail on the UI.
                       stage('build (docker)') {
                         steps {
-                          // Jenkins workspaces are reused between builds. If a prior run
-                          // produced libsf_mini_core.* and this run's build fails, the
-                          // upload's findFiles guard would still see the stale artifact
-                          // and upload it. Removing the artifact BEFORE the build ensures
-                          // the guard only matches when this build actually produced one.
-                          // Cargo's incremental compilation will simply re-link the
-                          // deleted output; upstream deps stay cached.
-                          sh "rm -f target/${platform_target(PLATFORM)}/debug/*sf_mini_core* 2>/dev/null || true"
+                          // Jenkins workspaces are reused between builds (reuseNode true),
+                          // so `target/` can carry artifacts compiled in a different
+                          // environment — e.g. a binary linked against a newer glibc than
+                          // this container provides. cargo reuses it on a fingerprint match
+                          // and the test binary then fails at load time with
+                          // "GLIBC_x.y not found". A full clean forces every artifact to be
+                          // rebuilt in *this* container, so it always links the current
+                          // glibc. It also removes any stale libsf_mini_core.* so the
+                          // upload's findFiles guard only matches an artifact this build
+                          // actually produced. Costs a full recompile per docker matrix cell.
+                          sh "rm -rf target"
                           catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
                             run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
                           }

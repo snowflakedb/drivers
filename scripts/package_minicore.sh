@@ -2,6 +2,13 @@
 # Exit on any error
 set -euxo pipefail
 
+# Ensure rustup/cargo are on PATH before any cargo/rustup invocation below.
+# Jenkins `sh` steps run non-login shells, and recent macOS build agents ship
+# rustup pre-installed without ~/.cargo/bin on the default PATH, so cargo would
+# otherwise be "command not found". Safe no-op when cargo is already on PATH.
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
+
 source ./scripts/version.sh
 
 echo "=== Platform: $PLATFORM ==="
