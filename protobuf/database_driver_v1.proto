@@ -332,6 +332,7 @@ message ConnectionGetInfoResponse {
   optional string schema = 10;
   optional string warehouse = 11;
   optional string master_token = 12;
+  optional string user_agent = 13;
 }
 
 message ConnectionGetObjectsRequest {

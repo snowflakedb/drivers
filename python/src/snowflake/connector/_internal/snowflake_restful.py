@@ -41,6 +41,16 @@ class SnowflakeRestful:
     def _connection_info(self) -> ConnectionGetInfoResponse:
         return self._connection._get_connection_info()
 
+    def get_user_agent(self) -> str | None:
+        """User-Agent string built by the driver core (None before connect).
+
+        The Rust core constructs the User-Agent from the client app id, version
+        and platform; consumers building REST requests should use this rather
+        than reconstructing the value themselves.
+        """
+        user_agent: str | None = self._connection_info.user_agent
+        return user_agent if user_agent else None
+
     @property
     def token(self) -> str | None:
         """Required by Python API. Returns None after close (handle released)."""
@@ -169,8 +179,7 @@ class SnowflakeRestful:
         )
 
         if status_code >= 400:
-            # Truncate body to avoid flooding error messages with large response payloads
-            raise OperationalError(msg=f"HTTP {status_code}: {response_body[:200]!r}")
+            raise OperationalError.from_http_response(status_code, response_body)
 
         return json.loads(response_body) if response_body else {}
 
@@ -194,8 +203,7 @@ class SnowflakeRestful:
         )
 
         if raise_raw_http_failure and status_code >= 400:
-            # Truncate body to avoid flooding error messages with large response payloads
-            raise OperationalError(msg=f"HTTP {status_code}: {response_body[:200]!r}")
+            raise OperationalError.from_http_response(status_code, response_body)
 
         return json.loads(response_body) if response_body else {}
 
