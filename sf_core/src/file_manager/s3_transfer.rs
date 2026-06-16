@@ -694,17 +694,13 @@ struct S3CredentialError;
 
 impl From<S3CredentialError> for UploadFileError {
     fn from(_: S3CredentialError) -> Self {
-        UploadFileError::MissingS3Credentials {
-            location: Location::default(),
-        }
+        upload_file_error::MissingS3CredentialsSnafu.build()
     }
 }
 
 impl From<S3CredentialError> for DownloadFileError {
     fn from(_: S3CredentialError) -> Self {
-        DownloadFileError::MissingS3Credentials {
-            location: Location::default(),
-        }
+        download_file_error::MissingS3CredentialsSnafu.build()
     }
 }
 
