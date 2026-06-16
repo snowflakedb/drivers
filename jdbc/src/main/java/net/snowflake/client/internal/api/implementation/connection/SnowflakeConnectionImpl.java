@@ -32,6 +32,7 @@ import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
+import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
@@ -164,7 +165,10 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
 
   @Override
   public CallableStatement prepareCall(String sql) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    CallableStatement stmt = new SnowflakeCallableStatementImpl(this, sql, coreDriverApi);
+    openStatements.add(stmt);
+    return stmt;
   }
 
   @Override
@@ -329,7 +333,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   @Override
   public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
       throws SQLException {
-    throw new NotImplementedException();
+    return prepareCall(sql);
   }
 
   @Override
@@ -392,7 +396,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   public CallableStatement prepareCall(
       String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
       throws SQLException {
-    throw new NotImplementedException();
+    return prepareCall(sql);
   }
 
   @Override
