@@ -20,8 +20,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes parameter after SQLPrepare",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -42,8 +40,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes parameter a
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes multiple parameters",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?, ?, ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -62,8 +58,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes multiple pa
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(
       stmt_handle(), sqlchar("CREATE TEMPORARY TABLE dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -89,8 +83,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLDescribeParam: Describes INSERT p
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Works after execute and close cursor",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -118,8 +110,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Works after execute a
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Reflects bound parameter type in IPD",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -142,8 +132,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Reflects bound parame
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Re-prepare reflects new parameter count",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -175,8 +163,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Re-prepare reflects n
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: All NULL output pointers accepted",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -186,8 +172,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: All NULL output point
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Partial NULL output pointers accepted",
                  "[odbc-api][describeparam][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -223,8 +207,6 @@ TEST_CASE("SQLDescribeParam: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNumber 0",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -246,8 +228,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNumber beyond parameter count",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -261,8 +241,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for prepared statement with no parameters",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1 AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -276,8 +254,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for prepared st
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 for statement not prepared",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHSTMT fresh_stmt = SQL_NULL_HSTMT;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &fresh_stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -330,8 +306,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 during SQL_NEED
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 after SQLExecDirect",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: The ODBC spec states HY010 is returned when called before
   // SQLPrepare or SQLExecDirect, return here should be 07009 (no parameters in the statement).
   // The reference driver incorrectly treats SQLExecDirect as not establishing the prepared state.
@@ -354,8 +328,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 after SQLExecDi
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 after execute and fetch",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: After SQLPrepare + SQLExecute + SQLFetch, none of the spec's HY010 conditions
   // apply (not before SQLPrepare, not async, not SQL_NEED_DATA). The reference
   // driver incorrectly returns HY010 when a cursor is open with rows fetched,
@@ -380,4 +352,49 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 after execute a
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeParam(stmt_handle(), 1, &dataType, &paramSize, &decDigits, &nullable);
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLDescribeParam: Bound fixed-size type with ColumnSize 0 reports its natural precision",
+                 "[odbc-api][describeparam][submitting_request]") {
+  // ColumnSize is ignored when binding a fixed-size SQL type, so applications
+  // legitimately pass 0. SQLDescribeParam must still report the type's natural
+  // precision (ODBC Appendix D) rather than 0.
+  struct Case {
+    SQLSMALLINT sql_type;
+    SQLULEN expected_size;
+    const char* label;
+  };
+  const Case cases[] = {
+      {SQL_BIT, 1, "SQL_BIT"},          {SQL_TINYINT, 3, "SQL_TINYINT"}, {SQL_SMALLINT, 5, "SQL_SMALLINT"},
+      {SQL_INTEGER, 10, "SQL_INTEGER"}, {SQL_BIGINT, 19, "SQL_BIGINT"},  {SQL_REAL, 7, "SQL_REAL"},
+      {SQL_FLOAT, 15, "SQL_FLOAT"},     {SQL_DOUBLE, 15, "SQL_DOUBLE"},
+  };
+
+  for (const auto& c : cases) {
+    INFO("parameter type " << c.label);
+    SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    char buf[] = "1";
+    SQLLEN ind = SQL_NTS;
+    // ColumnSize argument deliberately 0 — the driver must substitute the
+    // type's natural precision.
+    ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, c.sql_type, 0, 0, buf, sizeof(buf), &ind);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    SQLSMALLINT dataType = 0;
+    SQLULEN paramSize = 0;
+    ret = SQLDescribeParam(stmt_handle(), 1, &dataType, &paramSize, nullptr, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(dataType == c.sql_type);
+    CHECK(paramSize == c.expected_size);
+
+    // Capture both returns: a silently-failed SQL_RESET_PARAMS would leave the
+    // current binding active and let the next iteration read a stale type.
+    ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
 }
