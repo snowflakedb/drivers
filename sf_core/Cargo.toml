@@ -42,8 +42,8 @@ tokio-stream = "0.1"
 toml = "0.8"
 uuid = { version = "1.18", features = ["v4"] }
 base64 = "0.22.1"
-arrow = { version = "56.0.0", features = ["ffi"] }
-arrow-ipc = "56.0.0"
+arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
+arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
 openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }

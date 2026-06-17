@@ -11,6 +11,7 @@ use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
     ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
     flat_sections_to_nested_json, proto_chunk_format_to_kind, proto_options_to_hashmap,
+    reader_to_arrow_stream_ptr,
 };
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
@@ -696,7 +697,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .statement_prepare(stmt_handle.into())
             .await
             .to_protobuf()?;
-        let result_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
+        let result_ptr = reader_to_arrow_stream_ptr(result.stream);
         Ok(StatementPrepareResponse {
             result: Some(PrepareResult {
                 stream: Some(result_ptr),
