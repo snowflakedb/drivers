@@ -450,7 +450,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
 
       - name: Rerun tests (Windows ARM64)
         if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
@@ -459,7 +459,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
@@ -468,7 +468,23 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
+          cargo nextest run --profile ci-flaky --package sf_core --target aarch64-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-core-tests-windows-arm64
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
+
+      - name: Upload flaky test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-core-flaky-tests-windows-arm64
+          path: target/nextest/ci-flaky/junit.xml
+          if-no-files-found: warn
 
       # Post-mortem diagnostics for Windows ARM64 failures: ARM64-specific build issues
       # (wrong architecture DLLs, missing OpenSSL, MSVC env not targeting ARM64) are
@@ -657,7 +673,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
       - name: Rerun tests (Windows x86)
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
@@ -666,7 +682,7 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
+          cargo nextest run --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
@@ -675,7 +691,23 @@ jobs:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
+          cargo nextest run --profile ci-flaky --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-core-tests-windows-x86
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
+
+      - name: Upload flaky test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-core-flaky-tests-windows-x86
+          path: target/nextest/ci-flaky/junit.xml
+          if-no-files-found: warn
 
       - name: Save Rust cache
         if: always()

@@ -1,0 +1,5 @@
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.ci-flaky.junit]
+path = "junit.xml"

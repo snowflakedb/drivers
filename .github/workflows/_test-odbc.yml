@@ -290,7 +290,7 @@ jobs:
       - name: Run flaky ODBC tests (Unix)
         if: runner.os != 'Windows'
         continue-on-error: true
-        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure --output-junit "${{ github.workspace }}/odbc-flaky-junit.xml"
         env:
           DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -315,12 +315,20 @@ jobs:
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: pwsh
-        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure --output-junit "${{ github.workspace }}\odbc-flaky-junit.xml"
         env:
           DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: NEW
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+
+      - name: Upload ODBC flaky test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odbc-flaky-tests-${{ matrix.name }}-${{ matrix.cloud_provider }}
+          path: odbc-flaky-junit.xml
+          if-no-files-found: warn
 
       - name: Upload test results
         if: always()
