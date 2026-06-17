@@ -13,6 +13,7 @@ import os
 import pytest
 
 from ...config import get_test_parameters
+from .auth_helpers import clean_browser_processes
 
 
 def is_browser_env():
@@ -22,6 +23,18 @@ def is_browser_env():
 def pytest_runtest_setup(item):
     if item.get_closest_marker("requires_browser") and not is_browser_env():
         pytest.skip("Requires headless browser container (SF_TEST_HEADLESS_BROWSER=true)")
+
+
+@pytest.fixture(autouse=True)
+def browser_cleanup(request):
+    """Kill stray Chromium between browser tests so a stale page from a prior
+    test can't make the next test's CDP attach pick up the wrong context."""
+    if not request.node.get_closest_marker("requires_browser"):
+        yield
+        return
+    clean_browser_processes()
+    yield
+    clean_browser_processes()
 
 
 def require_auth_params(*keys: str) -> dict[str, str]:
