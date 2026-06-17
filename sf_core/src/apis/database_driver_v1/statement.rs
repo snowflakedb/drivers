@@ -30,7 +30,7 @@ use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::async_exec::submit_statement_async;
 #[cfg(test)]
 use crate::rest::snowflake::query_request;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow::array::RecordBatchReader;
 use serde_json::value::RawValue;
 use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
@@ -193,7 +193,7 @@ impl DatabaseDriverV1 {
 }
 
 pub struct PrepareResult {
-    pub stream: Box<FFI_ArrowArrayStream>,
+    pub stream: Box<dyn RecordBatchReader + Send>,
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
     pub number_of_binds: i32,
