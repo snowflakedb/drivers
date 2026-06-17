@@ -527,9 +527,9 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn sql_type_is_ext_var_binary() {
+    fn sql_type_is_ext_binary() {
         let sn = sn();
-        assert_eq!(sn.sql_type(), sql::SqlDataType::EXT_VAR_BINARY);
+        assert_eq!(sn.sql_type(), sql::SqlDataType::EXT_BINARY);
     }
 
     #[test]

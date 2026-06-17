@@ -605,25 +605,61 @@ impl TryFrom<i32> for StmtAttr {
 pub enum DescField {
     /// `SQL_DESC_CONCISE_TYPE` (2) — concise data type of the column.
     ConciseType = 2,
+    /// `SQL_DESC_DISPLAY_SIZE` (6) — maximum display width.
+    DisplaySize = 6,
+    /// `SQL_DESC_UNSIGNED` (8) — whether the column is unsigned.
+    Unsigned = 8,
+    /// `SQL_DESC_FIXED_PREC_SCALE` (9) — whether the column has fixed precision/scale.
+    FixedPrecScale = 9,
+    /// `SQL_DESC_UPDATABLE` (10) — whether the column is updatable.
+    Updatable = 10,
+    /// `SQL_DESC_AUTO_UNIQUE_VALUE` (11) — whether the column auto-increments.
+    AutoUniqueValue = 11,
+    /// `SQL_DESC_CASE_SENSITIVE` (12) — whether the column is case-sensitive.
+    CaseSensitive = 12,
+    /// `SQL_DESC_SEARCHABLE` (13) — searchability of the column.
+    Searchable = 13,
+    /// `SQL_DESC_TYPE_NAME` (14) — data-source-dependent type name.
+    TypeName = 14,
+    /// `SQL_DESC_TABLE_NAME` (15) — table name.
+    TableName = 15,
+    /// `SQL_DESC_SCHEMA_NAME` (16) — schema name.
+    SchemaName = 16,
+    /// `SQL_DESC_CATALOG_NAME` (17) — catalog name.
+    CatalogName = 17,
+    /// `SQL_DESC_LABEL` (18) — column label or title.
+    Label = 18,
     /// `SQL_DESC_ARRAY_SIZE` (20) — header: number of rows in the rowset.
     ArraySize = 20,
     /// `SQL_DESC_ARRAY_STATUS_PTR` (21) — header: pointer to row status array.
     ArrayStatusPtr = 21,
+    /// `SQL_DESC_BASE_COLUMN_NAME` (22) — base column name.
+    BaseColumnName = 22,
+    /// `SQL_DESC_BASE_TABLE_NAME` (23) — base table name.
+    BaseTableName = 23,
     /// `SQL_DESC_BIND_OFFSET_PTR` (24) — header: binding offset pointer.
     BindOffsetPtr = 24,
     /// `SQL_DESC_BIND_TYPE` (25) — header: row-wise vs column-wise binding.
     BindType = 25,
     /// `SQL_DESC_DATETIME_INTERVAL_PRECISION` (26) — leading precision for interval C types.
     DatetimeIntervalPrecision = 26,
+    /// `SQL_DESC_LITERAL_PREFIX` (27) — literal prefix for the type.
+    LiteralPrefix = 27,
+    /// `SQL_DESC_LITERAL_SUFFIX` (28) — literal suffix for the type.
+    LiteralSuffix = 28,
+    /// `SQL_DESC_LOCAL_TYPE_NAME` (29) — localized type name.
+    LocalTypeName = 29,
+    /// `SQL_DESC_NUM_PREC_RADIX` (32) — numeric precision radix (2 or 10).
+    NumPrecRadix = 32,
+    /// `SQL_DESC_PARAMETER_TYPE` (33) — parameter direction (IPD only).
+    ParameterType = 33,
     /// `SQL_DESC_ROWS_PROCESSED_PTR` (34) — header: pointer to rows-processed count.
     RowsProcessedPtr = 34,
     /// `SQL_DESC_COUNT` (1001) — number of bound columns (header field, record 0).
     Count = 1001,
     /// `SQL_DESC_TYPE` (1002) — verbose data type of the column.
     Type = 1002,
-    /// `SQL_DESC_LENGTH` (1003) — column length in characters (or scale-derived
-    /// precision for temporal types, byte length for binary types). Distinct
-    /// from `SQL_DESC_OCTET_LENGTH` (1013), which is always in bytes.
+    /// `SQL_DESC_LENGTH` (1003) — column length in characters.
     Length = 1003,
     /// `SQL_DESC_OCTET_LENGTH_PTR` (1004) — pointer to the octet-length buffer.
     OctetLengthPtr = 1004,
@@ -631,20 +667,32 @@ pub enum DescField {
     Precision = 1005,
     /// `SQL_DESC_SCALE` (1006) — numeric scale.
     Scale = 1006,
+    /// `SQL_DESC_NULLABLE` (1008) — whether the column is nullable.
+    Nullable = 1008,
     /// `SQL_DESC_INDICATOR_PTR` (1009) — pointer to the indicator buffer.
     IndicatorPtr = 1009,
     /// `SQL_DESC_DATA_PTR` (1010) — pointer to the data buffer.
     DataPtr = 1010,
     /// `SQL_DESC_NAME` (1011) — column name (string, IRD only).
     Name = 1011,
+    /// `SQL_DESC_UNNAMED` (1012) — whether the column is named (SQL_NAMED / SQL_UNNAMED).
+    Unnamed = 1012,
     /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
-    /// `SQL_DESC_PARAMETER_TYPE` (33) — parameter direction (IPD only).
-    ParameterType = 33,
-    /// `SQL_DESC_TYPE_NAME` (14) — data-source-dependent type name.
-    TypeName = 14,
-    /// `SQL_DESC_NULLABLE` (1008) — whether the parameter is nullable (IPD only).
-    Nullable = 1008,
+
+    // ODBC 2.x SQL_COLUMN_* identifiers (used by SQLColAttributes)
+    /// `SQL_COLUMN_COUNT` (0) — number of columns.
+    ColumnCount = 0,
+    /// `SQL_COLUMN_NAME` (1) — column name (ODBC 2.x alias).
+    ColumnName = 1,
+    /// `SQL_COLUMN_LENGTH` (3) — transfer octet length (ODBC 2.x).
+    ColumnLength = 3,
+    /// `SQL_COLUMN_PRECISION` (4) — column size (ODBC 2.x).
+    ColumnPrecision = 4,
+    /// `SQL_COLUMN_SCALE` (5) — decimal digits (ODBC 2.x).
+    ColumnScale = 5,
+    /// `SQL_COLUMN_NULLABLE` (7) — nullable (ODBC 2.x).
+    ColumnNullable = 7,
 }
 
 impl TryFrom<i16> for DescField {
@@ -652,17 +700,41 @@ impl TryFrom<i16> for DescField {
 
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         match value {
+            0 => Ok(DescField::ColumnCount),
+            1 => Ok(DescField::ColumnName),
             2 => Ok(DescField::ConciseType),
+            3 => Ok(DescField::ColumnLength),
+            4 => Ok(DescField::ColumnPrecision),
+            5 => Ok(DescField::ColumnScale),
+            6 => Ok(DescField::DisplaySize),
+            7 => Ok(DescField::ColumnNullable),
+            8 => Ok(DescField::Unsigned),
+            9 => Ok(DescField::FixedPrecScale),
+            10 => Ok(DescField::Updatable),
+            11 => Ok(DescField::AutoUniqueValue),
+            12 => Ok(DescField::CaseSensitive),
+            13 => Ok(DescField::Searchable),
+            14 => Ok(DescField::TypeName),
+            15 => Ok(DescField::TableName),
+            16 => Ok(DescField::SchemaName),
+            17 => Ok(DescField::CatalogName),
+            18 => Ok(DescField::Label),
             20 => Ok(DescField::ArraySize),
             21 => Ok(DescField::ArrayStatusPtr),
+            22 => Ok(DescField::BaseColumnName),
+            23 => Ok(DescField::BaseTableName),
             24 => Ok(DescField::BindOffsetPtr),
             25 => Ok(DescField::BindType),
             26 => Ok(DescField::DatetimeIntervalPrecision),
+            27 => Ok(DescField::LiteralPrefix),
+            28 => Ok(DescField::LiteralSuffix),
+            29 => Ok(DescField::LocalTypeName),
+            32 => Ok(DescField::NumPrecRadix),
+            33 => Ok(DescField::ParameterType),
             34 => Ok(DescField::RowsProcessedPtr),
             1001 => Ok(DescField::Count),
             1002 => Ok(DescField::Type),
             1003 => Ok(DescField::Length),
-            14 => Ok(DescField::TypeName),
             1004 => Ok(DescField::OctetLengthPtr),
             1005 => Ok(DescField::Precision),
             1006 => Ok(DescField::Scale),
@@ -670,12 +742,12 @@ impl TryFrom<i16> for DescField {
             1009 => Ok(DescField::IndicatorPtr),
             1010 => Ok(DescField::DataPtr),
             1011 => Ok(DescField::Name),
+            1012 => Ok(DescField::Unnamed),
             1013 => Ok(DescField::OctetLength),
-            33 => Ok(DescField::ParameterType),
             _ => {
                 tracing::warn!("Unknown descriptor field identifier: {}", value);
-                Err(OdbcError::UnknownAttribute {
-                    attribute: value as i32,
+                Err(OdbcError::InvalidDescriptorFieldId {
+                    field_id: value,
                     location: snafu::location!(),
                 })
             }
@@ -1908,8 +1980,8 @@ mod tests {
         assert_eq!(DescField::try_from(1002_i16).unwrap(), DescField::Type);
 
         match DescField::try_from(-1_i16) {
-            Err(OdbcError::UnknownAttribute { attribute, .. }) => assert_eq!(attribute, -1),
-            other => panic!("expected UnknownAttribute, got {other:?}"),
+            Err(OdbcError::InvalidDescriptorFieldId { field_id, .. }) => assert_eq!(field_id, -1),
+            other => panic!("expected InvalidDescriptorFieldId, got {other:?}"),
         }
     }
 }

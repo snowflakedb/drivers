@@ -187,6 +187,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid descriptor field identifier: {field_id}"))]
+    InvalidDescriptorFieldId {
+        field_id: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Unsupported attribute: {attribute}"))]
     UnsupportedAttribute {
         attribute: i32,
@@ -620,6 +627,7 @@ impl OdbcError {
             OdbcError::InvalidDiagnosticIdentifier { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnknownAttribute { .. } => ErrorSource::ApiMisuse,
             OdbcError::ReadOnlyAttribute { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDescriptorFieldId { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnsupportedAttribute { .. } => ErrorSource::Unsupported,
             OdbcError::InvalidAttributeValue { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnsupportedInfoType { .. } => ErrorSource::Unsupported,
@@ -768,6 +776,9 @@ impl OdbcError {
             OdbcError::InvalidPrecisionOrScale { .. } => SqlState::InvalidPrecisionOrScaleValue,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::ReadOnlyAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::InvalidDescriptorFieldId { .. } => {
+                SqlState::InvalidDescriptorFieldIdentifier
+            }
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,

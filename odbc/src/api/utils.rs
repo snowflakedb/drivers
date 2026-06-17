@@ -5,7 +5,13 @@ use crate::api::error::{
 };
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
 use crate::conversion::warning::Warnings;
-use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
+use crate::conversion::{
+    column_size_from_field, decimal_digits_from_field, display_size_from_field,
+    is_case_sensitive_from_field, is_unsigned_from_field, literal_prefix_from_field,
+    literal_suffix_from_field, num_prec_radix_from_field, octet_length_from_field,
+    precision_from_field, searchable_from_field, sql_type_from_field, type_name_from_field,
+    verbose_sql_type_from_field,
+};
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
@@ -103,7 +109,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     Ok(())
 }
 
-/// Get a column attribute (SQLColAttribute)
+/// Get a column attribute (SQLColAttribute / SQLColAttributes)
 #[allow(clippy::too_many_arguments)]
 pub fn col_attribute<E: OdbcEncoding>(
     statement_handle: sql::Handle,
@@ -128,118 +134,158 @@ pub fn col_attribute<E: OdbcEncoding>(
     }
 
     let schema = match inner.state.as_ref() {
+        StatementState::Prepared { schema } => schema.clone(),
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
-    // ODBC column numbers are 1-based; validate before indexing into the schema
-    if column_number == 0 {
-        tracing::warn!("col_attribute: invalid column_number=0");
-        return StatementNotExecutedSnafu.fail();
-    }
-    let column_index = (column_number - 1) as usize;
-    if column_index >= schema.fields().len() {
-        tracing::warn!(
-            "col_attribute: column_number={} out of range (num_fields={})",
-            column_number,
-            schema.fields().len()
-        );
-        return StatementNotExecutedSnafu.fail();
-    }
-
-    let field = schema.field(column_index);
     let desc_field = DescField::try_from(field_identifier as i16)?;
 
-    match desc_field {
-        DescField::Type | DescField::ConciseType => {
-            let dbc = guard.conn()?;
-            let settings = dbc.connection.lock().numeric_settings;
-            let sql_type = sql_type_from_field(field, &settings).context(ConversionSnafu)?;
-            if !numeric_attribute_ptr.is_null() {
-                unsafe {
-                    std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
-                }
-            }
-            Ok(())
+    // SQL_DESC_COUNT / SQL_COLUMN_COUNT don't require a valid column number
+    if matches!(desc_field, DescField::Count | DescField::ColumnCount) {
+        write_numeric(numeric_attribute_ptr, schema.fields().len() as sql::Len);
+        return Ok(());
+    }
+
+    // Validate column number (1-based)
+    if column_number < 1 || (column_number as usize - 1) >= schema.fields().len() {
+        return InvalidDescriptorIndexSnafu {
+            number: column_number as sql::SmallInt,
         }
-        DescField::Name => {
-            // Per ODBC spec, SQL_DESC_NAME returns the column name when one
-            // exists. Snowflake's result-set schema always carries a name,
-            // even for `SELECT 1` (`"1"`), so no SQL_DESC_UNNAMED handling is
-            // needed here.
+        .fail();
+    }
+    let column_index = (column_number - 1) as usize;
+    let field = schema.field(column_index);
+    let dbc = guard.conn()?;
+    let numeric_settings = dbc.connection.lock().numeric_settings;
+
+    match compute_ird_field(field, desc_field, &numeric_settings)? {
+        IrdFieldValue::SmallInt(v) => write_numeric(numeric_attribute_ptr, v as sql::Len),
+        IrdFieldValue::Integer(v) => write_numeric(numeric_attribute_ptr, v as sql::Len),
+        IrdFieldValue::Len(v) => write_numeric(numeric_attribute_ptr, v),
+        IrdFieldValue::Str(s) => {
             write_string_bytes::<E>(
-                field.name(),
+                s,
                 character_attribute_ptr,
                 buffer_length,
                 string_length_ptr,
                 Some(warnings),
             );
-            Ok(())
+        }
+    }
+
+    Ok(())
+}
+
+fn write_numeric(ptr: *mut sql::Len, value: sql::Len) {
+    if !ptr.is_null() {
+        unsafe { std::ptr::write(ptr, value) };
+    }
+}
+
+/// Result of computing an IRD record field value from Arrow metadata.
+///
+/// Variants match the C type that `SQLGetDescField` writes for each IRD field
+/// (per the ODBC spec table), so the descriptor path writes exactly the right
+/// number of bytes.  `SQLColAttribute` widens everything to `SQLLEN`.
+pub(crate) enum IrdFieldValue<'a> {
+    SmallInt(sql::SmallInt),
+    Integer(sql::Integer),
+    Len(sql::Len),
+    Str(&'a str),
+}
+
+/// Compute the value of an IRD record field from Arrow metadata.
+/// Shared logic between `SQLColAttribute` and `SQLGetDescField(IRD)`.
+pub(crate) fn compute_ird_field<'a>(
+    field: &'a arrow::datatypes::Field,
+    desc_field: DescField,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<IrdFieldValue<'a>> {
+    use IrdFieldValue::*;
+    match desc_field {
+        DescField::Type => {
+            let t =
+                verbose_sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(t.0))
+        }
+        DescField::ConciseType => {
+            let t = sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(t.0))
+        }
+        DescField::Nullable | DescField::ColumnNullable => {
+            let val = if field.is_nullable() {
+                sql::Nullability::NULLABLE.0
+            } else {
+                sql::Nullability::NO_NULLS.0
+            };
+            Ok(SmallInt(val))
+        }
+        DescField::Precision | DescField::ColumnPrecision => {
+            let v = precision_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(v as sql::SmallInt))
+        }
+        DescField::Scale | DescField::ColumnScale => {
+            let v = decimal_digits_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(v))
         }
         DescField::Length => {
-            // SQL_DESC_LENGTH is the column's logical length (characters for
-            // strings, scale-derived precision for temporal types, byte
-            // length for binary). Distinct from SQL_DESC_OCTET_LENGTH (1013),
-            // which is always in bytes. `column_size_from_field` dispatches
-            // through `SnowflakeFieldType::column_size` to the per-type
-            // `WriteODBCType::column_size` impls under `odbc/src/conversion/`,
-            // which is where the actual formulas live.
-            let dbc = guard.conn()?;
-            let settings = dbc.connection.lock().numeric_settings;
-            let col_size = column_size_from_field(field, &settings).context(ConversionSnafu)?;
-            if !numeric_attribute_ptr.is_null() {
-                unsafe {
-                    std::ptr::write(numeric_attribute_ptr, col_size as sql::Len);
-                }
-            }
-            Ok(())
+            let v = column_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Len(v as sql::Len))
         }
-        DescField::TypeName => {
-            let logical_type = field
-                .metadata()
-                .get("logicalType")
-                .map(|s| s.as_str())
-                .unwrap_or("");
-            let type_name = match logical_type {
-                "OBJECT" => "STRUCT",
-                "ARRAY" => "ARRAY",
-                "VARIANT" => "VARIANT",
-                _ => "",
-            };
-            match logical_type {
-                "OBJECT" | "ARRAY" | "VARIANT" => {
-                    write_string_bytes::<E>(
-                        type_name,
-                        character_attribute_ptr,
-                        buffer_length,
-                        string_length_ptr,
-                        Some(warnings),
-                    );
-                    Ok(())
-                }
-                _ => {
-                    tracing::warn!(
-                        "col_attribute: SQL_DESC_TYPE_NAME not yet implemented for logicalType={logical_type}"
-                    );
-                    write_string_bytes::<E>(
-                        "",
-                        character_attribute_ptr,
-                        buffer_length,
-                        string_length_ptr,
-                        None,
-                    );
-                    Ok(())
-                }
-            }
+        DescField::OctetLength | DescField::ColumnLength => {
+            let v = octet_length_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Len(v))
         }
-        _ => {
-            tracing::warn!(
-                "col_attribute: unsupported field_identifier={:?}",
-                desc_field
-            );
-            Ok(())
+        DescField::DisplaySize => {
+            let v = display_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Len(v))
         }
+        DescField::NumPrecRadix => {
+            let v = num_prec_radix_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Integer(v as sql::Integer))
+        }
+        DescField::Unsigned => {
+            let v = is_unsigned_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(if v { 1 } else { 0 }))
+        }
+        DescField::CaseSensitive => {
+            let v =
+                is_case_sensitive_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Integer(if v { 1 } else { 0 }))
+        }
+        DescField::Searchable => {
+            let v = searchable_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(v as sql::SmallInt))
+        }
+        DescField::Updatable => Ok(SmallInt(2)), // SQL_ATTR_READWRITE_UNKNOWN
+        DescField::AutoUniqueValue => Ok(Integer(0)), // SQL_FALSE
+        DescField::FixedPrecScale => Ok(SmallInt(0)), // SQL_FALSE
+        DescField::Unnamed => Ok(SmallInt(0)),   // SQL_NAMED
+        DescField::Name | DescField::ColumnName | DescField::Label | DescField::BaseColumnName => {
+            Ok(Str(field.name()))
+        }
+        DescField::TableName
+        | DescField::BaseTableName
+        | DescField::CatalogName
+        | DescField::SchemaName => Ok(Str("")),
+        DescField::TypeName | DescField::LocalTypeName => {
+            let name = type_name_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(name))
+        }
+        DescField::LiteralPrefix => {
+            let v = literal_prefix_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(v))
+        }
+        DescField::LiteralSuffix => {
+            let v = literal_suffix_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(v))
+        }
+        _ => crate::api::error::UnknownAttributeSnafu {
+            attribute: desc_field as i32,
+        }
+        .fail(),
     }
 }
 

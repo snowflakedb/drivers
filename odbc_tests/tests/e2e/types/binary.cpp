@@ -235,8 +235,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select binary with specified length 
     SQLRETURN r = SQLDescribeCol(stmt.getHandle(), col_num, col_name, sizeof(col_name), &name_len, &data_type,
                                  &col_size, &decimal_digits, &nullable);
     REQUIRE_ODBC(r, stmt);
-    NEW_DRIVER_ONLY("#26") REQUIRE(data_type == SQL_VARBINARY);
-    OLD_DRIVER_ONLY("#26") REQUIRE(data_type == SQL_BINARY);
+    REQUIRE(data_type == SQL_BINARY);
     REQUIRE(decimal_digits == 0);
     return col_size;
   };

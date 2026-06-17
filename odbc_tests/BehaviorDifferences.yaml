@@ -379,17 +379,17 @@ behavior_differences:
 
   24:
     name: "SQLDescribeCol reports SQL_VARBINARY for BINARY columns instead of SQL_BINARY"
-    status: todo
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |
-      Both versions are correct, but to keep the backwards compatibility this should be kept as SQL_BINARY.
+      Fixed: new driver now reports SQL_BINARY to match the old driver.
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
       Reports data_type as SQL_BINARY (-2) for Snowflake BINARY columns via SQLDescribeCol.
     new_driver_behavior: |
-      Reports data_type as SQL_VARBINARY (-3).
+      Reports data_type as SQL_BINARY (-2), matching the old driver.
     description: |
       Rationale: Snowflake BINARY is a variable-length type (up to 8 MB). The ODBC specification defines SQL_BINARY for fixed-length binary and SQL_VARBINARY for variable-length binary. SQL_VARBINARY is the semantically correct type for Snowflake's BINARY.
       Most applications treat SQL_BINARY and SQL_VARBINARY interchangeably. Applications that switch on the exact data_type value may need to handle SQL_VARBINARY in addition to SQL_BINARY.
@@ -1291,3 +1291,24 @@ behavior_differences:
       The new driver honours DriverManagerEncoding (read once from sf.odbc.ini via
       SF_ODBC_INI) uniformly: under iODBC every SQL_C_WCHAR fetch is UTF-32 regardless of
       the source column type, so the indicator is always char_count * 4.
+
+  80:
+    name: "SQLColAttribute properly supports ODBC 2.x field aliases through the 3.x function"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      The old driver's inconsistent handling of 2.x identifiers is a bug; the new driver follows the spec's backward compatibility rules.
+    old_driver_behavior: |
+      When SQLColAttribute (ODBC 3.x) is called with ODBC 2.x field identifiers
+      (SQL_COLUMN_NAME, SQL_COLUMN_TYPE, etc.), the old driver exhibits inconsistent
+      behavior — returning empty strings, incorrect values, or HY091 errors
+      depending on the identifier.
+    new_driver_behavior: |
+      Properly maps ODBC 2.x field identifiers to their SQL_DESC_* equivalents per
+      the ODBC specification backward compatibility rules.
+    is_breaking_change: false
+    impact: low
+    description: |
+      Applications using ODBC 2.x field identifiers with the 3.x function will now
+      receive correct values.
