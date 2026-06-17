@@ -65,7 +65,7 @@ class MultiStatementQueryResultState:
 class QueryResult:
     """Pure metadata about a query execution result."""
 
-    __slots__ = ("description", "sqlstate", "sfqid", "query", "stats", "rowcount")
+    __slots__ = ("description", "sqlstate", "sfqid", "query", "stats", "rowcount", "is_file_transfer")
 
     def __init__(
         self,
@@ -76,6 +76,7 @@ class QueryResult:
         query: str | None = None,
         stats: QueryResultStats | None = None,
         rowcount: int | None = None,
+        is_file_transfer: bool = False,
     ) -> None:
         self.description = description
         self.sqlstate = sqlstate
@@ -83,6 +84,7 @@ class QueryResult:
         self.query = query
         self.stats = stats if stats is not None else QueryResultStats()
         self.rowcount = rowcount
+        self.is_file_transfer = is_file_transfer
 
     def reset(self, closing: bool = False) -> None:
         """Optionally clear the rowcount.
@@ -138,6 +140,9 @@ class QueryResult:
             sfqid=descriptor.query_id if descriptor.query_id else None,
             query=query,
             rowcount=extract_rowcount(descriptor),
+            is_file_transfer=(
+                descriptor.statement_type_id in (0x7101, 0x7102) if descriptor.HasField("statement_type_id") else False
+            ),
             stats=(
                 QueryResultStats.from_query_stats(descriptor.stats)
                 if descriptor.HasField("stats")

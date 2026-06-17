@@ -184,7 +184,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
     @property
     def is_file_transfer(self) -> bool:
         """Whether the last executed command was a PUT or GET file transfer."""
-        raise NotImplementedError("is_file_transfer is not yet implemented")
+        return self._query_result.is_file_transfer
 
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
