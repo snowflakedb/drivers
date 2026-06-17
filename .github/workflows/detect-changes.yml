@@ -154,6 +154,7 @@ jobs:
             odbc_e2e_integ:
               - 'odbc_tests/tests/e2e/**'
               - 'odbc_tests/tests/integration/**'
+              - 'odbc_tests/tests/odbc-api/**'
               - 'odbc_tests/CMakeLists.txt'
               - 'odbc_tests/tests/CMakeLists.txt'
               - 'odbc_tests/common/**'
