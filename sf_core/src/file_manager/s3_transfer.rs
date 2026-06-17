@@ -322,7 +322,13 @@ async fn put_object(
             .metadata("x-amz-matdesc", mat_desc);
     }
 
-    tracing::trace!("PUT object request: {:?}", put_object_request);
+    // NB: do NOT `{:?}` the whole request — its `.body(ByteStream)` Debug-
+    // expands the full file payload (~12 MB/file). When an in-band telemetry
+    // exporter is attached, that string is captured per file and accumulated
+    // into the telemetry payload, which then OOMs serializing a multi-GB JSON
+    // blob on a multi-file PUT (SNOW-3240509-adjacent; perf 12mx100 exit 137).
+    // Log only safe metadata.
+    tracing::trace!(bucket = %stage_info.bucket, key = %s3_key, "Sending S3 PutObject request");
 
     match put_object_request
         .customize()
