@@ -1,4 +1,4 @@
-@core @odbc
+@core @odbc @python
 Feature: Parallel User Prompt Locking
 
   When a connection pool opens multiple connections concurrently and interactive
@@ -9,7 +9,7 @@ Feature: Parallel User Prompt Locking
   Locking is engaged when `clientStoreTemporaryCredential=true` and
   `DISABLE_PARALLEL_USER_PROMPT=true` (the default).
 
-  @core_int @odbc_int
+  @core_int @odbc_int @python_e2e
   Scenario: should show only one external browser prompt when multiple connections authenticate concurrently
     Given clientStoreTemporaryCredential is enabled and DISABLE_PARALLEL_USER_PROMPT is true
     And Wiremock returns valid ssoUrl and proofKey for authenticator-request
@@ -18,7 +18,7 @@ Feature: Parallel User Prompt Locking
     Then Only one authenticator-request is sent to the server
     And All connections succeed
 
-  @core_int @odbc_int
+  @core_int @odbc_int @python_e2e
   Scenario: should show only one MFA prompt when multiple connections authenticate concurrently
     Given clientStoreTemporaryCredential is enabled and DISABLE_PARALLEL_USER_PROMPT is true
     And Wiremock returns successful login with MFA token for the first connection
@@ -26,7 +26,7 @@ Feature: Parallel User Prompt Locking
     Then Only one interactive MFA login-request is sent to the server
     And All connections succeed using the cached MFA token
 
-  @core_int @odbc_int
+  @core_int @odbc_int @python_e2e
   Scenario: should show independent prompts when DISABLE_PARALLEL_USER_PROMPT is false
     Given clientStoreTemporaryCredential is enabled and DISABLE_PARALLEL_USER_PROMPT is false
     And Wiremock returns valid ssoUrl and proofKey for each authenticator-request
@@ -35,7 +35,7 @@ Feature: Parallel User Prompt Locking
     Then Each connection sends its own authenticator-request to the server
     And All connections succeed independently
 
-  @core_int @odbc_int
+  @core_int @odbc_int @python_e2e
   Scenario: should show independent prompts when clientStoreTemporaryCredential is false
     Given clientStoreTemporaryCredential is disabled and DISABLE_PARALLEL_USER_PROMPT is true
     And Wiremock returns valid ssoUrl and proofKey for each authenticator-request

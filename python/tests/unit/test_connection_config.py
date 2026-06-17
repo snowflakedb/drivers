@@ -61,6 +61,12 @@ class TestFromKwargs:
         assert config.user == "u"
         assert config._extra == {"custom_param": "value"}
 
+    def test_disable_parallel_user_prompt_uppercase_alias(self):
+        # ODBC-style DSN strings deliver the key upper-cased; resolution is
+        # case-insensitive, so it lands on the canonical field.
+        config = ConnectionConfig.from_kwargs(DISABLE_PARALLEL_USER_PROMPT=False)
+        assert config.disable_parallel_user_prompt is False
+
     def test_legacy_rewrite_private_key_file_pwd(self):
         with pytest.warns(DeprecationWarning, match="private_key_file_pwd"):
             config = ConnectionConfig.from_kwargs(private_key_file_pwd="secret")
@@ -393,6 +399,18 @@ class TestToOptions:
         config._extra = {"custom_param": "value"}
         opts = config.to_options()
         assert opts["custom_param"] == "value"
+
+    def test_disable_parallel_user_prompt_default_forwarded(self):
+        # Defaults to True (prompt-lock serialization on) and is forwarded so
+        # sf_core sees the explicit choice rather than relying on its own default.
+        config = ConnectionConfig()
+        opts = config.to_options()
+        assert opts["disable_parallel_user_prompt"] is True
+
+    def test_disable_parallel_user_prompt_explicit_false_forwarded(self):
+        config = ConnectionConfig(disable_parallel_user_prompt=False)
+        opts = config.to_options()
+        assert opts["disable_parallel_user_prompt"] is False
 
 
 class TestRedactedOptions:

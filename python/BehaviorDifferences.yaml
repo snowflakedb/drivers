@@ -428,3 +428,26 @@ behavior_differences:
       Python connector retain their stored `Content-Encoding: utf-8` property;
       reading them with the new driver still works, because no driver acts on
       the property when downloading.
+
+  33:
+    name: "Concurrent interactive auth prompts are serialized (disable_parallel_user_prompt)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a connection pool opens multiple connections concurrently for the same
+      `<user, host>` and interactive authentication is required (external browser,
+      USERNAME_PASSWORD_MFA, OAuth authorization code), each connection runs its
+      own interactive flow, so the user is shown one prompt per connection. There
+      is no parameter to serialize the prompts.
+    new_driver_behavior: |
+      Interactive auth prompts are serialized by a process-global per-`<user, host,
+      token-type>` lock: the first connection runs the interactive flow and caches
+      the token; connections that arrive while it holds the lock wait and then reuse
+      the cached token, so the user sees only one prompt. Locking engages only when
+      `client_store_temporary_credential=true` and `disable_parallel_user_prompt=true`
+      (the default). Set `disable_parallel_user_prompt=false` to opt out and let each
+      concurrent connection show its own prompt. The lock is released on failure and
+      on browser-callback timeout so a waiting connection can still authenticate.
