@@ -63,6 +63,51 @@ pub fn load_connection_config_with_paths(
     Ok(settings)
 }
 
+/// Determine the default connection name to use for bare `connect()` calls.
+///
+/// Resolution order (matches legacy `snowflake-connector-python`):
+///   1. `SNOWFLAKE_DEFAULT_CONNECTION_NAME` environment variable.
+///   2. `default_connection_name` root scalar in `config.toml`.
+///   3. Literal `"default"`.
+///
+/// Note: an empty `SNOWFLAKE_DEFAULT_CONNECTION_NAME` is treated as absent,
+/// which differs from the legacy Python driver (which would look up a profile
+/// named `""`).  The universal driver's behavior is intentional: an empty env
+/// var is almost certainly a misconfiguration, and treating it as absent lets
+/// the next resolution step apply rather than immediately erroring.
+pub(crate) fn get_default_connection_name_with_paths(
+    paths: &ConfigPaths,
+) -> Result<String, ConfigError> {
+    let env_override = std::env::var("SNOWFLAKE_DEFAULT_CONNECTION_NAME").ok();
+    resolve_default_connection_name(paths, env_override)
+}
+
+/// Inner helper that takes the env value as a parameter for testability,
+/// mirroring `path_resolver::resolve_snowflake_home`.
+fn resolve_default_connection_name(
+    paths: &ConfigPaths,
+    env_override: Option<String>,
+) -> Result<String, ConfigError> {
+    if let Some(name) = env_override
+        && !name.is_empty()
+    {
+        return Ok(name);
+    }
+
+    if let Some(config_path) = &paths.config_file {
+        let config_toml = load_toml_file(config_path)?;
+        if let Some(name) = config_toml
+            .get("default_connection_name")
+            .and_then(|v| v.as_str())
+            && !name.is_empty()
+        {
+            return Ok(name.to_owned());
+        }
+    }
+
+    Ok("default".to_owned())
+}
+
 /// Load all connections from config files
 pub fn load_all_connections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let paths = get_config_paths()?;
@@ -800,5 +845,98 @@ account = "acct"
             result.contains_key("connections.myconn"),
             "config.toml connections should remain when connections.toml does not exist"
         );
+    }
+
+    // --- resolve_default_connection_name tests ---
+
+    #[test]
+    fn default_connection_name_env_override_wins() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let name = resolve_default_connection_name(&paths, Some("from_env".to_owned())).unwrap();
+        assert_eq!(name, "from_env");
+    }
+
+    #[test]
+    fn default_connection_name_falls_back_to_config_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let name = resolve_default_connection_name(&paths, None).unwrap();
+        assert_eq!(name, "from_file");
+    }
+
+    #[test]
+    fn default_connection_name_falls_back_to_literal_default() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        // No config.toml written
+
+        let name = resolve_default_connection_name(&paths, None).unwrap();
+        assert_eq!(name, "default");
+    }
+
+    #[test]
+    fn empty_env_override_is_ignored() {
+        // Deliberately diverges from the legacy Python driver, which would
+        // look up a profile named "" and emit "Default connection with name ''
+        // cannot be found".  Treating an empty value as absent is intentional:
+        // an empty env var is almost certainly a misconfiguration, and falling
+        // through to the next resolution step (config.toml → "default") is
+        // more helpful than an inscrutable "profile '' not found" error.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let name = resolve_default_connection_name(&paths, Some(String::new())).unwrap();
+        assert_eq!(name, "from_file");
+    }
+
+    /// Serialises env-mutating tests within this module to avoid data races.
+    ///
+    /// `std::env::set_var` / `remove_var` are global, so concurrent tests that
+    /// both touch `SNOWFLAKE_DEFAULT_CONNECTION_NAME` can interfere.  The mutex
+    /// does not protect against *other* parallel tests outside this module that
+    /// happen to read the same env var, but it makes the within-module tests
+    /// deterministic when run with the default multi-thread executor.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn get_default_connection_name_with_paths_reads_env_var() {
+        // Exercises the `std::env::var` read in the public wrapper (not just
+        // the inner helper).  Guards against regressions where the wrapper
+        // is refactored and the env-read path becomes dead code.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by ENV_MUTEX.
+        unsafe { std::env::set_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "from_env_var") };
+        let result = get_default_connection_name_with_paths(&paths);
+        // SAFETY: test-only; serialised by ENV_MUTEX.
+        unsafe { std::env::remove_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME") };
+        drop(_lock);
+
+        assert_eq!(result.unwrap(), "from_env_var");
     }
 }

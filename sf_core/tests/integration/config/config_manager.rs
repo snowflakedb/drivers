@@ -52,7 +52,7 @@ warehouse = "mywarehouse"
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let resolved = resolver::resolve_with_paths(&explicit, &paths).unwrap();
+    let resolved = resolver::resolve_with_paths(&explicit, &paths, false).unwrap();
 
     // Then The connection settings should be loaded
     assert_eq!(
@@ -91,7 +91,7 @@ user = "config_user"
     ]);
 
     // When sf_core loads the connection config
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then The explicit setting should take precedence
     assert!(result.is_ok());
@@ -111,7 +111,7 @@ fn connection_not_found_in_config() {
 
     // When sf_core loads connection named nonexistent
     let explicit = make_explicit(&[("connection_name", "nonexistent")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
@@ -147,7 +147,7 @@ warehouse = "connections_wh"
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then connections.toml values should override config.toml
     assert!(result.is_ok());
@@ -180,7 +180,7 @@ account = "myaccount"
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then An insecure permissions error should be returned
     assert!(result.is_err());
@@ -206,7 +206,7 @@ validate_certs = true
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then Each value should be parsed to the correct Setting type
     assert!(result.is_ok());
@@ -222,7 +222,7 @@ fn empty_config_files() {
 
     // When sf_core loads connection named testconn
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());

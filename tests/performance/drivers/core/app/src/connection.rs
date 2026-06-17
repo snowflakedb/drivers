@@ -264,6 +264,7 @@ fn set_connection_option(
         .connection_set_options_blocking(ConnectionSetOptionsRequest {
             conn_handle: Some(*conn_handle),
             options,
+            no_connection_details: false,
         })
         .map_err(|e| format!("Connection option set failed ({}): {:?}", key, e))?;
     Ok(())

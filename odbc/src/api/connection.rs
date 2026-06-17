@@ -305,6 +305,9 @@ fn connect_with_params(
             .connection_set_options(ConnectionSetOptionsRequest {
                 conn_handle: Some(conn_handle),
                 options,
+                // ODBC always connects via a connection string / DSN, so there
+                // is no bare-connect default-profile fallback to trigger.
+                no_connection_details: false,
             })
             .await?;
 
@@ -322,6 +325,7 @@ fn connect_with_params(
                 .connection_set_options(ConnectionSetOptionsRequest {
                     conn_handle: Some(conn_handle),
                     options: follow_up,
+                    no_connection_details: false,
                 })
                 .await?;
             for warning in &response.warnings {

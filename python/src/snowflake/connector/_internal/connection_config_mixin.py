@@ -96,6 +96,19 @@ class ConnectionConfigMixin:
     fail loudly instead of being silently dropped.
     """
 
+    _no_connection_details: bool = field(default=False, repr=False)
+    """Wrapper-internal: ``True`` when ``connect()`` was called with no
+    connection options (the legacy ``is_kwargs_empty`` condition).
+
+    Set by :meth:`from_connection_args` from the raw caller input, *before* any
+    bookkeeping params (application, client_app_id, …) are injected — only the
+    wrapper can observe true emptiness.  Carried to sf_core as the typed
+    ``ConnectionSetOptionsRequest.no_connection_details`` field (not via the
+    options map), where it drives the default-profile fallback.  The leading
+    underscore keeps it out of :meth:`_all_field_names`, so it is neither
+    settable via ``from_kwargs`` nor forwarded through :meth:`to_options`.
+    """
+
     # -- Hand-written class constants -----------------------------------------
     _PYTHON_ONLY: ClassVar[frozenset[str]] = frozenset(
         {
@@ -309,6 +322,11 @@ class ConnectionConfigMixin:
 
         internal_app_name: Any = None
         internal_app_version: Any = None
+        # Bare connect() = caller passed no connection options at all.  This is
+        # the legacy ``is_kwargs_empty`` condition and the sole trigger for the
+        # default-profile fallback in sf_core.  Computed from the raw caller
+        # input below; an explicit ``config`` object is never a bare connect.
+        no_connection_details = False
         if config is None:
             if connection_name is not None:
                 kwargs["connection_name"] = connection_name
@@ -321,12 +339,20 @@ class ConnectionConfigMixin:
             # directly.
             internal_app_name = kwargs.pop("internal_application_name", None)
             internal_app_version = kwargs.pop("internal_application_version", None)
+
+            # Capture emptiness AFTER stripping wrapper-internal levers —
+            # matching the legacy driver's ``is_kwargs_empty = not kwargs``
+            # (computed before any bookkeeping injection).  ``connect(user="alice")``
+            # is NOT bare and must not silently load the default profile.
+            no_connection_details = connection_name is None and not kwargs
             config = cls.from_kwargs(**kwargs)
         else:
             if connection_name is not None:
                 config.connection_name = connection_name  # type: ignore[attr-defined]
             if connections_file_path is not None:
                 config.connections_file_path = connections_file_path
+
+        config._no_connection_details = no_connection_details
 
         # ``private_key`` is defined on the generated subclass (a PARAM_DEFS field);
         # mypy can't see it through the TypeVar, so the attribute access is suppressed.
