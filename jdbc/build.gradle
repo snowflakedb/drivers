@@ -27,7 +27,15 @@ targetCompatibility = '1.8'
 // Dependency resolution
 // ====================
 repositories {
-    mavenCentral()
+    // On Jenkins, resolve via Snowflake's Artifactory Maven Central proxy to avoid public Central rate limits.
+    if (System.getenv('JENKINS_HOME')) {
+        maven {
+            name = 'Snowflake internal Artifactory (Maven Central proxy)'
+            url 'https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/development-maven-virtual'
+        }
+    } else {
+        mavenCentral()
+    }
 }
 
 configurations {

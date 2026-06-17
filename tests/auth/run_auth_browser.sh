@@ -10,6 +10,10 @@
 # Usage:
 #   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh python
 #   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh odbc
+#   DOCKER_IMAGE=<image> ./tests/auth/run_auth_browser.sh jdbc
+#
+# Optional: DOCKER_RUN_EXTRA_ARGS — extra flags appended to docker run (e.g. "-e VAR"
+# from a CI caller that needs to forward env into the container).
 #
 # Local development (builds the image automatically):
 #   ./tests/auth/run_auth_browser_local.sh python
@@ -42,5 +46,6 @@ fi
 docker run --rm --platform "$PLATFORM" \
     -v "${REPO_ROOT}:/mnt/host" \
     -e WORKSPACE_ROOT=/mnt/host \
+    ${DOCKER_RUN_EXTRA_ARGS:-} \
     "${DOCKER_IMAGE}" \
     bash "/mnt/host/tests/auth/auth_browser_${WRAPPER}.sh"

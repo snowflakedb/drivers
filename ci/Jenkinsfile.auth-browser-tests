@@ -160,7 +160,11 @@ pipeline {
               withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                 sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
               }
-              sh label: 'Run JDBC auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh jdbc"
+              sh label: 'Run JDBC auth browser tests', script: """
+                DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} \\
+                DOCKER_RUN_EXTRA_ARGS='-e JENKINS_HOME' \\
+                ./tests/auth/run_auth_browser.sh jdbc
+              """
             }
           }
         }
