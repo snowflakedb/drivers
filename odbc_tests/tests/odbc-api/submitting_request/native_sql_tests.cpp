@@ -19,8 +19,6 @@
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Plain SQL passes through unchanged",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -36,8 +34,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Plain SQL passes through u
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Explicit TextLength1 instead of SQL_NTS",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -53,8 +49,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Explicit TextLength1 inste
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Zero TextLength1 returns empty string",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -62,10 +56,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Zero TextLength1 returns e
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), 0, out, sizeof(out), &outLen);
   REQUIRE(ret == SQL_SUCCESS);
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver ignores TextLength1=0 and copies the NUL-terminated input
-    //   verbatim, reporting outLen=8 for "SELECT 1"; the new driver honours
-    //   the explicit length and returns an empty string with outLen=0.
+  IODBC_ONLY {
+    // iODBC's DM ignores TextLength1=0 and forwards the NUL-terminated input
+    //   verbatim, so the driver sees "SELECT 1" and reports outLen=8. This is a
+    //   DM-level transformation that happens before either driver is invoked,
+    //   so it holds for both the old and new drivers. unixODBC and the Windows
+    //   DM forward the explicit length, so the driver returns an empty string.
     REQUIRE(outLen == 8);
     REQUIRE(std::string(reinterpret_cast<char*>(out)) == "SELECT 1");
   }
@@ -79,17 +75,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Zero TextLength1 returns e
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL OutStatementText returns length without writing output",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 12345"), SQL_NTS, nullptr, 0, &outLen);
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver flags the NULL output buffer as an implicit truncation
-    //   and surfaces SQL_SUCCESS_WITH_INFO; the new driver returns plain
-    //   SQL_SUCCESS because the caller explicitly asked for the length only.
+  IODBC_ONLY {
+    // iODBC's DM flags the NULL output buffer as an implicit truncation and
+    //   surfaces SQL_SUCCESS_WITH_INFO before the driver runs, for both the old
+    //   and new drivers. unixODBC and the Windows DM forward the length-only
+    //   request, so the driver returns plain SQL_SUCCESS.
     REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   }
   else {
@@ -102,8 +97,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL OutStatementText retu
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Truncation returns SQL_SUCCESS_WITH_INFO and 01004",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -123,8 +116,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Truncation returns SQL_SUC
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL TextLength2Ptr succeeds without crash",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -140,8 +131,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL TextLength2Ptr succee
 // This is not invoked by SQLNativeSql. Therefore, all escape sequences are wrongly passed through unchanged.
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Escape sequences pass through unchanged",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -181,8 +170,6 @@ TEST_CASE("SQLNativeSql: SQL_INVALID_HANDLE for null connection handle",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY009 for null InStatementText",
                  "[odbc-api][nativesql][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -196,8 +183,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY009 for null InStatement
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative TextLength1",
                  "[odbc-api][nativesql][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -219,8 +204,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative TextLen
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative BufferLength",
                  "[odbc-api][nativesql][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 

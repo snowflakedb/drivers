@@ -743,6 +743,33 @@ pub(crate) fn write_string_chars<E: OdbcEncoding>(
 }
 
 /// Write a string where `buffer_length` and `*string_length_ptr` count
+/// **characters** as `sql::Integer`.
+///
+/// Used by: `SQLNativeSql`, whose `BufferLength` / `TextLength2Ptr` are
+/// character counts per the ODBC spec, independent of the DM-side `SQLWCHAR`
+/// width. (Contrast `write_string_bytes_i32`, whose lengths are byte counts.)
+pub(crate) fn write_string_chars_i32<E: OdbcEncoding>(
+    string: &str,
+    buffer: *mut E::Char,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+    warnings: Option<&mut Warnings>,
+) {
+    let buf_units = if buffer_length < 0 {
+        0
+    } else {
+        buffer_length as usize
+    };
+    let (char_len, truncated) = E::write_string(string, buffer, buf_units);
+    if !string_length_ptr.is_null() {
+        unsafe { std::ptr::write(string_length_ptr, char_len as sql::Integer) };
+    }
+    if truncated && let Some(w) = warnings {
+        w.push(Warning::StringDataTruncated);
+    }
+}
+
+/// Write a string where `buffer_length` and `*string_length_ptr` count
 /// **bytes** as `sql::SmallInt`.
 ///
 /// For Narrow this is identical to `write_string_chars` (1 byte = 1

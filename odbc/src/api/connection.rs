@@ -2,7 +2,7 @@ use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::encoding::{
     OdbcEncoding, read_pre_connection_string_attr, read_string_from_pointer, write_string_bytes,
-    write_string_bytes_i32,
+    write_string_bytes_i32, write_string_chars_i32,
 };
 use crate::api::error::Required;
 use crate::api::error::{
@@ -679,7 +679,7 @@ pub fn native_sql<E: OdbcEncoding>(
         E::read_string(in_statement_text, text_length1)?
     };
 
-    write_string_bytes_i32::<E>(
+    write_string_chars_i32::<E>(
         &sql_text,
         out_statement_text,
         buffer_length,
