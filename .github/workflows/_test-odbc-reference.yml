@@ -1,0 +1,286 @@
+name: ODBC Reference-Driver Tests
+
+# Reusable workflow that runs odbc_tests with the released Snowflake ODBC
+# driver as the device under test (the "reference" driver), so regressions
+# in our test harness vs. the canonical reference implementation are caught
+# independently of UD-ODBC changes.
+
+on:
+  workflow_call:
+
+jobs:
+  odbc_tests_reference:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            driver_lib: libsfodbc.so
+            driver_manager: unixodbc
+          - os: macos-latest
+            name: macOS Universal
+            driver_lib: libSnowflake.dylib
+            driver_manager: unixodbc
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
+            driver_manager: unixodbc
+          - os: macos-latest
+            name: macOS Universal + iODBC
+            driver_lib: libSnowflake.dylib
+            driver_manager: iodbc
+    runs-on: ${{ matrix.os }}
+    name: odbc_reference_tests (${{ matrix.name }})
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Restore test dependencies cache
+        id: test-deps-cache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: test-deps
+
+      - name: Restore ccache
+        id: ccache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: ccache
+
+      # VCPKG_VER must be in the cache key because vcpkg's package
+      # ABI hashes change with the runner's vcpkg version.
+      - name: Capture vcpkg version (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Restore vcpkg binary cache (Windows)
+        if: matrix.os == 'windows-latest'
+        id: vcpkg-cache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: vcpkg
+          key-suffix: x64-windows
+
+      - name: Restore Homebrew cache (macOS)
+        if: matrix.os == 'macos-latest'
+        id: brew-cache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: brew
+
+      - name: Install build prerequisites (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+
+          Invoke-Checked "python -m pip install cmake" { python -m pip install cmake>=4.0.3 }
+          cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
+          New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
+          # VCPKG_BINARY_SOURCES (workflow-level env) points at this directory;
+          # vcpkg refuses to use a missing path silently — create it before install.
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
+
+          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+
+      - name: Install build prerequisites (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev ccache
+
+          python3 -m pip install 'cmake>=4.0.3'
+          cmake --version
+
+      - name: Install build prerequisites (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          # Skip Homebrew's self-update (~30-60s) — we only need stable formulae.
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -euxo pipefail
+          # cmake via the official Kitware pip wheel, in a dedicated venv so we
+          # don't fight macos-latest's PEP-668 externally-managed python3. See
+          # _test-odbc.yml's macOS install for the same rationale.
+          CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
+          python3 -m venv "$CMAKE_VENV"
+          "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
+          "$CMAKE_VENV/bin/pip" install 'cmake>=4.0.3'
+          echo "$CMAKE_VENV/bin" >> "$GITHUB_PATH"
+          "$CMAKE_VENV/bin/cmake" --version
+          # unixodbc is the default DM our test harness links against; libiodbc
+          # is installed so the iODBC matrix cell can use it (cheap no-op on
+          # cache hit). ccache speeds up _deps rebuilds; ninja is the cmake
+          # generator used by run_tests_unix.sh. The chosen DM is selected by
+          # `DRIVER_MANAGER` when invoking run_tests_unix.sh.
+          brew install unixodbc libiodbc ccache ninja
+          echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> "$GITHUB_ENV"
+
+      - name: Install reference ODBC driver
+        uses: ./.github/actions/install-reference-odbc
+        with:
+          driver-manager: ${{ matrix.driver_manager }}
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Run Old ODBC tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        id: run_odbc_ref_tests_linux
+        run: |
+          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
+        env:
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Run flaky Old ODBC tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Run Old ODBC tests (macOS)
+        # /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib is the
+        # documented driver path produced by the released macuniversal .pkg
+        # (see docs.snowflake.com → odbc-mac). The .pkg writes a universal
+        # binary that loads on both x86_64 and arm64 hosts, so a single
+        # DRIVER_PATH covers any macos-latest runner architecture.
+        if: matrix.os == 'macos-latest'
+        id: run_odbc_ref_tests_macos
+        run: |
+          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
+        env:
+          DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+          DRIVER_MANAGER: ${{ matrix.driver_manager }}
+
+      - name: Run flaky Old ODBC tests (macOS)
+        if: matrix.os == 'macos-latest'
+        continue-on-error: true
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+          DRIVER_MANAGER: ${{ matrix.driver_manager }}
+          SF_RUNNING_IODBC_TEST_SUITE: ${{ matrix.driver_manager == 'iodbc' && '1' || '' }}
+
+      - name: Run Old ODBC tests (Windows)
+        if: matrix.os == 'windows-latest'
+        id: run_odbc_ref_tests_windows
+        shell: pwsh
+        run: |
+          $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
+          $env:PARAMETER_PATH = "$(pwd)\parameters.json"
+          $env:DRIVER_TYPE = "OLD"
+          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
+          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
+
+      - name: Run flaky Old ODBC tests (Windows)
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        shell: pwsh
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Cleanup orphaned test schemas (Linux)
+        if: always() && matrix.os == 'ubuntu-latest'
+        run: |
+          TOOL="odbc_tests/cmake-build/tools/schema_tool"
+          if [[ -x "$TOOL" ]]; then
+            "$TOOL" cleanup --age-days 2
+          else
+            echo "schema_tool not found (build may have failed), skipping cleanup"
+          fi
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+
+      - name: Cleanup orphaned test schemas (macOS)
+        if: always() && matrix.os == 'macos-latest'
+        run: |
+          TOOL="odbc_tests/cmake-build/tools/schema_tool"
+          if [[ -x "$TOOL" ]]; then
+            "$TOOL" cleanup --age-days 2
+          else
+            echo "schema_tool not found (build may have failed), skipping cleanup"
+          fi
+        # On the iODBC matrix cell `schema_tool` is linked against libiodbc and
+        # opens its DSN through the same `UnixConfigInstallation` flow as the
+        # tests. That flow only publishes `ODBCINSTINI` (where the per-process
+        # `SnowflakeDriver_<random>` alias lives) when SF_RUNNING_IODBC_TEST_SUITE
+        # is set — `run_tests_unix.sh` does that for the test step, but this
+        # cleanup step shells `schema_tool` directly and must re-export the
+        # flag, otherwise iODBC falls back to `~/Library/ODBC/odbcinst.ini`,
+        # cannot resolve the alias, and `SQLDriverConnect` fails with IM003.
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
+          SF_RUNNING_IODBC_TEST_SUITE: ${{ matrix.driver_manager == 'iodbc' && '1' || '' }}
+
+      - name: Save test dependencies cache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: test-deps
+          cache-hit: ${{ steps.test-deps-cache-ref.outputs.cache-hit }}
+
+      - name: Save ccache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: ccache
+          cache-hit: ${{ steps.ccache-ref.outputs.cache-hit }}
+
+      - name: Save vcpkg binary cache (Windows)
+        if: always() && matrix.os == 'windows-latest'
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: vcpkg
+          key-suffix: x64-windows
+          cache-hit: ${{ steps.vcpkg-cache-ref.outputs.cache-hit }}
+
+      - name: Save Homebrew cache (macOS)
+        if: always() && matrix.os == 'macos-latest'
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: brew
+          cache-hit: ${{ steps.brew-cache-ref.outputs.cache-hit }}

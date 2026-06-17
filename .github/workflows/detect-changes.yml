@@ -1,0 +1,402 @@
+name: Detect Changes
+
+on:
+  workflow_call:
+    outputs:
+      # Raw detection outputs
+      core:
+        description: "True if core Rust code changed"
+        value: ${{ jobs.detect.outputs.core }}
+      jdbc:
+        description: "True if JDBC wrapper code changed"
+        value: ${{ jobs.detect.outputs.jdbc }}
+      odbc:
+        description: "True if ODBC wrapper code changed"
+        value: ${{ jobs.detect.outputs.odbc }}
+      python:
+        description: "True if Python wrapper code changed"
+        value: ${{ jobs.detect.outputs.python }}
+      python_packaging:
+        description: "True if Python packaging files changed"
+        value: ${{ jobs.detect.outputs.python_packaging }}
+      nodejs:
+        description: "True if Node.js wrapper code changed"
+        value: ${{ jobs.detect.outputs.nodejs }}
+      shared:
+        description: "True if shared config/build files changed"
+        value: ${{ jobs.detect.outputs.shared }}
+      docs_only:
+        description: "True if only documentation changed"
+        value: ${{ jobs.detect.outputs.docs_only }}
+      # "Should run" outputs — GHA always runs ALL unit tests; these flags
+      # control whether to run at all (skip when only unrelated files changed).
+      # Per-feature test selection is handled by Buildkite via ci/select_tests.py.
+      run_jdbc:
+        description: "True if JDBC tests should run"
+        value: ${{ jobs.detect.outputs.run_jdbc }}
+      run_odbc:
+        description: "True if ODBC tests should run"
+        value: ${{ jobs.detect.outputs.run_odbc }}
+      run_python:
+        description: "True if Python tests should run"
+        value: ${{ jobs.detect.outputs.run_python }}
+      run_python_packaging:
+        description: "True if Python packaging tests should run"
+        value: ${{ jobs.detect.outputs.run_python_packaging }}
+      run_nodejs:
+        description: "True if Node.js tests should run"
+        value: ${{ jobs.detect.outputs.run_nodejs }}
+      run_rust_core:
+        description: "True if Rust Core tests should run"
+        value: ${{ jobs.detect.outputs.run_rust_core }}
+      run_jdbc_reference:
+        description: "True if JDBC reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_jdbc_reference }}
+      run_odbc_reference:
+        description: "True if ODBC reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_odbc_reference }}
+      run_python_reference:
+        description: "True if Python reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_python_reference }}
+      run_nodejs_reference:
+        description: "True if Node.js reference tests should run (e2e tests changed)"
+        value: ${{ jobs.detect.outputs.run_nodejs_reference }}
+      run_odbc_packaging:
+        description: "True if ODBC packaging should run"
+        value: ${{ jobs.detect.outputs.run_odbc_packaging }}
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      # Raw outputs
+      core: ${{ steps.filter.outputs.core }}
+      jdbc: ${{ steps.filter.outputs.jdbc }}
+      odbc: ${{ steps.filter.outputs.odbc }}
+      python: ${{ steps.filter.outputs.python }}
+      python_packaging: ${{ steps.filter.outputs.python_packaging }}
+      nodejs: ${{ steps.filter.outputs.nodejs }}
+      shared: ${{ steps.filter.outputs.shared }}
+      docs_only: ${{ steps.computed.outputs.docs_only }}
+      # Pre-computed "should run" outputs
+      run_jdbc: ${{ steps.computed.outputs.run_jdbc }}
+      run_odbc: ${{ steps.computed.outputs.run_odbc }}
+      run_python: ${{ steps.computed.outputs.run_python }}
+      run_python_packaging: ${{ steps.computed.outputs.run_python_packaging }}
+      run_nodejs: ${{ steps.computed.outputs.run_nodejs }}
+      run_rust_core: ${{ steps.computed.outputs.run_rust_core }}
+      run_jdbc_reference: ${{ steps.computed.outputs.run_jdbc_reference }}
+      run_odbc_reference: ${{ steps.computed.outputs.run_odbc_reference }}
+      run_python_reference: ${{ steps.computed.outputs.run_python_reference }}
+      run_nodejs_reference: ${{ steps.computed.outputs.run_nodejs_reference }}
+      run_odbc_packaging: ${{ steps.computed.outputs.run_odbc_packaging }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for comparing commits
+
+      - name: Detect changed files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          # `list-files: json` makes each filter expose `<filter>_files` as
+          # a JSON array of matching paths. The computed step below uses
+          # `all_files` (from the catch-all `all` filter) to verify every
+          # changed path against the documentation patterns explicitly.
+          list-files: 'json'
+          # Each language filter explicitly includes:
+          #   1. its source directories, and
+          #   2. the GHA workflows + composite actions it actually consumes.
+          # The `shared` filter lists only truly cross-cutting items (the
+          # detect-changes workflow itself, the universally-used cargo-cache
+          # action, the Rust workspace root, shared test infra).  Editing one
+          # language's CI — or an admin-only workflow like labeler.yml —
+          # therefore no longer retriggers every other language's CI.
+          filters: |
+            core:
+              - 'sf_core/**'
+              - 'sf_mini_core/**'
+              - 'sf_mini_core_static/**'
+              - 'proto_utils/**'
+              - 'proto_generator/**'
+              - 'protobuf/**'
+              - 'thrift/**'
+              - 'tests/definitions/core/**'
+              - '.github/workflows/test-rust-core.yml'
+              - '.github/actions/setup-msvc/**'
+              - '.github/actions/setup-windows-openssl/**'
+              - 'ci/test_matrix/models/core.py'
+              - 'ci/test_matrix/mappings/core.py'
+            jdbc:
+              - 'jdbc/**'
+              - 'jdbc_bridge/**'
+              - 'tests/definitions/jdbc/**'
+              - '.github/workflows/test-jdbc.yml'
+              - 'scripts/validate_behavior_differences.py'
+            jdbc_e2e_integ:
+              - 'jdbc/src/test/java/net/snowflake/client/api/**'
+              - 'jdbc/src/test/java/net/snowflake/jdbc/**'
+              - 'jdbc/src/test/resources/**'
+              - 'jdbc/build.gradle'
+            odbc:
+              - 'odbc/**'
+              - 'odbc_tests/**'
+              - 'tests/definitions/odbc/**'
+              - 'scripts/odbc/**'
+              - 'scripts/old_odbc/**'
+              - '.github/workflows/test-odbc.yml'
+              - '.github/actions/setup-msvc/**'
+              - '.github/actions/setup-windows-openssl/**'
+              - '.github/actions/vcpkg-version/**'
+              - 'ci/test_matrix/models/odbc.py'
+              - 'ci/test_matrix/mappings/odbc.py'
+            odbc_e2e_integ:
+              - 'odbc_tests/tests/e2e/**'
+              - 'odbc_tests/tests/integration/**'
+              - 'odbc_tests/CMakeLists.txt'
+              - 'odbc_tests/tests/CMakeLists.txt'
+              - 'odbc_tests/common/**'
+              - 'scripts/validate_behavior_differences.py'
+              - 'scripts/odbc/run_tests_unix.sh'
+              - 'scripts/odbc/run_tests_windows.ps1'
+              - 'ci/reference-odbc-version'
+              - 'ci/reference-odbc-checksums'
+              - 'ci/test_matrix/models/odbc.py'
+              - 'ci/test_matrix/mappings/odbc.py'
+            odbc_packaging:
+              - 'odbc/installer/**'
+              - 'ci/Dockerfile.rocky-rpm-build'
+              - 'ci/Dockerfile.debian-deb-build'
+              - '.github/workflows/_build-odbc-packages.yml'
+            python:
+              - 'python/**'
+              - 'scripts/validate_behavior_differences.py'
+              - 'pep249_dbapi/**'
+              - 'tests/definitions/python/**'
+              - 'scripts/old_python/**'
+              - '.github/workflows/test-python.yml'
+              - '.github/workflows/_build-python-wheels.yml'
+              - '.github/workflows/build-python-release.yml'
+              - '.github/actions/setup-windows-openssl/**'
+              - 'ci/test_matrix/models/python.py'
+              - 'ci/test_matrix/mappings/python.py'
+            python_e2e_integ:
+              - 'python/tests/e2e/**'
+              - 'python/tests/integ/**'
+              - 'python/tests/*.py'
+              - 'python/tests/helpers/**'
+              - '.github/workflows/test-python.yml'
+              - 'ci/test_matrix/models/python.py'
+              - 'ci/test_matrix/mappings/python.py'
+            python_packaging:
+              - 'python/pyproject.toml'
+              - 'python/hatch_build.py'
+            nodejs:
+              - 'nodejs/**'
+              - '.github/workflows/test-nodejs.yml'
+              - 'scripts/validate_behavior_differences.py'
+            nodejs_e2e_integ:
+              - 'nodejs/tests/e2e/**'
+              - '.github/workflows/test-nodejs.yml'
+            shared:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build_common.rs'
+              - 'rust-toolchain.toml'
+              - 'error_trace/**'
+              - 'error_trace_derive/**'
+              - 'odbc_trace_tool/**'
+              - 'tests/!(performance|tests_format_validator|test_coverage_report|definitions)/**'
+              - 'tests/definitions/shared/**'
+              - '.github/workflows/detect-changes.yml'
+              - '.github/actions/cargo-cache/**'
+              - '.buildkite/**'
+              - 'scripts/decode_secrets.*'
+              - 'scripts/shared/**'
+              # Truly-shared `ci/` files only. Negation patterns ('!path') are
+              # NOT used here: dorny/paths-filter@v3 runs with the default
+              # `predicate-quantifier: some`, which treats negations as
+              # standalone matches, not exclusions — every unrelated file
+              # would match a `!foo.py` rule and flip `shared=true`. List
+              # truly-shared paths explicitly. Per-driver `ci/test_matrix/
+              # {models,mappings}/<driver>.py` belong in each language's
+              # filter above; they are intentionally not listed here.
+              - 'ci/Dockerfile.*'
+              - 'ci/select_tests.py'
+              - 'ci/test-matrix.yml'
+              - 'ci/test_revocation.sh'
+              - 'ci/upload_test_results.sh'
+              - 'ci/test_matrix/generate_matrix.py'
+              - 'ci/test_matrix/test_generate_matrix.py'
+              - 'ci/test_matrix/mappings/__init__.py'
+              - 'ci/test_matrix/mappings/shared.py'
+              - 'ci/test_matrix/models/__init__.py'
+            # Catch-all used by the docs_only computation.
+            all:
+              - '**'
+
+      - name: Compute combined conditions
+        id: computed
+        run: |
+          if [[ "${{ github.repository_owner }}" != "snowflakedb" ]]; then
+            IS_SNOWFLAKE_ENG=true
+          else
+            IS_SNOWFLAKE_ENG=false
+          fi
+
+          # docs_only is true if every modified file is a documentation
+          # file (path matches `**/*.md`, equals `LICENSE`, or equals
+          # `.github/CODEOWNERS`).
+          #
+          # Iterate the full changed-file list and verify
+          # each path explicitly against the documentation patterns.
+          DOCS_ONLY=$(jq -r '
+            (length > 0)
+            and all(.[];
+              test("\\.md$")
+              or . == "LICENSE"
+              or . == ".github/CODEOWNERS"
+            )
+          ' <<<'${{ steps.filter.outputs.all_files }}')
+          echo "docs_only=$DOCS_ONLY" >> $GITHUB_OUTPUT
+
+          # JDBC should run if: jdbc OR core OR shared changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.jdbc }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
+            echo "run_jdbc=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_jdbc=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ODBC should run if: odbc OR core OR shared changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.odbc }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
+            echo "run_odbc=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_odbc=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Python should run if: python OR core OR shared changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.python }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
+            echo "run_python=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_python=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Packaging should run if: packaging files changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.python_packaging }}" == "true" ]]; then
+            echo "run_python_packaging=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_python_packaging=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Rust Core should run if: core OR shared changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
+            echo "run_rust_core=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_rust_core=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Node.js should run only if files inside nodejs/** changed.
+          # Intentionally excludes `core` and `shared` for now: the Node.js
+          # driver is a fresh skeleton with no real integration yet, so
+          # changes to shared infra do not trigger nodejs tests.
+          # Broaden this rule (add `core`/`shared`) once the wrapper actually depends on them.
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs }}" == "true" ]]; then
+            echo "run_nodejs=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nodejs=false" >> $GITHUB_OUTPUT
+          fi
+
+          # JDBC reference tests should run if: e2e/integ tests changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.jdbc_e2e_integ }}" == "true" ]]; then
+            echo "run_jdbc_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_jdbc_reference=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ODBC reference tests should run if: e2e/integ tests changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.odbc_e2e_integ }}" == "true" ]]; then
+            echo "run_odbc_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_odbc_reference=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Python reference tests should run if: e2e/integ tests changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.python_e2e_integ }}" == "true" ]]; then
+            echo "run_python_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_python_reference=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Node.js reference tests should run if: e2e tests changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs_e2e_integ }}" == "true" ]]; then
+            echo "run_nodejs_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nodejs_reference=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ODBC packaging should run if installer/packaging files changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.odbc_packaging }}" == "true" ]]; then
+            echo "run_odbc_packaging=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_odbc_packaging=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ "$DOCS_ONLY" == "true" ]]; then
+            for v in run_jdbc run_odbc run_python run_python_packaging \
+                     run_rust_core run_nodejs run_jdbc_reference \
+                     run_odbc_reference run_python_reference \
+                     run_nodejs_reference run_odbc_packaging; do
+              echo "$v=false" >> $GITHUB_OUTPUT
+            done
+          fi
+
+      - name: Output summary
+        run: |
+          echo "### Change Detection Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Files Changed" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Changed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Core | ${{ steps.filter.outputs.core }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDBC | ${{ steps.filter.outputs.jdbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC | ${{ steps.filter.outputs.odbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC Packaging | ${{ steps.filter.outputs.odbc_packaging }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python | ${{ steps.filter.outputs.python }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Packaging | ${{ steps.filter.outputs.python_packaging }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | ${{ steps.filter.outputs.nodejs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Tests to Run (GHA — all unit tests)" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Should Run |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust Core | ${{ steps.computed.outputs.run_rust_core }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDBC | ${{ steps.computed.outputs.run_jdbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDBC Reference | ${{ steps.computed.outputs.run_jdbc_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC | ${{ steps.computed.outputs.run_odbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC Reference | ${{ steps.computed.outputs.run_odbc_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC Packaging | ${{ steps.computed.outputs.run_odbc_packaging }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Reference | ${{ steps.computed.outputs.run_python_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python | ${{ steps.computed.outputs.run_python }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Packaging | ${{ steps.computed.outputs.run_python_packaging }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | ${{ steps.computed.outputs.run_nodejs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js Reference | ${{ steps.computed.outputs.run_nodejs_reference }} |" >> $GITHUB_STEP_SUMMARY
