@@ -52,6 +52,10 @@ try {
     if ($env:VCPKG_INSTALLATION_ROOT) {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
     }
+    if (Get-Command lld-link.exe -ErrorAction SilentlyContinue) {
+        $cmakeArgs += "-DCMAKE_LINKER_TYPE=LLD"
+        Write-Host "run_tests: using lld-link"
+    }
     cmake @cmakeArgs .
 
     if (Get-Command ccache -ErrorAction SilentlyContinue) {
