@@ -122,7 +122,9 @@ class Connection(ConnectionMixin):
         )
 
         if options:
-            response = core_driver.connection_set_options(conn_handle=self.conn_handle, options=options)
+            response = core_driver.connection_set_options(
+                conn_handle=self.conn_handle, options=options, no_connection_details=self.config._no_connection_details
+            )
             for warning in response.warnings:
                 warnings.warn(warning.message, stacklevel=2)
 

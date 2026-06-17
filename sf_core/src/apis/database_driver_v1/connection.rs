@@ -506,11 +506,16 @@ impl DatabaseDriverV1 {
         &self,
         handle: Handle,
         options: HashMap<String, Setting>,
+        no_connection_details: bool,
     ) -> Result<Vec<ValidationIssue>, ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
                 let post = conn.is_post_connect();
+                // Latch the bare-connect signal so a later non-bare set_options
+                // call cannot clear it. Only the wrapper can compute this (it
+                // alone sees the raw caller input before bookkeeping is added).
+                conn.no_connection_details |= no_connection_details;
                 let (resolved, issues) = resolve_options(options);
                 let error_messages: Vec<String> = issues
                     .iter()
@@ -766,6 +771,12 @@ pub struct WrapperIdentity {
 pub struct Connection {
     /// Explicit connection-string / API options (merged as the top layer in [`resolver::resolve`]).
     pub(crate) connection_seed: ParamStore,
+    /// True when the caller invoked a bare `connect()` with no connection
+    /// options — the wrapper's `is_kwargs_empty` signal, received via
+    /// `ConnectionSetOptionsRequest::no_connection_details`. Drives the
+    /// default-profile fallback in [`resolver::resolve`]. Latched on, so a
+    /// later non-bare `set_options` call cannot clear it.
+    pub(crate) no_connection_details: bool,
     /// Resolved settings snapshot captured at successful login (defaults + files + seed).
     pub(crate) resolved_connect: Option<ParamStore>,
     /// Typed session overrides set after connect (session scope only).
@@ -840,6 +851,7 @@ impl Connection {
     pub fn new() -> Self {
         Connection {
             connection_seed: ParamStore::new(),
+            no_connection_details: false,
             resolved_connect: None,
             session_overrides: ParamStore::new(),
             tokens: Arc::new(AsyncRwLock::new(None)),
@@ -913,7 +925,7 @@ impl Connection {
     }
 
     fn resolved_settings(&self) -> Result<ParamStore, crate::config::ConfigError> {
-        resolver::resolve(&self.connection_seed)
+        resolver::resolve(&self.connection_seed, self.no_connection_details)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2278,6 +2290,49 @@ mod tests {
             conn.connection_seed
                 .get_bool(param_names::LOG_QUERY_PARAMETERS),
             Some(false)
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_options_records_no_connection_details_flag() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        // A bare connect() arrives as set_options with the flag set.
+        ds.connection_set_options(handle, HashMap::new(), true)
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert!(conn.no_connection_details);
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_options_latches_no_connection_details_flag() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        // First call marks the connection as bare; a later non-bare call must
+        // not clear the latch.
+        ds.connection_set_options(handle, HashMap::new(), true)
+            .await
+            .unwrap();
+        let mut later = HashMap::new();
+        later.insert("user".to_owned(), Setting::String("alice".to_owned()));
+        ds.connection_set_options(handle, later, false)
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert!(
+            conn.no_connection_details,
+            "no_connection_details must stay latched across later set_options calls"
         );
         drop(conn);
         ds.connection_release(handle).unwrap();

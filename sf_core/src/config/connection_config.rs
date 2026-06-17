@@ -2271,7 +2271,7 @@ mod tests {
             config_file: None,
             connections_file: None,
         };
-        let resolved = resolver::resolve_with_paths(&explicit, &paths).unwrap();
+        let resolved = resolver::resolve_with_paths(&explicit, &paths, false).unwrap();
         let config = ConnectionConfig::build(&resolved).unwrap();
 
         assert_eq!(config.server.account, "myaccount");

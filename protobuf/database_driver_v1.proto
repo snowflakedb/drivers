@@ -721,6 +721,15 @@ message ConfigSection {
 message ConnectionSetOptionsRequest {
   ConnectionHandle conn_handle = 1;
   map<string, ConfigSetting> options = 2;
+  // True when the caller invoked connect() with zero connection-identifying
+  // options (the legacy Python driver's `is_kwargs_empty` condition). The core
+  // then falls back to the default connection profile from connections.toml,
+  // honoring SNOWFLAKE_DEFAULT_CONNECTION_NAME and config.toml's
+  // `default_connection_name`. Language wrappers MUST compute this from the
+  // raw caller input *before* injecting any bookkeeping params (application,
+  // client_app_id, …); a value of `false` (the default) means "caller supplied
+  // something", so do not load the default profile.
+  bool no_connection_details = 3;
 }
 
 message ConnectionSetOptionsResponse {

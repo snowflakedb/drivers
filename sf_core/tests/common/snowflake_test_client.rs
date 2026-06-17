@@ -526,6 +526,7 @@ impl SnowflakeTestClient {
                 options: [(option_name.to_string(), option_value.to_vec().into())]
                     .into_iter()
                     .collect(),
+                no_connection_details: false,
             })
             .unwrap();
     }
@@ -549,6 +550,7 @@ impl SnowflakeTestClient {
             .connection_set_options_blocking(ConnectionSetOptionsRequest {
                 conn_handle: Some(self.conn_handle),
                 options: [(key.to_string(), setting)].into_iter().collect(),
+                no_connection_details: false,
             })
             .unwrap();
     }

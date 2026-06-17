@@ -172,7 +172,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let warnings = self
             .driver
-            .connection_set_options(conn_handle.into(), options)
+            .connection_set_options(conn_handle.into(), options, input.no_connection_details)
             .await
             .to_protobuf()?;
 

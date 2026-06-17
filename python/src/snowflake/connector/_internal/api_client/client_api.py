@@ -334,8 +334,13 @@ class CoreDriver:
         self,
         conn_handle: ConnectionHandle,
         options: dict[str, ConfigSetting],
+        no_connection_details: bool = False,
     ) -> ConnectionSetOptionsResponse:
-        request = ConnectionSetOptionsRequest(conn_handle=conn_handle, options=options)
+        request = ConnectionSetOptionsRequest(
+            conn_handle=conn_handle,
+            options=options,
+            no_connection_details=no_connection_details,
+        )
         return self.client.connection_set_options(request)
 
     def connection_set_session_parameters(
@@ -611,9 +616,14 @@ class AsyncCoreDriver:
         self,
         conn_handle: ConnectionHandle,
         options: dict[str, ConfigSetting],
+        no_connection_details: bool = False,
     ) -> ConnectionSetOptionsResponse:
         return await self.client.connection_set_options(
-            ConnectionSetOptionsRequest(conn_handle=conn_handle, options=options)
+            ConnectionSetOptionsRequest(
+                conn_handle=conn_handle,
+                options=options,
+                no_connection_details=no_connection_details,
+            )
         )
 
     async def connection_set_session_parameters(
