@@ -1,3 +1,5 @@
+USE ROLE TESTROLE_UNIVERSAL;
+
 -- =============================================================================
 -- Readonly Metadata Test Database Setup
 -- =============================================================================
@@ -249,6 +251,30 @@ SELECT
   NULL, NULL, NULL,
   NULL, NULL, NULL,
   NULL;
+
+-- -----------------------------------------------------------------------------
+-- ALLDATATYPES_NAV -- timezone-safe projection for Power Query Navigator flows
+-- (PQ-Nav-1). Navigator emits a bare `SELECT * FROM <object>` with no place to
+-- inject a SQL-level dodge, and the generated replay test rebuilds its own
+-- connection string from PARAMETER_PATH (so a capture-time TIMEZONE=UTC DSN
+-- setting never reaches CI). CI therefore replays under the account-default
+-- session timezone. Shifting TSLTZ/TSTZ back one day keeps the BOUNDARY row's
+-- rendered wall-clock <= year 9999 under every real session timezone (max
+-- eastward offset is +14h < 24h), so the legacy-driver capture reproduces on
+-- the new driver regardless of CI timezone. Column types are preserved
+-- (DATEADD on TIMESTAMP_LTZ/TZ returns the same type); NUM38 is intentionally
+-- NOT cast to VARCHAR here -- PQ's W-API fetch path does not hit ADO/OLE DB's
+-- DBTYPE_NUMERIC precision-28 cap, so PQ-Nav-1 still exercises the real
+-- NUMBER(38,0) -> numeric conversion. The full year-9999 LTZ/TZ contract is
+-- owned by manual E2E-1.
+-- -----------------------------------------------------------------------------
+
+CREATE VIEW ALLDATATYPESNAV AS
+SELECT * REPLACE(
+  DATEADD('day', -1, TSLTZ) AS TSLTZ,
+  DATEADD('day', -1, TSTZ)  AS TSTZ
+)
+FROM ALLDATATYPES;
 
 -- -----------------------------------------------------------------------------
 -- LARGELOBS rows. FULL exercises chunked LOB streaming through SQLGetData;
