@@ -53,6 +53,9 @@ EXCLUDED_PATHS = [
 # ships with a `github.repository ==` guard so the copy left on the
 # internal repo is a no-op.
 #
+# `mirror-notify-pr.yml` posts a Slack announcement when a contributor
+# opens a PR on the mirror; same repository-guard pattern.
+#
 # The pre-commit and validations workflows use only public runners and no
 # internal secrets, so they run on mirror PRs without modification. The
 # cargo-cache composite action is a local dependency of both.
@@ -62,6 +65,7 @@ EXCLUDED_PATHS = [
 # internal repo.
 EXCLUDED_PATH_OVERRIDES = [
     ".github/workflows/close-imported-pr.yml",
+    ".github/workflows/mirror-notify-pr.yml",
     ".github/workflows/pre-commit.yml",
     ".github/workflows/validations.yml",
     ".github/actions/cargo-cache/action.yml",
