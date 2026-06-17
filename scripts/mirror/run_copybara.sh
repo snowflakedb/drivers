@@ -101,13 +101,24 @@ GITCONFIG
 # `java -jar copybara_deploy.jar` ENTRYPOINT. The repo is mounted at
 # /workdir (Copybara's working dir) and the scratch HOME at /root so the
 # credentials file is picked up by git operations inside the container.
+#
+# Copybara exits 4 (NO_OP) when there are no new changes to migrate — the
+# steady state whenever the source ref hasn't advanced since the last run.
+# That is a success, not a failure, so it is normalized to exit 0 here;
+# every other non-zero code propagates.
 run_copybara() {
+  local rc=0
   docker run --rm \
     -v "${REPO_ROOT}:/workdir" \
     -v "${TMP_HOME}:/root" \
     -w /workdir \
     "${COPYBARA_IMAGE}" \
-    "$@"
+    "$@" || rc=$?
+  if [ "${rc}" -eq 4 ]; then
+    echo "Copybara: no new changes (NO_OP, exit 4) — treating as success."
+    return 0
+  fi
+  return "${rc}"
 }
 
 build_image_if_missing
@@ -141,7 +152,18 @@ case "${SUBCOMMAND}" in
     elif [ -n "${LAST_REV}" ]; then
       echo "::warning:: last_rev=${LAST_REV} ignored — only applied when a single branch is dispatched"
     fi
-    run_copybara migrate ci/mirroring/copy.bara.sky mirror \
+    # "${BRANCH}" is the positional source_ref (migrate <config> <workflow>
+    # [source_ref]); it overrides the `ref = "main"` baked into copy.bara.sky
+    # so the release branch — not main — is mirrored. Copybara has no `--ref`
+    # flag, so the ref MUST be positional here.
+    #
+    # NOTE: a brand-new release branch must already exist on the mirror, or
+    # Copybara aborts ("GitOrigin-RevId could not be found"). The GitHub
+    # Actions workflow (.github/workflows/mirror.yml) seeds it automatically
+    # from the mirrored fork-point commit; when running this script by hand
+    # against a not-yet-mirrored branch, seed it first (or pass --init-history
+    # via single_ref/last_rev for a full-history replay).
+    run_copybara migrate ci/mirroring/copy.bara.sky mirror "${BRANCH}" \
       --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/universal-driver.git" \
       --git-destination-push="${BRANCH}" \
       --force \
@@ -167,6 +189,11 @@ case "${SUBCOMMAND}" in
     #
     # Copybara reads GITHUB_TOKEN to call the mirror's API for PR metadata;
     # forward DRIVER_MIRROR_TOKEN_SNOWFLAKEDB into the container under that name.
+    #
+    # This path uses its own `docker run` (it needs an extra -e GITHUB_TOKEN)
+    # rather than run_copybara(), so it repeats the exit-4 (NO_OP) handling:
+    # "nothing to import" is success, not failure.
+    rc=0
     docker run --rm \
       -v "${REPO_ROOT}:/workdir" \
       -v "${TMP_HOME}:/root" \
@@ -176,7 +203,12 @@ case "${SUBCOMMAND}" in
       migrate ci/mirroring/copy.bara.sky import "${PR_NUMBER}" \
         --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
         --nogit-destination-rebase \
-        --force
+        --force || rc=$?
+    if [ "${rc}" -eq 4 ]; then
+      echo "Copybara: nothing to import (NO_OP, exit 4) — treating as success."
+      rc=0
+    fi
+    exit "${rc}"
     ;;
 
   *)

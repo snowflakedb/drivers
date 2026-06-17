@@ -117,6 +117,7 @@ jobs:
             echo "::notice::Dry run requested — Copybara will not push to the destination."
             extra_args+=(--dry-run)
           fi
+          set +e
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workdir" \
             -v "${HOME}/.gitconfig:/root/.gitconfig:ro" \
@@ -125,6 +126,19 @@ jobs:
             --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/universal-driver.git" \
             --force \
             "${extra_args[@]}"
+          rc=$?
+          set -e
+          # Copybara exits 4 (NO_OP) when there are no new changes to migrate —
+          # the steady state whenever main hasn't advanced since the last run.
+          # Always treat it as success; only other non-zero codes are failures.
+          if [[ "${rc}" -eq 0 ]]; then
+            echo "Copybara: mirrored new changes to main."
+          elif [[ "${rc}" -eq 4 ]]; then
+            echo "::notice::Copybara: no new changes to mirror (NO_OP, exit 4) — treating as success."
+          else
+            echo "::error::Copybara failed for main (exit ${rc})."
+            exit "${rc}"
+          fi
 
   mirror-release-branches:
     name: Mirror release/* branches
@@ -219,23 +233,94 @@ jobs:
             echo "::notice::Dry run requested — Copybara will not push to the destination."
             extra_args+=(--dry-run)
           fi
+
+          DEST_URL="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/universal-driver.git"
+          # actions/checkout injects a local `http.https://github.com/.extraheader`
+          # carrying the github-actions[bot] token. That header OVERRIDES the
+          # x-access-token credentials embedded in DEST_URL, so host-side git
+          # pushes authenticate as the bot — which has no write access to
+          # snowflakedb and is rejected with 403. Reset the header (an empty
+          # value clears the multi-valued list) so DEST_URL's token is used.
+          # Local-only git ops below (merge-base, log of refs/mirror/main)
+          # touch no remote and don't need it.
+          git_mirror=(git -c http.https://github.com/.extraheader=)
+          # Local view of the mirror's main, used only to seed brand-new
+          # release branches (see below). Fetched into a private ref so the
+          # tokenized URL is not persisted as a named remote.
+          "${git_mirror[@]}" fetch --quiet "${DEST_URL}" "+refs/heads/main:refs/mirror/main" || true
+
+          failures=0
           for branch in ${BRANCHES}; do
             echo "::group::Mirror ${branch}"
+
+            # First-mirror seeding. Copybara's ITERATIVE mode resumes from the
+            # GitOrigin-RevId trailer on the destination branch tip. A branch
+            # that does not exist on the mirror yet has no such baseline, so
+            # Copybara aborts: "Previous revision label GitOrigin-RevId could
+            # not be found ... --last-rev or --init-history flags were not
+            # passed".
+            #
+            # We deliberately avoid --init-history (it replays the branch's
+            # entire history as fresh commits that share no SHAs with the
+            # mirrored main, producing a divergent duplicate). Instead, create
+            # the branch on the mirror from the commit that ALREADY corresponds
+            # to its fork point on main — located via the GitOrigin-RevId
+            # trailer Copybara stamps on every mirrored commit. The mirror's
+            # release branch then shares history with main and Copybara's
+            # normal iterative replay takes over from there with no flags.
+            if ! "${git_mirror[@]}" ls-remote --exit-code "${DEST_URL}" "refs/heads/${branch}" >/dev/null 2>&1; then
+              forkpoint="$(git merge-base origin/main "origin/${branch}" || true)"
+              seed=""
+              if [[ -n "${forkpoint}" ]]; then
+                seed="$(git log refs/mirror/main --grep "GitOrigin-RevId: ${forkpoint}" --format=%H -1 || true)"
+              fi
+              if [[ -z "${seed}" ]]; then
+                echo "::error::Cannot seed ${branch}: its fork point (${forkpoint:-unknown}) is not yet on the mirror's main. Mirror main first, then retry."
+                failures=$((failures + 1)); echo "::endgroup::"; continue
+              fi
+              if [[ "${DRY_RUN}" == "true" ]]; then
+                echo "::notice::[dry-run] ${branch} is not on the mirror; would seed it from ${seed} (GitOrigin-RevId ${forkpoint}). Skipping replay preview (the seed commit must exist on the mirror first)."
+                echo "::endgroup::"; continue
+              fi
+              echo "Seeding ${branch} on the mirror from ${seed} (corresponds to fork point ${forkpoint})."
+              "${git_mirror[@]}" push "${DEST_URL}" "${seed}:refs/heads/${branch}"
+            fi
+
             # Direct push: destination branch name matches the source branch
             # (e.g. release/8.1 -> release/8.1 on the mirror).
+            #
+            # The origin ref is passed as the positional `source_ref` argument
+            # (migrate <config> <workflow> [source_ref]) to override the
+            # `ref = "main"` baked into copy.bara.sky. Copybara has no `--ref`
+            # flag — passing one is silently consumed as the positional refspec
+            # and fails with "Invalid refspec: --ref=...".
+            set +e
             docker run --rm \
               -v "${GITHUB_WORKSPACE}:/workdir" \
               -v "${HOME}/.gitconfig:/root/.gitconfig:ro" \
               -e GITHUB_TOKEN \
-              copybara:local migrate ci/mirroring/copy.bara.sky mirror \
-              --ref="${branch}" \
-              --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/universal-driver.git" \
+              copybara:local migrate ci/mirroring/copy.bara.sky mirror "${branch}" \
+              --git-destination-url="${DEST_URL}" \
               --git-destination-push="${branch}" \
               --force \
-              "${extra_args[@]}" \
-              || echo "::warning::Copybara failed for ${branch}"
+              "${extra_args[@]}"
+            rc=$?
+            set -e
+            # Copybara exits 4 (NO_OP) when there are no new changes — e.g. a
+            # freshly-seeded branch whose tip equals its fork point. Always
+            # treat it as success; only other non-zero codes are failures.
+            case "${rc}" in
+              0) echo "Mirrored ${branch}." ;;
+              4) echo "::notice::No new changes for ${branch} (NO_OP, exit 4) — treating as success." ;;
+              *) echo "::error::Copybara failed for ${branch} (exit ${rc})."; failures=$((failures + 1)) ;;
+            esac
             echo "::endgroup::"
           done
+
+          if [[ "${failures}" -gt 0 ]]; then
+            echo "::error::${failures} release branch(es) failed to mirror."
+            exit 1
+          fi
 
   audit:
     name: Audit log
