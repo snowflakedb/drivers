@@ -5,6 +5,10 @@ import time
 
 from collections.abc import Callable
 
+import requests
+
+from requests.auth import HTTPBasicAuth
+
 from snowflake.connector.errors import DatabaseError
 
 
@@ -41,6 +45,31 @@ def verify_login_error(exception, keywords):
     error_msg = str(exception.value).lower()
     for kw in keywords:
         assert kw in error_msg, f"Expected error to contain {kw!r}, got: {exception.value}"
+
+
+def retrieve_oauth_access_token(
+    *,
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    user: str,
+    password: str,
+    role: str,
+) -> str:
+    """Mint a fresh OAuth access token via the IdP's Resource Owner Password grant."""
+    response = requests.post(
+        url=token_url,
+        data={
+            "username": user,
+            "password": password,
+            "grant_type": "password",
+            "scope": f"session:role:{role.lower()}",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+        auth=HTTPBasicAuth(client_id, client_secret),
+    )
+    response.raise_for_status()
+    return response.json()["access_token"]
 
 
 def clean_browser_processes():
@@ -196,17 +225,18 @@ def connect_with_browser_automation(
 ):
     """Run connect_fn and browser automation concurrently.
 
-    Returns the connection on success, raises on failure.
+    The connect leg is authoritative: returns the connection on success, or
+    re-raises the driver's exception unchanged so negative tests can assert on it.
+    A browser-leg failure is only surfaced when the connect leg has no result.
     """
-    errors = []
-    result_holder = []
+    connect_result = {}
+    browser_error_holder = []
 
     def _connect():
         try:
-            conn = connect_fn()
-            result_holder.append(conn)
+            connect_result["connection"] = connect_fn()
         except Exception as e:
-            errors.append(e)
+            connect_result["error"] = e
 
     def _browser():
         try:
@@ -214,7 +244,7 @@ def connect_with_browser_automation(
                 raise RuntimeError(f"Chromium did not start on port {CHROMIUM_DEBUG_PORT} within timeout")
             provide_browser_credentials(scenario, login, password)
         except Exception as e:
-            errors.append(e)
+            browser_error_holder.append(e)
 
     # daemon=True so a hung thread can never block interpreter shutdown / leak across
     # tests; the explicit joins below are the real synchronization point.
@@ -224,17 +254,20 @@ def connect_with_browser_automation(
     t_connect.start()
     t_browser.start()
 
-    t_browser.join(timeout=90)
-    t_connect.join(timeout=120)
+    t_browser.join(timeout=60)
+    t_connect.join(timeout=90)
 
-    # Distinguish a hung thread (join timed out) from a clean failure so the cause
-    # isn't swallowed into a generic "connection not established".
-    if t_browser.is_alive():
-        raise TimeoutError("Browser automation thread did not finish within 90s")
     if t_connect.is_alive():
-        raise TimeoutError("Connect thread did not finish within 120s")
+        raise TimeoutError("Connect thread did not finish within 90s")
 
-    assert not errors, f"Errors during browser authentication: {errors}"
-    assert len(result_holder) == 1, "Connection was not established"
+    if "error" in connect_result:
+        raise connect_result["error"]
+    if "connection" in connect_result:
+        return connect_result["connection"]
 
-    return result_holder[0]
+    # Connect leg produced nothing: the browser leg (or its absence) explains why.
+    if t_browser.is_alive():
+        raise TimeoutError("Browser automation thread did not finish within 60s")
+    if browser_error_holder:
+        raise RuntimeError(f"Browser automation failed: {browser_error_holder}")
+    raise AssertionError("Connection was not established")

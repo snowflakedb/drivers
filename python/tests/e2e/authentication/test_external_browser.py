@@ -13,7 +13,6 @@ from dataclasses import dataclass
 import pytest
 
 from .auth_helpers import (
-    clean_browser_processes,
     connect_with_browser_automation,
     verify_simple_query_execution,
 )
@@ -50,13 +49,6 @@ def browser_credentials() -> BrowserCredentials:
         user=values["SNOWFLAKE_TEST_OKTA_USER"],
         password=values["SNOWFLAKE_TEST_OKTA_PASSWORD"],
     )
-
-
-@pytest.fixture(autouse=True)
-def browser_cleanup():
-    clean_browser_processes()
-    yield
-    clean_browser_processes()
 
 
 @pytest.mark.requires_browser
