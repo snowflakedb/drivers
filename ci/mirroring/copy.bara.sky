@@ -12,6 +12,8 @@
 SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
 MIRROR_REPO = "https://github.com/snowflakedb/universal-driver"
 
+load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
+
 # DENYLIST: mirror everything except paths matching these patterns.
 #
 # Safety model
@@ -180,6 +182,7 @@ core.workflow(
     destination = git.github_pr_destination(
         url = SOURCE_REPO,
         destination_ref = "main",
+        draft = IMPORT_AS_DRAFT,
         title = "Import mirror PR #${GITHUB_PR_NUMBER}: ${GITHUB_PR_TITLE}",
         body = "Imported from ${GITHUB_PR_URL}.\n\n"
                + "Original PR body:\n\n"
@@ -208,8 +211,13 @@ core.workflow(
     # internal-only paths (.ai/, .claude/, .cursor/, .buildkite/, .github/,
     # etc.) don't exist on the external mirror, copybara generates deletions
     # for all of them in the imported PR diff.
-    origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
-    destination_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
+    #
+    # IMPORT_FILE_GLOBS is generated per run by
+    # scripts/mirror/prepare_import_paths.py from the mirror PR file list.
+    # Merge-import baseline flags reconcile every managed path; scoping to
+    # the PR diff avoids unrelated org-string drift on untouched files.
+    origin_files = glob(IMPORT_FILE_GLOBS),
+    destination_files = glob(IMPORT_FILE_GLOBS),
     transformations = [
         # Defensive: internal hostnames should never appear in a mirror PR,
         # but fail loudly if they somehow do.

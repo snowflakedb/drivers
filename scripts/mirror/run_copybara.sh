@@ -34,6 +34,8 @@
 #   COPYBARA_IMAGE          Pre-built image reference to use instead of
 #                           building locally. Set this on CI agents once a
 #                           registry-hosted image is available.
+#   IMPORT_AS_DRAFT         When "true", open the imported internal PR as a
+#                           draft (passed to prepare_import_paths.py).
 
 set -euo pipefail
 
@@ -180,6 +182,11 @@ case "${SUBCOMMAND}" in
     # snowflakedb-side mirror token. Destination push into the internal repo
     # uses DRIVER_MIRROR_TOKEN (snowflake-eng access) inlined in the URL below.
     prepare_home "${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}"
+    import_draft_args=()
+    if [ "${IMPORT_AS_DRAFT:-false}" = "true" ]; then
+      import_draft_args=(--draft)
+    fi
+    python3 "${REPO_ROOT}/scripts/mirror/prepare_import_paths.py" "${PR_NUMBER}" "${import_draft_args[@]}"
     # --nogit-destination-rebase: the mirror is a strict subset of the
     # internal repo (no copy.bara.sky, _internal/, adr/, .github/, …).
     # Rebasing the mirror PR branch onto internal main fails with
