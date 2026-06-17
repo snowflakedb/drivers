@@ -862,9 +862,17 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     Ok(())
 }
 
+/// Fixed VARCHAR size `SQLDescribeParam` reports for an untyped `?` marker,
+/// matching the reference driver's `maxVarcharSize`. ODBC `ColumnSize` for a
+/// character type is a length **in characters**, so this is 134,217,728
+/// characters (128 Mi), not bytes. Intentionally distinct from
+/// `SF_DEFAULT_VARCHAR_MAX_LEN` (16,777,216 characters), which is Snowflake's
+/// default VARCHAR *column* length used for result-set column sizing.
+const PARAM_DESCRIBE_VARCHAR_SIZE_IN_CHARS: u64 = 134_217_728;
+
 fn apply_prepare_outcome(
     inner: &mut StatementInner,
-    conn: &crate::api::Connection,
+    _conn: &crate::api::Connection,
     outcome: crate::api::PrepareOutcome,
 ) {
     let crate::api::PrepareOutcome {
@@ -875,14 +883,13 @@ fn apply_prepare_outcome(
     inner.ird.desc_count = schema.fields().len() as sql::SmallInt;
     inner.prepared_param_count = Some(number_of_binds);
     inner.prepared_array_bind_supported = Some(array_bind_supported);
-    let max_varchar = conn.numeric_settings.max_varchar_size;
     inner.ipd.records.retain(|&k, _| k <= number_of_binds);
     for i in 1..=number_of_binds {
         inner
             .ipd
             .records
             .entry(i)
-            .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
+            .or_insert_with(|| IpdRecord::with_varchar_size(PARAM_DESCRIBE_VARCHAR_SIZE_IN_CHARS));
     }
     tracing::info!("prepare: auto-IPD populated {number_of_binds} parameter markers (from server)");
     inner.state.set(StatementState::Prepared { schema });
@@ -1413,6 +1420,22 @@ fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResul
         })
 }
 
+/// Default ODBC column size (precision) for fixed-size SQL parameter types,
+/// per the ODBC spec (Appendix D). Returns `None` for variable-length / unsized
+/// types, whose size must come from the caller's `ColumnSize` argument.
+fn default_param_column_size(sql_data_type: sql::SqlDataType) -> Option<sql::ULen> {
+    Some(match sql_data_type {
+        sql::SqlDataType::EXT_BIT => 1,
+        sql::SqlDataType::EXT_TINY_INT => 3,
+        sql::SqlDataType::SMALLINT => 5,
+        sql::SqlDataType::INTEGER => 10,
+        sql::SqlDataType::EXT_BIG_INT => 19,
+        sql::SqlDataType::REAL => 7,
+        sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => 15,
+        _ => return None,
+    })
+}
+
 /// Bind a parameter to a prepared statement
 #[allow(clippy::too_many_arguments)]
 pub fn bind_parameter(
@@ -1468,6 +1491,16 @@ pub fn bind_parameter(
         sql::SqlDataType::TIMESTAMP
     } else {
         parameter_type
+    };
+
+    // For fixed-size SQL types the application may legitimately pass
+    // `ColumnSize` 0 (it is ignored for those types); `SQLDescribeParam` must
+    // still report the type's natural precision rather than 0. Variable-length
+    // types keep the caller-supplied size.
+    let column_size = if column_size == 0 {
+        default_param_column_size(stored_sql_data_type).unwrap_or(column_size)
+    } else {
+        column_size
     };
 
     if direction == ParamDirection::Input
