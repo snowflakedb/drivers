@@ -98,7 +98,7 @@ fn hex_nibble(c: u8) -> Result<u8, BindingError> {
 
 impl WriteODBCType for SnowflakeBinary {
     fn sql_type(&self) -> sql::SqlDataType {
-        odbc_sys::SqlDataType::EXT_VAR_BINARY
+        odbc_sys::SqlDataType::EXT_BINARY
     }
 
     fn column_size(&self) -> sql::ULen {

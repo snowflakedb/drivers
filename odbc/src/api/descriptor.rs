@@ -1,17 +1,22 @@
 use crate::api::CDataType;
-use crate::api::types::DescriptorKind;
-use crate::api::{DescField, OdbcResult, desc_from_handle};
+use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
+use crate::api::error::StatementNotExecutedSnafu;
+use crate::api::handle_registry::HandleGuard;
+use crate::api::types::{DescriptorKind, State, Statement};
+use crate::api::utils::{IrdFieldValue, compute_ird_field};
+use crate::api::{DescField, OdbcResult, StatementState, desc_from_handle};
+use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use tracing;
 
-/// Get a descriptor field value
-pub fn get_desc_field(
+/// Get a descriptor field value.
+pub fn get_desc_field<E: OdbcEncoding>(
     desc_handle: sql::Handle,
     rec_number: sql::SmallInt,
     field_identifier: sql::SmallInt,
     value_ptr: sql::Pointer,
-    _buffer_length: sql::Integer,
-    _string_length_ptr: *mut sql::Integer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
 ) -> OdbcResult<()> {
     tracing::debug!(
         "get_desc_field: desc_handle={:?}, rec_number={}, field_identifier={}",
@@ -40,7 +45,16 @@ pub fn get_desc_field(
 
     match kind {
         DescriptorKind::Ard => get_ard_field(&inner.ard, rec_number, field, value_ptr),
-        DescriptorKind::Ird => get_ird_field(&inner.ird, rec_number, field, value_ptr),
+        DescriptorKind::Ird => get_ird_field::<E>(
+            &inner.ird,
+            rec_number,
+            field,
+            value_ptr,
+            buffer_length,
+            string_length_ptr,
+            &guard,
+            &inner.state,
+        ),
         DescriptorKind::Apd => get_apd_field(&inner.apd, rec_number, field, value_ptr),
         DescriptorKind::Ipd => get_ipd_field(&inner.ipd, rec_number, field, value_ptr),
     }
@@ -173,11 +187,16 @@ fn get_ard_field(
     }
 }
 
-fn get_ird_field(
+#[allow(clippy::too_many_arguments)]
+fn get_ird_field<E: OdbcEncoding>(
     desc: &crate::api::IrdDescriptor,
     rec_number: sql::SmallInt,
     field: DescField,
     value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+    guard: &HandleGuard<Statement>,
+    state: &State<StatementState>,
 ) -> OdbcResult<()> {
     if rec_number == 0 {
         match field {
@@ -211,11 +230,44 @@ fn get_ird_field(
             }
         }
     } else {
-        tracing::warn!(
-            "get_desc_field: IRD record fields not supported (rec={})",
-            rec_number
-        );
-        crate::api::error::NoMoreDataSnafu.fail()
+        let schema = match state.as_ref() {
+            StatementState::Prepared { schema } => schema.clone(),
+            StatementState::QueryExecuted { reader, .. } => reader.schema(),
+            StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+            _ => return StatementNotExecutedSnafu.fail(),
+        };
+
+        let col_idx = (rec_number as usize) - 1;
+        if col_idx >= schema.fields().len() {
+            return crate::api::error::NoMoreDataSnafu.fail();
+        }
+
+        let arrow_field = schema.field(col_idx);
+        let dbc = guard.conn()?;
+        let numeric_settings = dbc.connection.lock().numeric_settings;
+
+        match compute_ird_field(arrow_field, field, &numeric_settings)? {
+            IrdFieldValue::SmallInt(v) => {
+                unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, v) };
+            }
+            IrdFieldValue::Integer(v) => {
+                unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::Integer, v) };
+            }
+            IrdFieldValue::Len(v) => {
+                unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::Len, v) };
+            }
+            IrdFieldValue::Str(s) => {
+                // TODO: pass a Warnings collector and propagate 01004 on truncation
+                write_string_bytes_i32::<E>(
+                    s,
+                    value_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
+            }
+        }
+        Ok(())
     }
 }
 

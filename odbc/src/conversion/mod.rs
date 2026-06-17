@@ -58,11 +58,27 @@ pub use error::{
 };
 pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN, TzOffsetFormatCache};
 
+use crate::api::encoding::is_ascii_locale;
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,
     WriteOdbcValueSnafu,
 };
 use crate::conversion::warning::Warnings;
+
+/// Maximum bytes per character for the narrow (ANSI) ODBC API, matching old
+/// driver behavior:
+/// - Windows: 1 (Windows-1252 single-byte)
+/// - Unix: 4 (UTF-8 worst-case)
+fn narrow_char_byte_width() -> odbc_sys::Len {
+    #[cfg(windows)]
+    {
+        1
+    }
+    #[cfg(not(windows))]
+    {
+        if is_ascii_locale() { 1 } else { 4 }
+    }
+}
 
 /// Per-column converter from Arrow values to ODBC buffers.
 ///
@@ -461,6 +477,13 @@ impl SnowflakeFieldType {
         }
     }
 
+    fn precision(&self) -> odbc_sys::ULen {
+        match self {
+            Self::Binary(_) | Self::Date(_) => 0,
+            other => other.column_size(),
+        }
+    }
+
     fn decimal_digits(&self) -> odbc_sys::SmallInt {
         match self {
             Self::Varchar(t) => t.decimal_digits(),
@@ -474,6 +497,110 @@ impl SnowflakeFieldType {
             Self::Binary(t) => t.decimal_digits(),
             Self::Real(t) => t.decimal_digits(),
             Self::Decfloat(t) => t.decimal_digits(),
+        }
+    }
+
+    fn type_name(&self) -> &'static str {
+        match self {
+            Self::Varchar(_) => "VARCHAR",
+            Self::Number(_) => "DECIMAL",
+            Self::Date(_) => "TYPE_DATE",
+            Self::Time(_) => "TYPE_TIME",
+            Self::TimestampNtz(_) => "TYPE_TIMESTAMP",
+            Self::TimestampLtz(_) => "TYPE_TIMESTAMP",
+            Self::TimestampTz(_) => "TYPE_TIMESTAMP",
+            Self::Boolean(_) => "BIT",
+            Self::Binary(_) => "BINARY",
+            Self::Real(_) => "DOUBLE",
+            Self::Decfloat(_) => "NUMERIC",
+        }
+    }
+
+    fn display_size(&self) -> odbc_sys::Len {
+        match self {
+            Self::Varchar(t) => t.len as odbc_sys::Len,
+            Self::Number(_) | Self::Decfloat(_) => 136,
+            Self::Date(_) => 10,
+            Self::Time(t) => t.column_size() as odbc_sys::Len,
+            Self::TimestampNtz(t) => t.column_size() as odbc_sys::Len,
+            Self::TimestampLtz(t) => t.column_size() as odbc_sys::Len,
+            Self::TimestampTz(t) => t.column_size() as odbc_sys::Len,
+            Self::Boolean(_) => 1,
+            Self::Binary(t) => 2 * t.len as odbc_sys::Len,
+            Self::Real(_) => 24,
+        }
+    }
+
+    fn octet_length(&self) -> odbc_sys::Len {
+        match self {
+            Self::Varchar(t) => (t.len as odbc_sys::Len) * narrow_char_byte_width(),
+            Self::Number(_) | Self::Decfloat(_) => 136,
+            Self::Date(_) => 6,
+            Self::Time(_) => 6,
+            Self::TimestampNtz(_) => 16,
+            Self::TimestampLtz(_) => 16,
+            Self::TimestampTz(_) => 16,
+            Self::Boolean(_) => 1,
+            Self::Binary(t) => t.len as odbc_sys::Len,
+            Self::Real(_) => 8,
+        }
+    }
+
+    fn num_prec_radix(&self) -> odbc_sys::Len {
+        match self {
+            Self::Number(_) | Self::Decfloat(_) => 10,
+            Self::Real(_) => 2,
+            _ => 0,
+        }
+    }
+
+    fn is_unsigned(&self) -> bool {
+        matches!(
+            self,
+            Self::Varchar(_)
+                | Self::Boolean(_)
+                | Self::Binary(_)
+                | Self::Date(_)
+                | Self::Time(_)
+                | Self::TimestampNtz(_)
+                | Self::TimestampLtz(_)
+                | Self::TimestampTz(_)
+        )
+    }
+
+    fn is_case_sensitive(&self) -> bool {
+        matches!(self, Self::Varchar(_))
+    }
+
+    fn searchable(&self) -> odbc_sys::Len {
+        match self {
+            Self::Varchar(_) => 3, // SQL_SEARCHABLE
+            _ => 2,                // SQL_ALL_EXCEPT_LIKE
+        }
+    }
+
+    fn literal_prefix(&self) -> &'static str {
+        match self {
+            Self::Varchar(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::TimestampNtz(_)
+            | Self::TimestampLtz(_)
+            | Self::TimestampTz(_) => "'",
+            Self::Binary(_) => "0x",
+            _ => "",
+        }
+    }
+
+    fn literal_suffix(&self) -> &'static str {
+        match self {
+            Self::Varchar(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::TimestampNtz(_)
+            | Self::TimestampLtz(_)
+            | Self::TimestampTz(_) => "'",
+            _ => "",
         }
     }
 }
@@ -569,6 +696,22 @@ pub fn sql_type_from_field(
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }
 
+/// Returns the verbose SQL data type (SQL_DESC_TYPE) for a field.
+/// For date/time types this returns SQL_DATETIME (9) instead of the concise type.
+/// For all other types, verbose == concise.
+pub fn verbose_sql_type_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::SqlDataType, ConversionError> {
+    let concise = sql_type_from_field(field, numeric_settings)?;
+    Ok(match concise {
+        odbc_sys::SqlDataType::DATE
+        | odbc_sys::SqlDataType::TIME
+        | odbc_sys::SqlDataType::TIMESTAMP => odbc_sys::SqlDataType::DATETIME,
+        other => other,
+    })
+}
+
 pub fn column_size_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
@@ -576,9 +719,79 @@ pub fn column_size_from_field(
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.column_size())
 }
 
+pub fn precision_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::ULen, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.precision())
+}
+
 pub fn decimal_digits_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SmallInt, ConversionError> {
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.decimal_digits())
+}
+
+pub fn type_name_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<&'static str, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.type_name())
+}
+
+pub fn display_size_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::Len, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.display_size())
+}
+
+pub fn octet_length_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::Len, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.octet_length())
+}
+
+pub fn num_prec_radix_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::Len, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.num_prec_radix())
+}
+
+pub fn is_unsigned_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<bool, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.is_unsigned())
+}
+
+pub fn is_case_sensitive_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<bool, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.is_case_sensitive())
+}
+
+pub fn searchable_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::Len, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.searchable())
+}
+
+pub fn literal_prefix_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<&'static str, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.literal_prefix())
+}
+
+pub fn literal_suffix_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<&'static str, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.literal_suffix())
 }

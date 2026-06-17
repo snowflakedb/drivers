@@ -845,7 +845,79 @@ pub unsafe extern "system" fn SQLColAttributeW(
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
     set_dispatch!();
-    record_api!(sql::HandleType::Stmt, statement_handle, "SQLColAttribute");
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLColAttributeW");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::utils::col_attribute::<Wide>(
+        statement_handle,
+        column_number,
+        field_identifier,
+        character_attribute_ptr as *mut WideChar,
+        buffer_length,
+        string_length_ptr,
+        numeric_attribute_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLColAttributes(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    field_identifier: sql::USmallInt,
+    character_attribute_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    numeric_attribute_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLColAttributes");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::utils::col_attribute::<Narrow>(
+        statement_handle,
+        column_number,
+        field_identifier,
+        character_attribute_ptr as *mut sql::Char,
+        buffer_length,
+        string_length_ptr,
+        numeric_attribute_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLColAttributesW(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    field_identifier: sql::USmallInt,
+    character_attribute_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    numeric_attribute_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLColAttributesW");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
     let result = api::utils::col_attribute::<Wide>(
@@ -1562,7 +1634,7 @@ pub unsafe extern "system" fn SQLGetDescField(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescField");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
-    let result = api::descriptor::get_desc_field(
+    let result = api::descriptor::get_desc_field::<api::encoding::Narrow>(
         descriptor_handle,
         rec_number,
         field_identifier,
@@ -1588,7 +1660,7 @@ pub unsafe extern "system" fn SQLGetDescFieldW(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescFieldW");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
-    let result = api::descriptor::get_desc_field(
+    let result = api::descriptor::get_desc_field::<api::encoding::Wide>(
         descriptor_handle,
         rec_number,
         field_identifier,
