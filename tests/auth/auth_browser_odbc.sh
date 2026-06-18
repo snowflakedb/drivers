@@ -38,8 +38,11 @@ if [ ! -d cmake-build ]; then
         ${CCACHE_ARGS} \
         .
 fi
-cmake --build cmake-build --target e2e_authentication_external_browser e2e_authentication_mfa_auth -- -j 16
+cmake --build cmake-build --target e2e_auth_browser -- -j 16
 
 echo ""
 echo "=== Running ODBC auth browser E2E tests ==="
-ctest -C Debug --test-dir cmake-build --output-on-failure -R "e2e_authentication_(external_browser|mfa_auth)"
+# Select by the shared `requires_browser` Catch2 tag (exposed as a CTest label
+# via ADD_TAGS_AS_LABELS) rather than by target/file name, mirroring the
+# `requires_browser` pytest marker used by the Python suite.
+ctest -C Debug --test-dir cmake-build --output-on-failure -L requires_browser
