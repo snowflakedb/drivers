@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Properties;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import lombok.SneakyThrows;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
@@ -18,7 +19,8 @@ public class TestParameters {
 
   private static volatile JSONObject params;
 
-  private static JSONObject get() throws Exception {
+  @SneakyThrows
+  private static JSONObject get() {
     if (params != null) {
       return params;
     }
@@ -38,11 +40,19 @@ public class TestParameters {
     }
   }
 
-  public static String get(String key) throws Exception {
+  public static boolean has(String key) {
+    return TestParameters.get().has(key);
+  }
+
+  public static String get(String key) {
     return TestParameters.get().getString(key);
   }
 
-  public static List<String> getList(String key) throws Exception {
+  public static int getInt(String key) {
+    return TestParameters.get().getInt(key);
+  }
+
+  public static List<String> getList(String key) {
     List<String> result = new ArrayList<>();
     JSONArray jsonArray = TestParameters.get().getJSONArray(key);
     for (int i = 0; i < jsonArray.length(); i++) {
@@ -51,43 +61,46 @@ public class TestParameters {
     return result;
   }
 
-  public static Properties loadConnectionProperties() throws Exception {
-    JSONObject params = TestParameters.get();
-
+  /**
+   * Loads the base connection properties that are independent of authentication: {@code account},
+   * {@code host}, {@code role}, {@code schema}, {@code db}, {@code warehouse}, and the optional
+   * {@code port}, {@code server_url} and {@code protocol}. No credentials (user/password) are set;
+   * callers choose an authentication method explicitly (e.g. via {@link #withSnowflakeAuth}).
+   */
+  public static Properties loadDefaultConnectionProperties() {
     Properties props = new Properties();
-    props.setProperty("account", params.getString("SNOWFLAKE_TEST_ACCOUNT"));
-    props.setProperty("host", params.getString("SNOWFLAKE_TEST_HOST"));
-    props.setProperty("role", params.getString("SNOWFLAKE_TEST_ROLE"));
+    props.setProperty("account", get("SNOWFLAKE_TEST_ACCOUNT"));
+    props.setProperty("host", get("SNOWFLAKE_TEST_HOST"));
+    props.setProperty("role", get("SNOWFLAKE_TEST_ROLE"));
 
-    props.setProperty("schema", params.getString("SNOWFLAKE_TEST_SCHEMA"));
-    props.setProperty("db", params.getString("SNOWFLAKE_TEST_DATABASE"));
+    props.setProperty("schema", get("SNOWFLAKE_TEST_SCHEMA"));
+    props.setProperty("db", get("SNOWFLAKE_TEST_DATABASE"));
     props.setProperty(
         "warehouse",
-        params.has("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
-            ? params.getString("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
-            : params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
+        has("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
+            ? get("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
+            : get("SNOWFLAKE_TEST_WAREHOUSE"));
 
-    addOptionalConnectionProperties(params, props);
+    if (has("SNOWFLAKE_TEST_PORT")) {
+      props.setProperty("port", String.valueOf(getInt("SNOWFLAKE_TEST_PORT")));
+    }
+    if (has("SNOWFLAKE_TEST_SERVER_URL")) {
+      props.setProperty("server_url", get("SNOWFLAKE_TEST_SERVER_URL"));
+    }
+    if (has("SNOWFLAKE_TEST_PROTOCOL")) {
+      props.setProperty("protocol", get("SNOWFLAKE_TEST_PROTOCOL"));
+    }
     return props;
   }
 
-  private static void addOptionalConnectionProperties(JSONObject params, Properties props) {
-    if (params.has("SNOWFLAKE_TEST_USER")) {
-      props.setProperty("user", params.getString("SNOWFLAKE_TEST_USER"));
-    }
-    if (params.has("SNOWFLAKE_TEST_PASSWORD")) {
-      props.setProperty("password", params.getString("SNOWFLAKE_TEST_PASSWORD"));
-    }
+  public static Properties withSnowflakeAuth(Properties props) {
+    props.setProperty("user", get("SNOWFLAKE_TEST_USER"));
+    props.setProperty("password", get("SNOWFLAKE_TEST_PASSWORD"));
+    return props;
+  }
 
-    if (params.has("SNOWFLAKE_TEST_PORT")) {
-      props.setProperty("port", String.valueOf(params.getInt("SNOWFLAKE_TEST_PORT")));
-    }
-    if (params.has("SNOWFLAKE_TEST_SERVER_URL")) {
-      props.setProperty("server_url", params.getString("SNOWFLAKE_TEST_SERVER_URL"));
-    }
-    if (params.has("SNOWFLAKE_TEST_PROTOCOL")) {
-      props.setProperty("protocol", params.getString("SNOWFLAKE_TEST_PROTOCOL"));
-    }
+  public static String buildJdbcUrl() {
+    return buildJdbcUrl(loadDefaultConnectionProperties());
   }
 
   public static String buildJdbcUrl(Properties props) {

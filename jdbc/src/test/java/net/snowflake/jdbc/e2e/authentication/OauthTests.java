@@ -1,19 +1,21 @@
 package net.snowflake.jdbc.e2e.authentication;
 
-import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
-import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.TestParameters;
+import net.snowflake.jdbc.utils.WithConnect;
+import net.snowflake.jdbc.utils.WithQueryUtils;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
-class OauthTests extends SnowflakeIntegrationTestBase {
+class OauthTests implements WithQueryUtils, WithConnect {
+
+  private static final String USER = TestParameters.get("SNOWFLAKE_TEST_USER");
 
   @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
   @Test
@@ -24,24 +26,23 @@ class OauthTests extends SnowflakeIntegrationTestBase {
     props.setProperty("token", TestParameters.get("SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN"));
 
     // When Trying to Connect
-    String url = buildJdbcUrl(props);
-    try (Connection conn = DriverManager.getConnection(url, props)) {
+    try (Connection conn = connect(props)) {
       // Then Login is successful and a simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
   }
 
   @Test
-  void oauthShouldFailLegacyAuthenticationWithInvalidToken() throws Exception {
+  void oauthShouldFailLegacyAuthenticationWithInvalidToken() {
     // Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
     Properties props = oauthConnectionProperties("OAUTH");
     props.setProperty("token", "invalid_oauth_token_12345");
 
     // When Trying to Connect
-    String url = buildJdbcUrl(props);
+    Executable connect = () -> connect(props);
 
     // Then Connection fails with an authentication / login error
-    assertThrows(SQLException.class, () -> DriverManager.getConnection(url, props));
+    assertThrows(SQLException.class, connect);
   }
 
   @Disabled("TODO: SNOW-2872392 - OAuth authorization code E2E spawns a real OS browser")
@@ -69,8 +70,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
     // When Trying to Connect (this will spawn the local-loopback HTTP listener and
     // `xdg-open`/`open`/`ShellExecute` the IdP login URL unless a previously cached access token
     // short-circuits the leg)
-    String url = buildJdbcUrl(props);
-    try (Connection conn = DriverManager.getConnection(url, props)) {
+    try (Connection conn = connect(props)) {
       // Then Login is successful and a simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
@@ -91,8 +91,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
     props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
 
     // When Trying to Connect
-    String url = buildJdbcUrl(props);
-    try (Connection conn = DriverManager.getConnection(url, props)) {
+    try (Connection conn = connect(props)) {
       // Then Login is successful and a simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
@@ -100,7 +99,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
 
   @Disabled("TODO: SNOW-2872392 - OAuth authorization code E2E spawns a real OS browser")
   @Test
-  void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() throws Exception {
+  void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() {
     // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id but a
     // deliberately invalid client secret. The IdP token-exchange step must reject the credentials
     // and the driver must surface an authentication / login error.
@@ -117,10 +116,10 @@ class OauthTests extends SnowflakeIntegrationTestBase {
     props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
 
     // When Trying to Connect
-    String url = buildJdbcUrl(props);
+    Executable connect = () -> connect(props);
 
     // Then Connection fails with an authentication / login error
-    assertThrows(SQLException.class, () -> DriverManager.getConnection(url, props));
+    assertThrows(SQLException.class, connect);
   }
 
   @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
@@ -132,8 +131,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
     props.setProperty("token", TestParameters.get("SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN"));
 
     // When Trying to Connect
-    String url = buildJdbcUrl(props);
-    try (Connection conn = DriverManager.getConnection(url, props)) {
+    try (Connection conn = connect(props)) {
       // Then Login is successful and a simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
@@ -141,7 +139,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
 
   @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
   @Test
-  void oauthShouldFailClientCredentialsFlowWithBadClientSecret() throws Exception {
+  void oauthShouldFailClientCredentialsFlowWithBadClientSecret() {
     // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id, an invalid
     // client secret and a valid token_request_url
     Properties props = oauthConnectionProperties("OAUTH_CLIENT_CREDENTIALS");
@@ -152,16 +150,16 @@ class OauthTests extends SnowflakeIntegrationTestBase {
     props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
 
     // When Trying to Connect
-    String url = buildJdbcUrl(props);
+    Executable connect = () -> connect(props);
 
     // Then Connection fails with an authentication / login error
-    assertThrows(SQLException.class, () -> DriverManager.getConnection(url, props));
+    assertThrows(SQLException.class, connect);
   }
 
-  private Properties oauthConnectionProperties(String authenticator) throws Exception {
-    Properties props = loadConnectionProperties();
-    props.remove("password");
+  private Properties oauthConnectionProperties(String authenticator) {
+    Properties props = loadDefaultConnectionProperties();
     props.setProperty("authenticator", authenticator);
+    props.setProperty("user", USER);
     return props;
   }
 }

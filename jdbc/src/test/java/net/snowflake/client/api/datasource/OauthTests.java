@@ -1,28 +1,20 @@
 package net.snowflake.client.api.datasource;
 
 import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Properties;
-import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.TestParameters;
-import org.junit.jupiter.api.BeforeAll;
+import net.snowflake.jdbc.utils.WithQueryUtils;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
-class OauthTests extends SnowflakeIntegrationTestBase {
+class OauthTests implements WithQueryUtils {
 
-  private Properties props;
-  private String jdbcUrl;
-
-  @BeforeAll
-  void setUp() throws Exception {
-    props = loadConnectionProperties();
-    jdbcUrl = buildJdbcUrl(props);
-  }
+  private static final String USER = TestParameters.get("SNOWFLAKE_TEST_USER");
 
   @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
   @Test
@@ -102,7 +94,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
 
   @Disabled("TODO: SNOW-2872392 - OAuth authorization code E2E spawns a real OS browser")
   @Test
-  void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() throws Exception {
+  void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() {
     // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id but a
     // deliberately invalid client secret. The IdP token-exchange step must reject the credentials
     // and the driver must surface an authentication / login error.
@@ -139,7 +131,7 @@ class OauthTests extends SnowflakeIntegrationTestBase {
 
   @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
   @Test
-  void oauthShouldFailClientCredentialsFlowWithBadClientSecret() throws Exception {
+  void oauthShouldFailClientCredentialsFlowWithBadClientSecret() {
     // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id, an invalid
     // client secret and a valid token_request_url
     SnowflakeDataSource ds = createDataSource();
@@ -155,9 +147,10 @@ class OauthTests extends SnowflakeIntegrationTestBase {
   }
 
   private SnowflakeDataSource createDataSource() {
+    Properties props = loadDefaultConnectionProperties();
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
-    ds.setUrl(jdbcUrl);
-    ds.setUser(props.getProperty("user"));
+    ds.setUrl(buildJdbcUrl(props));
+    ds.setUser(USER);
     ds.setAccount(props.getProperty("account"));
     return ds;
   }

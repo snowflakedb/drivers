@@ -1,7 +1,8 @@
 package net.snowflake.client.api.datasource;
 
 import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -18,7 +19,7 @@ public class DataSourceConnectionTests {
 
   @Test
   public void testConnectUsingDataSourceWithExplicitUrl() throws Exception {
-    Properties props = loadConnectionProperties();
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setUser(props.getProperty("user"));
@@ -34,7 +35,7 @@ public class DataSourceConnectionTests {
 
   @Test
   public void testConnectUsingDataSourceWithExplicitCredentials() throws Exception {
-    Properties props = loadConnectionProperties();
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setAccount(props.getProperty("account"));
@@ -48,8 +49,8 @@ public class DataSourceConnectionTests {
   }
 
   @Test
-  public void testFailToConnectWithInvalidPassword() throws Exception {
-    Properties props = loadConnectionProperties();
+  public void testFailToConnectWithInvalidPassword() {
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setUser(props.getProperty("user"));
@@ -60,8 +61,8 @@ public class DataSourceConnectionTests {
   }
 
   @Test
-  public void testFailToConnectWithInvalidUser() throws Exception {
-    Properties props = loadConnectionProperties();
+  public void testFailToConnectWithInvalidUser() {
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setUser("NONEXISTENT_USER_XYZ_12345");
@@ -72,8 +73,8 @@ public class DataSourceConnectionTests {
   }
 
   @Test
-  public void testFailToConnectWhenUserIsNotSet() throws Exception {
-    Properties props = loadConnectionProperties();
+  public void testFailToConnectWhenUserIsNotSet() {
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setPassword(props.getProperty("password"));
@@ -83,8 +84,8 @@ public class DataSourceConnectionTests {
   }
 
   @Test
-  public void testFailToConnectWhenPasswordIsNotSet() throws Exception {
-    Properties props = loadConnectionProperties();
+  public void testFailToConnectWhenPasswordIsNotSet() {
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setUser(props.getProperty("user"));
@@ -94,8 +95,8 @@ public class DataSourceConnectionTests {
   }
 
   @Test
-  public void testFailToConnectWithNullUserViaExplicitCredentials() throws Exception {
-    Properties props = loadConnectionProperties();
+  public void testFailToConnectWithNullUserViaExplicitCredentials() {
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setAccount(props.getProperty("account"));
@@ -104,8 +105,8 @@ public class DataSourceConnectionTests {
   }
 
   @Test
-  public void testFailToConnectWithNullPasswordViaExplicitCredentials() throws Exception {
-    Properties props = loadConnectionProperties();
+  public void testFailToConnectWithNullPasswordViaExplicitCredentials() {
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setAccount(props.getProperty("account"));
@@ -115,7 +116,7 @@ public class DataSourceConnectionTests {
 
   @Test
   public void testConnectionReportsClosedAfterClose() throws Exception {
-    Properties props = loadConnectionProperties();
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setUser(props.getProperty("user"));
@@ -130,7 +131,7 @@ public class DataSourceConnectionTests {
 
   @Test
   public void testCreateStatementOnClosedConnectionThrowsSQLException() throws Exception {
-    Properties props = loadConnectionProperties();
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
     ds.setUrl(buildJdbcUrl(props));
     ds.setUser(props.getProperty("user"));

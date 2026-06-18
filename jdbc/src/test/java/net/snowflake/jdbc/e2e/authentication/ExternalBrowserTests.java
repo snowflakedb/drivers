@@ -1,16 +1,12 @@
 package net.snowflake.jdbc.e2e.authentication;
 
-import static net.snowflake.jdbc.e2e.authentication.AuthTestUtils.browserLoginFuture;
-import static net.snowflake.jdbc.e2e.authentication.AuthTestUtils.cleanBrowserProcesses;
-import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.util.Properties;
-import java.util.concurrent.CompletableFuture;
 import net.snowflake.jdbc.utils.RequiresBrowser;
 import net.snowflake.jdbc.utils.TestParameters;
+import net.snowflake.jdbc.utils.WithConnect;
 import net.snowflake.jdbc.utils.WithQueryUtils;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +21,7 @@ import org.junit.jupiter.api.Test;
  * <pre>./tests/auth/run_auth_browser.sh jdbc</pre>
  */
 @RequiresBrowser
-class ExternalBrowserTests implements WithQueryUtils {
+class ExternalBrowserTests implements WithQueryUtils, WithConnect, WithBrowserAutomation {
 
   @Test
   void shouldAuthenticateWithExternalBrowserViaOktaIdp() throws Exception {
@@ -35,19 +31,15 @@ class ExternalBrowserTests implements WithQueryUtils {
       String login = TestParameters.get("SNOWFLAKE_TEST_OKTA_USER");
       String password = TestParameters.get("SNOWFLAKE_TEST_OKTA_PASSWORD");
 
-      Properties props = loadConnectionProperties();
+      Properties props = loadDefaultConnectionProperties();
       props.setProperty("authenticator", "EXTERNALBROWSER");
       props.setProperty("user", login);
-      String url = buildJdbcUrl(props);
 
       // When Trying to Connect with headless browser providing valid credentials
-      CompletableFuture<Void> browser = browserLoginFuture(login, password);
-
-      try (Connection conn = DriverManager.getConnection(url, props)) {
+      try (Connection conn =
+          connectWithBrowserAutomation(() -> connect(props), "success", login, password)) {
         // Then Login is successful and simple query can be executed
         assertSimpleQuerySucceeds(conn);
-      } finally {
-        browser.join();
       }
     } finally {
       cleanBrowserProcesses();
