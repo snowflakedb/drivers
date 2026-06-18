@@ -21,6 +21,12 @@ load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
 # small internal-only set below. New files are PUBLIC by default; put anything
 # internal-only under one of the excluded prefixes.
 #
+# The GPG-encrypted e2e credential bundle (.github/secrets/*.gpg) IS published:
+# the files decrypt only with the PARAMETERS_SECRET CI secret, so they're inert
+# in the open repo (same practice as snowflakedb/snowflake-connector-python).
+# Mirroring them is what lets the mirror's e2e jobs decode creds without a
+# manual per-release seeding step.
+#
 # Safety net (independent of this list):
 #   1. ArcticOwl reviewer (`universal-driver-mirror-privacy`) flags new files in
 #      public paths whose content looks internal. See
@@ -50,9 +56,6 @@ EXCLUDED_PATHS = [
     # CODEOWNERS. Re-include + scrub to a public team if external-review routing
     # is ever wanted.
     ".github/CODEOWNERS",
-    # GPG-encrypted e2e credential bundle — seeded to the mirror out-of-band,
-    # not via Copybara. decode_secrets.sh expects it present at e2e time.
-    ".github/secrets/**",
 ]
 
 # Per-path overrides that re-include specific files from inside an EXCLUDED_PATHS
