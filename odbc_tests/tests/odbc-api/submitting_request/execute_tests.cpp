@@ -20,8 +20,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Executes prepared SELECT and returns result set",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42 AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -43,8 +41,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Executes prepared SELECT an
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Executes prepared DDL statement and table is queryable",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TABLE ex_ddl_t(c1 INTEGER)";
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -68,8 +64,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Executes prepared DDL st
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: INSERT returns correct SQLRowCount and inserts rows",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ex_ins_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -112,8 +106,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: INSERT returns correct S
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: UPDATE returns correct SQLRowCount and updates rows",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ex_upd_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -161,8 +153,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: UPDATE returns correct S
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: DELETE returns correct SQLRowCount and removes rows",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ex_del_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -208,8 +198,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: DELETE returns correct S
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affecting zero rows",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // TODO: Restore SECTIONs once ConfigInstallation supports re-entry within sections
   {
     std::string create_sql = "CREATE TEMPORARY TABLE ex_nod_t(c1 INTEGER)";
@@ -226,11 +214,11 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    OLD_IODBC_ONLY("BD#61") {
-      // Under iODBC the old driver does not advance the statement state into a
-      //   form SQLRowCount can read after SQL_NO_DATA, so the call surfaces
-      //   SQL_ERROR. Under unixODBC the same call returns SQL_SUCCESS with
-      //   rowCount=0.
+    IODBC_ONLY {
+      // Under iODBC the DM does not advance the statement state into a form
+      //   SQLRowCount can read after SQL_NO_DATA, so the call surfaces
+      //   SQL_ERROR for both the old and new drivers. Under unixODBC the same
+      //   call returns SQL_SUCCESS with rowCount=0.
       REQUIRE(ret == SQL_ERROR);
     }
     else {
@@ -254,9 +242,9 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    OLD_IODBC_ONLY("BD#61") {
-      // See "DELETE" case above: SQLRowCount after SQL_NO_DATA on the old
-      //   driver under iODBC returns SQL_ERROR rather than 0.
+    IODBC_ONLY {
+      // See "DELETE" case above: under iODBC the DM makes SQLRowCount after
+      //   SQL_NO_DATA return SQL_ERROR for both drivers, rather than 0.
       REQUIRE(ret == SQL_ERROR);
     }
     else {
@@ -272,8 +260,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Re-executes SELECT with updated parameter value",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param = 10;
   SQLLEN ind = 0;
 
@@ -306,8 +292,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Re-executes SELECT with upd
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Re-executes INSERT with different parameter each time",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ex_reins_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -356,8 +340,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Re-executes INSERT with 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Re-executes SELECT after SQLCloseCursor",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1 AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -384,8 +366,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Re-executes SELECT after SQ
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Executes with bound parameter",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_val = 77;
   SQLLEN ind = 0;
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
@@ -517,8 +497,6 @@ TEST_CASE("SQLExecute: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 when statement not prepared",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecute(stmt_handle());
   OLD_IODBC_ONLY("BD#60") {
     // iODBC's DM tracks per-statement prepare state and catches SQLExecute on
@@ -572,8 +550,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: 24000 for cursor already op
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: 22012 for division by zero",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1/0"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -583,8 +559,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: 22012 for division by zero"
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42S02 for table not found",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "SELECT * FROM nonexistent_table";
 
   // Note: Snowflake validates table existence at prepare time, so the 42S02
@@ -598,8 +572,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42S02 for table not foun
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: 07002 for parameter count mismatch",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?, ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -614,8 +586,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: 07002 for parameter count m
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 22000 for NOT NULL constraint violation",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ex_nn_t(c1 INTEGER NOT NULL)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -633,8 +603,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 22000 for NOT NULL const
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42710 for table already exists",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TABLE ex_dup_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -652,8 +620,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42710 for table already 
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 21S01 for INSERT column count mismatch",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ex_mis_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -672,8 +638,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 21S01 for INSERT column 
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42601 for CREATE VIEW column list mismatch",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE VIEW ex_vm_v (a, b) AS SELECT 1";
 
   // Note: Snowflake validates at prepare time. The reference driver returns
@@ -688,8 +652,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42601 for CREATE VIEW co
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: 22023 for invalid LIKE escape character",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: Snowflake validates at prepare time. The reference driver returns
   // 22023 instead of 22019 in the ODBC spec for a LIKE predicate with an
   // ESCAPE clause where the escape character is not exactly one character long.
