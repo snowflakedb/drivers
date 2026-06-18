@@ -651,11 +651,11 @@ behavior_differences:
 
   42:
     name: "TIME to SQL_C_TYPE_TIMESTAMP report fractional truncation with SQL_SUCCESS_WITH_INFO (01S07) instead of SQL_SUCCESS (01S07)"
-    status: allowed
-    type: bugfix
+    status: fixed
+    type: bug
     reviewed: true
     status_rationale: |
-      Now, the truncation happens with a warning which can be consumed by the client instead of providing the success and silently truncating.
+      Zeroing the fraction and reporting 01S07 on this conversion was a bug — SQL_TIMESTAMP_STRUCT has a fraction field, so the sub-second value is not actually truncated. Fixed so the driver preserves the fraction and returns SQL_SUCCESS.
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
