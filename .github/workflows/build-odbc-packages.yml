@@ -21,4 +21,10 @@ concurrency:
 
 jobs:
   build_odbc_packages:
+    # Public-side gate: on the mirror (snowflakedb) build only on manual
+    # dispatch or release/* pushes; unchanged on the internal repo.
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
     uses: ./.github/workflows/_build-odbc-packages.yml

@@ -20,7 +20,9 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           LEVEL_ARG=""
+          # workflow_dispatch selects nightly too, so the full matrix can be run by hand.
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || \
              [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi
@@ -32,7 +34,9 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           LEVEL_ARG=""
+          # workflow_dispatch selects nightly too, so the full matrix can be run by hand.
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || \
              [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi

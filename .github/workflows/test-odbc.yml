@@ -17,6 +17,8 @@ on:
   # detect-changes still decides whether ODBC jobs actually run.
   merge_group:
     types: [ checks_requested ]
+  # Lets the mirror (snowflakedb) build/test on demand — see scope-label-gate.
+  workflow_dispatch:
 
 concurrency:
   # Group by PR number for PRs; by branch for pushes; fall back to run ID for
@@ -35,9 +37,16 @@ jobs:
   # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
   # workflow at the upgraded scope.
   scope-label-gate:
-    if: |
-      github.event.action != 'labeled' ||
-      contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+    # Public-side gate: on the mirror (snowflakedb) this pipeline runs only on
+    # manual dispatch or release/* pushes, never on every PR/push-to-main. On
+    # the internal repo (repository_owner != 'snowflakedb') behavior is
+    # unchanged. AND-merged with the existing scope-label filter.
+    if: >-
+      (github.repository_owner != 'snowflakedb'
+       || github.event_name == 'workflow_dispatch'
+       || startsWith(github.ref, 'refs/heads/release/'))
+      && (github.event.action != 'labeled'
+          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
     runs-on: ubuntu-latest
     steps:
       - run: 'true'

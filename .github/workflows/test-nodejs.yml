@@ -6,6 +6,8 @@ on:
   pull_request:
   merge_group:
     types: [ checks_requested ]
+  # Lets the mirror (snowflakedb) run on demand — see the detect-changes gate.
+  workflow_dispatch:
 
 concurrency:
   # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
@@ -15,6 +17,13 @@ concurrency:
 
 jobs:
   detect-changes:
+    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch
+    # or release/* pushes; gating this root job skips the whole workflow there.
+    # Internal repo (repository_owner != 'snowflakedb') unchanged.
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
     uses: ./.github/workflows/detect-changes.yml
 
   nodejs_tests:

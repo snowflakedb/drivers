@@ -29,6 +29,13 @@ concurrency:
 
 jobs:
   cleanup:
+    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch,
+    # never on the daily schedule (which would fail without creds). Internal
+    # repo (repository_owner != 'snowflakedb') unchanged.
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
     name: Environment cleanup (${{ matrix.cloud }})
     runs-on: ubuntu-slim
     strategy:

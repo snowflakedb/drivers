@@ -14,69 +14,52 @@ MIRROR_REPO = "https://github.com/snowflakedb/universal-driver"
 
 load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
 
-# DENYLIST: mirror everything except paths matching these patterns.
+# DENYLIST: mirror everything except the paths below.
 #
-# Safety model
-# ------------
-# A denylist defaults to "public" for new files, which is the opposite of
-# what a mirror config typically wants. Two things compensate:
+# Policy (decided 2026-06-18): publish the full repo — CI/build infrastructure
+# included (.github/, ci/, scripts/, .buildkite/, .ci/, shell.nix) — except the
+# small internal-only set below. New files are PUBLIC by default; put anything
+# internal-only under one of the excluded prefixes.
 #
-#   1. `_internal/` convention. Put any new internal-only material under
-#      `_internal/` and it's covered without touching this file.
-#   2. ArcticOwl reviewer (`universal-driver-mirror-privacy`, status:
-#      enabled) reviews every new file in a public directory and flags
-#      anything that looks internal by content. See
+# Safety net (independent of this list):
+#   1. ArcticOwl reviewer (`universal-driver-mirror-privacy`) flags new files in
+#      public paths whose content looks internal. See
 #      `.ai/review/universal-driver-mirror-privacy.yaml`.
-#
-# Keep this list short. Adding a new entry should be a deliberate act,
-# documented in `_internal/mirroring.md`. The mirror token also blocks
-# `.github/workflows/*` pushes today (no `workflow` PAT scope), which is
-# why `.github/**` is fully excluded.
+#   2. The verify_match guards in the `mirror` workflow below FAIL the sync if a
+#      mirrored file names the internal repo, an internal hostname, or the
+#      internal 1Password vault.
 EXCLUDED_PATHS = [
+    # Internal-only material — never published.
     "_internal/**",
     ".ai/**",
     ".cursor/**",
     ".claude/**",
-    ".buildkite/**",
-    ".ci/**",
-    ".github/**",
-    "ci/**",
-    "scripts/**",
-    "shell.nix",
+    # Mirror orchestration — internal-only, no purpose on the public repo:
+    #   - ci/mirroring/** is the Copybara config + runner image; copy.bara.sky
+    #     also names the internal vault in its own guard regex, which would
+    #     self-trip the vault verify_match below if mirrored.
+    #   - mirror.yml runs the outbound sync on a daily SCHEDULE with no
+    #     repository_owner guard — published to the mirror it would fire there
+    #     daily and fail (no destination token; snowflakedb -> snowflakedb).
+    #   - mirror-inbound.yml is the manual import half of the same loop.
+    "ci/mirroring/**",
+    ".github/workflows/mirror.yml",
+    ".github/workflows/mirror-inbound.yml",
+    # CODEOWNERS routes to the internal team @snowflake-eng/snow-drivers-warsaw,
+    # which doesn't exist in the public org — a mirrored copy is just a broken
+    # CODEOWNERS. Re-include + scrub to a public team if external-review routing
+    # is ever wanted.
+    ".github/CODEOWNERS",
+    # GPG-encrypted e2e credential bundle — seeded to the mirror out-of-band,
+    # not via Copybara. decode_secrets.sh expects it present at e2e time.
+    ".github/secrets/**",
 ]
 
-# Per-path overrides that re-include specific files inside an excluded
-# directory. Empty by default — all internal directories are
-# internal-by-default. Add a path here only when a file inside an
-# otherwise-excluded directory must be published; the file enters the
-# mirror as soon as the entry is committed.
-#
-# `close-imported-pr.yml` is the mirror-side half of the inbound loop: it
-# ships with a `github.repository ==` guard so the copy left on the
-# internal repo is a no-op.
-#
-# `mirror-notify-pr.yml` posts a Slack announcement when a contributor
-# opens a PR on the mirror; same repository-guard pattern.
-#
-# The pre-commit and validations workflows use only public runners and no
-# internal secrets, so they run on mirror PRs without modification. The
-# cargo-cache composite action is a local dependency of both.
-#
-# Mirror-only unit test workflows (mirror-test-*.yml) run only when
-# github.repository_owner == 'snowflakedb', so they are no-ops on the
-# internal repo.
-EXCLUDED_PATH_OVERRIDES = [
-    ".github/workflows/close-imported-pr.yml",
-    ".github/workflows/mirror-notify-pr.yml",
-    ".github/workflows/pre-commit.yml",
-    ".github/workflows/validations.yml",
-    ".github/actions/cargo-cache/action.yml",
-    # Mirror-only unit test workflows and their local action dependencies.
-    ".github/workflows/mirror-test-rust-core.yml",
-    ".github/workflows/mirror-test-odbc.yml",
-    ".github/workflows/mirror-test-python.yml",
-    ".github/actions/setup-odbc-build-env/action.yml",
-]
+# Per-path overrides that re-include specific files from inside an EXCLUDED_PATHS
+# prefix. Kept as a seam (unioned into origin_files below): add a path here to
+# republish a single file from an otherwise-excluded prefix without reopening
+# the whole prefix.
+EXCLUDED_PATH_OVERRIDES = []
 
 
 # ┌─────────────────────────────────────────────────────────────────────┐
@@ -103,9 +86,8 @@ core.workflow(
     authoring = authoring.pass_thru(
         "Mirror Bot <mirror-bot@snowflake.com>"
     ),
-    # Default-deny denylist + explicit per-path overrides. The `+` unions
-    # two globs: the broad denylist filter plus an additive include list
-    # that re-allows specific paths inside otherwise-excluded directories.
+    # Default-deny denylist + override seam: mirror everything except
+    # EXCLUDED_PATHS, then re-include any EXCLUDED_PATH_OVERRIDES (empty today).
     origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
     transformations = [
         # Strip GitHub-appended PR numbers (e.g. " (#123)") from commit messages.
@@ -123,6 +105,23 @@ core.workflow(
                     before = "snowflake-eng/universal-driver",
                     after = "snowflakedb/universal-driver",
                 ),
+                # Scrub the internal 1Password vault name from the local-dev
+                # fallback in scripts/decode_secrets.sh (and encode_secrets.sh).
+                # CI sets PARAMETERS_SECRET directly, so the fallback is never
+                # hit there; this only keeps the internal vault name out of the
+                # public mirror.
+                core.replace(
+                    before = "op://Eng - Snow Drivers Warsaw/PARAMETERS_SECRET/password",
+                    after = "op://<vault>/PARAMETERS_SECRET/password",
+                ),
+                # ci/test_revocation.sh clones an internal-only framework repo.
+                # The script runs only on internal Jenkins (ci/Jenkinsfile.vpn-
+                # tests), never on the mirror, so rewriting the org just keeps
+                # the internal repo URL off the public mirror.
+                core.replace(
+                    before = "snowflake-eng/revocation-validation",
+                    after = "snowflakedb/revocation-validation",
+                ),
             ],
             noop_behavior = "IGNORE_NOOP",
         ),
@@ -137,6 +136,17 @@ core.workflow(
         # Fail the sync if any mirrored file references internal hostnames.
         core.verify_match(
             regex = "\\.snowflakecomputing\\.internal|\\.corp\\.snowflake",
+            verify_no_match = True,
+        ),
+        # Defense-in-depth for the expanded CI surface: fail the sync if a
+        # mirrored file still names the internal 1Password vault after the
+        # scrub above. Not covered by the repo/hostname guards.
+        # (Internal runner labels like `ubuntu-slim` are intentionally NOT
+        # guarded here: mirror-notify-pr.yml already ships with that label, and
+        # rewriting it would force a workflow-file push the mirror token can't
+        # make. Tracked as a separate follow-up.)
+        core.verify_match(
+            regex = "Eng - Snow Drivers Warsaw",
             verify_no_match = True,
         ),
     ],
@@ -200,22 +210,13 @@ core.workflow(
     authoring = authoring.pass_thru(
         "Mirror Bot <mirror-bot@snowflake.com>"
     ),
-    # Same denylist + overrides as outbound — anything matching
-    # EXCLUDED_PATHS is silently dropped from the imported PR unless it
-    # is explicitly re-included via EXCLUDED_PATH_OVERRIDES. Intentional:
-    # external contributors cannot add files to .github/, adr/, _internal/,
-    # etc. even if they try.
-    #
-    # destination_files must mirror origin_files exactly. Without it,
-    # copybara treats every file on the destination as managed, and since
-    # internal-only paths (.ai/, .claude/, .cursor/, .buildkite/, .github/,
-    # etc.) don't exist on the external mirror, copybara generates deletions
-    # for all of them in the imported PR diff.
-    #
-    # IMPORT_FILE_GLOBS is generated per run by
+    # Imported PRs are scoped to the mirror PR's changed files (not the full
+    # denylist): IMPORT_FILE_GLOBS is generated per run by
     # scripts/mirror/prepare_import_paths.py from the mirror PR file list.
     # Merge-import baseline flags reconcile every managed path; scoping to
     # the PR diff avoids unrelated org-string drift on untouched files.
+    # destination_files must mirror origin_files exactly, else copybara treats
+    # every destination file as managed and generates spurious deletions.
     origin_files = glob(IMPORT_FILE_GLOBS),
     destination_files = glob(IMPORT_FILE_GLOBS),
     transformations = [

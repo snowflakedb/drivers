@@ -13,6 +13,8 @@ on:
     types: [opened, synchronize, reopened, labeled]
   merge_group:
     types: [ checks_requested ]
+  # Lets the mirror (snowflakedb) build/test on demand — see scope-label-gate.
+  workflow_dispatch:
 
 concurrency:
   # Group by PR number for PRs; fall back to run ID for push-to-main,
@@ -35,9 +37,16 @@ jobs:
   # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
   # workflow at the upgraded scope.
   scope-label-gate:
-    if: |
-      github.event.action != 'labeled' ||
-      contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+    # Public-side gate: on the mirror (snowflakedb) this pipeline runs only on
+    # manual dispatch or release/* pushes, never on every PR/push-to-main. On
+    # the internal repo (repository_owner != 'snowflakedb') behavior is
+    # unchanged. AND-merged with the existing scope-label filter.
+    if: >-
+      (github.repository_owner != 'snowflakedb'
+       || github.event_name == 'workflow_dispatch'
+       || startsWith(github.ref, 'refs/heads/release/'))
+      && (github.event.action != 'labeled'
+          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
     runs-on: ubuntu-latest
     steps:
       - run: 'true'
@@ -59,7 +68,9 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           LEVEL_ARG=""
+          # workflow_dispatch selects nightly too, so the full matrix can be run by hand.
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || \
              [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi
@@ -71,7 +82,9 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           LEVEL_ARG=""
+          # workflow_dispatch selects nightly too, so the full matrix can be run by hand.
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || \
              [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi

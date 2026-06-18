@@ -47,9 +47,15 @@ jobs:
   #   - the triggering event is something else (synchronize/opened/...)
   #     and the matching label is currently on the PR
   gate:
-    if: |
-      (github.event.action == 'labeled' && github.event.label.name == 'run_full_put_get_tests')
-      || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run_full_put_get_tests'))
+    # Public-side gate: on the mirror (snowflakedb) this never runs — it's an
+    # internal label-gated workflow. Internal repo (repository_owner !=
+    # 'snowflakedb') unchanged. AND-merged with the existing label filter.
+    if: >-
+      (github.repository_owner != 'snowflakedb'
+       || github.event_name == 'workflow_dispatch'
+       || startsWith(github.ref, 'refs/heads/release/'))
+      && ((github.event.action == 'labeled' && github.event.label.name == 'run_full_put_get_tests')
+          || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run_full_put_get_tests')))
     runs-on: ubuntu-latest
     steps:
       - run: 'true'
