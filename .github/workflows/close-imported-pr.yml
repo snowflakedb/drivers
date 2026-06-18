@@ -47,7 +47,7 @@ jobs:
     # the actual login or app slug used to push from the outbound job.
     if: >-
       github.repository == 'snowflakedb/universal-driver'
-      && (github.event_name == 'workflow_dispatch' || github.actor == 'mirror-bot')
+      && (github.event_name == 'workflow_dispatch' || github.actor == 'sfc-gh-drivers-sa')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for git log on dispatch backfill)
