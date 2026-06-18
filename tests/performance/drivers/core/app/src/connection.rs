@@ -89,6 +89,16 @@ pub fn create_connection(
     set_connection_option(rt, &conn_handle, "role", &params.role)?;
     set_connection_option(rt, &conn_handle, "host", &params.host)?;
 
+    // Opt into HTTP(S)_PROXY env-var detection. sf_core defaults `use_proxy_env`
+    // to false (default-deny, introduced in SNOW-2314158), but the WireMock perf
+    // harness routes traffic to the proxy purely via the HTTPS_PROXY/HTTP_PROXY
+    // env vars. Without this opt-in the recorded-http suite records zero traffic
+    // and replay fails with "No mapping files found". Mirrors the python adapter's
+    // use_proxy_env=True and the ODBC adapter's USE_PROXY_ENV=true.
+    if std::env::var("HTTPS_PROXY").is_ok() || std::env::var("HTTP_PROXY").is_ok() {
+        set_connection_option(rt, &conn_handle, "use_proxy_env", "true")?;
+    }
+
     set_tls_options(rt, &conn_handle, params)?;
 
     // Initialize connection (performs login)
