@@ -39,6 +39,7 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.LegacyKeyNormalizer;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
@@ -128,7 +129,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
           if (!(key instanceof String)) {
             return;
           }
-          String keyStr = ConfigSettingFactory.normalizeKey((String) key, value);
+          String keyStr = LegacyKeyNormalizer.normalize((String) key);
           ConfigSetting configSetting = ConfigSettingFactory.from(value);
           if (configSetting != null) {
             optionsMap.put(keyStr, configSetting);

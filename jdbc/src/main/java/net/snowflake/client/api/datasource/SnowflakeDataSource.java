@@ -44,6 +44,10 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setPasscodeInPassword(boolean isPasscodeInPassword);
 
+  void setOktaUsername(String oktaUsername);
+
+  void setDisableSamlURLCheck(boolean disableSamlURLCheck);
+
   void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential);
 
   void setOauthClientId(String oauthClientId);

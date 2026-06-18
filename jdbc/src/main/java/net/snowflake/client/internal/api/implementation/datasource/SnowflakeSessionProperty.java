@@ -22,6 +22,8 @@ enum SnowflakeSessionProperty {
   PRIVATE_KEY_PASSWORD("private_key_password"),
   PASSCODE("passcode"),
   PASSCODE_IN_PASSWORD("passcodeInPassword"),
+  OKTA_USERNAME("okta_username"),
+  DISABLE_SAML_URL_CHECK("disable_saml_url_check"),
   CLIENT_STORE_TEMPORARY_CREDENTIAL("clientStoreTemporaryCredential"),
   OAUTH_CLIENT_ID("oauth_client_id"),
   OAUTH_CLIENT_SECRET("oauth_client_secret"),
