@@ -1,7 +1,7 @@
 package net.snowflake.client.api.datasource;
 
 import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
@@ -10,30 +10,33 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Properties;
 import net.snowflake.jdbc.utils.PrivateKeyHelper;
-import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.TestParameters;
+import net.snowflake.jdbc.utils.WithQueryUtils;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
 import org.junit.jupiter.api.io.TempDir;
 
-class PrivateKeyTests extends SnowflakeIntegrationTestBase {
+@TestInstance(Lifecycle.PER_CLASS)
+class PrivateKeyTests implements WithQueryUtils {
+
+  private static final String USER = TestParameters.get("SNOWFLAKE_TEST_USER");
 
   private Path tempDir;
   private PrivateKeyHelper privateKeyHelper;
-  private Properties props;
-  private String jdbcUrl;
 
   @BeforeAll
   void setUp(@TempDir Path tempDir) throws Exception {
     this.tempDir = tempDir;
     privateKeyHelper = PrivateKeyHelper.fromParameters(tempDir.resolve("encrypted_key.p8"));
-    props = loadConnectionProperties();
-    jdbcUrl = buildJdbcUrl(props);
   }
 
   private SnowflakeDataSource createDataSource() {
+    Properties props = loadDefaultConnectionProperties();
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
-    ds.setUrl(jdbcUrl);
-    ds.setUser(props.getProperty("user"));
+    ds.setUrl(buildJdbcUrl(props));
+    ds.setUser(USER);
     ds.setAccount(props.getProperty("account"));
     return ds;
   }
@@ -88,7 +91,7 @@ class PrivateKeyTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void shouldFailJwtAuthenticationWhenInvalidPrivateKeyProvided() throws Exception {
+  void shouldFailJwtAuthenticationWhenInvalidPrivateKeyProvided() {
     // Given Authentication is set to JWT and invalid private key file is provided
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("SNOWFLAKE_JWT");
@@ -100,7 +103,7 @@ class PrivateKeyTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void shouldFailJwtAuthenticationWhenNoPrivateFileProvided() throws Exception {
+  void shouldFailJwtAuthenticationWhenNoPrivateFileProvided() {
     // Given Authentication is set to JWT
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("SNOWFLAKE_JWT");

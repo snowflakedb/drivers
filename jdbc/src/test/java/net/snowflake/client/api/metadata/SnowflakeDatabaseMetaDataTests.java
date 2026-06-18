@@ -1,6 +1,7 @@
 package net.snowflake.client.api.metadata;
 
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -883,7 +884,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
     // Both drivers should expose the connecting host in the URL. The legacy driver
     // derives it from SERVER_URL; universal-driver returns the URL the caller passed.
-    Properties props = loadConnectionProperties();
+    Properties props = loadDefaultConnectionProperties();
     String host =
         props.getProperty("host", props.getProperty("account") + ".snowflakecomputing.com");
     assertTrue(
@@ -893,7 +894,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
   @Test
   void getUserNameReturnsConnectedUser() throws Exception {
-    String expected = loadConnectionProperties().getProperty("user");
+    String expected = withSnowflakeAuth(loadDefaultConnectionProperties()).getProperty("user");
     assertEquals(expected, metaData().getUserName(), "getUserName must match the 'user' property");
   }
 

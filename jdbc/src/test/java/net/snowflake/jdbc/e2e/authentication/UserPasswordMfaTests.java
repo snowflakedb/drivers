@@ -1,57 +1,25 @@
 package net.snowflake.jdbc.e2e.authentication;
 
-import static net.snowflake.jdbc.e2e.authentication.MfaAuthHelpers.acquireTotpPasscode;
-import static net.snowflake.jdbc.e2e.authentication.MfaAuthHelpers.connectWithTotpRetry;
-import static net.snowflake.jdbc.e2e.authentication.MfaAuthHelpers.getMfaParam;
-import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
-import static net.snowflake.jdbc.utils.TestParameters.loadConnectionProperties;
+import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
 import net.snowflake.jdbc.utils.RequiresBrowser;
+import net.snowflake.jdbc.utils.TestParameters;
+import net.snowflake.jdbc.utils.WithConnect;
 import net.snowflake.jdbc.utils.WithQueryUtils;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.function.Executable;
 
-/**
- * End-to-end {@code DriverManager}-based tests for {@code USERNAME_PASSWORD_MFA} authentication.
- * Mirrors the Gherkin scenarios in {@code
- * tests/definitions/shared/authentication/user_password_mfa.feature}.
- *
- * <p>Requires the snowdrivers-test-external-browser-universal-driver Docker container
- * (/externalbrowser/totpGenerator.js generates TOTP passcodes for the MFA test user).
- *
- * <p>Run locally:
- *
- * <pre>./tests/auth/run_auth_browser.sh jdbc</pre>
- */
 @RequiresBrowser
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class UserPasswordMfaTests implements WithQueryUtils {
+class UserPasswordMfaTests implements WithQueryUtils, WithConnect, WithTotpCodes {
 
-  private String totpSeed;
-  private String jdbcUrl;
-  private Properties baseConnectionProps;
-
-  @BeforeAll
-  void setUp() throws Exception {
-    String user = getMfaParam("SNOWFLAKE_TEST_MFA_USER");
-    String password = getMfaParam("SNOWFLAKE_TEST_MFA_PASSWORD");
-    totpSeed = getMfaParam("SNOWFLAKE_TEST_MFA_SEED");
-
-    baseConnectionProps = loadConnectionProperties();
-    baseConnectionProps.setProperty("user", user);
-    baseConnectionProps.setProperty("password", password);
-    baseConnectionProps.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
-    baseConnectionProps.setProperty("role", "PUBLIC");
-    jdbcUrl = buildJdbcUrl(baseConnectionProps);
-  }
+  private static final String USER = TestParameters.get("SNOWFLAKE_TEST_MFA_USER");
+  private static final String PASSWORD = TestParameters.get("SNOWFLAKE_TEST_MFA_PASSWORD");
+  private static final String TOTP_SEED = TestParameters.get("SNOWFLAKE_TEST_MFA_SEED");
 
   // -------------------------------------------------------------------------
   // Passcode flow
@@ -61,11 +29,13 @@ class UserPasswordMfaTests implements WithQueryUtils {
   void shouldAuthenticateUsingUsernamePasswordAndTotpPasscode() throws Exception {
     // Given Authentication is set to username_password_mfa and user, password and passcode are
     // provided
-    Properties props = new Properties();
-    props.putAll(baseConnectionProps);
+    Properties props = loadDefaultConnectionProperties();
+    props.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
+    props.setProperty("user", USER);
+    props.setProperty("password", PASSWORD);
 
     // When Trying to Connect
-    try (Connection conn = connectWithTotpRetry(jdbcUrl, props, totpSeed, false)) {
+    try (Connection conn = connectWithTotpRetry(props, TOTP_SEED, false)) {
       // Then Login is successful and simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
@@ -75,11 +45,13 @@ class UserPasswordMfaTests implements WithQueryUtils {
   void shouldAuthenticateUsingUsernamePasswordWithAppendedTotpPasscode() throws Exception {
     // Given Authentication is set to username_password_mfa and user, password with appended
     // passcode are provided and passcodeInPassword is set
-    Properties props = new Properties();
-    props.putAll(baseConnectionProps);
+    Properties props = loadDefaultConnectionProperties();
+    props.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
+    props.setProperty("user", USER);
+    props.setProperty("password", PASSWORD);
 
     // When Trying to Connect
-    try (Connection conn = connectWithTotpRetry(jdbcUrl, props, totpSeed, true)) {
+    try (Connection conn = connectWithTotpRetry(props, TOTP_SEED, true)) {
       // Then Login is successful and simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
@@ -93,20 +65,24 @@ class UserPasswordMfaTests implements WithQueryUtils {
   void shouldReuseCachedMfaTokenWithoutPasscode() throws Exception {
     // Given Authentication is set to username_password_mfa and MFA token has been cached from a
     // previous connection
-    Properties firstProps = new Properties();
-    firstProps.putAll(baseConnectionProps);
+    Properties firstProps = loadDefaultConnectionProperties();
+    firstProps.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
+    firstProps.setProperty("user", USER);
+    firstProps.setProperty("password", PASSWORD);
     firstProps.setProperty("clientStoreTemporaryCredential", "true");
 
-    try (Connection first = connectWithTotpRetry(jdbcUrl, firstProps, totpSeed, false)) {
+    try (Connection first = connectWithTotpRetry(firstProps, TOTP_SEED, false)) {
       assertSimpleQuerySucceeds(first);
     }
 
     // When Trying to Connect without passcode
-    Properties secondProps = new Properties();
-    secondProps.putAll(baseConnectionProps);
+    Properties secondProps = loadDefaultConnectionProperties();
+    secondProps.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
+    secondProps.setProperty("user", USER);
+    secondProps.setProperty("password", PASSWORD);
     secondProps.setProperty("clientStoreTemporaryCredential", "true");
 
-    try (Connection second = DriverManager.getConnection(jdbcUrl, secondProps)) {
+    try (Connection second = connect(secondProps)) {
       // Then Login is successful and simple query can be executed
       assertSimpleQuerySucceeds(second);
     }
@@ -117,17 +93,17 @@ class UserPasswordMfaTests implements WithQueryUtils {
   // -------------------------------------------------------------------------
 
   @Test
-  void shouldFailAuthenticationWhenWrongPasswordIsProvided() throws Exception {
+  void shouldFailAuthenticationWhenWrongPasswordIsProvided() {
     // Given Authentication is set to username_password_mfa and user is provided but password is
     // skipped or invalid
-    String passcode = acquireTotpPasscode(totpSeed);
-    Properties props = new Properties();
-    props.putAll(baseConnectionProps);
+    Properties props = loadDefaultConnectionProperties();
+    props.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
+    props.setProperty("user", USER);
     props.setProperty("password", "wrong_password");
-    props.setProperty("passcode", passcode);
+    props.setProperty("passcode", acquireTotpPasscode(TOTP_SEED));
 
     // When Trying to Connect
-    Executable connect = () -> DriverManager.getConnection(jdbcUrl, props);
+    Executable connect = () -> connect(props);
 
     // Then There is error returned
     assertThrows(SQLException.class, connect);
@@ -142,11 +118,13 @@ class UserPasswordMfaTests implements WithQueryUtils {
   void shouldAuthenticateUsingUsernamePasswordAndDuoPush() throws Exception {
     // Given Authentication is set to username_password_mfa and user, password are provided and DUO
     // push is enabled
-    Properties props = new Properties();
-    props.putAll(baseConnectionProps);
+    Properties props = loadDefaultConnectionProperties();
+    props.setProperty("authenticator", "USERNAME_PASSWORD_MFA");
+    props.setProperty("user", USER);
+    props.setProperty("password", PASSWORD);
 
     // When Trying to Connect
-    try (Connection conn = DriverManager.getConnection(jdbcUrl, props)) {
+    try (Connection conn = connect(props)) {
       // Then Login is successful and simple query can be executed
       assertSimpleQuerySucceeds(conn);
     }
