@@ -1,0 +1,94 @@
+# Dockerfile for code coverage builds
+# Contains all dependencies for: Rust Core, Python, ODBC, JDBC
+# Mirrors the GitHub Actions test workflows
+
+FROM rockylinux:8
+
+# Install EPEL first (needed for lcov and awscli)
+RUN dnf install -y epel-release
+
+# Install base development tools (including GCC 8 for Rust builds).
+# `unzip` is included so we don't need a runtime `yum install -y unzip` in the
+# Jenkins pipelines that consume this image — runtime installs from a pre-built
+# image break whenever Rocky rotates upstream repodata hashes (≈weekly), which
+# has caused full pipeline outages.
+RUN dnf install -y \
+    gcc \
+    gcc-c++ \
+    make \
+    tar \
+    gzip \
+    curl \
+    wget \
+    bash \
+    git \
+    which \
+    findutils \
+    unzip \
+    openssl-devel \
+    perl-IPC-Cmd \
+    lcov \
+    awscli
+
+# Install GCC 11 (has std::filesystem built-in, no separate stdc++fs needed)
+# NOTE: Don't add to PATH globally - only enable for ODBC builds to avoid Rust linker conflicts
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+
+# ============================================================
+# Python 3.11 (for Python driver tests)
+# ============================================================
+RUN dnf install -y python3.11 python3.11-pip python3.11-devel && \
+    alternatives --set python3 /usr/bin/python3.11 && \
+    pip3 install --upgrade pip setuptools wheel uv hatch tox
+
+# ============================================================
+# Java 11 (for JDBC tests and Wiremock which requires Java 11+)
+# ============================================================
+RUN dnf install -y java-11-openjdk java-11-openjdk-devel
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+
+# ============================================================
+# ODBC (for ODBC tests)
+# ============================================================
+RUN dnf install -y unixODBC unixODBC-devel zlib-devel
+
+# Install CMake 4.0.3 (matching GitHub Actions)
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh -o /tmp/cmake.sh && \
+    sh /tmp/cmake.sh --skip-license --prefix=/usr/local && \
+    rm /tmp/cmake.sh
+
+# ============================================================
+# Go (required by aws-lc-fips-sys for FIPS-compliant crypto)
+# ============================================================
+RUN curl -L https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# ============================================================
+# Rust (shared by all components)
+# ============================================================
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    rustup component add llvm-tools-preview && \
+    cargo install cargo-tarpaulin
+
+# ============================================================
+# Codecov CLI (for uploading coverage)
+# ============================================================
+RUN pip3 install codecov-cli
+
+# Configure git to trust all directories (needed for Docker-mounted workspaces)
+RUN git config --global --add safe.directory '*'
+
+# Verify installations
+RUN gcc --version && \
+    g++ --version && \
+    rustc --version && \
+    cargo --version && \
+    python3 --version && \
+    java -version && \
+    go version && \
+    cmake --version && \
+    codecovcli --version

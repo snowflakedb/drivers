@@ -1,0 +1,423 @@
+/*
+ * Jenkinsfile for code coverage generation.
+ *
+ * Coverage reports are generated per-component and surfaced as:
+ *   - Jenkins build status (build description + GitHub Checks via publishChecks)
+ *   - Archived artifacts (lcov/jacoco/cobertura files, downloadable from Jenkins UI)
+ *
+ * There is intentionally NO upload to Codecov or other external coverage services:
+ * Jenkins is the single source of truth. Removing the Codecov upload avoids the
+ * FUSE secret DECRYPT permission issues on merge-queue / readonly-queue callers.
+ */
+
+@Library('pipeline-utils')
+import com.snowflake.DevEnvUtils
+import groovy.transform.Field
+
+@Field String DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+@Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+@Field Map coverageResults = [:]
+@Field Map DISPLAY_NAMES = [
+    'rust-core': 'Rust Core',
+    'python': 'Python',
+    'odbc': 'ODBC',
+    'jdbc': 'JDBC'
+]
+
+def dockerSetup() {
+    new DevEnvUtils().withSfCli {
+        sh "sf artifact oci auth"
+    }
+    sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
+}
+
+def installSystemDeps() {
+    // Refresh dnf metadata cache before installing.
+    //
+    // The Docker image (rhel8-universal-driver-coverage) ships with a pre-built
+    // dnf cache whose `repomd.xml` references content-addressed metadata blobs
+    // (hashes like df44af0...-modules.yaml.xz). Rocky Linux rotates these hashes
+    // on every repo update (~weekly) and deletes the old blobs from mirrors
+    // after a brief grace period — at which point any `yum install` from the
+    // image fails with cascading 404s across every mirror in the world.
+    //
+    // `dnf clean all` wipes the stale cache; `dnf makecache` redownloads the
+    // current `repomd.xml` and metadata blobs. This adds ~30s but makes the
+    // install resilient to mirror rotation. Long-term fix: bake `unzip` into
+    // the Docker image so no runtime install is needed.
+    sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
+    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+}
+
+def decodeSecrets() {
+    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+        sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+    }
+}
+
+def parseLcovCoverage(String lcovFile) {
+    def result = sh(label: 'Parse LCOV Coverage', script: """
+        set +x
+        awk '
+            /^LH:/ { hit += substr(\$0, 4) }
+            /^LF:/ { found += substr(\$0, 4) }
+            END {
+                if (found > 0) printf "%.2f", hit * 100 / found
+                else print ""
+            }
+        ' "${lcovFile}"
+    """, returnStdout: true).trim()
+    return result ?: null
+}
+
+def parseJacocoCoverage(String xmlFile) {
+    def result = sh(label: 'Parse JaCoCo Coverage', script: """
+        set +x
+        # Extract LINE counters only (handles both formatted and minified XML)
+        # grep -o extracts just the LINE counter tag, tail -1 gets the last (report-level)
+        grep -o '<counter type="LINE"[^/]*' "${xmlFile}" | tail -1 | sed 's/.*missed="\\([0-9]*\\)".*covered="\\([0-9]*\\)".*/\\1 \\2/' | awk '{
+            total = \$1 + \$2
+            if (total > 0) printf "%.2f", \$2 * 100 / total
+        }'
+    """, returnStdout: true).trim()
+    return result ?: null
+}
+
+def parseCoberturaCoverage(String xmlFile) {
+    def result = sh(label: 'Parse Cobertura Coverage', script: """
+        set +x
+        grep -o 'line-rate="[^"]*"' "${xmlFile}" | head -1 | sed 's/line-rate="\\([^"]*\\)"/\\1/' | awk '{printf "%.2f", \$1 * 100}'
+    """, returnStdout: true).trim()
+    return result ?: null
+}
+
+def reportStatus(String component, String coverage) {
+    def displayName = DISPLAY_NAMES[component] ?: component
+    // detailsURL points at the Jenkins build page so reviewers can inspect the full
+    // coverage artifacts (lcov / jacoco / cobertura files) from the GitHub Check.
+    if (coverage) {
+        coverageResults[component] = coverage
+        publishChecks name: "Code Coverage - ${displayName}",
+                      title: "Coverage: ${coverage}%",
+                      summary: "Code coverage for ${displayName}: ${coverage}%",
+                      detailsURL: env.BUILD_URL,
+                      status: 'COMPLETED',
+                      conclusion: 'SUCCESS'
+    } else {
+        coverageResults[component] = 'FAILED'
+        publishChecks name: "Code Coverage - ${displayName}",
+                      title: "Coverage failed",
+                      summary: "Could not calculate coverage percentage from report.",
+                      detailsURL: env.BUILD_URL,
+                      status: 'COMPLETED',
+                      conclusion: 'FAILURE'
+    }
+}
+
+def reportFailure(String component) {
+    def displayName = DISPLAY_NAMES[component] ?: component
+    coverageResults[component] = 'FAILED'
+
+    publishChecks name: "Code Coverage - ${displayName}",
+                  title: "Coverage failed",
+                  summary: "Coverage collection failed for ${displayName}",
+                  detailsURL: env.BUILD_URL,
+                  status: 'COMPLETED',
+                  conclusion: 'FAILURE'
+}
+
+pipeline {
+    agent none
+    
+    options {
+        timestamps()
+        disableResume()
+        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '100'))
+        timeout(time: 2, unit: 'HOURS')
+    }
+    
+    triggers {
+        cron(env.BRANCH_NAME == 'main' ? 'H 2 * * *' : '')
+    }
+    
+    stages {
+        stage('Setup') {
+            agent any
+            steps {
+                script {
+                    publishChecks name: 'Universal Driver Code Coverage',
+                                  title: 'Build In Progress',
+                                  summary: "Jenkins Build ${env.BUILD_NUMBER} is running...",
+                                  detailsURL: env.BUILD_URL,
+                                  status: 'IN_PROGRESS'
+                }
+            }
+        }
+        
+        stage('Coverage') {
+            failFast false
+            parallel {
+                stage('Rust Core') {
+                    agent { label 'build-node-extra-large' }
+                    steps {
+                        script {
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
+                                    installSystemDeps()
+                                    
+                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
+                                        set +x
+                                        export PARAMETER_PATH=$(pwd)/parameters.json
+                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                    ''')
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_env.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+
+                                    if (testExitCode != 0) {
+                                        echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "Rust Core tests failed")
+                                    }
+                                    sh 'mv lcov.info lcov-rust-core.info'
+                                    
+                                    def coverage = parseLcovCoverage('lcov-rust-core.info')
+                                    reportStatus('rust-core', coverage)
+                                }
+                                archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('rust-core')
+                                throw e
+                            }
+                        }
+                    }
+                }
+                
+                stage('Python') {
+                    agent { label 'build-node-extra-large' }
+                    steps {
+                        script {
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
+                                    installSystemDeps()
+                                    
+                                    dir('python') {
+                                        sh label: 'Build Python Package', script: '''
+                                            set +x
+                                            RUSTFLAGS="" hatch build -t wheel
+                                        '''
+
+                                        sh label: 'Install the wheel', script: '''
+                                            set +x
+                                            hatch run test.py3.10:install-wheel
+                                        '''
+                                        
+                                        def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
+                                            set +x
+                                            export PARAMETER_PATH=$(pwd)/../parameters.json
+                                            export PYTHONPATH=$(pwd)/src:$PYTHONPATH
+                                            mkdir -p reports
+                                            hatch run test.py3.10:cov -- \
+                                                --cov-report=term
+                                            test_status=$?
+                                            if [ -f coverage.xml ]; then
+                                                mv coverage.xml reports/coverage-python.xml
+                                            fi
+                                            exit $test_status
+                                        ''')
+                                        if (testExitCode != 0) {
+                                            echo "Python tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                            unstable(message: "Python tests failed")
+                                        }
+                                    }
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_env.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+                                    
+                                    def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
+                                    reportStatus('python', coverage)
+                                }
+                                archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('python')
+                                throw e
+                            }
+                        }
+                    }
+                }
+                
+                stage('ODBC') {
+                    agent { label 'build-node-extra-large' }
+                    steps {
+                        script {
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
+                                    installSystemDeps()
+                                    
+                                    sh label: 'Build ODBC Driver', script: '''
+                                        set +x
+                                        RUSTFLAGS="-C instrument-coverage" cargo build
+                                        source /opt/rh/gcc-toolset-11/enable
+                                        cd odbc_tests
+                                        mkdir -p cmake-build
+                                        cmake -B cmake-build \
+                                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                            -D ODBC_INCLUDE_DIR="/usr/include" \
+                                            -D DRIVER_TYPE=NEW \
+                                            .
+                                        cmake --build cmake-build -- -j $(nproc)
+                                    '''
+                                    
+                                    def testExitCode = sh(label: 'Run ODBC Tests', returnStatus: true, script: '''
+                                        set +x
+                                        WORKSPACE_ROOT=$(pwd)
+                                        export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                                        export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                                        export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
+                                        
+                                        cd odbc_tests
+                                        # Exclude CRL tests - they require Wiremock server which is not started in coverage job
+                                        ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                                    ''')
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_env.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+
+                                    if (testExitCode != 0) {
+                                        echo "ODBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "ODBC tests failed")
+                                    }
+                                    
+                                    sh label: 'Generate Coverage Report', script: '''
+                                        set +x
+                                        LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                                        LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                                        find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                        
+                                        $LLVM_COV export target/debug/libsfodbc.so \
+                                            -instr-profile=coverage.profdata \
+                                            -format=lcov \
+                                            -sources=$(pwd)/odbc \
+                                            -sources=$(pwd)/sf_core > lcov-odbc.info
+                                        
+                                        # Filter to only odbc/ files for local percentage calculation
+                                        lcov --extract lcov-odbc.info "*/odbc/*" -o lcov-odbc-filtered.info
+                                    '''
+                                    
+                                    def coverage = parseLcovCoverage('lcov-odbc-filtered.info')
+                                    reportStatus('odbc', coverage)
+                                }
+                                archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('odbc')
+                                throw e
+                            }
+                        }
+                    }
+                }
+                
+                stage('JDBC') {
+                    agent { label 'build-node-extra-large' }
+                    steps {
+                        script {
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
+                                    installSystemDeps()
+                                    
+                                    sh label: 'Build JDBC Bridge', script: '''
+                                        set +x
+                                        cargo build --package sf_core
+                                        cargo build --package jdbc_bridge
+                                    '''
+                                    
+                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
+                                        set +x
+                                        export PARAMETER_PATH=$(pwd)/parameters.json
+                                        export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                        chmod +x jdbc/gradlew
+                                        cd jdbc
+                                        ./gradlew test jacocoTestReport --stacktrace
+                                    ''')
+                                    if (testExitCode != 0) {
+                                        echo "JDBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "JDBC tests failed")
+                                    }
+                                    
+                                    def jdbcReportPath = "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
+                                    def coverage = parseJacocoCoverage(jdbcReportPath)
+                                    reportStatus('jdbc', coverage)
+                                }
+                                archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('jdbc')
+                                throw e
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        failure {
+            script {
+                node {
+                    checkout scm
+                    def slackFailure = load("${env.WORKSPACE}/ci/lib/jenkins_slack_failure.groovy")
+                    slackFailure.notifyFailure()
+                }
+            }
+        }
+        always {
+            script {
+                // Aggregate per-component coverage into the build description so the
+                // Jenkins job list shows coverage at a glance. Values come from the
+                // coverageResults map populated by reportStatus() / reportFailure().
+                if (coverageResults.isEmpty()) {
+                    currentBuild.description = "No coverage data"
+                } else {
+                    def parts = []
+                    coverageResults.each { component, value ->
+                        def displayName = DISPLAY_NAMES[component] ?: component
+                        if (value == 'FAILED') {
+                            parts << "${displayName}: FAILED"
+                        } else {
+                            parts << "${displayName}: ${value}%"
+                        }
+                    }
+                    currentBuild.description = parts.join(' | ')
+                }
+
+                publishChecks name: 'Universal Driver Code Coverage',
+                              title: "Build ${currentBuild.currentResult}",
+                              summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",
+                              detailsURL: env.BUILD_URL,
+                              status: 'COMPLETED',
+                              conclusion: currentBuild.currentResult == 'SUCCESS' ? 'SUCCESS' : 'FAILURE'
+            }
+        }
+    }
+}

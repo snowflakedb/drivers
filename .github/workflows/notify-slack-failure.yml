@@ -1,0 +1,267 @@
+# Slack failure notifications for CI runs on main and in the merge queue.
+#
+# Fires when any of the listed workflows complete with a failure conclusion,
+# but only when they were triggered by a push to `main` or a merge_group event
+# (i.e. the merge queue). Regular PR runs are silently ignored.
+#
+# workflow_dispatch is present for manual testing only — remove before merging
+# to main. Trigger with:
+#   gh workflow run "CI Failure Notifications" \
+#     --ref <branch> -f run_id=<failed-run-id>
+#
+# Required repository configuration:
+#   secrets.SLACK_BOT_TOKEN
+#       Same bot token used by the PR review bot (xoxb-...).
+#       Required scopes: chat:write, users:read.email
+#   No channel configuration needed — notifications always go to
+#       #universal-driver-ci-alerts.
+#
+# No additional secrets or GitHub App permissions are needed beyond the
+# GITHUB_TOKEN that GitHub automatically provides (used to list failed jobs
+# and download test artifacts from the triggering run).
+name: CI Failure Notifications
+
+on:
+  workflow_run:
+    workflows:
+      - "JDBC CI"
+      - "Python CI"
+      - "Rust Core CI"
+      - "Pre-commit"
+      - "Validate generated data"
+      - "ODBC CI"
+      - "Python Release Build"
+    types: [completed]
+  # For manual testing only — remove before merging to main.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID of the failed workflow run to notify about'
+        required: true
+        type: string
+
+permissions:
+  # Required to list jobs and download artifacts from the triggering run.
+  actions: read
+
+concurrency:
+  # One notification job per completed run; no cancellation so every failure
+  # gets its own alert even when multiple workflows fail simultaneously.
+  group: ci-failure-notify-${{ github.event.workflow_run.id || github.event.inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    # Only alert on failures caused by a push to main, a merge-queue check, or a nightly schedule run.
+    # workflow_dispatch is allowed unconditionally for manual testing.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'failure' &&
+        (
+          (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') ||
+          github.event.workflow_run.event == 'merge_group' ||
+          github.event.workflow_run.event == 'schedule'
+        )
+      )
+    runs-on: ubuntu-slim
+    steps:
+      # ── 1. Fetch run metadata + failed-job details via the GitHub API ──────
+      # Always fetches from the API so both workflow_run and workflow_dispatch
+      # triggers use the same code path.
+      - name: Get run details and failed jobs
+        id: run_info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run_id = context.payload.workflow_run?.id
+              ?? parseInt(context.payload.inputs.run_id);
+
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id,
+            });
+
+            const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id,
+              per_page: 100,
+            });
+            const failed = jobs.jobs.filter(j => j.conclusion === 'failure');
+            const result = failed.map(j => ({
+              name: j.name,
+              url: j.html_url,
+              failed_step: (j.steps || []).find(s => s.conclusion === 'failure')?.name || null,
+            }));
+
+            core.setOutput('run_id',        run_id);
+            core.setOutput('workflow_name',  run.name);
+            core.setOutput('run_url',        run.html_url);
+            core.setOutput('head_sha',       run.head_sha);
+            core.setOutput('head_branch',    run.head_branch);
+            core.setOutput('trigger_event',  run.event);
+            core.setOutput('failed_jobs',    JSON.stringify(result));
+            core.setOutput('author_email',   run.head_commit?.author?.email || '');
+            core.setOutput('author_name',    run.head_commit?.author?.name  || '');
+
+      # ── 2. Resolve commit author to a Slack mention (best-effort) ─────────
+      - name: Resolve author Slack ID
+        id: slack_user
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          AUTHOR_EMAIL: ${{ steps.run_info.outputs.author_email }}
+          AUTHOR_NAME:  ${{ steps.run_info.outputs.author_name }}
+        with:
+          script: |
+            const email = process.env.AUTHOR_EMAIL;
+            const name  = process.env.AUTHOR_NAME;
+            if (!email) { core.setOutput('mention', name || 'unknown'); return; }
+            try {
+              const resp = await fetch(
+                `https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(email)}`,
+                { headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` } }
+              );
+              const data = await resp.json();
+              core.setOutput('mention', data.ok ? `<@${data.user.id}>` : (name || email));
+            } catch (_) {
+              core.setOutput('mention', name || email);
+            }
+
+      # ── 3. Download test artifacts (best-effort; no artifacts = no test summary) ──
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.run_info.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: test-artifacts
+        continue-on-error: true
+
+      # ── 4. Parse JUnit XML artifacts + build and post Slack payload ───────
+      - name: Build and post Slack notification
+        env:
+          WORKFLOW_NAME: ${{ steps.run_info.outputs.workflow_name }}
+          RUN_URL:       ${{ steps.run_info.outputs.run_url }}
+          HEAD_SHA:      ${{ steps.run_info.outputs.head_sha }}
+          HEAD_BRANCH:   ${{ steps.run_info.outputs.head_branch }}
+          TRIGGER_EVENT: ${{ steps.run_info.outputs.trigger_event }}
+          FAILED_JOBS_JSON: ${{ steps.run_info.outputs.failed_jobs }}
+          AUTHOR_MENTION:   ${{ steps.slack_user.outputs.mention }}
+          SLACK_CHANNEL: universal-driver-ci-alerts
+          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
+        run: |
+          python3 <<'PYEOF'
+          import json, os, glob, xml.etree.ElementTree as ET
+
+          workflow    = os.environ['WORKFLOW_NAME']
+          run_url     = os.environ['RUN_URL']
+          sha         = os.environ['HEAD_SHA'][:8]
+          head_branch = os.environ['HEAD_BRANCH']
+          event       = os.environ['TRIGGER_EVENT']
+          failed_jobs = json.loads(os.environ.get('FAILED_JOBS_JSON') or '[]')
+          author      = os.environ.get('AUTHOR_MENTION', '')
+          channel     = os.environ['SLACK_CHANNEL']
+          payload_file = os.environ['SLACK_PAYLOAD_FILE']
+
+          # Human-readable trigger context.
+          if event == 'merge_group':
+              context_str = 'merge queue \u2192 `main`'
+          elif event == 'schedule':
+              context_str = 'nightly schedule on `main`'
+          else:
+              context_str = f'push to `{head_branch}`'
+
+          # Parse JUnit XML files for individual test failures.
+          test_failures = []
+          for xml_path in sorted(glob.glob('test-artifacts/**/*.xml', recursive=True)):
+              try:
+                  tree = ET.parse(xml_path)
+                  for tc in tree.findall('.//testcase'):
+                      for tag in ('failure', 'error'):
+                          node = tc.find(tag)
+                          if node is not None:
+                              cls  = tc.get('classname', '')
+                              name = tc.get('name', '')
+                              msg  = (node.get('message') or node.text or '').strip()[:200]
+                              label = f'{cls}.{name}' if cls else name
+                              test_failures.append((label, msg))
+                              break
+              except Exception:
+                  pass  # malformed XML or unrelated XML file — skip silently
+
+          # ── Build Slack Block Kit payload ─────────────────────────────────
+          blocks = [
+              {
+                  'type': 'header',
+                  'text': {
+                      'type': 'plain_text',
+                      'text': f'\u274c CI Failure: {workflow}',
+                      'emoji': True,
+                  },
+              },
+              {
+                  'type': 'section',
+                  'fields': [
+                      {'type': 'mrkdwn', 'text': f'*Trigger:*\n{context_str}'},
+                      {'type': 'mrkdwn', 'text': f'*Commit:*\n`{sha}`'},
+                      {'type': 'mrkdwn', 'text': f'*Author:*\n{author}'},
+                  ],
+              },
+          ]
+
+          if failed_jobs:
+              lines = []
+              for j in failed_jobs[:10]:
+                  step = f' \u00b7 step: _{j["failed_step"]}_' if j.get('failed_step') else ''
+                  lines.append(f'\u2022 <{j["url"]}|{j["name"]}>{step}')
+              if len(failed_jobs) > 10:
+                  lines.append(f'_\u2026and {len(failed_jobs) - 10} more_')
+              blocks.append({
+                  'type': 'section',
+                  'text': {'type': 'mrkdwn', 'text': '*Failed jobs:*\n' + '\n'.join(lines)},
+              })
+
+          if test_failures:
+              cap   = 15
+              lines = [
+                  f'\u2022 `{label}`: {msg}' if msg else f'\u2022 `{label}`'
+                  for label, msg in test_failures[:cap]
+              ]
+              suffix = f'\n_\u2026and {len(test_failures) - cap} more_' if len(test_failures) > cap else ''
+              blocks.append({
+                  'type': 'section',
+                  'text': {'type': 'mrkdwn', 'text': '*Failed tests:*\n' + '\n'.join(lines) + suffix},
+              })
+
+          blocks.append({
+              'type': 'actions',
+              'elements': [{
+                  'type': 'button',
+                  'text': {'type': 'plain_text', 'text': 'View Run'},
+                  'url': run_url,
+                  'style': 'danger',
+              }],
+          })
+
+          payload = {
+              'channel': channel,
+              'blocks': blocks,
+              'unfurl_links': False,
+              'unfurl_media': False,
+          }
+
+          with open(payload_file, 'w') as f:
+              json.dump(payload, f, indent=2)
+
+          print(f'Payload: {len(failed_jobs)} failed job(s), {len(test_failures)} failed test(s)')
+          PYEOF
+
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@v2
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload-file-path: ${{ runner.temp }}/slack_payload.json

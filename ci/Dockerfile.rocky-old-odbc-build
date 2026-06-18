@@ -1,0 +1,51 @@
+# Dockerfile for building the old ODBC driver with coverage
+FROM rockylinux:8
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install all system packages in one layer
+RUN dnf install -y \
+        epel-release \
+        dnf-plugins-core && \
+    (dnf config-manager --set-enabled powertools || dnf config-manager --set-enabled crb) && \
+    dnf install -y \
+        autoconf \
+        automake \
+        awscli \
+        bash \
+        cmake \
+        gcc \
+        gcc-c++ \
+        git \
+        gzip \
+        lcov \
+        libstdc++-devel \
+        libstdc++-static \
+        libtool \
+        python3 \
+        python3-pip \
+        python3.11 \
+        python3.11-pip \
+        tar \
+        unixODBC-devel \
+        which \
+        zlib-devel && \
+    ln -s /usr/bin/python3 /usr/bin/python && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+# Build and install cppunit
+RUN cd /tmp && \
+    git clone https://github.com/VXAPPS/cppunit.git && \
+    cd cppunit && \
+    git checkout 7e1c90fa717eb2253ca1901d4065f06b2469cfa2 && \
+    ./autogen.sh && \
+    ./configure CXXFLAGS="-std=c++11" && \
+    make -j"$(nproc)" && make install && \
+    cp /usr/local/lib/libcppunit* /usr/lib64 && \
+    rm -rf /tmp/cppunit

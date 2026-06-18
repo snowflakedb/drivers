@@ -1,0 +1,10 @@
+FROM rockylinux:8
+
+RUN dnf install -y gcc tar gzip curl bash
+RUN dnf install -y epel-release && dnf install -y awscli
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
