@@ -44,6 +44,12 @@ pub fn sql_state_from_code(code: i32) -> Option<&'static str> {
         // String length exceeds the column's declared maximum and would be
         // truncated. e.g. "String 'hello world' is too long and would be truncated".
         100078 => Some("22001"),
+        // NOT NULL constraint violation: NULL written to a non-nullable column.
+        // e.g. "DML operation to table T failed on column C with error: NULL
+        // result in a non-nullable column". The reference driver reports 22000
+        // (data exception) here rather than the ODBC-spec 23000 (integrity
+        // constraint violation); match it for compatibility.
+        100072 => Some("22000"),
         _ => {
             // Surface unmapped codes so we can grow this table as new ones
             // appear in production telemetry. Logged at `debug` because this
@@ -68,6 +74,7 @@ mod tests {
         assert_eq!(sql_state_from_code(1003), Some("42000"));
         assert_eq!(sql_state_from_code(100038), Some("22003"));
         assert_eq!(sql_state_from_code(100078), Some("22001"));
+        assert_eq!(sql_state_from_code(100072), Some("22000"));
     }
 
     #[test]

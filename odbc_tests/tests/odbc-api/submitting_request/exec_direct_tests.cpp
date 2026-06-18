@@ -22,8 +22,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Executes SELECT and returns result set",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -42,8 +40,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Executes SELECT and retu
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: Executes DDL statement and table is queryable",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TABLE ed_ddl_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -64,8 +60,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: Executes DDL statemen
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: INSERT returns correct SQLRowCount and inserts rows",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ed_ins_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -105,8 +99,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: INSERT returns correc
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: UPDATE returns correct SQLRowCount and updates rows",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ed_upd_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -151,8 +143,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: UPDATE returns correc
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: DELETE returns correct SQLRowCount and removes rows",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ed_del_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -195,8 +185,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: DELETE returns correc
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: SQL_NO_DATA for DML affecting zero rows",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // TODO: Restore SECTIONs once ConfigInstallation supports re-entry within sections
   {
     std::string create_sql = "CREATE TEMPORARY TABLE ed_nod_t(c1 INTEGER)";
@@ -210,11 +198,11 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: SQL_NO_DATA for DML a
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    OLD_IODBC_ONLY("BD#61") {
-      // Under iODBC the old driver does not advance the statement state into a
-      //   form SQLRowCount can read after SQL_NO_DATA, so the call surfaces
-      //   SQL_ERROR. Under unixODBC the same call returns SQL_SUCCESS with
-      //   rowCount=0.
+    IODBC_ONLY {
+      // Under iODBC the DM does not advance the statement state into a form
+      //   SQLRowCount can read after SQL_NO_DATA, so the call surfaces
+      //   SQL_ERROR for both the old and new drivers. Under unixODBC the same
+      //   call returns SQL_SUCCESS with rowCount=0.
       REQUIRE(ret == SQL_ERROR);
     }
     else {
@@ -235,9 +223,9 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: SQL_NO_DATA for DML a
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    OLD_IODBC_ONLY("BD#61") {
-      // See "DELETE" case above: SQLRowCount after SQL_NO_DATA on the old
-      //   driver under iODBC returns SQL_ERROR rather than 0.
+    IODBC_ONLY {
+      // See "DELETE" case above: under iODBC the DM makes SQLRowCount after
+      //   SQL_NO_DATA return SQL_ERROR for both drivers, rather than 0.
       REQUIRE(ret == SQL_ERROR);
     }
     else {
@@ -253,8 +241,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: SQL_NO_DATA for DML a
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Explicit TextLength instead of SQL_NTS",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const auto sql = "SELECT 99 AS val";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql), static_cast<SQLINTEGER>(strlen(sql)));
   REQUIRE(ret == SQL_SUCCESS);
@@ -271,8 +257,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Explicit TextLength inst
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Multiple executions on same statement after close cursor",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1 AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -292,8 +276,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Multiple executions on s
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: TextLength truncates SQL to shorter valid statement",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // TextLength=9 truncates "SELECT 42 AS val" to "SELECT 42", so the column
   // alias "val" is never sent. The column name comes back as "42", not "VAL".
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS val"), 9);
@@ -321,8 +303,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: TextLength truncates SQL
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Executes with bound parameter",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_val = 77;
   SQLLEN ind = 0;
   SQLRETURN ret =
@@ -383,16 +363,12 @@ TEST_CASE("SQLExecDirect: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY009 for null StatementText",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), nullptr, SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for negative TextLength",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), -99);
   IODBC_ONLY {
     // iODBC's DM-side length validator rejects the negative length with the
@@ -410,14 +386,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for negative TextL
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for TextLength zero",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), 0);
-  OLD_IODBC_ONLY("BD#60") {
-    // iODBC's DM mangles negative-length / empty-string parameters before
-    //   forwarding them to the old driver, which then surfaces HY000
-    //   instead of the spec-mandated HY090. unixODBC passes the arg through
-    //   unchanged, so the driver's HY090 validation fires.
+  IODBC_ONLY {
+    // iODBC's DM mangles the zero TextLength before forwarding the call, so an
+    //   empty statement reaches the server and surfaces HY000 (400 Bad Request)
+    //   for both the old and new drivers, instead of the spec-mandated HY090.
+    //   unixODBC passes the arg through unchanged, so the driver's HY090
+    //   validation fires.
     REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
   }
   else {
@@ -462,16 +437,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: 24000 for cursor already
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: 42000 for syntax error",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SLECT 1"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "42000", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42S02 for table not found",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "SELECT * FROM nonexistent_table";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "42S02", stmt_handle(), SQL_HANDLE_STMT);
@@ -479,16 +450,12 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42S02 for table not f
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: 22012 for division by zero",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1/0"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "22012", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 21S01 for INSERT column count mismatch",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ed_mis_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -501,8 +468,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 21S01 for INSERT colu
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 22000 for NOT NULL constraint violation",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TEMPORARY TABLE ed_nn_t(c1 INTEGER NOT NULL)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -526,8 +491,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 22000 for NOT NULL co
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42710 for table already exists",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   std::string sql = "CREATE TABLE ed_dup_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -541,8 +504,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42710 for table alrea
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42601 for CREATE VIEW column list mismatch",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: The reference driver returns 42601 instead of 21S02 in the ODBC
   // spec for a CREATE VIEW where the column list has more names than the
   // SELECT produces.
@@ -553,8 +514,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42601 for CREATE VIEW
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: 22023 for invalid LIKE escape character",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: The reference driver returns 22023 instead of 22019 in the ODBC
   // spec for a LIKE predicate with an ESCAPE clause where the escape
   // character is not exactly one character long.
