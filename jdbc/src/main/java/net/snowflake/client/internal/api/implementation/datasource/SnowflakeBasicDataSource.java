@@ -228,6 +228,19 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   }
 
   @Override
+  public void setOktaUsername(String oktaUsername) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.OKTA_USERNAME.getPropertyKey(), oktaUsername);
+  }
+
+  @Override
+  public void setDisableSamlURLCheck(boolean disableSamlURLCheck) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.DISABLE_SAML_URL_CHECK.getPropertyKey(),
+        Boolean.toString(disableSamlURLCheck));
+  }
+
+  @Override
   public void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential) {
     this.properties.setProperty(
         SnowflakeSessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL.getPropertyKey(),

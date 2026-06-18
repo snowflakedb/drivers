@@ -11,18 +11,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Confi
 public class ConfigSettingFactory {
 
   /**
-   * Normalizes a JDBC connection property key before sending to sf_core. Handles legacy camelCase
-   * property names that carry non-string Java objects (e.g. {@code privateKey} → {@code
-   * private_key}).
-   */
-  public static String normalizeKey(String key, Object value) {
-    if ("privateKey".equals(key) && value instanceof PrivateKey) {
-      return "private_key";
-    }
-    return key;
-  }
-
-  /**
    * Converts a Java value to a protobuf {@link ConfigSetting}. Returns {@code null} if the value
    * type is not supported.
    */
