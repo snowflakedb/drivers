@@ -549,7 +549,11 @@ TEST_CASE("should return SQL_ERROR asynchronously for invalid SQL", "[query][asy
   CHECK(get_sqlstate(stmt) == "42000");
 }
 
-TEST_CASE("should reject non-permitted function call during async execution", "[query][async]") {
+// [flaky]: the old reference driver can abort (simba_abort / pthread_mutex_lock)
+// when a non-permitted call races the still-executing async query under parallel
+// ctest workers, crashing the test subprocess. Same class as the long-query async
+// case above. Tagged flaky so the blocking reference run is not destabilized.
+TEST_CASE("should reject non-permitted function call during async execution", "[query][async][flaky]") {
   // Given Snowflake client is logged in with async enabled and a query in progress
   Connection conn;
   auto stmt = conn.createStatement();

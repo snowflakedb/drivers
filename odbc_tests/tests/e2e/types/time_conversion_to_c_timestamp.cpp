@@ -88,36 +88,33 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP end of day", "[time][conversion][c_times
   CHECK(ts.fraction == 0);
 }
 
-TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with fractional truncation", "[time][conversion][c_timestamp][truncation]") {
-  SKIP_OLD_DRIVER("BD#42", "old driver does not report 01S07 for fractional seconds");
+TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with fractional seconds", "[time][conversion][c_timestamp]") {
   // Given Snowflake client is logged in
   Connection conn;
 
   // When A TIME with non-zero fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
-  auto ts = check_fractional_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '14:30:45.123'::TIME"), 1);
+  // Then the sub-second component is preserved in the timestamp fraction field
+  //   (nanoseconds) with no truncation warning, matching the reference driver.
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '14:30:45.123'::TIME"), 1);
 
-  // Then Time components are extracted with SQLSTATE 01S07 warning and fraction is zero
   CHECK(ts.hour == 14);
   CHECK(ts.minute == 30);
   CHECK(ts.second == 45);
-  CHECK(ts.fraction == 0);
+  CHECK(ts.fraction == 123000000);
 }
 
-TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with high-precision fractional truncation",
-          "[time][conversion][c_timestamp][truncation]") {
-  SKIP_OLD_DRIVER("BD#42", "old driver does not report 01S07 for fractional seconds");
+TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with high-precision fractional seconds", "[time][conversion][c_timestamp]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIME with high-precision fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
-  auto ts =
-      check_fractional_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '10:30:00.123456789'::TIME"), 1);
+  // When A TIME with nanosecond-precision fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
+  // Then the full nanosecond fraction is preserved with no truncation warning.
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '10:30:00.123456789'::TIME"), 1);
 
-  // Then Time components are extracted with SQLSTATE 01S07 warning and fraction is zero
   CHECK(ts.hour == 10);
   CHECK(ts.minute == 30);
   CHECK(ts.second == 0);
-  CHECK(ts.fraction == 0);
+  CHECK(ts.fraction == 123456789);
 }
 
 TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with zero fractional seconds", "[time][conversion][c_timestamp]") {

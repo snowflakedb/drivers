@@ -139,6 +139,11 @@ impl WriteODBCType for SnowflakeTime {
                     second: snowflake_value.second() as u16,
                 };
                 binding.write_fixed(time);
+                // SQL_TIME_STRUCT has no fraction field, so any sub-second
+                // component of the source TIME is genuinely dropped here. Mirror
+                // the reference driver: flag the data loss with 01S07
+                // (NumericValueTruncated) when a fraction is present, and emit
+                // nothing when there is none to lose.
                 if snowflake_value.nanosecond() != 0 {
                     Ok(vec![Warning::NumericValueTruncated])
                 } else {
@@ -203,14 +208,14 @@ impl WriteODBCType for SnowflakeTime {
                     hour: snowflake_value.hour() as u16,
                     minute: snowflake_value.minute() as u16,
                     second: snowflake_value.second() as u16,
-                    fraction: 0,
+                    // SQL_TIMESTAMP_STRUCT.fraction holds nanoseconds, so the
+                    // sub-second component survives the conversion. Preserve it
+                    // (mirroring the reference driver) rather than zeroing it —
+                    // no data is lost, so no truncation warning is raised.
+                    fraction: snowflake_value.nanosecond(),
                 };
                 binding.write_fixed(ts);
-                if snowflake_value.nanosecond() != 0 {
-                    Ok(vec![Warning::NumericValueTruncated])
-                } else {
-                    Ok(vec![])
-                }
+                Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
