@@ -1,12 +1,14 @@
+use std::collections::BTreeMap;
 use std::ffi::{CStr, c_char, c_void};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
 use futures::FutureExt;
 use proto_utils::{ProtoError, Transport};
+use tokio_util::sync::CancellationToken;
 
 /// C callback type - fn ptr invoked when an async proto API call completes.
 ///
@@ -31,11 +33,24 @@ struct CApiState {
     transport: RustTransport,
     dispatch: tracing::dispatcher::Dispatch,
 
-    /// monotonic source for request IDs returned by [`sf_core_api_call_proto_async`].
-    next_async_request_id: AtomicU64,
+    /// monotonic source for async handles returned by [`sf_core_api_call_proto_async`].
+    next_async_handle: AtomicU64,
+    /// In-flight async calls keyed by handle for cooperative cancellation.
+    handle_registry: Mutex<BTreeMap<u64, CancellationToken>>,
 }
 
 static STATE: OnceLock<CApiState> = OnceLock::new();
+
+impl CApiState {
+    /// The registry is tolerant of a partially-updated `BTreeMap`
+    /// (worst case: a stale entry that is never canceled),
+    /// so we clear the poison and continue rather than tearing down the process.
+    fn registry(&self) -> std::sync::MutexGuard<'_, BTreeMap<u64, CancellationToken>> {
+        self.handle_registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
 
 /// Eagerly build the entire core state (tokio runtime + transport) using the
 /// given `LogManager`.  Called once from `sf_core_init`.
@@ -56,7 +71,8 @@ pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
                 .expect("Failed to create tokio runtime"),
             transport: RustTransport::new_with(providers),
             dispatch,
-            next_async_request_id: AtomicU64::new(1),
+            next_async_handle: AtomicU64::new(1),
+            handle_registry: Mutex::new(BTreeMap::new()),
         }
     });
 }
@@ -153,7 +169,7 @@ unsafe fn fire_callback(
 /// Async variant of [`sf_core_api_call_proto`] that returns immediately and
 /// invokes `callback` from a tokio worker thread when the request completes.
 ///
-/// Returns a non-zero **request ID** that uniquely identifies this in-flight request.
+/// Returns a non-zero **async handle** that uniquely identifies this in-flight call.
 ///
 /// Unlike the sync variant, this does **not** block the caller, so multiple requests run concurrently on the shared tokio runtime.
 ///
@@ -186,27 +202,53 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
     let user_data = UserData(user_data);
 
     let state = STATE.get().expect("sf_core_init was not called");
-    let request_id = state.next_async_request_id.fetch_add(1, Ordering::Relaxed);
+    let async_handle = state.next_async_handle.fetch_add(1, Ordering::Relaxed);
+
+    let cancel_token = CancellationToken::new();
+    let cancel_token_for_task = cancel_token.clone();
+    state.registry().insert(async_handle, cancel_token);
 
     state.runtime.spawn(async move {
-        let result = std::panic::AssertUnwindSafe(state.transport.handle_message(
-            &api_str,
-            &method_str,
-            request_vec,
-        ))
-        .catch_unwind()
-        .await;
-
-        let (status, response_vec): (usize, Vec<u8>) = match result {
-            Ok(Ok(r)) => (0, r),
-            Ok(Err(ProtoError::Application(e))) => (1, e),
-            Ok(Err(ProtoError::Transport(e))) => (2, e.as_bytes().to_vec()),
-            Err(_) => (2, b"sf_core panic in async task".to_vec()),
+        let result: Option<(usize, Vec<u8>)> = tokio::select! {
+            biased;
+            _ = cancel_token_for_task.cancelled() => None,
+            // TODO(SNOW-3675196): handle_message should accept CancellationToken and pass it down the stack,
+            //       then every operation can race against this token and cancel at a proper time
+            result = std::panic::AssertUnwindSafe(state.transport.handle_message(
+                &api_str,
+                &method_str,
+                request_vec,
+            ))
+            .catch_unwind() => Some(match result {
+                Ok(Ok(r)) => (0, r),
+                Ok(Err(ProtoError::Application(e))) => (1, e),
+                Ok(Err(ProtoError::Transport(e))) => (2, e.as_bytes().to_vec()),
+                Err(_) => (2, b"sf_core panic in async task".to_vec()),
+            }),
         };
 
-        // SAFETY: callback contract documented on this function.
-        unsafe { fire_callback(callback, user_data, status, response_vec) };
+        state.registry().remove(&async_handle);
+
+        // Cancellation is always initiated by the caller, not the Tokio runtime.
+        // So, caller already raised CancelledError, and we can skip the callback.
+        if let Some((status, response_vec)) = result {
+            // SAFETY: callback contract documented on this function.
+            unsafe { fire_callback(callback, user_data, status, response_vec) };
+        }
     });
 
-    request_id
+    async_handle
+}
+
+/// Cooperatively cancel an in-flight async call started by [`sf_core_api_call_proto_async`].
+///
+/// # Safety
+/// No preconditions. Unknown async handles are silently ignored.
+#[unsafe(no_mangle)]
+#[cfg(feature = "protobuf")]
+pub unsafe extern "C" fn sf_core_api_cancel(async_handle: u64) {
+    let state = STATE.get().expect("sf_core_init was not called");
+    if let Some(token) = state.registry().remove(&async_handle) {
+        token.cancel();
+    }
 }

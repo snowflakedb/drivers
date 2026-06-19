@@ -7,7 +7,7 @@ run without the Rust dylib loaded. They cover:
 * application-error path (status 1)
 * transport-error path (status 2)
 * unknown status -> ProtoTransportException
-* cancellation safety -- callback firing into a canceled Future must not crash
+* cancellation propagation -- asyncio cancel calls sf_core_api_cancel
 * lifetime safety -- callback ref is pinned to the Future
 * concurrency -- many in-flight calls resolve independently
 * empty message edge case
@@ -65,6 +65,23 @@ class _FakeFFI:
         buf = (ctypes.c_ubyte * len(payload)).from_buffer_copy(payload)
         ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte))
         call["callback"](call["user_data"], status, ptr, len(payload))
+
+
+class _FakeCancel:
+    """Records sf_core_api_cancel calls."""
+
+    def __init__(self) -> None:
+        self.cancelled_ids: list[int] = []
+
+    def __call__(self, async_handle: int) -> None:
+        self.cancelled_ids.append(async_handle)
+
+
+@pytest.fixture
+def fake_cancel(monkeypatch: pytest.MonkeyPatch) -> _FakeCancel:
+    fake = _FakeCancel()
+    monkeypatch.setattr(bridge, "sf_core_api_cancel", fake)
+    return fake
 
 
 @pytest.fixture
@@ -156,7 +173,7 @@ class TestCancellationSafety:
        no special behaviour needed.
     """
 
-    def test_callback_after_cancel_does_not_crash(self, fake_ffi: _FakeFFI) -> None:
+    def test_cancel_propagates_request_id(self, fake_ffi: _FakeFFI, fake_cancel: _FakeCancel) -> None:
         async def run() -> None:
             transport = ProtoTransport()
             task = asyncio.create_task(transport.handle_message_async("DatabaseDriver", "database_new", b"req"))
@@ -167,13 +184,21 @@ class TestCancellationSafety:
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-            # Rust fires the callback after cancellation (the race we're testing).
-            fake_ffi.complete(0, 0, b"too-late-response")
+        asyncio.run(run())
+        assert fake_cancel.cancelled_ids == [1]
+
+    def test_normal_completion_does_not_cancel(self, fake_ffi: _FakeFFI, fake_cancel: _FakeCancel) -> None:
+        async def run() -> tuple[int, bytes]:
+            transport = ProtoTransport()
+            task = asyncio.create_task(transport.handle_message_async("DatabaseDriver", "database_new", b"req"))
             await asyncio.sleep(0)
+            fake_ffi.complete(0, 0, b"ok")
+            return await task
 
         asyncio.run(run())
+        assert fake_cancel.cancelled_ids == []
 
-    def test_cancel_before_submit_works(self, fake_ffi: _FakeFFI) -> None:
+    def test_cancel_before_submit_works(self, fake_ffi: _FakeFFI, fake_cancel: _FakeCancel) -> None:
         """Coroutine cancelled before reaching the FFI — no call submitted."""
 
         async def run() -> None:
@@ -186,6 +211,7 @@ class TestCancellationSafety:
             assert len(fake_ffi.calls) == 0
 
         asyncio.run(run())
+        assert fake_cancel.cancelled_ids == []
 
 
 class TestLifetimeSafety:

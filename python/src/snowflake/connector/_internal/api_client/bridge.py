@@ -11,6 +11,7 @@ from .c_api import (
     RESPONSE_CALLBACK,
     sf_core_api_call_proto,
     sf_core_api_call_proto_async,
+    sf_core_api_cancel,
     sf_core_free_buffer,
 )
 
@@ -63,7 +64,7 @@ class ProtoTransport:
 
         message_buf = (ctypes.c_ubyte * len(message)).from_buffer_copy(message)
 
-        sf_core_api_call_proto_async(
+        async_handle = sf_core_api_call_proto_async(
             api.encode("utf-8"),
             method.encode("utf-8"),
             ctypes.cast(message_buf, ctypes.POINTER(ctypes.c_ubyte)),
@@ -72,7 +73,11 @@ class ProtoTransport:
             None,  # user_data not needed, as we capture future in the closure
         )
 
-        status, response_bytes = await future
+        try:
+            status, response_bytes = await future
+        except asyncio.CancelledError:
+            sf_core_api_cancel(async_handle)
+            raise
 
         if status in (0, 1, 2):
             return status, response_bytes

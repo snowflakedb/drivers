@@ -28,6 +28,8 @@ core.sf_core_api_call_proto_async.argtypes = [
     RESPONSE_CALLBACK,  # callback
     ctypes.c_void_p,  # user_data
 ]
+core.sf_core_api_cancel.restype = None
+core.sf_core_api_cancel.argtypes = [ctypes.c_uint64]
 
 
 def sf_core_api_call_proto_async(
@@ -39,3 +41,7 @@ def sf_core_api_call_proto_async(
     user_data: Any,
 ) -> int:
     return core.sf_core_api_call_proto_async(api, method, request, request_len, callback, user_data)  # type: ignore
+
+
+def sf_core_api_cancel(async_handle: int) -> None:
+    core.sf_core_api_cancel(async_handle)

@@ -1,6 +1,6 @@
 """FFI bindings to libsf_core, split by concern."""
 
-from ._async import RESPONSE_CALLBACK, sf_core_api_call_proto_async
+from ._async import RESPONSE_CALLBACK, sf_core_api_call_proto_async, sf_core_api_cancel
 from ._common import CORE_API, CAPIHandle, core
 from ._init import (
     LOGGER_CALLBACK,
@@ -30,6 +30,7 @@ __all__ = [
     "register_default_logger_callback",
     "sf_core_api_call_proto",
     "sf_core_api_call_proto_async",
+    "sf_core_api_cancel",
     "sf_core_free_buffer",
     "sf_core_get_perf_data",
     "sf_core_init",
