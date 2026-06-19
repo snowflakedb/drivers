@@ -14,6 +14,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+/**
+ * Test connection parameters from {@code parameters.json} (or {@code PARAMETER_PATH}). Loads the
+ * base {@code testconnection} section, then overlays {@code testconnection-jdbc} when present.
+ */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class TestParameters {
 
@@ -33,11 +37,16 @@ public class TestParameters {
         paramPath = "/parameters.json";
       }
       try (InputStream input = Files.newInputStream(Paths.get(paramPath))) {
-        JSONObject params = new JSONObject(new JSONTokener(new InputStreamReader(input)));
-        TestParameters.params = params.getJSONObject("testconnection");
+        JSONObject parametersJson = new JSONObject(new JSONTokener(new InputStreamReader(input)));
+        JSONObject resolvedParams = parametersJson.getJSONObject("testconnection");
+        if (parametersJson.has("testconnection-jdbc")) {
+          JSONObject overridesJson = parametersJson.getJSONObject("testconnection-jdbc");
+          overridesJson.keys().forEachRemaining(k -> resolvedParams.put(k, overridesJson.get(k)));
+        }
+        params = resolvedParams;
       }
-      return params;
     }
+    return params;
   }
 
   public static boolean has(String key) {

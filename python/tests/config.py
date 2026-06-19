@@ -11,6 +11,10 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 def get_test_parameters() -> dict[str, Any]:
     """Get test connection parameters from environment or parameters file.
 
+    Loads the base ``testconnection`` section from the parameters file, then overlays
+    any keys from ``testconnection-python`` when present. MFA credentials can still
+    be overridden via environment variables.
+
     Returns:
         Dictionary containing test connection parameters from parameters.json
         or environment variables as fallback.
@@ -21,6 +25,9 @@ def get_test_parameters() -> dict[str, Any]:
         with open(parameter_path) as f:
             parameters = json.load(f)
         params = parameters.get("testconnection", {})
+        python_overrides = parameters.get("testconnection-python")
+        if python_overrides:
+            params.update(python_overrides)
         # MFA credentials are not typically present in parameters.json (they belong to a
         # separate MFA-enabled account user).  Always overlay from env vars so that MFA
         # E2E tests can run in any environment regardless of whether parameters.json exists.

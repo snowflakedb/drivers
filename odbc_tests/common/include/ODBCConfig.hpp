@@ -81,6 +81,7 @@ class DataSourceConfig {
   std::optional<std::shared_ptr<DriverConfig>> driver_config_;
 
   // Helper methods
+  // Loads the base section from PARAMETER_PATH, then overlays testconnection-odbc when present.
   static picojson::object load_parameters(const std::string& connection_name);
   static std::string get_string(const picojson::object& obj, const std::string& key,
                                 const std::string& default_value = "");
