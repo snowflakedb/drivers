@@ -152,10 +152,15 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
             f"api_call message[{key!r}] expected int, got {type(message.get(key)).__name__}: {message.get(key)!r}"
         )
 
-    # Guard against the event silently gaining or losing attributes: the
-    # api_call message is the union of the exact and numeric attribute
-    # sets above plus code.filepath / code.namespace.
+    # `thread.name` is present when the span runs on a named thread (e.g. a
+    # tokio worker via the async FFI path) but absent when `block_on` runs on
+    # the calling Python thread (sync FFI path). Accept both.
     expected_keys = set(expected_exact.keys()) | numeric_attrs | {"code.filepath", "code.namespace"}
+    if "thread.name" in message:
+        assert isinstance(message["thread.name"], str) and message["thread.name"], (
+            f"thread.name must be a non-empty string when present, got: {message['thread.name']!r}"
+        )
+        expected_keys.add("thread.name")
     assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
 
 

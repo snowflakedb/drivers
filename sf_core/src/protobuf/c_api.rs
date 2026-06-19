@@ -1,15 +1,38 @@
-use std::ffi::c_char;
+use std::ffi::{CStr, c_char, c_void};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
+use futures::FutureExt;
 use proto_utils::{ProtoError, Transport};
+
+/// C callback type - fn ptr invoked when an async proto API call completes.
+///
+/// `user_data` is an opaque pointer passed through unchanged from the caller.
+/// This C API is the universal FFI surface consumed by various language wrappers.
+/// Languages whose fn ptrs cannot capture state need it to associate a callback with its context.
+/// Higher-level languages may ignore it, as their closures capture state directly.
+///
+/// # Safety
+/// - Must not unwind across the FFI boundary.
+/// - The response buffer is owned by Rust and is freed immediately after the callback returns.
+///   The callback must copy any data it needs before returning.
+type ResponseCallback = unsafe extern "C" fn(*mut c_void, usize, *const u8, usize);
+
+/// Opaque user-data pointer forwarded to the callback unchanged. Rust never dereferences it!
+#[derive(Copy, Clone)]
+struct UserData(*mut c_void);
+unsafe impl Send for UserData {}
 
 struct CApiState {
     runtime: tokio::runtime::Runtime,
     transport: RustTransport,
     dispatch: tracing::dispatcher::Dispatch,
+
+    /// monotonic source for request IDs returned by [`sf_core_api_call_proto_async`].
+    next_async_request_id: AtomicU64,
 }
 
 static STATE: OnceLock<CApiState> = OnceLock::new();
@@ -33,6 +56,7 @@ pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
                 .expect("Failed to create tokio runtime"),
             transport: RustTransport::new_with(providers),
             dispatch,
+            next_async_request_id: AtomicU64::new(1),
         }
     });
 }
@@ -81,10 +105,8 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
     let result = std::panic::catch_unwind(|| unsafe {
         let state = STATE.get().expect("sf_core_init was not called");
         let _guard = tracing::dispatcher::set_default(&state.dispatch);
-        let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
-        let method = std::ffi::CStr::from_ptr(method)
-            .to_string_lossy()
-            .to_string();
+        let api = CStr::from_ptr(api).to_string_lossy().to_string();
+        let method = CStr::from_ptr(method).to_string_lossy().to_string();
         let message = std::slice::from_raw_parts(request, request_len);
         state.runtime.block_on(
             state
@@ -112,4 +134,79 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
             2
         }
     }
+}
+
+unsafe fn fire_callback(
+    callback: ResponseCallback,
+    user_data: UserData,
+    status: usize,
+    response_vec: Vec<u8>,
+) {
+    // `boxed` is dropped at the end of this scope, immediately after the callback returns
+    let boxed = response_vec.into_boxed_slice();
+    let ptr = boxed.as_ptr();
+    let len = boxed.len();
+    // SAFETY: ptr/len point into `boxed` which is alive for the call.
+    unsafe { callback(user_data.0, status, ptr, len) };
+}
+
+/// Async variant of [`sf_core_api_call_proto`] that returns immediately and
+/// invokes `callback` from a tokio worker thread when the request completes.
+///
+/// Returns a non-zero **request ID** that uniquely identifies this in-flight request.
+///
+/// Unlike the sync variant, this does **not** block the caller, so multiple requests run concurrently on the shared tokio runtime.
+///
+/// # Safety
+/// - `api`, `method`, `request` must point to valid data of the specified lengths for the duration of this call.
+///   *They are copied immediately. The caller may free them after this returns.*
+/// - `callback` is invoked exactly once and must be `Send`-safe (it will fire from a tokio worker thread, not the calling thread).
+/// - `user_data` is opaque and is forwarded to the callback unchanged.
+///   *The caller is responsible for keeping any referent alive until the callback fires.*
+/// - The response buffer passed to the callback is owned by Rust and freed immediately.
+///   *The callback must copy before returning!*
+#[unsafe(no_mangle)]
+#[cfg(feature = "protobuf")]
+pub unsafe extern "C" fn sf_core_api_call_proto_async(
+    api: *const c_char,
+    method: *const c_char,
+    request: *const u8,
+    request_len: usize,
+    callback: ResponseCallback,
+    user_data: *mut c_void,
+) -> u64 {
+    // Copy inputs eagerly — the caller may free these after we return.
+    let api_str = unsafe { CStr::from_ptr(api).to_string_lossy().into_owned() };
+    let method_str = unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() };
+    let request_vec = if request_len == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(request, request_len).to_vec() }
+    };
+    let user_data = UserData(user_data);
+
+    let state = STATE.get().expect("sf_core_init was not called");
+    let request_id = state.next_async_request_id.fetch_add(1, Ordering::Relaxed);
+
+    state.runtime.spawn(async move {
+        let result = std::panic::AssertUnwindSafe(state.transport.handle_message(
+            &api_str,
+            &method_str,
+            request_vec,
+        ))
+        .catch_unwind()
+        .await;
+
+        let (status, response_vec): (usize, Vec<u8>) = match result {
+            Ok(Ok(r)) => (0, r),
+            Ok(Err(ProtoError::Application(e))) => (1, e),
+            Ok(Err(ProtoError::Transport(e))) => (2, e.as_bytes().to_vec()),
+            Err(_) => (2, b"sf_core panic in async task".to_vec()),
+        };
+
+        // SAFETY: callback contract documented on this function.
+        unsafe { fire_callback(callback, user_data, status, response_vec) };
+    });
+
+    request_id
 }
