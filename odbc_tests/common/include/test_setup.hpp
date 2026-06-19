@@ -43,6 +43,7 @@ inline int current_pid() { return getpid(); }
   } while (0)
 
 inline picojson::object get_test_parameters(const std::string& connection_name) {
+  // Loads the base section from PARAMETER_PATH, then overlays testconnection-odbc when present.
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
   REQUIRE(parameter_path_env_value != nullptr);
   std::string parameter_path = std::string(parameter_path_env_value);
@@ -60,7 +61,18 @@ inline picojson::object get_test_parameters(const std::string& connection_name) 
   REQUIRE(connections.contains(connection_name));
   const picojson::value& params = connections.get<picojson::object>().at(connection_name);
   REQUIRE(params.is<picojson::object>());
-  return params.get<picojson::object>();
+  picojson::object result = params.get<picojson::object>();
+  if (connection_name == "testconnection") {
+    const auto& all_connections = connections.get<picojson::object>();
+    if (all_connections.count("testconnection-odbc")) {
+      const picojson::value& overrides = all_connections.at("testconnection-odbc");
+      REQUIRE(overrides.is<picojson::object>());
+      for (const auto& [key, value] : overrides.get<picojson::object>()) {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
 }
 
 template <typename T>

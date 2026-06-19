@@ -218,7 +218,20 @@ picojson::object DataSourceConfig::load_parameters(const std::string& connection
     throw std::runtime_error("Connection '" + connection_name + "' is not an object");
   }
 
-  return params.get<picojson::object>();
+  picojson::object result = params.get<picojson::object>();
+  if (connection_name == "testconnection") {
+    const auto& all_connections = connections.get<picojson::object>();
+    if (all_connections.count("testconnection-odbc")) {
+      const picojson::value& overrides = all_connections.at("testconnection-odbc");
+      if (overrides.is<picojson::object>()) {
+        for (const auto& [key, value] : overrides.get<picojson::object>()) {
+          result[key] = value;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 std::string DataSourceConfig::get_string(const picojson::object& obj, const std::string& key,
