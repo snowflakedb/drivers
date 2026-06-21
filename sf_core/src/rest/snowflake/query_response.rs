@@ -361,6 +361,7 @@ impl Data {
         &self,
         flavor: PutGetResultsetFlavor,
         legacy_odbc_compression_autodetect: bool,
+        skip_upload_on_content_match: bool,
         use_s3_regional_url_session_param: bool,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
@@ -450,6 +451,7 @@ impl Data {
             overwrite,
             flavor,
             legacy_odbc_compression_autodetect,
+            skip_upload_on_content_match,
         })
     }
 
@@ -510,6 +512,7 @@ impl Data {
             overwrite,
             flavor: PutGetResultsetFlavor::default(),
             legacy_odbc_compression_autodetect: false,
+            skip_upload_on_content_match: false,
         })
     }
 
@@ -1532,7 +1535,7 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": null,"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1542,7 +1545,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1552,7 +1555,7 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": [],"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1564,7 +1567,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false)
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1576,7 +1579,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false)
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1590,7 +1593,8 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result = data.to_file_upload_data(PutGetResultsetFlavor::default(), false, false);
+        let result =
+            data.to_file_upload_data(PutGetResultsetFlavor::default(), false, false, false);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -1604,7 +1608,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
+            .to_file_upload_data(PutGetResultsetFlavor::Python, false, false, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Python);
         assert!(!upload.legacy_odbc_compression_autodetect);
@@ -1615,7 +1619,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Odbc, true, false)
+            .to_file_upload_data(PutGetResultsetFlavor::Odbc, true, false, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
         assert!(upload.legacy_odbc_compression_autodetect);
@@ -1646,7 +1650,7 @@ mod tests {
             let json = upload_json_with_source_compression(value);
             let data: Data = serde_json::from_str(&json).unwrap();
             let upload = data
-                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
+                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false, false)
                 .unwrap();
             assert!(
                 matches!(upload.source_compression, SourceCompressionParam::Parquet),
@@ -1662,7 +1666,7 @@ mod tests {
             let json = upload_json_with_source_compression(value);
             let data: Data = serde_json::from_str(&json).unwrap();
             let upload = data
-                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
+                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false, false)
                 .unwrap();
             assert!(
                 matches!(upload.source_compression, SourceCompressionParam::Orc),
@@ -2567,6 +2571,7 @@ mod tests {
         let data: Data = serde_json::from_value(payload).expect("build upload Data");
         data.to_file_upload_data(
             PutGetResultsetFlavor::default(),
+            false,
             false,
             use_s3_regional_url_session_param,
         )

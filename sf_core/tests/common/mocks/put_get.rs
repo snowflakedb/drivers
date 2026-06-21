@@ -170,3 +170,49 @@ pub async fn mount_unsupported_compression(server: &MockServer, repo_root: &str)
         .mount(server)
         .await;
 }
+
+/// Mount a PUT command response whose `stageInfo` points at a wiremock Azure
+/// endpoint. The driver issues HEAD/PUT against `azure_uri` rather than a
+/// real Azure account.
+///
+/// `auto_compress=false` and `sourceCompression="NONE"` keep the upload bytes
+/// bit-identical to the file contents — required so the locally-computed
+/// SHA-256 (`prepared.digest`) matches whatever digest the test plants in
+/// the HEAD response.
+pub async fn mount_azure_put_pointing_at(
+    server: &MockServer,
+    azure_uri: &str,
+    src_file_path: &str,
+) {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .and(body_string_contains("PUT"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "success": true,
+                    "data": {
+                        "command": "UPLOAD",
+                        "stageInfo": {
+                            "locationType": "AZURE",
+                            "location": "test-container/prefix/",
+                            "path": "prefix/",
+                            "region": "eastus2",
+                            "endPoint": azure_uri,
+                            "storageAccount": "test",
+                            "isClientSideEncrypted": false,
+                            "creds": {
+                                "AZURE_SAS_TOKEN": "sv=2099-01-01&sig=mock-sig&se=2099-12-31"
+                            }
+                        },
+                        "src_locations": [src_file_path],
+                        "autoCompress": false,
+                        "overwrite": true,
+                        "sourceCompression": "NONE"
+                    }
+                }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .mount(server)
+        .await;
+}

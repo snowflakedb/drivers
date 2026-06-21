@@ -80,6 +80,7 @@ pub(super) async fn perform_put_get_transfer(
     put_get_max_attempts: u32,
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
+    skip_upload_on_content_match: bool,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -98,6 +99,7 @@ pub(super) async fn perform_put_get_transfer(
                 .to_file_upload_data(
                     wrapper_presets.put_get_resultset_flavor.clone(),
                     wrapper_presets.legacy_odbc_compression_autodetect,
+                    skip_upload_on_content_match,
                     use_s3_regional_url_session_param,
                 )
                 .context(FileTransferPreparationSnafu)?;

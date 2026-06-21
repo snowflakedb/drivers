@@ -63,6 +63,13 @@ pub struct UploadData {
     /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
     /// of the `infer` crate.
     pub legacy_odbc_compression_autodetect: bool,
+    /// When true, PUT skips re-uploading a blob whose stored
+    /// `x-ms-meta-sfcdigest` matches the locally-computed SHA-256.
+    /// Mirrors Python's `_skip_upload_on_content_match` cursor kwarg
+    /// (`storage_client.py:214-218`). Only consulted when the caller
+    /// also passes `overwrite=true`; the existence-only branch
+    /// (`!overwrite && exists`) short-circuits before this flag.
+    pub skip_upload_on_content_match: bool,
 }
 
 // TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
@@ -76,6 +83,7 @@ pub struct SingleUploadData {
     pub overwrite: bool,
     pub flavor: PutGetResultsetFlavor,
     pub legacy_odbc_compression_autodetect: bool,
+    pub skip_upload_on_content_match: bool,
 }
 
 #[derive(Debug)]

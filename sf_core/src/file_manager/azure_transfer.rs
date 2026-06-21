@@ -17,25 +17,90 @@ const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
 const AZURE_META_ENCRYPTIONDATA: &str = "x-ms-meta-encryptiondata";
 const AZURE_META_MATDESC: &str = "x-ms-meta-matdesc";
 
-/// Uploads a file to Azure Blob Storage, skipping if it already exists and `overwrite` is false.
+/// Uploads a file to Azure, skipping when a HEAD probe says either
+/// "blob exists and overwrite is off" or "blob content matches the local
+/// digest and the caller opted into content-match skipping". HEAD is elided
+/// when neither skip branch can fire, saving a round-trip vs. Python.
 pub async fn upload_to_azure_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    skip_upload_on_content_match: bool,
     max_attempts: u32,
 ) -> Result<UploadStatus, AzureUploadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
 
-    if !overwrite && check_blob_exists(&client, &url, sas_token.reveal()).await {
-        tracing::info!("Blob already exists in Azure: {}", key);
-        return Ok(UploadStatus::Skipped);
+    let head_needed = !overwrite || skip_upload_on_content_match;
+    let remote = if head_needed {
+        send_head_to_azure_blob(&client, &url, sas_token).await
+    } else {
+        None
+    };
+
+    match classify_pre_upload_skip(
+        overwrite,
+        skip_upload_on_content_match,
+        remote.as_ref(),
+        &prepared.digest,
+    ) {
+        SkipDecision::Existence => {
+            tracing::info!("Blob already exists in Azure: {}", key);
+            return Ok(UploadStatus::Skipped);
+        }
+        SkipDecision::ContentMatch => {
+            tracing::info!(
+                "Blob content matches local digest, skipping upload: {}",
+                key
+            );
+            return Ok(UploadStatus::Skipped);
+        }
+        SkipDecision::Upload => {}
     }
 
-    upload_to_azure(&client, &url, sas_token.reveal(), prepared, max_attempts).await?;
+    upload_to_azure(&client, &url, sas_token, prepared, max_attempts).await?;
     Ok(UploadStatus::Uploaded)
+}
+
+/// Outcome of the pre-upload skip check. Extracted so the decision is
+/// testable independent of the HEAD elision in `upload_to_azure_or_skip`
+/// (the elision can hide a missing guard in the content-match branch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipDecision {
+    /// The blob is visible on stage and the caller didn't request overwrite.
+    /// Skip without comparing content — stale stage bytes are preserved.
+    Existence,
+    /// The caller opted into content-match skipping and the remote digest
+    /// equals the local one. Skip the redundant upload; the bytes on stage
+    /// are already what we'd have written.
+    ContentMatch,
+    /// Neither skip applies; upload proceeds.
+    Upload,
+}
+
+/// Pure decision: which skip branch (if any) fires. Existence-only is checked
+/// first so a `!overwrite` caller never reaches the content-match branch — a
+/// blob that exists is treated as authoritative regardless of digest. A
+/// missing remote digest cannot match, so the content branch falls through
+/// to `Upload` in that case.
+fn classify_pre_upload_skip(
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    remote: Option<&RemoteBlobHeader>,
+    local_digest: &str,
+) -> SkipDecision {
+    if !overwrite && remote.is_some() {
+        return SkipDecision::Existence;
+    }
+    if overwrite
+        && skip_upload_on_content_match
+        && remote.and_then(|h| h.digest.as_deref()) == Some(local_digest)
+    {
+        return SkipDecision::ContentMatch;
+    }
+    SkipDecision::Upload
 }
 
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
@@ -54,10 +119,12 @@ pub async fn download_from_azure(
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let full_url = build_sas_url(&url, sas_token.reveal());
-
-    let response =
-        azure_request_with_retry(|| client.get(&full_url), Method::GET, max_attempts).await?;
+    let response = azure_request_with_retry(
+        || client.get(build_sas_url(&url, sas_token.reveal())),
+        Method::GET,
+        max_attempts,
+    )
+    .await?;
 
     // Extract metadata from response headers
     let headers = response.headers();
@@ -102,26 +169,53 @@ pub async fn download_from_azure(
     })
 }
 
-/// Check if a blob exists in Azure via HEAD request.
-/// Returns false on any error or non-200 status so the caller proceeds with upload.
-async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str) -> bool {
-    let full_url = build_sas_url(url, sas_token);
+/// Subset of HEAD response metadata consumed by the upload-or-skip path.
+/// `None` digest means the header was absent — treat as "cannot compare".
+#[derive(Debug, Clone)]
+struct RemoteBlobHeader {
+    digest: Option<String>,
+}
+
+#[cfg(test)]
+impl RemoteBlobHeader {
+    fn with_digest(digest: &str) -> Self {
+        Self {
+            digest: Some(digest.to_string()),
+        }
+    }
+}
+
+/// Probes the blob with HEAD. Returns `None` on 404/403/transport-error/
+/// malformed header so the caller falls through to upload (fail-open).
+async fn send_head_to_azure_blob(
+    client: &reqwest::Client,
+    url: &str,
+    sas_token: &SensitiveString,
+) -> Option<RemoteBlobHeader> {
+    let full_url = build_sas_url(url, sas_token.reveal());
     match client.head(&full_url).send().await {
         Ok(resp) => match resp.status() {
-            StatusCode::OK => true,
-            StatusCode::NOT_FOUND => false,
+            StatusCode::OK => {
+                let digest = resp
+                    .headers()
+                    .get(AZURE_META_SFC_DIGEST)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                Some(RemoteBlobHeader { digest })
+            }
+            StatusCode::NOT_FOUND => None,
             StatusCode::FORBIDDEN => {
                 tracing::warn!(
                     "Access denied checking blob existence in Azure, proceeding with upload"
                 );
-                false
+                None
             }
             status => {
                 tracing::warn!(
                     "Unexpected status {} checking Azure blob existence, proceeding with upload",
                     status
                 );
-                false
+                None
             }
         },
         Err(e) => {
@@ -129,7 +223,7 @@ async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str)
                 "Error checking Azure blob existence, proceeding with upload: {}",
                 sanitize_sas(e.to_string())
             );
-            false
+            None
         }
     }
 }
@@ -146,10 +240,14 @@ async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str)
 ///   reference-count bump — no copy of the ciphertext.
 ///
 /// Sets encryption metadata headers only when client-side encryption was used.
+///
+/// The SAS token is taken as `&SensitiveString` and revealed only at the
+/// URL-construction site so the raw secret never enters this function's
+/// outer scope.
 async fn upload_to_azure(
     client: &reqwest::Client,
     url: &str,
-    sas_token: &str,
+    sas_token: &SensitiveString,
     prepared: PreparedUpload,
     max_attempts: u32,
 ) -> Result<(), AzureUploadError> {
@@ -172,7 +270,6 @@ async fn upload_to_azure(
 
     let source = prepared.data;
     let digest = prepared.digest;
-    let full_url = build_sas_url(url, sas_token);
 
     azure_upload_with_retry(
         || {
@@ -182,7 +279,7 @@ async fn upload_to_azure(
             let body = cloud_http::body_for(&source).context(azure_upload_error::SourceIoSnafu)?;
 
             let mut req = client
-                .put(&full_url)
+                .put(build_sas_url(url, sas_token.reveal()))
                 .header("x-ms-blob-type", "BlockBlob")
                 .header(AZURE_META_SFC_DIGEST, &digest)
                 .body(body);
@@ -458,10 +555,12 @@ pub async fn download_from_azure_streaming(
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let full_url = build_sas_url(&url, sas_token.reveal());
-
-    let response =
-        azure_request_with_retry(|| client.get(&full_url), Method::GET, max_attempts).await?;
+    let response = azure_request_with_retry(
+        || client.get(build_sas_url(&url, sas_token.reveal())),
+        Method::GET,
+        max_attempts,
+    )
+    .await?;
 
     // cloud_byte_count from Content-Length (accurate for non-chunked responses).
     let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
@@ -690,8 +789,6 @@ mod tests {
     use crate::file_manager::types::ByteSource;
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
-    use wiremock::matchers::method;
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
@@ -969,7 +1066,430 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // 7. Azure PUT omits Content-Encoding-class headers
+    // 7. Pre-upload HEAD probe and skip-decision
+    //
+    // Contract: HEAD is issued only when at least one skip branch could
+    // fire (`!overwrite || skip_upload_on_content_match`), and the skip
+    // is keyed on either remote existence or remote-vs-local digest
+    // equality. Six tests cover every row of the truth table.
+    // ---------------------------------------------------------------
+
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Builds a `StageInfo` whose `endpoint` is the mock server URI, so
+    /// `build_azure_url` routes the SAS-signed URL straight at the mock.
+    fn mock_stage(mock_uri: &str) -> StageInfo {
+        StageInfo {
+            location_type: super::super::types::LocationType::Azure,
+            bucket: "test-container".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "eastus2".to_string(),
+            creds: CloudCredentials::Azure {
+                sas_token: SensitiveString::from("sv=2021-08-06&sig=test-secret-sig&se=2099-01-01"),
+            },
+            endpoint: Some(mock_uri.to_string()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: Some("test".to_string()),
+        }
+    }
+
+    fn prepared_with_digest(digest: &str) -> PreparedUpload {
+        PreparedUpload {
+            data: ByteSource::Bytes(b"hello-azure".to_vec().into()),
+            digest: digest.to_string(),
+            encryption_metadata: None,
+        }
+    }
+
+    /// Scenario 1: existence-only branch — `!overwrite && exists` returns
+    /// `Skipped` without issuing a PUT. Mirrors UD's pre-gap behaviour and
+    /// guards against regression in the `send_head_to_azure_blob` refactor.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_false_and_blob_exists() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Scenario 2: HEAD elision — `overwrite=true && skip_match=false`
+    /// proves UD doesn't waste a round-trip on the path Python wastes on.
+    /// `Mock::given(method("HEAD")).expect(0)` is the load-bearing
+    /// assertion: any HEAD against the mock fails the test.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_head_issued_when_overwrite_true_and_skip_match_false() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(header("x-ms-blob-type", "BlockBlob"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 3: content-match branch — when the remote `sfcdigest`
+    /// equals the local digest, the upload is skipped. Uses the *real*
+    /// `compute_sha256_digest` output rather than a synthetic value so
+    /// that a future change to the digest format on either side fails
+    /// here, not silently in production.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_true_and_skip_match_true_and_digests_match() {
+        use super::super::encryption::compute_sha256_digest;
+
+        let data = b"hello-azure".to_vec();
+        let real_digest = compute_sha256_digest(&data).expect("digest computation");
+
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(AZURE_META_SFC_DIGEST, real_digest.as_str()),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            PreparedUpload {
+                data: ByteSource::Bytes(data.into()),
+                digest: real_digest,
+                encryption_metadata: None,
+            },
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Scenario 4: content-mismatch — same flags as scenario 3, but the
+    /// remote `sfcdigest` differs from the local one. Different content
+    /// cannot be skipped over; upload must proceed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_overwrite_true_and_skip_match_true_and_digests_differ() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200).insert_header(AZURE_META_SFC_DIGEST, "remote-digest"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 5: 404 on HEAD — blob doesn't exist. Even with the flag
+    /// on, there is no remote header to compare, so the upload runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_skip_match_true_and_head_404() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 6: HEAD returns 200 but the `sfcdigest` user-metadata
+    /// header is absent — e.g. the blob was uploaded by a tool that
+    /// doesn't write Snowflake's custom header. Cannot compare digests,
+    /// so the content-match branch must NOT skip.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_skip_match_true_and_head_200_without_sfcdigest_header() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    // ---------------------------------------------------------------
+    // 8. Skip-decision in isolation — kills mutants the wiremock scenarios
+    //    can't (see SkipDecision / classify_pre_upload_skip docs).
+    //
+    //    The six wiremock scenarios above couple the `skip_upload_on_content_match &&`
+    //    guard with the HEAD-elision optimization (head_needed = !overwrite ||
+    //    skip_match). The case that would expose a missing guard —
+    //    overwrite=true, skip_match=false, remote-digest matches local — is
+    //    UNREACHABLE through `upload_to_azure_or_skip` because HEAD is elided
+    //    in that configuration. These direct unit tests bypass the elision so
+    //    a guard regression fails here even when the integration scenarios
+    //    still pass.
+    // ---------------------------------------------------------------
+
+    /// Mutation guard: dropping `skip_upload_on_content_match &&` from the
+    /// content branch flips this to `ContentMatch` and the assertion fails.
+    #[test]
+    fn classify_does_not_fire_content_branch_without_opt_in() {
+        let h = RemoteBlobHeader::with_digest("abc");
+        let decision = classify_pre_upload_skip(
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            Some(&h),
+            "abc",
+        );
+        assert_eq!(
+            decision,
+            SkipDecision::Upload,
+            "content-match must require the opt-in flag"
+        );
+    }
+
+    /// Positive control: the same digest match WITH the flag set fires.
+    #[test]
+    fn classify_fires_content_branch_with_opt_in() {
+        let h = RemoteBlobHeader::with_digest("abc");
+        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
+        assert_eq!(decision, SkipDecision::ContentMatch);
+    }
+
+    /// Existence wins over content-match when `!overwrite`: a blob that
+    /// exists is treated as authoritative, digest comparison is skipped.
+    #[test]
+    fn classify_existence_wins_under_no_overwrite() {
+        let h = RemoteBlobHeader::with_digest("abc");
+        let decision = classify_pre_upload_skip(false, true, Some(&h), "abc");
+        assert_eq!(decision, SkipDecision::Existence);
+    }
+
+    /// `!overwrite` with no remote means upload — blob doesn't exist yet.
+    /// Common first-upload path.
+    #[test]
+    fn classify_uploads_when_remote_absent_under_no_overwrite() {
+        let decision = classify_pre_upload_skip(false, false, None, "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    /// `overwrite && skip_match && remote present but digest absent` — the
+    /// HEAD returned 200 but no `x-ms-meta-sfcdigest` header. Cannot compare,
+    /// so upload runs (fail-open at the comparison site).
+    #[test]
+    fn classify_uploads_when_remote_digest_missing() {
+        let h = RemoteBlobHeader { digest: None };
+        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    /// `overwrite && skip_match && remote digest differs` — the racing
+    /// uploader had different content; we must overwrite, not skip.
+    #[test]
+    fn classify_uploads_when_digests_differ() {
+        let h = RemoteBlobHeader::with_digest("xyz");
+        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    // ---------------------------------------------------------------
+    // 9. Parametrized fail-open over HEAD error classes — only 404 is
+    //    covered by the existing scenarios. A regression that
+    //    misclassifies any of {403, 5xx, transport, malformed-header}
+    //    as a successful match would silently preserve stale stage
+    //    content (data-correctness, not perf).
+    // ---------------------------------------------------------------
+
+    /// Helper: assert that overwrite=true + skip_match=true against the
+    /// configured HEAD response results in an `Uploaded` status (PUT runs
+    /// exactly once). The matching local digest in the request would skip
+    /// IF the HEAD parser misread the error class as a successful 200 with
+    /// a matching digest.
+    async fn assert_failopen_uploads(head_response: ResponseTemplate) {
+        use super::super::encryption::compute_sha256_digest;
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(head_response)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let data = b"hello-azure".to_vec();
+        let real_digest = compute_sha256_digest(&data).expect("digest");
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            PreparedUpload {
+                data: ByteSource::Bytes(data.into()),
+                digest: real_digest,
+                encryption_metadata: None,
+            },
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failopen_403_uploads() {
+        assert_failopen_uploads(ResponseTemplate::new(403)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failopen_500_uploads() {
+        assert_failopen_uploads(ResponseTemplate::new(500)).await;
+    }
+
+    /// Malformed `x-ms-meta-sfcdigest` — non-ASCII bytes make `to_str()`
+    /// fail in `send_head_to_azure_blob`; the digest is dropped to `None`
+    /// and the comparison can't match. Must fall through to upload.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failopen_malformed_sfcdigest_header_uploads() {
+        // Non-ASCII bytes (0xFF) — invalid as an HTTP header value's str view.
+        let head =
+            ResponseTemplate::new(200).insert_header(AZURE_META_SFC_DIGEST, "\u{00ff}invalid-utf8");
+        assert_failopen_uploads(head).await;
+    }
+
+    /// Transport error: connect to a server URI that no mock is bound to.
+    /// `reqwest`'s `send().await` returns `Err`, mapping to `None` in
+    /// `send_head_to_azure_blob` (the documented fail-open path).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failopen_transport_error_uploads() {
+        use super::super::encryption::compute_sha256_digest;
+        // Pick a port unlikely to be bound. We never start a server here.
+        let stage = mock_stage("http://127.0.0.1:1");
+        let data = b"hello-azure".to_vec();
+        let real_digest = compute_sha256_digest(&data).expect("digest");
+
+        // Note: `azure_request_with_retry` for the PUT will also fail since
+        // the same address is unreachable. The point of this test is to
+        // exercise the HEAD failure path, not assert PUT success — so we
+        // expect an error, but the failure mode must be "PUT was attempted",
+        // not "skip fired silently". The result type is the proxy: an Ok
+        // here would mean skip fired (data loss); an Err means we tried to
+        // PUT and the network failed (correct fail-open behaviour).
+        let result = upload_to_azure_or_skip(
+            PreparedUpload {
+                data: ByteSource::Bytes(data.into()),
+                digest: real_digest,
+                encryption_metadata: None,
+            },
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "transport-error fail-open must reach PUT (which then errors), not silently skip; got: {result:?}"
+        );
+    }
+    // ---------------------------------------------------------------
+    // 10. Azure PUT omits Content-Encoding-class headers
     // ---------------------------------------------------------------
     //
     // Asserts the wire-level outcome directly: neither `Content-Encoding`
@@ -1005,6 +1525,7 @@ mod tests {
             &stage,
             "file.dat",
             true,
+            false,
             DEFAULT_PUT_GET_MAX_ATTEMPTS,
         )
         .await

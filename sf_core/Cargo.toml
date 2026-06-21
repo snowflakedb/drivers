@@ -123,6 +123,7 @@ tokio-rustls = "0.26"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
 temp-env = { version = "0.3.6", features = ["async_closure"] }
+scopeguard = "1.2"
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }

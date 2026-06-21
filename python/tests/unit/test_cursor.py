@@ -2198,6 +2198,82 @@ class TestExecuteAsync:
         assert result["queryId"] is None
 
 
+class TestExecuteSkipUploadOnContentMatch:
+    """`_skip_upload_on_content_match` is a private execute() kwarg with
+    per-call semantics: a True on call N must not bleed into call N+1.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @staticmethod
+    def _capture_at_execute(cursor):
+        """Capture `_statement_parameters` at the moment `_execute` runs."""
+        captured_session_params = {}
+
+        def side_effect(*args, **kwargs):
+            captured_session_params.update(cursor._statement_parameters)
+            return MagicMock()
+
+        return captured_session_params, side_effect
+
+    def test_kwarg_true_is_applied_then_cleared(self, cursor):
+        captured_session_params, side_effect = self._capture_at_execute(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("PUT file://x @s", _skip_upload_on_content_match=True)
+        assert captured_session_params.get("skip_upload_on_content_match") is True
+        assert "skip_upload_on_content_match" not in cursor._statement_parameters
+
+    def test_kwarg_default_writes_nothing(self, cursor):
+        # Conditional gate: default omits the FFI hop, registry default stands.
+        captured_session_params, side_effect = self._capture_at_execute(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("PUT file://x @s")
+        assert "skip_upload_on_content_match" not in captured_session_params
+
+    def test_kwarg_explicit_false_is_no_op(self, cursor):
+        # Explicit False is identical to omitting the kwarg — no sticky state
+        # exists to clear, so symmetry with True is unnecessary.
+        captured_session_params, side_effect = self._capture_at_execute(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("PUT file://x @s", _skip_upload_on_content_match=False)
+        assert "skip_upload_on_content_match" not in captured_session_params
+
+    def test_kwarg_does_not_persist_across_calls(self, cursor):
+        # Per-call BC regression guard.
+        with (
+            patch.object(cursor, "_execute"),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("PUT file://a @s", _skip_upload_on_content_match=True)
+
+        captured_session_params, side_effect = self._capture_at_execute(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("PUT file://b @s")
+        assert "skip_upload_on_content_match" not in captured_session_params, (
+            "second call must NOT inherit True from the first call"
+        )
+
+
 class TestParamsAliasAndForceQmark:
     """Unit tests for the legacy ``params``/``seqparams`` aliases and
     ``_force_qmark_paramstyle`` overrides on execute()/executemany().
