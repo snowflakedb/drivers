@@ -82,6 +82,7 @@ pub mod param_names {
     pub const CRL_CONNECTION_TIMEOUT: ParamKey = ParamKey("crl_connection_timeout");
     pub const ASYNC_EXECUTION: ParamKey = ParamKey("async_execution");
     pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
+    pub const SKIP_UPLOAD_ON_CONTENT_MATCH: ParamKey = ParamKey("skip_upload_on_content_match");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
@@ -1116,6 +1117,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: None,
         sensitive: false,
         description: "Exact number of statements in a multi-statement query",
+        deprecated_by: None,
+        scope: ParamScope::Statement,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::SKIP_UPLOAD_ON_CONTENT_MATCH.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Skip re-uploading a PUT blob when the remote x-ms-meta-sfcdigest header equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
         deprecated_by: None,
         scope: ParamScope::Statement,
         used_at_connect: false,

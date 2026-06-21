@@ -191,6 +191,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
+        _skip_upload_on_content_match: bool = False,
         *,
         params: Sequence[Any] | dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
@@ -204,9 +205,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             operation (str): SQL statement to execute
             parameters (sequence or dict): Parameters for the operation.
                 For qmark/numeric paramstyle: sequence of values
-                For pyformat paramstyle: sequence (%s) or dict (%(name)s)
+                For pyformat/format paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
+            _skip_upload_on_content_match (bool, optional): On PUT, skip
+                re-upload when the remote ``x-ms-meta-sfcdigest`` matches the
+                locally-computed SHA-256. Opt-in optimization for racing
+                concurrent uploaders; only meaningful with ``OVERWRITE=TRUE``.
+                Underscore-prefixed for parity with the legacy
+                Python-connector kwarg name.
             params: Legacy alias for ``parameters`` (kwarg-only). Cannot be
                 supplied together with ``parameters``.
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
@@ -219,14 +226,22 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             # TODO Create a global known parameters registry
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
+        if _skip_upload_on_content_match:
+            # Per-call opt-in. Cleared in `finally` below so the value never
+            # bleeds into a subsequent execute() that omits the kwarg.
+            self.set_statement_parameter("skip_upload_on_content_match", True)
+
         self.reset()
-        return self._execute(
-            operation,
-            parameters,
-            _is_put_get,
-            _force_qmark_paramstyle=_force_qmark_paramstyle,
-            **kwargs,
-        )
+        try:
+            return self._execute(
+                operation,
+                parameters,
+                _is_put_get,
+                _force_qmark_paramstyle=_force_qmark_paramstyle,
+                **kwargs,
+            )
+        finally:
+            self._statement_parameters.pop("skip_upload_on_content_match", None)
 
     def _execute(
         self,

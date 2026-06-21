@@ -94,6 +94,7 @@ pub async fn upload_files(
             overwrite: data.overwrite,
             flavor: data.flavor.clone(),
             legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
+            skip_upload_on_content_match: data.skip_upload_on_content_match,
         };
 
         let result =
@@ -213,6 +214,7 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.skip_upload_on_content_match,
             put_get_max_attempts,
         )
         .await
@@ -1641,6 +1643,7 @@ mod tests {
             overwrite: false,
             flavor,
             legacy_odbc_compression_autodetect,
+            skip_upload_on_content_match: false,
         }
     }
 
@@ -1662,5 +1665,214 @@ mod tests {
             use_s3_regional_url: false,
             storage_account: None,
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Cross-wrapper result mapping for content-match skip
+    //
+    // Content-match skip under `overwrite=true` is a new path that produces
+    // `(UploadStatus::Skipped, flavor)`. The `upload_result_message` unit
+    // tests (above) cover the static mapping, but the END-TO-END behaviour
+    // — that the path actually arrives at `Skipped` and the message column
+    // gets populated correctly per wrapper — wasn't pinned. A future change
+    // that splits content-match into a separate UploadStatus variant could
+    // silently break the ODBC contract unless caught here.
+    //
+    // Drives `upload_single_file` against a wiremock Azure where HEAD
+    // returns a matching digest, asserts the resulting `UploadResult` per
+    // wrapper flavor.
+    // ---------------------------------------------------------------
+
+    use crate::sensitive::SensitiveString;
+    use std::io::Write;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn run_content_match_skip(flavor: PutGetResultsetFlavor) -> UploadResult {
+        // Real on-disk file so `upload_single_file`'s `File::open` works.
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let payload = b"hello-azure-cross-wrapper";
+        // Disable auto_compress so prepared.data == payload and the digest
+        // computed on the file matches what the test plants in the HEAD
+        // response. With auto_compress=true the upload-prep would gzip the
+        // bytes and the digest would be over the gzipped form.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(tmp.path())
+            .unwrap()
+            .write_all(payload)
+            .unwrap();
+
+        let real_digest = encryption::compute_sha256_digest(payload).expect("digest");
+
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-ms-meta-sfcdigest", real_digest.as_str()),
+            )
+            .mount(&mock)
+            .await;
+        // Load-bearing: skip must fire (no PUT) for this end-to-end path.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage_info = StageInfo {
+            location_type: LocationType::Azure,
+            bucket: "test-container".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "eastus2".to_string(),
+            creds: CloudCredentials::Azure {
+                sas_token: SensitiveString::from("sv=test&sig=test&se=2099-01-01"),
+            },
+            endpoint: Some(mock.uri()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: Some("test".to_string()),
+        };
+
+        let data = SingleUploadData {
+            source: ByteSource::Path(tmp.path().to_str().unwrap().into()),
+            filename: "f.dat".to_string(),
+            stage_info,
+            encryption_material: None,
+            auto_compress: false,
+            source_compression: SourceCompressionParam::None,
+            overwrite: true,
+            flavor,
+            legacy_odbc_compression_autodetect: false,
+            skip_upload_on_content_match: true,
+        };
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        upload_single_file(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, &mut refresher)
+            .await
+            .expect("upload_single_file should succeed against the mock")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_under_odbc_emits_legacy_message() {
+        let result = run_content_match_skip(PutGetResultsetFlavor::Odbc).await;
+        assert_eq!(result.status, "SKIPPED");
+        assert_eq!(
+            result.message, ODBC_PUT_MESSAGE_SKIPPED,
+            "ODBC users who set OVERWRITE=TRUE and hit content-match must get the legacy SKIPPED message",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_under_python_emits_empty_message() {
+        let result = run_content_match_skip(PutGetResultsetFlavor::Python).await;
+        assert_eq!(result.status, "SKIPPED");
+        assert_eq!(
+            result.message, "",
+            "Python flavor must keep the message column empty even when content-match fires",
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // S3 / GCS scope pin: skip_upload_on_content_match is Azure-only
+    // per gap-5 findings. These tests assert current no-op behaviour.
+    // If a future change wires the flag for S3 or GCS, update findings.md
+    // (cross-cloud parity scope) and this test deliberately.
+    // ---------------------------------------------------------------
+
+    fn write_local_payload(content: &[u8]) -> tempfile::NamedTempFile {
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(tmp.path())
+            .unwrap()
+            .write_all(content)
+            .unwrap();
+        tmp
+    }
+
+    fn single_upload_data_for(
+        location_type: LocationType,
+        endpoint: &str,
+        file_path: &str,
+    ) -> SingleUploadData {
+        let creds = match location_type {
+            LocationType::S3 => CloudCredentials::S3 {
+                aws_key_id: "AKIA-TEST".to_string(),
+                aws_secret_key: SensitiveString::from("secret".to_string()),
+                aws_token: SensitiveString::from("token".to_string()),
+            },
+            LocationType::Gcs => CloudCredentials::Gcs {
+                gcs_access_token: Some(SensitiveString::from("test-bearer-token".to_string())),
+            },
+            LocationType::Azure => unreachable!("Azure path covered by content_match_skip tests"),
+        };
+        SingleUploadData {
+            source: ByteSource::Path(file_path.into()),
+            filename: "f.dat".to_string(),
+            stage_info: StageInfo {
+                location_type,
+                bucket: "test-bucket".to_string(),
+                key_prefix: "prefix/".to_string(),
+                region: "us-east-1".to_string(),
+                creds,
+                endpoint: Some(endpoint.to_string()),
+                presigned_url: None,
+                use_virtual_url: false,
+                use_regional_url: false,
+                use_s3_regional_url: false,
+                storage_account: None,
+            },
+            encryption_material: None,
+            auto_compress: false,
+            source_compression: SourceCompressionParam::None,
+            overwrite: true,
+            flavor: PutGetResultsetFlavor::Python,
+            legacy_odbc_compression_autodetect: false,
+            skip_upload_on_content_match: true,
+        }
+    }
+
+    /// Pin: under `overwrite=true && skip_match=true`, S3 must NOT issue a
+    /// HEAD probe (it doesn't read the flag). A regression where S3 begins
+    /// honoring the flag would issue HEAD for digest comparison; this test
+    /// catches that drift via `Mock::given(method("HEAD")).expect(0)`.
+    ///
+    /// No GCS sibling test: PR #57 (SNOW-3406389) made GCS issue HEAD
+    /// unconditionally (the `upload_to_gcs_or_skip` signature drops the
+    /// `skip_upload_on_content_match` kwarg entirely; HEAD fires whether
+    /// the flag is set or not). Cross-cloud picture is therefore: S3
+    /// no-ops the kwarg (this test), Azure honors it (azure_transfer.rs
+    /// tests), GCS unconditionally probes (gcs_transfer.rs tests, layer
+    /// below dispatch). S3 remains the only "no-op" cloud worth pinning
+    /// here; tracked as a follow-up (S3 HEAD fail-OPEN clobber +
+    /// skip-match parity).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_upload_on_content_match_is_no_op_on_s3() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(b"hello-s3-no-op");
+        let data =
+            single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let result = upload_single_file(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, &mut refresher)
+            .await
+            .expect("S3 upload should succeed against the mock");
+        assert_eq!(result.status, "UPLOADED");
     }
 }

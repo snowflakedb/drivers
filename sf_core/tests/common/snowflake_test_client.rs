@@ -204,6 +204,16 @@ impl SnowflakeTestClient {
         self.execute_statement_query_with_bindings(stmt, None)
     }
 
+    /// Set a single per-statement option via the proto/FFI client.
+    pub fn set_statement_option(&self, stmt: &StatementHandle, key: &str, value: ConfigSetting) {
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
+                stmt_handle: Some(*stmt),
+                options: [(key.to_string(), value)].into_iter().collect(),
+            })
+            .unwrap();
+    }
+
     pub fn execute_statement_query_with_bindings(
         &self,
         stmt: &StatementHandle,

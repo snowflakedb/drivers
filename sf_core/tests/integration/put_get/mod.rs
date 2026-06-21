@@ -1,2 +1,3 @@
 pub mod gcs_async_refresh;
+pub mod put_get_skip_upload_on_content_match;
 pub mod put_get_source_compression;

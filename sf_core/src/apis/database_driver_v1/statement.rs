@@ -387,6 +387,10 @@ impl DatabaseDriverV1 {
         // Re-acquire lock to set the state
         let mut stmt = stmt_ptr.lock().await;
         stmt.state = StatementState::Executed;
+        let skip_upload_on_content_match = stmt
+            .settings
+            .get_bool(param_names::SKIP_UPLOAD_ON_CONTENT_MATCH)
+            .unwrap_or(false);
         drop(stmt);
 
         let data = response.data;
@@ -395,7 +399,12 @@ impl DatabaseDriverV1 {
             return Ok(multi);
         }
         let rowset_data = self
-            .extract_rowset_data(&conn_arc, data, Some((query, query_parameters)))
+            .extract_rowset_data(
+                &conn_arc,
+                data,
+                Some((query, query_parameters)),
+                skip_upload_on_content_match,
+            )
             .await?;
         let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
         Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
@@ -413,6 +422,7 @@ impl DatabaseDriverV1 {
         conn: &Arc<Mutex<Connection>>,
         data: query_response::Data,
         refresh_sql: Option<(String, QueryParameters)>,
+        skip_upload_on_content_match: bool,
     ) -> Result<query_response::RowsetData, ApiError> {
         match data.command.as_deref() {
             Some(command) => {
@@ -440,6 +450,7 @@ impl DatabaseDriverV1 {
                     put_get_max_attempts,
                     stage_info_refresh_context,
                     use_s3_regional_url_session_param,
+                    skip_upload_on_content_match,
                 )
                 .await
                 .context(QueryResponseProcessingSnafu)
@@ -576,7 +587,12 @@ impl DatabaseDriverV1 {
                 }
                 None => None,
             };
-            let rowset_data = self.extract_rowset_data(&conn_ptr, data, refresh_sql).await?;
+            // PUT/GET is routed to Blocking dispatch by `is_file_transfer`, so
+            // this async result-fetch path is not normally reached for file
+            // transfers; pass skip_upload_on_content_match=false defensively.
+            let rowset_data = self
+                .extract_rowset_data(&conn_ptr, data, refresh_sql, false)
+                .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
         }
@@ -916,6 +932,16 @@ mod tests {
     fn parse_bool_setting_accepts_native_bool_values() {
         assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
         assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    /// `skip_upload_on_content_match` is the first Statement-scoped param that
+    /// must stay client-only. Adding it to `QUERY_PARAMETER_NAMES` would forward
+    /// it to GS where it has no meaning.
+    #[test]
+    fn skip_upload_on_content_match_is_not_forwarded_to_gs() {
+        for (key, _server_name) in QUERY_PARAMETER_NAMES {
+            assert_ne!(key.as_str(), "skip_upload_on_content_match");
+        }
     }
 
     #[test]

@@ -4881,6 +4881,7 @@ dependencies = [
  "rustls-native-certs 0.8.1",
  "rustls-pemfile 2.2.0",
  "rustls-webpki 0.102.8",
+ "scopeguard",
  "serde",
  "serde_json",
  "sf_core",
