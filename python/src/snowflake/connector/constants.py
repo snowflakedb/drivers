@@ -37,3 +37,4 @@ class StatementParameterName:
 
     MULTI_STATEMENT_COUNT = "MULTI_STATEMENT_COUNT"
     ASYNC_EXECUTION = "ASYNC_EXECUTION"
+    SKIP_UPLOAD_ON_CONTENT_MATCH = "skip_upload_on_content_match"

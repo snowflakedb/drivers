@@ -169,6 +169,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
+        _skip_upload_on_content_match: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -182,19 +183,38 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
+            _skip_upload_on_content_match (bool, optional): On PUT, skip
+                re-upload when the remote ``x-ms-meta-sfcdigest`` matches the
+                locally-computed SHA-256. Opt-in optimization for racing
+                concurrent uploaders; only meaningful with ``OVERWRITE=TRUE``.
+                Underscore-prefixed for parity with the legacy
+                Python-connector kwarg name.
         """
+        # Per-call params: this execute() only, never persisted on the cursor.
+        statement_parameters = self._collect_statement_params(
+            skip_upload_on_content_match=_skip_upload_on_content_match,
+        )
+
         if num_statements is not None:
             # TODO Create a global known parameters registry
             await self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
         await self.reset()
-        return await self._execute(operation, parameters, _is_put_get, **kwargs)
+        return await self._execute(
+            operation,
+            parameters,
+            _is_put_get,
+            statement_parameters=statement_parameters,
+            **kwargs,
+        )
 
     async def _execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        *,
+        statement_parameters: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
@@ -204,8 +224,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         query, bindings = self._prepare_query(operation, parameters)
 
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            if self._statement_parameters:
-                await self._apply_statement_parameters(stmt_handle)
+            await self._apply_statement_parameters(stmt_handle, statement_parameters)
 
             response = await self._execute_query(stmt_handle, bindings)
 
@@ -217,9 +236,16 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
 
-    async def _apply_statement_parameters(self, stmt_handle: StatementHandle) -> None:
-        """Apply stored statement parameters to the statement handle via SetOptions RPC."""
-        options = self._build_statement_parameter_options()
+    async def _apply_statement_parameters(
+        self,
+        stmt_handle: StatementHandle,
+        statement_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Apply sticky `_statement_parameters` merged with per-call
+        `statement_parameters` via SetOptions RPC. Per-call wins on key
+        collision and is never persisted on the cursor.
+        """
+        options = self._build_statement_parameters_options(statement_parameters)
         if not options:
             return
         await async_core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)

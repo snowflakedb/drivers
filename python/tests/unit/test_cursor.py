@@ -2,8 +2,10 @@
 Unit tests for PEP 249 Cursor class.
 """
 
+import asyncio
+
 from decimal import Decimal
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,7 +24,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ResultSetHandle,
     StatementHandle,
 )
-from snowflake.connector.constants import QueryStatus
+from snowflake.connector.aio.cursor import SnowflakeCursor as AsyncSnowflakeCursor
+from snowflake.connector.constants import QueryStatus, StatementParameterName
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
@@ -2199,8 +2202,9 @@ class TestExecuteAsync:
 
 
 class TestExecuteSkipUploadOnContentMatch:
-    """`_skip_upload_on_content_match` is a private execute() kwarg with
-    per-call semantics: a True on call N must not bleed into call N+1.
+    """`_skip_upload_on_content_match` is a private execute() kwarg routed
+    through the per-call channel: never lands in `_statement_parameters`,
+    structurally cannot bleed across calls.
     """
 
     @pytest.fixture
@@ -2214,64 +2218,169 @@ class TestExecuteSkipUploadOnContentMatch:
         return SnowflakeCursor(mock_connection)
 
     @staticmethod
-    def _capture_at_execute(cursor):
-        """Capture `_statement_parameters` at the moment `_execute` runs."""
-        captured_session_params = {}
+    def _capture_per_call(cursor):
+        """Capture the `statement_parameters` kwarg at the moment `_execute` runs."""
+        captured = {}
 
         def side_effect(*args, **kwargs):
-            captured_session_params.update(cursor._statement_parameters)
+            captured.update(kwargs.get("statement_parameters") or {})
             return MagicMock()
 
-        return captured_session_params, side_effect
+        return captured, side_effect
 
-    def test_kwarg_true_is_applied_then_cleared(self, cursor):
-        captured_session_params, side_effect = self._capture_at_execute(cursor)
+    def test_kwarg_true_passed_as_per_call_param(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
             patch.object(cursor, "reset"),
         ):
             cursor.execute("PUT file://x @s", _skip_upload_on_content_match=True)
-        assert captured_session_params.get("skip_upload_on_content_match") is True
-        assert "skip_upload_on_content_match" not in cursor._statement_parameters
+        assert captured.get(StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH) is True
+        # Structural guarantee: never persisted on the cursor.
+        assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in cursor._statement_parameters
 
-    def test_kwarg_default_writes_nothing(self, cursor):
-        # Conditional gate: default omits the FFI hop, registry default stands.
-        captured_session_params, side_effect = self._capture_at_execute(cursor)
+    def test_kwarg_default_passes_nothing(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
             patch.object(cursor, "reset"),
         ):
             cursor.execute("PUT file://x @s")
-        assert "skip_upload_on_content_match" not in captured_session_params
+        assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in captured
 
-    def test_kwarg_explicit_false_is_no_op(self, cursor):
-        # Explicit False is identical to omitting the kwarg — no sticky state
-        # exists to clear, so symmetry with True is unnecessary.
-        captured_session_params, side_effect = self._capture_at_execute(cursor)
+    def test_kwarg_explicit_false_passes_nothing(self, cursor):
+        # Explicit False is identical to omitting the kwarg.
+        captured, side_effect = self._capture_per_call(cursor)
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
             patch.object(cursor, "reset"),
         ):
             cursor.execute("PUT file://x @s", _skip_upload_on_content_match=False)
-        assert "skip_upload_on_content_match" not in captured_session_params
+        assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in captured
 
     def test_kwarg_does_not_persist_across_calls(self, cursor):
-        # Per-call BC regression guard.
+        # Per-call BC regression guard. With the statement_parameters channel,
+        # cross-call bleed is structurally impossible.
         with (
             patch.object(cursor, "_execute"),
             patch.object(cursor, "reset"),
         ):
             cursor.execute("PUT file://a @s", _skip_upload_on_content_match=True)
 
-        captured_session_params, side_effect = self._capture_at_execute(cursor)
+        captured, side_effect = self._capture_per_call(cursor)
         with (
             patch.object(cursor, "_execute", side_effect=side_effect),
             patch.object(cursor, "reset"),
         ):
             cursor.execute("PUT file://b @s")
-        assert "skip_upload_on_content_match" not in captured_session_params, (
+        assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in captured, (
             "second call must NOT inherit True from the first call"
         )
+
+    def test_per_call_wins_over_sticky_on_key_collision(self, cursor):
+        # Pin the merge order in `_apply_statement_parameters`: per-call
+        # values override sticky values when the same key is set in both.
+        # A future "tidy up" that reverses the spread direction
+        # ({**per_call, **sticky}) fails this test.
+        captured_options = {}
+
+        def capture_options(*, stmt_handle, options):
+            captured_options.update(options)
+
+        cursor._statement_parameters[StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH] = False
+        with (
+            patch("snowflake.connector.cursor._base.core_driver.statement_set_options", side_effect=capture_options),
+            patch("snowflake.connector.cursor._base.statement"),
+            patch.object(cursor, "_execute_query", return_value=MagicMock(HasField=lambda f: False)),
+            patch.object(cursor, "_apply_result_set"),
+            patch.object(cursor, "reset"),
+            patch.object(cursor, "_prepare_query", return_value=("PUT", None)),
+        ):
+            cursor.execute("PUT file://x @s", _skip_upload_on_content_match=True)
+
+        # The merged options sent to core must reflect the per-call value (True),
+        # not the sticky one (False).
+        setting = captured_options.get(StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH)
+        assert setting is not None, "skip_upload_on_content_match must be in options"
+        assert setting.bool_value is True, (
+            f"per-call True must override sticky False; got bool_value={setting.bool_value}"
+        )
+
+
+class TestStatementParameterCollection:
+    """The per-call collection helper and the merged options builder that the
+    sync and async cursors share on the cursor base mixin."""
+
+    @pytest.fixture
+    def cursor(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return SnowflakeCursor(mock_connection)
+
+    def test_collect_skip_upload_true(self, cursor):
+        params = cursor._collect_statement_params(skip_upload_on_content_match=True)
+        assert params == {StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH: True}
+
+    def test_collect_default_is_empty(self, cursor):
+        assert cursor._collect_statement_params(skip_upload_on_content_match=False) == {}
+
+    def test_build_options_per_call_overrides_sticky(self, cursor):
+        # Sticky False + per-call True for the same key: per-call must win.
+        # A future reversal of the spread order ({**per_call, **sticky}) fails here.
+        cursor._statement_parameters[StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH] = False
+        options = cursor._build_statement_parameters_options(
+            {StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH: True}
+        )
+        setting = options.get(StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH)
+        assert setting is not None
+        assert setting.bool_value is True
+
+    def test_build_options_includes_sticky_when_no_per_call(self, cursor):
+        cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+        options = cursor._build_statement_parameters_options()
+        assert "MULTI_STATEMENT_COUNT" in options
+
+
+class TestAsyncExecuteSkipUploadOnContentMatch:
+    """Async cursor parity: `_skip_upload_on_content_match` routes through the
+    same per-call channel as the sync cursor and never persists on the cursor.
+    """
+
+    @pytest.fixture
+    def cursor(self):
+        mock_connection = MagicMock()
+        # aio cursor awaits self._connection.is_closed(), so it must be async.
+        mock_connection.is_closed = AsyncMock(return_value=False)
+        return AsyncSnowflakeCursor(mock_connection)
+
+    @staticmethod
+    def _capture_per_call():
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        return captured, side_effect
+
+    def test_kwarg_true_passed_as_per_call_param(self, cursor):
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(cursor.execute("PUT file://x @s", _skip_upload_on_content_match=True))
+        assert captured.get(StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH) is True
+        assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in cursor._statement_parameters
+
+    def test_kwarg_default_passes_nothing(self, cursor):
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(cursor.execute("PUT file://x @s"))
+        assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in captured
 
 
 class TestParamsAliasAndForceQmark:

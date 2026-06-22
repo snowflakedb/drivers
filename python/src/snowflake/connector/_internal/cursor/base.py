@@ -7,6 +7,7 @@ import ctypes
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from ...constants import StatementParameterName
 from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
 from ..binding_converters import (
     ClientSideBindingConverter,
@@ -317,14 +318,32 @@ class CursorBaseMixin(ErrorHandlerMixin):
         # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
         return [[row[col_idx] for row in rows] for col_idx in range(first_len)]
 
-    def _build_statement_parameter_options(self) -> dict[str, ConfigSetting]:
-        """Build ConfigSetting options from stored statement parameters."""
+    def _collect_statement_params(self, *, skip_upload_on_content_match: bool) -> dict[str, Any]:
+        """Collect per-call statement parameters for a single execute().
+
+        Scoped to one call and never written to the cursor's sticky
+        `_statement_parameters`, so a per-call value cannot bleed into a
+        later execute() that omits the kwarg.
+        """
+        params: dict[str, Any] = {}
+        if skip_upload_on_content_match:
+            params[StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH] = True
+        return params
+
+    def _build_statement_parameters_options(
+        self, statement_parameters: dict[str, Any] | None = None
+    ) -> dict[str, ConfigSetting]:
+        """Build SetOptions from the cursor's sticky `_statement_parameters`
+        merged with per-call `statement_parameters`. Per-call wins on key
+        collision and is never persisted on the cursor.
+        """
+        merged_statement_params = {**self._statement_parameters, **(statement_parameters or {})}
         options: dict[str, ConfigSetting] = {}
-        for key, value in self._statement_parameters.items():
+        for key, value in merged_statement_params.items():
             try:
                 setting = create_config_setting(value)
             except TypeError as err:
-                raise TypeError(f"Cannot set parameter '{key}': {err}") from err
+                raise ProgrammingError(msg=f"Cannot set parameter '{key}': {err}") from err
             if setting is not None:
                 options[key] = setting
         return options
