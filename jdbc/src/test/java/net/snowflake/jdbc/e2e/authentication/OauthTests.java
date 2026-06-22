@@ -6,160 +6,222 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Properties;
+import net.snowflake.jdbc.utils.RequiresBrowser;
 import net.snowflake.jdbc.utils.TestParameters;
 import net.snowflake.jdbc.utils.WithConnect;
 import net.snowflake.jdbc.utils.WithQueryUtils;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
-class OauthTests implements WithQueryUtils, WithConnect {
+@RequiresBrowser
+class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
 
-  private static final String USER = TestParameters.get("SNOWFLAKE_TEST_USER");
+  // ===========================================================================
+  // Legacy AUTHENTICATOR=OAUTH (pre-acquired access token)
+  //
+  // A fresh OAuth access token is minted from the Okta IdP and passed via
+  // `token=`; it is presented to Snowflake as-is.
+  // ===========================================================================
 
-  @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
-  @Test
-  void oauthShouldAuthenticateWithPreAcquiredAccessToken() throws Exception {
-    // Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is supplied
-    // via `token=`
-    Properties props = oauthConnectionProperties("OAUTH");
-    props.setProperty("token", TestParameters.get("SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN"));
+  @Nested
+  class LegacyOauth {
 
-    // When Trying to Connect
-    try (Connection conn = connect(props)) {
-      // Then Login is successful and a simple query can be executed
-      assertSimpleQuerySucceeds(conn);
+    private final String TOKEN_URL = TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL");
+    private final String CLIENT_ID = TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_CLIENT_ID");
+    private final String CLIENT_SECRET =
+        TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_CLIENT_SECRET");
+    private final String USER = TestParameters.get("SNOWFLAKE_TEST_OKTA_USER");
+    private final String PASSWORD = TestParameters.get("SNOWFLAKE_TEST_OKTA_PASSWORD");
+    private final String ROLE = TestParameters.get("SNOWFLAKE_TEST_ROLE");
+
+    @Test
+    void oauthShouldAuthenticateWithPreAcquiredAccessToken() throws Exception {
+      // Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is
+      // supplied via `token=`
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH");
+      props.setProperty("user", USER);
+      props.setProperty(
+          "token",
+          retrieveOauthAccessToken(TOKEN_URL, CLIENT_ID, CLIENT_SECRET, USER, PASSWORD, ROLE));
+
+      // When Trying to Connect
+      try (Connection conn = connect(props)) {
+        // Then Login is successful and a simple query can be executed
+        assertSimpleQuerySucceeds(conn);
+      }
+    }
+
+    @Test
+    void oauthShouldAuthenticateUsingLowercaseOauthAuthenticator() throws Exception {
+      // Given Authentication is set to lowercase oauth and a valid pre-acquired OAuth access token
+      // is supplied via TOKEN
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "oauth");
+      props.setProperty("user", USER);
+      props.setProperty(
+          "token",
+          retrieveOauthAccessToken(TOKEN_URL, CLIENT_ID, CLIENT_SECRET, USER, PASSWORD, ROLE));
+
+      // When Trying to Connect
+      try (Connection conn = connect(props)) {
+        // Then Login is successful and a simple query can be executed
+        assertSimpleQuerySucceeds(conn);
+      }
+    }
+
+    @Test
+    void oauthShouldFailLegacyAuthenticationWithInvalidToken() {
+      // Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH");
+      props.setProperty("user", USER);
+      props.setProperty("token", "invalid_oauth_token_12345");
+
+      // When Trying to Connect
+      Executable connectAttempt = () -> connect(props);
+
+      // Then Connection fails with an authentication / login error
+      assertThrows(SQLException.class, connectAttempt);
     }
   }
 
-  @Test
-  void oauthShouldFailLegacyAuthenticationWithInvalidToken() {
-    // Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
-    Properties props = oauthConnectionProperties("OAUTH");
-    props.setProperty("token", "invalid_oauth_token_12345");
+  // ===========================================================================
+  // OAuth Authorization Code (AC) flow
+  //
+  // An interactive, user-based flow that authenticates a real user through a
+  // browser login leg. The connect thread spawns Chromium via the OS browser
+  // opener; the browser thread drives the Snowflake IdP login over Chromium's
+  // remote-debugging port.
+  // ===========================================================================
 
-    // When Trying to Connect
-    Executable connect = () -> connect(props);
+  @Nested
+  class AuthorizationCodeFlow implements WithBrowserAutomation {
 
-    // Then Connection fails with an authentication / login error
-    assertThrows(SQLException.class, connect);
-  }
+    private final String USER = TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_USER");
+    private final String PASSWORD = TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_PASSWORD");
+    private final String CLIENT_ID = TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_ID");
+    private final String CLIENT_SECRET =
+        TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_SECRET");
+    private final String REDICTED_URI =
+        TestParameters.get("SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI");
 
-  @Disabled("TODO: SNOW-2872392 - OAuth authorization code E2E spawns a real OS browser")
-  @Test
-  void oauthShouldAuthenticateUsingAuthorizationCodeFlow() throws Exception {
-    // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id / secret.
-    // `oauth_authorization_url` and `oauth_token_request_url` are forwarded from parameters when
-    // present (otherwise the driver falls back to the Snowflake-IdP defaults
-    // `https://{host}/oauth/authorize` and `https://{host}/oauth/token-request`).
-    // `client_store_temporary_credential=true` lets the AC flow short-circuit on subsequent runs by
-    // re-using the cached access / refresh token (AC state machine: cache → refresh → interactive).
-    Properties props = oauthConnectionProperties("OAUTH_AUTHORIZATION_CODE");
-    props.setProperty("oauth_client_id", TestParameters.get("SNOWFLAKE_TEST_OAUTH_CLIENT_ID"));
-    props.setProperty(
-        "oauth_client_secret", TestParameters.get("SNOWFLAKE_TEST_OAUTH_CLIENT_SECRET"));
-    props.setProperty("clientStoreTemporaryCredential", "true");
-    props.setProperty(
-        "oauth_authorization_url", TestParameters.get("SNOWFLAKE_TEST_OAUTH_AUTHORIZATION_URL"));
-    props.setProperty(
-        "oauth_token_request_url", TestParameters.get("SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL"));
-    props.setProperty(
-        "oauth_redirect_uri", TestParameters.get("SNOWFLAKE_TEST_OAUTH_REDIRECT_URI"));
-    props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
+    @Test
+    void oauthShouldAuthenticateUsingAuthorizationCodeFlow() throws Exception {
+      // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id / secret.
+      // `oauth_authorization_url` and `oauth_token_request_url` are forwarded from parameters when
+      // present (otherwise the driver falls back to the Snowflake-IdP defaults
+      // `https://{host}/oauth/authorize` and `https://{host}/oauth/token-request`).
+      // `client_store_temporary_credential=true` lets the AC flow short-circuit on subsequent runs
+      // by re-using the cached access / refresh token (AC state machine: cache → refresh →
+      // interactive).
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH_AUTHORIZATION_CODE");
+      props.setProperty("user", USER);
+      props.setProperty("oauth_client_id", CLIENT_ID);
+      props.setProperty("oauth_client_secret", CLIENT_SECRET);
+      props.setProperty("oauth_redirect_uri", REDICTED_URI);
 
-    // When Trying to Connect (this will spawn the local-loopback HTTP listener and
-    // `xdg-open`/`open`/`ShellExecute` the IdP login URL unless a previously cached access token
-    // short-circuits the leg)
-    try (Connection conn = connect(props)) {
-      // Then Login is successful and a simple query can be executed
-      assertSimpleQuerySucceeds(conn);
+      cleanBrowserProcesses();
+      try {
+        // When Trying to Connect (this will spawn the local-loopback HTTP listener and
+        // `xdg-open`/`open`/`ShellExecute` the IdP login URL unless a previously cached access
+        // token short-circuits the leg)
+        try (Connection conn =
+            connectWithBrowserAutomation(
+                () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD)) {
+          // Then Login is successful and a simple query can be executed
+          assertSimpleQuerySucceeds(conn);
+        }
+      } finally {
+        cleanBrowserProcesses();
+      }
+    }
+
+    @Test
+    void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() throws Exception {
+      // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id but a
+      // deliberately invalid client secret. The IdP token-exchange step must reject the credentials
+      // and the driver must surface an authentication / login error.
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH_AUTHORIZATION_CODE");
+      props.setProperty("user", USER);
+      props.setProperty("oauth_client_id", CLIENT_ID);
+      props.setProperty("oauth_client_secret", "invalid_client_secret_12345");
+      props.setProperty("oauth_redirect_uri", REDICTED_URI);
+
+      cleanBrowserProcesses();
+      try {
+        // When Trying to Connect
+        Executable connect =
+            () ->
+                connectWithBrowserAutomation(
+                    () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD);
+
+        // Then Connection fails with an authentication / login error
+        assertThrows(SQLException.class, connect);
+      } finally {
+        cleanBrowserProcesses();
+      }
     }
   }
 
-  @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
-  @Test
-  void oauthShouldAuthenticateUsingClientCredentialsFlow() throws Exception {
-    // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id / secret and
-    // an external IdP token URL. Snowflake's GS does not mint CC tokens, so
-    // `oauth_token_request_url` is required up-front.
-    Properties props = oauthConnectionProperties("OAUTH_CLIENT_CREDENTIALS");
-    props.setProperty("oauth_client_id", TestParameters.get("SNOWFLAKE_TEST_OAUTH_CLIENT_ID"));
-    props.setProperty(
-        "oauth_client_secret", TestParameters.get("SNOWFLAKE_TEST_OAUTH_CLIENT_SECRET"));
-    props.setProperty(
-        "oauth_token_request_url", TestParameters.get("SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL"));
-    props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
+  // ===========================================================================
+  // OAuth Client Credentials (CC) flow
+  //
+  // A non-interactive, machine-to-machine flow where an external IdP mints the
+  // token from a client id / secret. Snowflake's GS does not mint CC tokens, so
+  // `oauth_token_request_url` is required up-front.
+  // ===========================================================================
 
-    // When Trying to Connect
-    try (Connection conn = connect(props)) {
-      // Then Login is successful and a simple query can be executed
-      assertSimpleQuerySucceeds(conn);
+  @Nested
+  class ClientCredentialsFlow {
+
+    private final String CLIENT_ID =
+        TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID");
+    private final String CLIENT_SECRET =
+        TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET");
+    private final String TOKEN_URL = TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL");
+    private final String SCOPE = "session:role:public";
+
+    @Test
+    void oauthShouldAuthenticateUsingClientCredentialsFlow() throws Exception {
+      // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id / secret and
+      // an external IdP token URL. Snowflake's GS does not mint CC tokens, so
+      // `oauth_token_request_url` is required up-front.
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH_CLIENT_CREDENTIALS");
+      props.setProperty("user", CLIENT_ID);
+      props.setProperty("oauth_client_id", CLIENT_ID);
+      props.setProperty("oauth_client_secret", CLIENT_SECRET);
+      props.setProperty("oauth_token_request_url", TOKEN_URL);
+      props.setProperty("oauth_scope", SCOPE);
+
+      // When Trying to Connect
+      try (Connection conn = connect(props)) {
+        // Then Login is successful and a simple query can be executed
+        assertSimpleQuerySucceeds(conn);
+      }
     }
-  }
 
-  @Disabled("TODO: SNOW-2872392 - OAuth authorization code E2E spawns a real OS browser")
-  @Test
-  void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() {
-    // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id but a
-    // deliberately invalid client secret. The IdP token-exchange step must reject the credentials
-    // and the driver must surface an authentication / login error.
-    Properties props = oauthConnectionProperties("OAUTH_AUTHORIZATION_CODE");
-    props.setProperty("oauth_client_id", TestParameters.get("SNOWFLAKE_TEST_OAUTH_CLIENT_ID"));
-    props.setProperty("oauth_client_secret", "invalid_client_secret_12345");
-    props.setProperty("clientStoreTemporaryCredential", "false");
-    props.setProperty(
-        "oauth_authorization_url", TestParameters.get("SNOWFLAKE_TEST_OAUTH_AUTHORIZATION_URL"));
-    props.setProperty(
-        "oauth_token_request_url", TestParameters.get("SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL"));
-    props.setProperty(
-        "oauth_redirect_uri", TestParameters.get("SNOWFLAKE_TEST_OAUTH_REDIRECT_URI"));
-    props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
+    @Test
+    void oauthShouldFailClientCredentialsFlowWithBadClientSecret() {
+      // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id, an invalid
+      // client secret and a valid token_request_url
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH_CLIENT_CREDENTIALS");
+      props.setProperty("user", CLIENT_ID);
+      props.setProperty("oauth_client_id", CLIENT_ID);
+      props.setProperty("oauth_client_secret", "invalid_client_secret_12345");
+      props.setProperty("oauth_token_request_url", TOKEN_URL);
+      props.setProperty("oauth_scope", SCOPE);
 
-    // When Trying to Connect
-    Executable connect = () -> connect(props);
+      // When Trying to Connect
+      Executable connectAttempt = () -> connect(props);
 
-    // Then Connection fails with an authentication / login error
-    assertThrows(SQLException.class, connect);
-  }
-
-  @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
-  @Test
-  void oauthShouldAuthenticateUsingLowercaseOauthAuthenticator() throws Exception {
-    // Given Authentication is set to lowercase oauth and a valid pre-acquired OAuth access token is
-    // supplied via TOKEN
-    Properties props = oauthConnectionProperties("oauth");
-    props.setProperty("token", TestParameters.get("SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN"));
-
-    // When Trying to Connect
-    try (Connection conn = connect(props)) {
-      // Then Login is successful and a simple query can be executed
-      assertSimpleQuerySucceeds(conn);
+      // Then Connection fails with an authentication / login error
+      assertThrows(SQLException.class, connectAttempt);
     }
-  }
-
-  @Disabled("TODO: SNOW-2872392 - requires SNOWFLAKE_TEST_OAUTH_* parameters in parameters.json")
-  @Test
-  void oauthShouldFailClientCredentialsFlowWithBadClientSecret() {
-    // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id, an invalid
-    // client secret and a valid token_request_url
-    Properties props = oauthConnectionProperties("OAUTH_CLIENT_CREDENTIALS");
-    props.setProperty("oauth_client_id", TestParameters.get("SNOWFLAKE_TEST_OAUTH_CLIENT_ID"));
-    props.setProperty("oauth_client_secret", "invalid_client_secret_12345");
-    props.setProperty(
-        "oauth_token_request_url", TestParameters.get("SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL"));
-    props.setProperty("oauth_scope", TestParameters.get("SNOWFLAKE_TEST_OAUTH_SCOPE"));
-
-    // When Trying to Connect
-    Executable connect = () -> connect(props);
-
-    // Then Connection fails with an authentication / login error
-    assertThrows(SQLException.class, connect);
-  }
-
-  private Properties oauthConnectionProperties(String authenticator) {
-    Properties props = loadDefaultConnectionProperties();
-    props.setProperty("authenticator", authenticator);
-    props.setProperty("user", USER);
-    return props;
   }
 }
