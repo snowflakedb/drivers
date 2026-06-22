@@ -30,3 +30,15 @@ Feature: Personal Access Token Authentication
     Given ALTER USER ADD PROGRAMMATIC ACCESS TOKEN is executed
     When SQLFetch is called on the ALTER USER result
     Then The old driver returns invalid cursor state, the new driver returns the token
+
+  # SNOW-3647715: token-based authenticators must not require `user` --
+  # the principal is encoded in the token and resolved by GS at login
+  # time. This wrapper-level scenario asserts the connector does not
+  # reject the connect when `user` is omitted; it currently only exists
+  # for Python (other drivers track parity work separately).
+
+  @python_e2e
+  Scenario: should authenticate using PAT as token without user
+    Given Authentication is set to Programmatic Access Token and valid PAT token is provided
+    When Trying to Connect without user
+    Then Login is successful and simple query can be executed

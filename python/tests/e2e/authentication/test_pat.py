@@ -36,6 +36,18 @@ class TestPATAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
+    def test_should_authenticate_using_pat_as_token_without_user(self, connection_factory, pat_token):
+        # Given Authentication is set to Programmatic Access Token and valid PAT token is provided
+        authenticator = "PROGRAMMATIC_ACCESS_TOKEN"
+        token = pat_token
+
+        # When Trying to Connect without user
+        connection = connection_factory(authenticator=authenticator, token=token, user=None)
+
+        # Then Login is successful and simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
+
     def test_should_fail_pat_authentication_when_invalid_token_provided(self, connection_factory):
         # Given Authentication is set to Programmatic Access Token and invalid PAT token is provided
         authenticator = "PROGRAMMATIC_ACCESS_TOKEN"

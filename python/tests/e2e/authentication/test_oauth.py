@@ -100,6 +100,25 @@ class TestLegacyOAuthAccessToken:
         with connection:
             verify_simple_query_execution(connection)
 
+    def test_should_authenticate_with_pre_acquired_access_token_without_user(
+        self, connection_factory, legacy_oauth_params
+    ):
+        # Given Authentication is set to legacy OAUTH and a pre-acquired
+        #       OAuth access token is supplied via `token=` and user is
+        #       omitted
+        connect_params = {
+            "authenticator": "OAUTH",
+            "token": retrieve_oauth_access_token(**legacy_oauth_params),
+            "user": None,
+        }
+
+        # When Trying to Connect without user
+        connection = connection_factory(**connect_params)
+
+        # Then Login is successful and a simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
+
 
 # ---------------------------------------------------------------------------
 # OAuth Authorization Code (AC) flow
@@ -237,6 +256,28 @@ class TestOAuthClientCredentials:
         }
 
         # When Trying to Connect
+        connection = connection_factory(**connect_params)
+
+        # Then Login is successful and a simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
+
+    def test_should_authenticate_using_client_credentials_flow_without_user(
+        self, connection_factory, client_credentials_params
+    ):
+        # Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a
+        #       valid client id / secret and an external IdP token URL
+        #       and user is omitted
+        connect_params = {
+            "authenticator": "OAUTH_CLIENT_CREDENTIALS",
+            "oauth_client_id": client_credentials_params["client_id"],
+            "oauth_client_secret": client_credentials_params["client_secret"],
+            "oauth_token_request_url": client_credentials_params["token_url"],
+            "oauth_scope": client_credentials_params["scope"],
+            "user": None,
+        }
+
+        # When Trying to Connect without user
         connection = connection_factory(**connect_params)
 
         # Then Login is successful and a simple query can be executed

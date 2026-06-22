@@ -153,3 +153,21 @@ Feature: OAuth Authentication
     Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id, an invalid client secret and a valid token_request_url
     When Trying to Connect
     Then Connection fails with an authentication / login error
+
+  # SNOW-3647715: token-based authenticators must not require `user` --
+  # the principal is encoded in the IdP-issued token and resolved by GS
+  # at login time. These wrapper-level scenarios assert the connector
+  # does not reject the connect when `user` is omitted; they currently
+  # only exist for Python (other drivers track parity work separately).
+
+  @python_e2e
+  Scenario: should authenticate with pre acquired access token without user
+    Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is supplied via `token=` and user is omitted
+    When Trying to Connect without user
+    Then Login is successful and a simple query can be executed
+
+  @python_e2e
+  Scenario: should authenticate using client credentials flow without user
+    Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id / secret and an external IdP token URL and user is omitted
+    When Trying to Connect without user
+    Then Login is successful and a simple query can be executed

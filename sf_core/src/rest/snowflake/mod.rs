@@ -623,7 +623,11 @@ pub async fn auth_request_data(
                 data.authenticator = Some(authenticator::SNOWFLAKE_JWT.to_string());
             }
             Credentials::Pat { username, token } => {
-                data.login_name = Some(username);
+                // PAT encodes the principal; omit LOGIN_NAME when empty so
+                // Snowflake resolves the user from the token itself.
+                if !username.is_empty() {
+                    data.login_name = Some(username);
+                }
                 data.token = Some(token);
                 data.authenticator = Some(authenticator::PROGRAMMATIC_ACCESS_TOKEN.to_string());
             }
@@ -2736,6 +2740,32 @@ mod tests {
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
+        assert_eq!(data.token.as_ref().unwrap().reveal(), "pat_secret");
+        assert_eq!(
+            data.authenticator.as_deref(),
+            Some("PROGRAMMATIC_ACCESS_TOKEN")
+        );
+    }
+
+    #[test]
+    fn pat_auth_without_user_omits_login_name() {
+        let login_params = LoginParameters {
+            login_method: LoginMethod::Pat {
+                username: "".to_string(),
+                token: "pat_secret".into(),
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .unwrap();
+
+        assert_eq!(
+            data.login_name, None,
+            "LOGIN_NAME must be absent when user is empty"
+        );
         assert_eq!(data.token.as_ref().unwrap().reveal(), "pat_secret");
         assert_eq!(
             data.authenticator.as_deref(),

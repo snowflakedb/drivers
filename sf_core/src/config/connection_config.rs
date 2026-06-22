@@ -406,9 +406,8 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .unwrap_or(false),
         }),
         "PROGRAMMATIC_ACCESS_TOKEN" => Ok(AuthConfig::Pat {
-            user: non_empty_string(settings, USER).context(MissingParameterSnafu {
-                parameter: String::from(USER),
-            })?,
+            // SNOW-3647715: `user` optional — PAT encodes the principal.
+            user: non_empty_string(settings, USER).unwrap_or_default(),
             token: settings
                 .get_sensitive_string(TOKEN)
                 .context(MissingParameterSnafu {
@@ -420,9 +419,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         // Snowflake; LOGIN_NAME is always set (cross-driver consensus:
         // JDBC/Go/Python set username; .NET's empty-string quirk is not ported).
         "OAUTH" => Ok(AuthConfig::OAuthAccessToken {
-            user: non_empty_string(settings, USER).context(MissingParameterSnafu {
-                parameter: String::from(USER),
-            })?,
+            // SNOW-3647715: `user` optional — the token's claims identify
+            // the Snowflake principal.
+            user: non_empty_string(settings, USER).unwrap_or_default(),
             token: settings
                 .get_sensitive_string(TOKEN)
                 .context(MissingParameterSnafu {
@@ -716,7 +715,23 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
     }
 
     // --- MissingRequired: user ---
-    if non_empty_string(settings, USER).is_none() {
+    // SNOW-3647715: token-based authenticators waive the `user`
+    // requirement — the principal is encoded in the IdP-issued token
+    // (or PAT) and resolved by GS at login time. The match below only
+    // appends per-authenticator issues; the `user` check is short-
+    // circuited here to keep the contract self-documenting.
+    let authenticator_for_user_check = settings
+        .get_string(AUTHENTICATOR)
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let user_optional = matches!(
+        authenticator_for_user_check.as_str(),
+        "OAUTH"
+            | "OAUTH_AUTHORIZATION_CODE"
+            | "OAUTH_CLIENT_CREDENTIALS"
+            | "PROGRAMMATIC_ACCESS_TOKEN"
+    );
+    if !user_optional && non_empty_string(settings, USER).is_none() {
         issues.push(ValidationIssue {
             severity: ValidationSeverity::Error,
             parameter: USER.into(),
