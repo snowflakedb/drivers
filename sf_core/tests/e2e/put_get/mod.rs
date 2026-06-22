@@ -3,6 +3,7 @@ mod put_get_basic_operations;
 mod put_get_errors;
 mod put_get_gcs_multi_file;
 mod put_get_overwrite;
+mod put_get_skip_upload_on_content_match;
 mod put_get_source_compression;
 mod put_get_sse_stage;
 mod put_get_wildcards;
