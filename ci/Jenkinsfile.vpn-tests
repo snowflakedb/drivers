@@ -16,6 +16,11 @@ def isMergeQueue() {
 @Field def runPython     = false
 @Field def runRevocation = false
 
+// True when this job is building the public mirror (snowflakedb) rather than the
+// internal repo. Set from the checkout's GIT_URL in 'Detect Changes'. Used to skip
+// the Revocation Validation stage, whose framework repo is internal-only (see below).
+@Field def isMirror = false
+
 def detectChanges() {
   // For main branch builds (and cron), run everything.
   if (env.CHANGE_ID == null) {
@@ -98,8 +103,19 @@ pipeline {
         stage('Detect Changes') {
           agent { label 'build-node-extra-large' }
           steps {
-            checkout scm
-            script { detectChanges() }
+            script {
+              def scmVars = checkout scm
+              // Identify the public mirror by its clone URL. The mirror lives under the
+              // `snowflakedb` org; the internal repo does not. Keyed on the `snowflakedb`
+              // token (not the full `<org>/universal-driver` string) because Copybara
+              // rewrites the internal org name on the way to the mirror — `snowflakedb`
+              // is stable on both sides.
+              isMirror = (scmVars.GIT_URL ?: '').contains('snowflakedb')
+              if (isMirror) {
+                echo 'Public mirror (snowflakedb) detected — Revocation Validation will be skipped.'
+              }
+              detectChanges()
+            }
           }
         }
 
@@ -302,8 +318,13 @@ pipeline {
             }
 
             stage('Revocation Validation') {
+              // Skipped on the public mirror: ci/test_revocation.sh clones the
+              // revocation-validation framework, which is an internal-only repo not
+              // published to the mirror's org. Copybara rewrites its URL on mirroring,
+              // so a mirror run would clone a non-existent repo and fail (git exit 128).
+              // This stage is covered by the internal VPN job.
               when {
-                expression { runRevocation }
+                expression { runRevocation && !isMirror }
               }
               agent { label 'build-node-extra-large' }
               environment {
