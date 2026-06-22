@@ -13,6 +13,50 @@ pub mod internal {
     pub use super::cloud_http::{CloudStreamingDownload, CseDownloadInfo, StreamReader};
     pub use super::encryption::{EncryptionError, decrypt_ciphertext_to_writer, encrypt_file_data};
     pub use super::gcs_transfer::download_from_gcs_streaming;
+
+    /// Zero-backoff variant of the production Azure retry policy, for tests.
+    /// Derives from `azure_retry_policy` (keeping the real `max_attempts` /
+    /// `max_elapsed` / retryable set) and only zeroes the backoff, so
+    /// retry-exhaustion tests run instantly without sleeping. Single source of
+    /// truth shared by the in-crate unit tests and the external integration
+    /// tests, so the test policy can't drift from the production shape.
+    pub fn azure_test_retry_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
+        use crate::config::retry::{BackoffConfig, Jitter};
+        use std::time::Duration;
+        crate::config::retry::RetryPolicy {
+            backoff: BackoffConfig {
+                base: Duration::ZERO,
+                factor: 1.0,
+                cap: Duration::ZERO,
+                jitter: Jitter::None,
+            },
+            ..super::azure_transfer::azure_retry_policy(max_attempts)
+        }
+    }
+
+    /// Zero-backoff variant of the production GCS retry policy, for tests.
+    /// Derives from `gcs_retry_policy` (keeping the real `max_attempts` /
+    /// `max_elapsed` / retryable set, including the presigned-only 400) and
+    /// only zeroes the backoff, so retry tests run instantly without sleeping.
+    /// Single source of truth shared by the in-crate unit tests and the
+    /// external integration tests, so the test policy can't drift from the
+    /// production shape.
+    pub fn gcs_test_retry_policy(
+        using_presigned_url: bool,
+        max_attempts: u32,
+    ) -> crate::config::retry::RetryPolicy {
+        use crate::config::retry::{BackoffConfig, Jitter};
+        use std::time::Duration;
+        crate::config::retry::RetryPolicy {
+            backoff: BackoffConfig {
+                base: Duration::ZERO,
+                factor: 1.0,
+                cap: Duration::ZERO,
+                jitter: Jitter::None,
+            },
+            ..super::gcs_transfer::gcs_retry_policy(using_presigned_url, max_attempts)
+        }
+    }
 }
 
 pub use self::types::*;
@@ -26,12 +70,13 @@ use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use azure_transfer::{
-    AzureDownloadError, AzureUploadError, download_from_azure_streaming, upload_to_azure_or_skip,
+    AzureDownloadError, AzureUploadError, azure_retry_policy, download_from_azure_streaming,
+    upload_to_azure_or_skip,
 };
 use encryption::{
     EncryptionError, compute_sha256_digest, decrypt_ciphertext_to_writer, encrypt_file_data,
 };
-use gcs_transfer::download_from_gcs_streaming;
+use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
@@ -204,7 +249,12 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
-            put_get_max_attempts,
+            // Build the policy here, where `using_presigned_url` is known, and
+            // pass it by reference so the test seam can inject zero backoff.
+            &gcs_retry_policy(
+                data.stage_info.presigned_url.is_some(),
+                put_get_max_attempts,
+            ),
             refresher,
         )
         .await
@@ -215,7 +265,7 @@ async fn upload_prepared_source(
             file_metadata.target.as_str(),
             data.overwrite,
             data.skip_upload_on_content_match,
-            put_get_max_attempts,
+            &azure_retry_policy(put_get_max_attempts),
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -631,7 +681,13 @@ pub async fn download_single_file(
                 &data.stage_info,
                 data.src_location.as_str(),
                 data.presigned_url.as_deref(),
-                put_get_max_attempts,
+                // Build the policy here, where `using_presigned_url` is known
+                // (per-file URL or stage URL), and pass it by reference so the
+                // test seam can inject zero backoff.
+                &gcs_retry_policy(
+                    data.presigned_url.is_some() || data.stage_info.presigned_url.is_some(),
+                    put_get_max_attempts,
+                ),
                 per_file_index,
                 refresher,
             )
@@ -719,7 +775,7 @@ pub async fn download_single_file(
             let dl = download_from_azure_streaming(
                 &data.stage_info,
                 data.src_location.as_str(),
-                put_get_max_attempts,
+                &azure_retry_policy(put_get_max_attempts),
             )
             .await
             .context(AzureDownloadSnafu)?;

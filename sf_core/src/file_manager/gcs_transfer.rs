@@ -50,7 +50,7 @@ pub async fn upload_to_gcs_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-    max_attempts: u32,
+    policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client()?;
@@ -66,8 +66,12 @@ pub async fn upload_to_gcs_or_skip(
     }
     // With a refresher, 400 is removed from the wire-level retry list — we
     // handle it reactively here by rotating the URL. Without a refresher,
-    // keep the legacy 400-retry-with-same-URL fallback.
-    let wire_retry_400 = using_presigned_url && !has_refresher;
+    // the injected policy keeps the legacy 400-retry-with-same-URL fallback.
+    let wire_policy = if has_refresher {
+        without_400(policy)
+    } else {
+        policy.clone()
+    };
 
     // Two-strike URL-refresh model. `make_attempt` is a factory that captures
     // `base` (the stage-info for this strike) so the attempt body is written
@@ -79,11 +83,13 @@ pub async fn upload_to_gcs_or_skip(
         let prepared = prepared.clone();
         let key = key.clone();
         let client = client.clone();
+        let wire_policy = wire_policy.clone();
         move |snapshot: super::types::StageInfoSnapshot| {
             let stage_info = base.with_snapshot(snapshot);
             let prepared = prepared.clone();
             let key = key.clone();
             let client = client.clone();
+            let wire_policy = wire_policy.clone();
             async move {
                 let (url, token) = resolve_url_and_token(&stage_info, &key, None)
                     .map_err(map_gcs_request_error_for_attempt)?;
@@ -111,7 +117,7 @@ pub async fn upload_to_gcs_or_skip(
                     return Ok(UploadStatus::Skipped);
                 }
 
-                upload_to_gcs(&client, &url, token, prepared, wire_retry_400, max_attempts)
+                upload_to_gcs(&client, &url, token, prepared, &wire_policy)
                     .await
                     .map_err(map_gcs_request_error_for_attempt)?;
                 Ok(UploadStatus::Uploaded)
@@ -227,7 +233,7 @@ async fn gcs_get_with_refresh(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
-    max_attempts: u32,
+    policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<reqwest::Response, GcsDownloadError> {
@@ -241,9 +247,13 @@ async fn gcs_get_with_refresh(
         per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
     let has_refresher = refresher.is_some();
     // With a refresher, 400 is removed from the wire-level retry list — we
-    // handle it reactively here. Without a refresher, keep the legacy
-    // 400-retry-with-same-URL fallback so today's tests keep passing.
-    let wire_retry_400 = using_presigned_url && !has_refresher;
+    // handle it reactively here. Without a refresher, the injected policy
+    // keeps the legacy 400-retry-with-same-URL fallback so today's tests pass.
+    let wire_policy = if has_refresher {
+        without_400(policy)
+    } else {
+        policy.clone()
+    };
     let initial_per_file_url = per_file_presigned_url.map(str::to_string);
 
     // Two-strike URL-refresh model. `make_attempt` is a factory that takes
@@ -257,11 +267,13 @@ async fn gcs_get_with_refresh(
         let base = base.clone();
         let key = key.clone();
         let client = client.clone();
+        let wire_policy = wire_policy.clone();
         move |snapshot: super::types::StageInfoSnapshot| {
             let stage_info = base.with_snapshot(snapshot);
             let key = key.clone();
             let client = client.clone();
             let per_file_url = per_file_url.clone();
+            let wire_policy = wire_policy.clone();
             async move {
                 let (url, token) =
                     resolve_url_and_token(&stage_info, &key, per_file_url.as_deref())
@@ -276,8 +288,7 @@ async fn gcs_get_with_refresh(
                         req
                     },
                     Method::GET,
-                    wire_retry_400,
-                    max_attempts,
+                    &wire_policy,
                 )
                 .await
                 .map_err(map_gcs_request_error_for_attempt)
@@ -374,7 +385,7 @@ pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
-    max_attempts: u32,
+    policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
@@ -382,7 +393,7 @@ pub async fn download_from_gcs(
         stage_info,
         filename,
         per_file_presigned_url,
-        max_attempts,
+        policy,
         per_file_index,
         refresher,
     )
@@ -551,8 +562,7 @@ async fn upload_to_gcs(
     url: &str,
     token: Option<&str>,
     prepared: PreparedUpload,
-    using_presigned_url: bool,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError> {
     let encryption_data_str = prepared
         .encryption_metadata
@@ -598,8 +608,7 @@ async fn upload_to_gcs(
             }
             Ok(req)
         },
-        using_presigned_url,
-        max_attempts,
+        policy,
     )
     .await?;
 
@@ -614,13 +623,18 @@ async fn upload_to_gcs(
 /// GCS treats 403 as retryable (temporary credential issues), and 400 is
 /// retryable when using presigned URLs (URL may have expired).
 ///
-/// When a refresher is wired in, 400 is removed from the
-/// wire-level retry list because the reactive recovery in
+/// Single source of truth for the production policy: built at the GCS entry
+/// fns (where `using_presigned_url` is known) and passed by `&RetryPolicy`
+/// into the transfer fns, so the wire-retry helpers share one policy and
+/// tests can inject a zero-backoff variant (`internal::gcs_test_retry_policy`).
+///
+/// When a refresher is wired in, 400 is removed from the wire-level retry
+/// list at the entry fn (see `strip_400`) because the reactive recovery in
 /// `upload_to_gcs_or_skip` / `download_from_gcs` handles it by rotating the
-/// presigned URL — blind retry against the same dead URL would just burn
-/// the retry budget. The legacy no-refresher path keeps 400 retryable to
-/// preserve today's behavior for callers that don't pass a refresher.
-fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> RetryPolicy {
+/// presigned URL — blind retry against the same dead URL would just burn the
+/// retry budget. The legacy no-refresher path keeps 400 retryable to preserve
+/// today's behavior for callers that don't pass a refresher.
+pub(crate) fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> RetryPolicy {
     let mut extra = vec![403];
     if using_presigned_url {
         extra.push(400);
@@ -641,20 +655,33 @@ fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> RetryPolicy
     }
 }
 
+/// Returns a clone of `policy` with HTTP 400 removed from the retryable set.
+///
+/// Used by the entry fns when a refresher is present: the reactive URL-refresh
+/// recovery owns the 400 case, so blind wire-level retry against the dead URL
+/// must not also fire.
+fn without_400(policy: &RetryPolicy) -> RetryPolicy {
+    let mut p = policy.clone();
+    p.extra_retryable_statuses.retain(|&s| s != 400);
+    p
+}
+
 /// Executes a GCS HTTP request with retry, then checks for GCS-specific status codes.
+///
+/// Takes the injected `&RetryPolicy` (not a bare `max_attempts`) so the
+/// *backoff* is injectable — production passes `gcs_retry_policy(..)` while
+/// tests pass a zero-backoff variant (`internal::gcs_test_retry_policy`).
 async fn gcs_request_with_retry<F>(
     build_request: F,
     method: Method,
-    using_presigned_url: bool,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
     let ctx = HttpContext::new(method, "gcs-transfer");
-    let policy = gcs_retry_policy(using_presigned_url, max_attempts);
 
-    let response = http_execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+    let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
         .await
         .map_err(map_http_error)?;
 
@@ -716,16 +743,17 @@ impl UploadRetryAdapter for GcsUploadRetry {
 /// Returns `GcsRequestError` so the caller (`upload_to_gcs`) keeps the same
 /// token-refresh dispatch (`map_gcs_request_error_for_attempt`) as the
 /// non-streaming path.
+///
+/// Takes the injected `&RetryPolicy` (not a bare `max_attempts`) for the same
+/// reason as `gcs_request_with_retry`: the backoff is injectable for tests.
 async fn gcs_upload_with_retry<F>(
     build_request: F,
-    using_presigned_url: bool,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError>
 where
     F: Fn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
 {
-    let policy = gcs_retry_policy(using_presigned_url, max_attempts);
-    cloud_http::upload_with_retry(&policy, &GcsUploadRetry, build_request).await
+    cloud_http::upload_with_retry(policy, &GcsUploadRetry, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> GcsRequestError {
@@ -878,7 +906,7 @@ pub async fn download_from_gcs_streaming(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
-    max_attempts: u32,
+    policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
@@ -886,7 +914,7 @@ pub async fn download_from_gcs_streaming(
         stage_info,
         filename,
         per_file_presigned_url,
-        max_attempts,
+        policy,
         per_file_index,
         refresher,
     )
@@ -1333,6 +1361,12 @@ mod tests {
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
+    // Zero-backoff test policy lives in `file_manager::internal` so the in-crate
+    // and external integration tests share one definition that derives from the
+    // production `gcs_retry_policy` (no drift). Aliased so call sites read
+    // `test_policy(using_presigned_url, ..)`.
+    use crate::file_manager::internal::gcs_test_retry_policy as test_policy;
+
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
             location_type: super::super::types::LocationType::Gcs,
@@ -1667,6 +1701,25 @@ mod tests {
     fn gcs_retry_policy_max_attempts() {
         assert_eq!(gcs_retry_policy(false, 25).max_attempts, 25);
         assert_eq!(gcs_retry_policy(false, 1).max_attempts, 1);
+    }
+
+    #[test]
+    fn gcs_retry_policy_backoff_bounds() {
+        // Pins the real production backoff so the zero-backoff test variant
+        // (`internal::gcs_test_retry_policy`) can't silently match the
+        // production shape — proving `gcs_retry_policy` is honest.
+        let p = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        assert_eq!(p.backoff.base, Duration::from_secs(1));
+        assert_eq!(p.backoff.cap, Duration::from_secs(16));
+        assert_eq!(p.backoff.factor, 2.0);
+        assert!(matches!(p.backoff.jitter, Jitter::None));
+    }
+
+    #[test]
+    fn without_400_drops_400_and_keeps_403() {
+        let p = without_400(&gcs_retry_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS));
+        assert!(!p.extra_retryable_statuses.contains(&400));
+        assert!(p.extra_retryable_statuses.contains(&403));
     }
 
     // ---------------------------------------------------------------
@@ -2185,7 +2238,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2216,7 +2269,7 @@ mod tests {
             &stage,
             "file.csv",
             false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2242,7 +2295,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2267,7 +2320,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2292,7 +2345,7 @@ mod tests {
             &stage,
             "file.csv",
             false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2313,7 +2366,7 @@ mod tests {
             &stage,
             "file.csv",
             false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2344,7 +2397,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2373,7 +2426,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await
@@ -2409,7 +2462,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
         .await

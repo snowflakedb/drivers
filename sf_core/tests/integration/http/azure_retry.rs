@@ -1,4 +1,7 @@
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+// Shared zero-backoff Azure test policy, derived from the production
+// `azure_retry_policy` (no drift). Aliased so call sites read `test_policy(..)`.
+use sf_core::file_manager::internal::azure_test_retry_policy as test_policy;
 use sf_core::file_manager::{CloudCredentials, LocationType, StageInfo};
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -68,7 +71,7 @@ async fn azure_download_success_returns_data_and_metadata() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -116,7 +119,7 @@ async fn azure_download_403_is_retried_then_succeeds() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -150,7 +153,7 @@ async fn azure_download_404_is_not_retried() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -185,7 +188,7 @@ async fn azure_download_503_is_retried_then_succeeds() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -219,7 +222,7 @@ async fn azure_error_response_redacts_sas_token() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -267,7 +270,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -300,7 +303,7 @@ async fn azure_download_with_wrong_creds_type_fails() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 
@@ -323,7 +326,7 @@ async fn azure_download_with_missing_storage_account_fails() {
     let result = sf_core::file_manager::download_from_azure(
         &stage,
         "file.csv",
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
     )
     .await;
 

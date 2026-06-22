@@ -480,6 +480,13 @@ async fn get_object(
 /// and retrying is rarely productive — `create_s3_client` is called per
 /// operation, so an expired STS token surfaces as a non-retryable 403 and the
 /// caller can re-fetch credentials via a new PUT/GET parse.
+///
+/// Unlike GCS/Azure, S3 has no driver-side retry loop: the AWS SDK owns retry
+/// (see `to_aws_retry_config` / `create_s3_client`), so there is no
+/// `&RetryPolicy` threaded through a driver loop and no zero-backoff test seam
+/// to inject — only policy-shape unit tests below. `s3_retry_policy` therefore
+/// stays a pure `max_attempts` constructor; the GCS/Azure `&RetryPolicy`
+/// injection pattern would add API surface here for no test benefit.
 pub(crate) fn s3_retry_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy {
         max_attempts,
