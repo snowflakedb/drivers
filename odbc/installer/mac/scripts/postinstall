@@ -31,13 +31,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_DRIVER_NAME="Snowflake ODBC UD"
 ALT_DRIVER_NAME="SnowflakeDSIIDriverUD"
 
-# pkg postinstall scripts run as root. Resolve the invoking user's home so the
-# driver and DSN land in the per-user iODBC config (~/Library/ODBC/), which is
-# the macOS convention.
+# pkg postinstall scripts run as root. Resolve the invoking user's home and
+# UID so the driver and DSN land in the per-user iODBC config
+# (~/Library/ODBC/) and ownership is restored correctly afterwards.
+#
+# Resolution order:
+#   1. SUDO_USER / SUDO_UID set by sudo (sudo installer ... on the CLI)
+#   2. The logged-in console user (double-click install via Installer.app)
+#   3. $HOME / $(id -u) as a last resort (rare; usually only in CI)
 if [ -n "${SUDO_USER:-}" ]; then
-    USER_HOME=$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory | awk '{print $2}')
+    INSTALL_USER="$SUDO_USER"
+    INSTALL_UID="${SUDO_UID:-$(id -u "$SUDO_USER")}"
+    INSTALL_GID="${SUDO_GID:-$(id -g "$SUDO_USER")}"
+    USER_HOME=$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory 2>/dev/null \
+        | awk '{print $2}')
+    USER_HOME="${USER_HOME:-/Users/$SUDO_USER}"
 else
-    USER_HOME="$HOME"
+    INSTALL_USER=$(stat -f "%Su" /dev/console 2>/dev/null || true)
+    if [ -n "$INSTALL_USER" ] && [ "$INSTALL_USER" != "root" ]; then
+        INSTALL_UID=$(id -u "$INSTALL_USER" 2>/dev/null || true)
+        INSTALL_GID=$(id -g "$INSTALL_USER" 2>/dev/null || true)
+        USER_HOME=$(dscl . -read /Users/"$INSTALL_USER" NFSHomeDirectory 2>/dev/null \
+            | awk '{print $2}')
+        USER_HOME="${USER_HOME:-/Users/$INSTALL_USER}"
+    else
+        INSTALL_USER=""
+        INSTALL_UID=""
+        INSTALL_GID=""
+        USER_HOME="$HOME"
+    fi
 fi
 
 ODBC_DIR="$USER_HOME/Library/ODBC"
@@ -214,21 +236,29 @@ upsert_ini_kv() {
     mv "$tmp" "$target_file"
 }
 
+# Always upsert the driver registration - safe to overwrite on upgrade
+# because we only touch our own [DriverName] section and the index.
 write_ini_section "$ODBCINST_FILE" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
-write_ini_section "$ODBC_FILE"     "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
+upsert_ini_kv "$ODBCINST_FILE" "ODBC Drivers" "$DRIVER_NAME" "Installed"
 
-# mktemp creates files with mode 0600; ensure the ini files are world-readable
-# so the installing user (and ODBC tools running as that user) can read them.
+# Write the default DSN only if this exact DSN section is not already present.
+if ! grep -q "^\[$DSN_NAME\]" "$ODBC_FILE" 2>/dev/null; then
+    write_ini_section "$ODBC_FILE" "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
+    upsert_ini_kv "$ODBC_FILE" "ODBC Data Sources" "$DSN_NAME" "$DRIVER_NAME"
+    echo "Default Snowflake DSN '$DSN_NAME' written to $ODBC_FILE"
+else
+    echo "Existing DSN '$DSN_NAME' in $ODBC_FILE preserved (not overwritten)"
+fi
+
+# mktemp creates files with mode 0600; both write_ini_section and upsert_ini_kv
+# use mktemp+mv, so chmod must come after ALL writes to take effect.
 chmod 644 "$ODBCINST_FILE" "$ODBC_FILE"
 
-# Maintain the iODBC index sections so SQLDrivers() / SQLDataSources() and
-# tools like ODBC Manager.app see our driver and DSN.
-upsert_ini_kv "$ODBCINST_FILE" "ODBC Drivers"      "$DRIVER_NAME" "Installed"
-upsert_ini_kv "$ODBC_FILE"     "ODBC Data Sources" "$DSN_NAME"    "$DRIVER_NAME"
+# Restore ownership to the invoking user. Files in ~/Library/ODBC/ belong to
+# the user, not root. chown applies to the whole ODBC_DIR so the directory
+# itself is also fixed if we just created it.
+if [ -n "${INSTALL_UID:-}" ]; then
+    chown -R "$INSTALL_UID":"${INSTALL_GID:-$INSTALL_UID}" "$ODBC_DIR"
+fi
 
 echo "Driver '$DRIVER_NAME' registered in $ODBCINST_FILE"
-echo "Default Snowflake DSN written to $ODBC_FILE"
-
-if [ -n "${SUDO_UID:-}" ]; then
-    chown -R "$SUDO_UID":"${SUDO_GID:-$SUDO_UID}" "$ODBC_DIR"
-fi
