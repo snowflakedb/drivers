@@ -6,7 +6,7 @@ use super::types::{
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::sensitive::SensitiveString;
-use reqwest::{Method, StatusCode};
+use reqwest::Method;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ pub async fn upload_to_azure_or_skip(
     filename: &str,
     overwrite: bool,
     skip_upload_on_content_match: bool,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<UploadStatus, AzureUploadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -35,7 +35,19 @@ pub async fn upload_to_azure_or_skip(
 
     let head_needed = !overwrite || skip_upload_on_content_match;
     let remote = if head_needed {
-        send_head_to_azure_blob(&client, &url, sas_token).await
+        match send_head_to_azure_blob(&client, &url, sas_token, policy).await {
+            Ok(remote) => remote,
+            Err(e) if !overwrite => {
+                // Cannot verify whether the blob exists; fail-CLOSED to
+                // avoid silently clobbering existing stage content.
+                return Err(e);
+            }
+            Err(_) => {
+                // skip_match path: a missed skip is bandwidth waste, not
+                // data loss — fail-OPEN and let the PUT proceed.
+                None
+            }
+        }
     } else {
         None
     };
@@ -60,7 +72,7 @@ pub async fn upload_to_azure_or_skip(
         SkipDecision::Upload => {}
     }
 
-    upload_to_azure(&client, &url, sas_token, prepared, max_attempts).await?;
+    upload_to_azure(&client, &url, sas_token, prepared, policy).await?;
     Ok(UploadStatus::Uploaded)
 }
 
@@ -114,7 +126,7 @@ fn classify_pre_upload_skip(
 pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<DownloadResponse, AzureDownloadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -122,7 +134,7 @@ pub async fn download_from_azure(
     let response = azure_request_with_retry(
         || client.get(build_sas_url(&url, sas_token.reveal())),
         Method::GET,
-        max_attempts,
+        policy,
     )
     .await?;
 
@@ -185,46 +197,38 @@ impl RemoteBlobHeader {
     }
 }
 
-/// Probes the blob with HEAD. Returns `None` on 404/403/transport-error/
-/// malformed header so the caller falls through to upload (fail-open).
+/// Probes the blob with HEAD, retrying transient failures via the shared
+/// Azure retry helper. Returns:
+///
+/// - `Ok(Some(header))` on 200 — blob exists, digest header captured.
+/// - `Ok(None)` on 404 — blob does not exist, safe to upload.
+/// - `Err(_)` on any other outcome after retry exhaustion (persistent
+///   5xx / transport / 403, or non-retryable non-404 like 401 / 409).
 async fn send_head_to_azure_blob(
     client: &reqwest::Client,
     url: &str,
     sas_token: &SensitiveString,
-) -> Option<RemoteBlobHeader> {
-    let full_url = build_sas_url(url, sas_token.reveal());
-    match client.head(&full_url).send().await {
-        Ok(resp) => match resp.status() {
-            StatusCode::OK => {
-                let digest = resp
-                    .headers()
-                    .get(AZURE_META_SFC_DIGEST)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string());
-                Some(RemoteBlobHeader { digest })
-            }
-            StatusCode::NOT_FOUND => None,
-            StatusCode::FORBIDDEN => {
-                tracing::warn!(
-                    "Access denied checking blob existence in Azure, proceeding with upload"
-                );
-                None
-            }
-            status => {
-                tracing::warn!(
-                    "Unexpected status {} checking Azure blob existence, proceeding with upload",
-                    status
-                );
-                None
-            }
-        },
-        Err(e) => {
-            tracing::warn!(
-                "Error checking Azure blob existence, proceeding with upload: {}",
-                sanitize_sas(e.to_string())
-            );
-            None
+    policy: &RetryPolicy,
+) -> Result<Option<RemoteBlobHeader>, AzureUploadError> {
+    match azure_request_with_retry(
+        || client.head(build_sas_url(url, sas_token.reveal())),
+        Method::HEAD,
+        policy,
+    )
+    .await
+    {
+        Ok(response) => {
+            let digest = response
+                .headers()
+                .get(AZURE_META_SFC_DIGEST)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            Ok(Some(RemoteBlobHeader { digest }))
         }
+        Err(AzureRequestError::AzureHttp {
+            status_code: 404, ..
+        }) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -249,7 +253,7 @@ async fn upload_to_azure(
     url: &str,
     sas_token: &SensitiveString,
     prepared: PreparedUpload,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
     let encryption_data_str = prepared
         .encryption_metadata
@@ -292,7 +296,7 @@ async fn upload_to_azure(
             }
             Ok(req)
         },
-        max_attempts,
+        policy,
     )
     .await?;
 
@@ -306,7 +310,12 @@ async fn upload_to_azure(
 ///
 /// Azure treats 403 as retryable (SAS token clock skew / replication delays),
 /// matching JDBC/ODBC behavior.
-fn azure_retry_policy(max_attempts: u32) -> RetryPolicy {
+///
+/// Single source of truth for the production policy: built once at the
+/// dispatch layer (`file_manager::mod`) and passed by `&RetryPolicy` into the
+/// transfer fns, so HEAD/GET/PUT share one policy and tests can inject a
+/// zero-backoff variant (`internal::azure_test_retry_policy`).
+pub(crate) fn azure_retry_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy {
         max_attempts,
         backoff: BackoffConfig {
@@ -328,18 +337,21 @@ fn azure_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// Unlike GCS, Azure does not have a `TokenExpired` (401) fast-fail path.
 /// Azure SAS tokens are URL-embedded and produce 403 on expiry (which is already retried).
 /// SAS tokens cannot be refreshed mid-request — a new query execution is needed.
+///
+/// `policy` is the whole `RetryPolicy` (which already carries `max_attempts`),
+/// not a bare `max_attempts`, so the *backoff* is injectable — production
+/// passes `azure_retry_policy(..)` while tests pass a zero-backoff variant.
 async fn azure_request_with_retry<F>(
     build_request: F,
     method: Method,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<reqwest::Response, AzureRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
     let ctx = HttpContext::new(method, "azure-transfer");
-    let policy = azure_retry_policy(max_attempts);
 
-    let response = http_execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+    let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
         .await
         .map_err(map_http_error)?;
 
@@ -403,15 +415,17 @@ impl UploadRetryAdapter for AzureUploadRetry {
 /// Unlike `azure_request_with_retry`, the closure may return `Err(AzureUploadError)`
 /// (e.g. if the source file cannot be opened on a retry attempt). A build failure
 /// is treated as non-retryable and propagated immediately.
+///
+/// Takes the injected `&RetryPolicy` (not a bare `max_attempts`) for the same
+/// reason as `azure_request_with_retry`: tests can supply zero backoff.
 async fn azure_upload_with_retry<F>(
     build_request: F,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError>
 where
     F: Fn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
 {
-    let policy = azure_retry_policy(max_attempts);
-    cloud_http::upload_with_retry(&policy, &AzureUploadRetry, build_request).await
+    cloud_http::upload_with_retry(policy, &AzureUploadRetry, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
@@ -550,7 +564,7 @@ fn try_get_header(
 pub async fn download_from_azure_streaming(
     stage_info: &StageInfo,
     filename: &str,
-    max_attempts: u32,
+    policy: &RetryPolicy,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -558,7 +572,7 @@ pub async fn download_from_azure_streaming(
     let response = azure_request_with_retry(
         || client.get(build_sas_url(&url, sas_token.reveal())),
         Method::GET,
-        max_attempts,
+        policy,
     )
     .await?;
 
@@ -790,6 +804,12 @@ mod tests {
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
+    // Zero-backoff test policy lives in `file_manager::internal` so the in-crate
+    // and external integration tests share one definition that derives from the
+    // production `azure_retry_policy` (no drift). Aliased so call sites read
+    // `test_policy(..)`.
+    use crate::file_manager::internal::azure_test_retry_policy as test_policy;
+
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
             location_type: super::super::types::LocationType::Azure,
@@ -974,6 +994,15 @@ mod tests {
         assert_eq!(azure_retry_policy(1).max_attempts, 1);
     }
 
+    #[test]
+    fn azure_retry_policy_backoff_bounds() {
+        let p = azure_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        assert_eq!(p.backoff.base, Duration::from_secs(1));
+        assert_eq!(p.backoff.cap, Duration::from_secs(16));
+        assert_eq!(p.backoff.factor, 2.0);
+        assert!(matches!(p.backoff.jitter, Jitter::None));
+    }
+
     // ---------------------------------------------------------------
     // 4. SAS token sanitization
     // ---------------------------------------------------------------
@@ -1129,7 +1158,7 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -1162,7 +1191,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1207,7 +1236,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -1240,7 +1269,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1270,7 +1299,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1302,7 +1331,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1424,7 +1453,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1480,7 +1509,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await;
         assert!(
@@ -1526,7 +1555,7 @@ mod tests {
             "file.dat",
             true,
             false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1564,6 +1593,198 @@ mod tests {
             put.headers.get("x-ms-blob-content-encoding").is_none(),
             "x-ms-blob-content-encoding must be absent on Azure PUT (got {:?})",
             put.headers.get("x-ms-blob-content-encoding")
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // 11. HEAD fail-CLOSED + retry
+    //
+    // HEAD probe runs through `azure_request_with_retry`, retrying
+    // transient 5xx / transport / 403 up to `max_attempts`. After
+    // exhaustion (or on a non-retryable, non-404 status), the probe
+    // surfaces `Err`; `upload_to_azure_or_skip` then dispatches:
+    //   - `!overwrite`            => fail-CLOSED (refuse to clobber).
+    //   - skip_match (overwrite)  => fail-OPEN (waste a PUT, not data).
+    // ---------------------------------------------------------------
+
+    /// Transient 5xx on first HEAD, 200 on second. Existence skip fires.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_retries_on_transient_5xx_then_succeeds() {
+        let mock = MockServer::start().await;
+        // First HEAD: 503 (matches once, then exhausts via up_to_n_times).
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&mock)
+            .await;
+        // Subsequent HEADs (after the priority-1 mock exhausts): 200.
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .with_priority(2)
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        )
+        .await
+        .expect("retry should recover and existence skip should fire");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Persistent 403 + !overwrite: HEAD retries up to max_attempts (6),
+    /// then `upload_to_azure_or_skip` fails-CLOSED. PUT must not run.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_fails_closed_on_persistent_403_when_not_overwrite() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(403))
+            .expect(DEFAULT_PUT_GET_MAX_ATTEMPTS as u64)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let result = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        )
+        .await;
+        assert!(
+            matches!(
+                &result,
+                Err(AzureUploadError::RetryExhausted { detail, .. }) if detail.contains("403")
+            ),
+            "persistent 403 + !overwrite must fail-CLOSED with RetryExhausted carrying \"403\" in detail, not silently fall through to PUT; got: {result:?}"
+        );
+    }
+
+    /// Persistent 403 + skip_match (overwrite=true): HEAD retries up to
+    /// max_attempts (6), then fails-OPEN to PUT. HEAD-count = 6 pins
+    /// that retry runs even on the skip_match branch.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_fails_open_on_persistent_403_when_skip_match() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(403))
+            .expect(DEFAULT_PUT_GET_MAX_ATTEMPTS as u64)
+            .mount(&mock)
+            .await;
+        // Pins M3: the skip_match path must fall through to PUT after HEAD
+        // exhaustion (fail-OPEN), not surface the HEAD error (fail-CLOSED).
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        )
+        .await
+        .expect("skip_match path should fail-OPEN to PUT after HEAD retry exhaustion");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Persistent 5xx + !overwrite: same fail-CLOSED outcome as the 403
+    /// case, but via the *default* retryable set (no `extra_retryable_statuses`
+    /// dependency).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_fails_closed_on_persistent_5xx_when_not_overwrite() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(DEFAULT_PUT_GET_MAX_ATTEMPTS as u64)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let result = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        )
+        .await;
+        assert!(
+            matches!(
+                &result,
+                Err(AzureUploadError::RetryExhausted { detail, .. }) if detail.contains("503")
+            ),
+            "persistent 5xx + !overwrite must fail-CLOSED with RetryExhausted carrying \"503\" in detail after retry exhaustion; got: {result:?}"
+        );
+    }
+
+    /// Non-retryable non-404 (401) + !overwrite: probe returns `Err`
+    /// immediately (no retry). HEAD-count = 1 pins the no-retry rule;
+    /// PUT `expect(0)` pins fail-CLOSED.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_fails_closed_immediately_on_non_retryable_4xx_when_not_overwrite() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mock_stage(&mock.uri());
+        let result = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        )
+        .await;
+        assert!(
+            matches!(
+                &result,
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 401,
+                    ..
+                })
+            ),
+            "non-retryable non-404 status + !overwrite must fail-CLOSED with AzureHttp{{401}} on first attempt; got: {result:?}"
         );
     }
 }

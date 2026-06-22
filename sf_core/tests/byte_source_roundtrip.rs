@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptionMaterial, LocationType, SingleDownloadData, StageInfo,
 };
@@ -394,7 +395,12 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 &stage,
                 "gcs-object",
                 None,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                // Success-path roundtrip; no retries exercised, so a default
+                // zero-backoff policy is sufficient.
+                &sf_core::file_manager::internal::gcs_test_retry_policy(
+                    false,
+                    DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                ),
                 0,
                 &mut None,
             )
@@ -422,7 +428,12 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
             sf_core::file_manager::internal::download_from_azure_streaming(
                 &stage,
                 "azure-blob",
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                // Success-path roundtrip; no retries exercised, so the default
+                // policy is sufficient.
+                &RetryPolicy {
+                    max_attempts: DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                    ..RetryPolicy::default()
+                },
             )
             .await
             .expect("Azure streaming download must succeed")
@@ -543,7 +554,12 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
             &stage,
             "gcs-object",
             None,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            // Success-path roundtrip; no retries exercised, so a default
+            // zero-backoff policy is sufficient.
+            &sf_core::file_manager::internal::gcs_test_retry_policy(
+                false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
             0,
             &mut None,
         ),
