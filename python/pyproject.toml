@@ -238,7 +238,11 @@ dependencies = [
     "protobuf>=6.32.1",
     "pytz",
     "tomlkit>=0.13",
-    "numpy>=2.1.0",
+    # Cap < 2.3 to match the mypy `python_version = "3.10"` target: numpy 2.3
+    # dropped 3.10 and its stubs use PEP-695 `type` statements mypy rejects
+    # under a 3.10 target. A real 3.10 install resolves numpy <= 2.2, so this is
+    # the numpy we should type-check against.
+    "numpy>=2.1.0,<2.3",
 ]
 
 [tool.hatch.envs.precommit.env-vars]
