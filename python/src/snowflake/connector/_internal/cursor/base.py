@@ -318,7 +318,9 @@ class CursorBaseMixin(ErrorHandlerMixin):
         # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
         return [[row[col_idx] for row in rows] for col_idx in range(first_len)]
 
-    def _collect_statement_params(self, *, skip_upload_on_content_match: bool) -> dict[str, Any]:
+    def _collect_statement_params(
+        self, *, skip_upload_on_content_match: bool, num_statements: int | None = None
+    ) -> dict[str, Any]:
         """Collect per-call statement parameters for a single execute().
 
         Scoped to one call and never written to the cursor's sticky
@@ -328,6 +330,8 @@ class CursorBaseMixin(ErrorHandlerMixin):
         params: dict[str, Any] = {}
         if skip_upload_on_content_match:
             params[StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH] = True
+        if num_statements is not None:
+            params[StatementParameterName.MULTI_STATEMENT_COUNT] = num_statements
         return params
 
     def _build_statement_parameters_options(

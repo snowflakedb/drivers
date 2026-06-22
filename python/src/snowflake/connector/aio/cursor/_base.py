@@ -193,11 +193,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # Per-call params: this execute() only, never persisted on the cursor.
         statement_parameters = self._collect_statement_params(
             skip_upload_on_content_match=_skip_upload_on_content_match,
+            num_statements=num_statements,
         )
-
-        if num_statements is not None:
-            # TODO Create a global known parameters registry
-            await self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
         await self.reset()
         return await self._execute(
