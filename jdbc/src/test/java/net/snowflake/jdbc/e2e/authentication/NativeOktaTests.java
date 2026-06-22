@@ -1,7 +1,9 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -36,7 +38,7 @@ class NativeOktaTests implements WithQueryUtils, WithConnect {
   }
 
   @Test
-  void shouldFailNativeOktaAuthenticationWithWrongCredentials() throws Exception {
+  void shouldFailNativeOktaAuthenticationWithWrongCredentials() {
     // Given Okta authentication is configured with wrong password
     Properties props = loadDefaultConnectionProperties();
     props.setProperty("authenticator", OKTA_URL);
@@ -47,11 +49,14 @@ class NativeOktaTests implements WithQueryUtils, WithConnect {
     Executable connect = () -> connect(props);
 
     // Then Connection fails with authentication error
-    assertThrows(SQLException.class, connect);
+    SQLException exception = assertThrows(SQLException.class, connect);
+    if (isNewDriver()) {
+      assertTrue(exception.getMessage().toLowerCase().contains("rejected credentials"));
+    }
   }
 
   @Test
-  void shouldFailNativeOktaAuthenticationWithWrongOktaUrl() throws Exception {
+  void shouldFailNativeOktaAuthenticationWithWrongOktaUrl() {
     // Given Okta authentication is configured with invalid okta url
     Properties props = loadDefaultConnectionProperties();
     props.setProperty("authenticator", "https://invalid.okta.com");
@@ -62,6 +67,9 @@ class NativeOktaTests implements WithQueryUtils, WithConnect {
     Executable connect = () -> connect(props);
 
     // Then Connection fails with authentication error
-    assertThrows(SQLException.class, connect);
+    SQLException exception = assertThrows(SQLException.class, connect);
+    if (isNewDriver()) {
+      assertTrue(exception.getMessage().toLowerCase().contains("bad request"));
+    }
   }
 }

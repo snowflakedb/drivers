@@ -20,7 +20,7 @@ interface WithTotpCodes extends WithNodeScripts {
 
   String TOTP_GENERATOR_SCRIPT = "/externalbrowser/totpGenerator.js";
   int TOTP_STEP_SECONDS = 30;
-  int MAX_TOTP_WINDOWS = 3;
+  int MAX_TOTP_WINDOWS = 5;
 
   // JVM-wide on purpose: Snowflake rejects TOTP replay within a time window, so any test in this
   // process — including parallel runs — must not resend a code another test already used.

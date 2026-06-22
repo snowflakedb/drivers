@@ -1,7 +1,9 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -80,10 +82,14 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       props.setProperty("token", "invalid_oauth_token_12345");
 
       // When Trying to Connect
-      Executable connectAttempt = () -> connect(props);
+      Executable connect = () -> connect(props);
 
       // Then Connection fails with an authentication / login error
-      assertThrows(SQLException.class, connectAttempt);
+      SQLException exception = assertThrows(SQLException.class, connect);
+      if (isNewDriver()) {
+        assertTrue(exception.getMessage().toLowerCase().contains("invalid oauth access token"));
+        assertTrue(exception.getMessage().contains("390303"));
+      }
     }
   }
 
@@ -140,7 +146,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
     }
 
     @Test
-    void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() throws Exception {
+    void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() {
       // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id but a
       // deliberately invalid client secret. The IdP token-exchange step must reject the credentials
       // and the driver must surface an authentication / login error.
@@ -160,7 +166,10 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
                     () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD);
 
         // Then Connection fails with an authentication / login error
-        assertThrows(SQLException.class, connect);
+        SQLException exception = assertThrows(SQLException.class, connect);
+        if (isNewDriver()) {
+          assertTrue(exception.getMessage().toLowerCase().contains("invalid_client"));
+        }
       } finally {
         cleanBrowserProcesses();
       }
@@ -218,10 +227,13 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       props.setProperty("oauth_scope", SCOPE);
 
       // When Trying to Connect
-      Executable connectAttempt = () -> connect(props);
+      Executable connect = () -> connect(props);
 
       // Then Connection fails with an authentication / login error
-      assertThrows(SQLException.class, connectAttempt);
+      SQLException exception = assertThrows(SQLException.class, connect);
+      if (isNewDriver()) {
+        assertTrue(exception.getMessage().toLowerCase().contains("invalid_client"));
+      }
     }
   }
 }
