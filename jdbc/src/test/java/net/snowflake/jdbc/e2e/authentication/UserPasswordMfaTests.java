@@ -2,6 +2,7 @@ package net.snowflake.jdbc.e2e.authentication;
 
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -106,7 +107,12 @@ class UserPasswordMfaTests implements WithQueryUtils, WithConnect, WithTotpCodes
     Executable connect = () -> connect(props);
 
     // Then There is error returned
-    assertThrows(SQLException.class, connect);
+    SQLException exception = assertThrows(SQLException.class, connect);
+    assertTrue(
+        exception
+            .getMessage()
+            .toLowerCase()
+            .contains("incorrect username or password was specified"));
   }
 
   // -------------------------------------------------------------------------

@@ -1,7 +1,9 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.security.PrivateKey;
@@ -96,11 +98,14 @@ class PrivateKeyTests implements WithQueryUtils, WithConnect {
     Executable connect = () -> connect(props);
 
     // Then There is error returned
-    assertThrows(SQLException.class, connect);
+    SQLException exception = assertThrows(SQLException.class, connect);
+    if (isNewDriver()) {
+      assertTrue(exception.getMessage().toLowerCase().contains("could not read private key file"));
+    }
   }
 
   @Test
-  void shouldFailJwtAuthenticationWhenNoPrivateFileProvided() throws Exception {
+  void shouldFailJwtAuthenticationWhenNoPrivateFileProvided() {
     // Given Authentication is set to JWT
     Properties props = loadDefaultConnectionProperties();
     props.setProperty("authenticator", "SNOWFLAKE_JWT");
@@ -110,7 +115,10 @@ class PrivateKeyTests implements WithQueryUtils, WithConnect {
     Executable connect = () -> connect(props);
 
     // Then There is error returned
-    assertThrows(SQLException.class, connect);
+    SQLException exception = assertThrows(SQLException.class, connect);
+    if (isNewDriver()) {
+      assertTrue(exception.getMessage().toLowerCase().contains("missing required parameter"));
+    }
   }
 
   @Test
