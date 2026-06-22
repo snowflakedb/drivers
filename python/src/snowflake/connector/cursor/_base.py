@@ -164,7 +164,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     @requires_open
     def set_statement_parameter(self, key: str, value: Any) -> None:
-        """Set a statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
+        """Set a sticky statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
+
+        Persists across `execute()` calls on this cursor until explicitly
+        changed. For per-call kwargs (one execute, no bleed across calls),
+        use the `statement_parameters` channel in `execute()` instead.
 
         This must be called before execute() to take effect.
 
@@ -222,32 +226,32 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
 
+        # Per-call params: this execute() only, never persisted on the cursor.
+        statement_parameters = self._collect_statement_params(
+            skip_upload_on_content_match=_skip_upload_on_content_match,
+        )
+
         if num_statements is not None:
             # TODO Create a global known parameters registry
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
-        if _skip_upload_on_content_match:
-            # Per-call opt-in. Cleared in `finally` below so the value never
-            # bleeds into a subsequent execute() that omits the kwarg.
-            self.set_statement_parameter("skip_upload_on_content_match", True)
-
         self.reset()
-        try:
-            return self._execute(
-                operation,
-                parameters,
-                _is_put_get,
-                _force_qmark_paramstyle=_force_qmark_paramstyle,
-                **kwargs,
-            )
-        finally:
-            self._statement_parameters.pop("skip_upload_on_content_match", None)
+        return self._execute(
+            operation,
+            parameters,
+            _is_put_get,
+            statement_parameters=statement_parameters,
+            _force_qmark_paramstyle=_force_qmark_paramstyle,
+            **kwargs,
+        )
 
     def _execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        *,
+        statement_parameters: dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
@@ -258,8 +262,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         query, bindings = self._prepare_query(operation, parameters, _force_qmark_paramstyle=_force_qmark_paramstyle)
 
         with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            if self._statement_parameters:
-                self._apply_statement_parameters(stmt_handle)
+            self._apply_statement_parameters(stmt_handle, statement_parameters)
 
             response = self._execute_query(stmt_handle, bindings)
 
@@ -271,9 +274,16 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
 
-    def _apply_statement_parameters(self, stmt_handle: StatementHandle) -> None:
-        """Apply stored statement parameters to the statement handle via SetOptions RPC."""
-        options = self._build_statement_parameter_options()
+    def _apply_statement_parameters(
+        self,
+        stmt_handle: StatementHandle,
+        statement_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Apply sticky `_statement_parameters` merged with per-call
+        `statement_parameters` via SetOptions RPC. Per-call wins on key
+        collision and is never persisted on the cursor.
+        """
+        options = self._build_statement_parameters_options(statement_parameters)
         if not options:
             return
         core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
