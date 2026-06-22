@@ -3,6 +3,8 @@ mod native_okta;
 mod oauth;
 mod pat;
 mod private_key_auth;
+#[cfg(feature = "auth_spcs_e2e")]
+mod spcs_token;
 mod user_password;
 #[cfg(feature = "auth_mfa_e2e")]
 mod user_password_mfa;

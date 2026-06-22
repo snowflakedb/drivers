@@ -1,0 +1,181 @@
+name: Rust Core SPCS E2E
+
+# Dedicated workflow for the SPCS (Snowpark Container Services) authentication
+# e2e test. It is intentionally separate from test-rust-core.yml because it is
+# the only lane that needs Docker build/push + a Snowflake image registry, and
+# it diverges from the coverage matrix shape.
+#
+# What it does:
+#   1. Builds the `spcs_probe` image (tests/docker/spcs).
+#   2. Pushes it to the image repository created by ci/account_setup.sql.
+#   3. Runs the orchestrating e2e test, which launches a one-shot SPCS job
+#      service from that image; the in-container probe authenticates using only
+#      the platform-injected session token (no user) and runs a query. The job
+#      reaching DONE proves the SPCS_TOKEN login path end-to-end.
+#
+# Pre-requisite: ci/account_setup.sql has been applied to the target account
+# (creates compute pool `ud_test_spcs_pool` + image repository
+# `testing_setup.public.ud_test_image_repo`). That script needs ACCOUNTADMIN and
+# is run once per account, so it is NOT run here by default.
+#
+# NOTE: This lane introduces the Snowflake CLI (`snow`) and Docker registry
+# push, which no other workflow uses yet. The connection wiring below reads the
+# decoded parameters.json; the exact auth fields may need adjustment on first
+# real run against the SPCS-enabled account.
+
+on:
+  # On PRs the lane is opt-in: it only runs when the `ci:spcs` label is present
+  # (the job-level `if:` below enforces this). `labeled` is included so applying
+  # the label re-triggers the workflow without a new push.
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 02:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Image tag must match the version pushed and the spec used by the test.
+  IMAGE_VERSION: '1'
+  IMAGE_REPO_DB: testing_setup
+  IMAGE_REPO_SCHEMA: public
+  IMAGE_REPO_NAME: ud_test_image_repo
+
+jobs:
+  spcs-e2e:
+    # Runs on nightly schedule, manual dispatch, or PRs labeled `ci:spcs`.
+    # Other PR events (incl. unrelated label changes) skip the job — no compute.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'ci:spcs'))
+    # ARM runner: the probe image is linux/arm64 and the SPCS compute pool uses
+    # an ARM instance family (GEN_ARM_G1_2), so the image builds natively here.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The probe image is linux/arm64 and the SPCS pool is an ARM family, so
+      # this lane MUST run on an arm64 runner. Fail fast if the runner label was
+      # ever changed to a non-arm host.
+      - name: Verify arm64 runner
+        run: |
+          arch="$(uname -m)"
+          if [ "$arch" != "aarch64" ] && [ "$arch" != "arm64" ]; then
+            echo "SPCS e2e must run on an arm64 runner (got '$arch')" >&2
+            exit 1
+          fi
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Snowflake CLI
+        run: pip install --quiet snowflake-cli
+
+      # Build a connections.toml for `snow` from the decoded parameters.json.
+      # Supports key-pair (preferred) or password auth. The connection is named
+      # `spcs` and pointed at via SNOWFLAKE_DEFAULT_CONNECTION_NAME below.
+      - name: Configure Snowflake CLI connection
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.snowflake"
+          chmod 700 "$HOME/.snowflake"
+          params=parameters.json
+
+          account=$(jq -r '.testconnection.SNOWFLAKE_TEST_ACCOUNT // empty' "$params")
+          user=$(jq -r '.testconnection.SNOWFLAKE_TEST_USER // empty' "$params")
+          host=$(jq -r '.testconnection.SNOWFLAKE_TEST_HOST // empty' "$params")
+          role=$(jq -r '.testconnection.SNOWFLAKE_TEST_ROLE // empty' "$params")
+          database=$(jq -r '.testconnection.SNOWFLAKE_TEST_DATABASE // empty' "$params")
+          warehouse=$(jq -r '.testconnection.SNOWFLAKE_TEST_WAREHOUSE_CORE // .testconnection.SNOWFLAKE_TEST_WAREHOUSE // empty' "$params")
+          password=$(jq -r '.testconnection.SNOWFLAKE_TEST_PASSWORD // empty' "$params")
+          pk_file=$(jq -r '.testconnection.SNOWFLAKE_TEST_PRIVATE_KEY_FILE // empty' "$params")
+          pk_contents=$(jq -r '.testconnection.SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS // empty | if type=="array" then join("\n") else . end' "$params")
+          pk_password=$(jq -r '.testconnection.SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD // empty' "$params")
+
+          {
+            # In connections.toml the section is the bare connection name
+            # (`[spcs]`); the `[connections.spcs]` form is only for config.toml.
+            echo "[spcs]"
+            echo "account = \"$account\""
+            echo "user = \"$user\""
+            [ -n "$host" ] && echo "host = \"$host\""
+            [ -n "$role" ] && echo "role = \"$role\""
+            [ -n "$database" ] && echo "database = \"$database\""
+            [ -n "$warehouse" ] && echo "warehouse = \"$warehouse\""
+          } > "$HOME/.snowflake/connections.toml"
+
+          if [ -n "$pk_file" ] || [ -n "$pk_contents" ]; then
+            if [ -z "$pk_file" ]; then
+              pk_file="$HOME/.snowflake/rsa_key.p8"
+              printf '%s\n' "$pk_contents" > "$pk_file"
+              chmod 600 "$pk_file"
+            fi
+            echo "private_key_file = \"$pk_file\"" >> "$HOME/.snowflake/connections.toml"
+            echo "authenticator = \"SNOWFLAKE_JWT\"" >> "$HOME/.snowflake/connections.toml"
+            # The injected key is encrypted; snow needs its passphrase.
+            [ -n "$pk_password" ] && \
+              echo "private_key_file_pwd = \"$pk_password\"" >> "$HOME/.snowflake/connections.toml"
+          else
+            echo "password = \"$password\"" >> "$HOME/.snowflake/connections.toml"
+          fi
+          chmod 600 "$HOME/.snowflake/connections.toml"
+
+      - name: Resolve image repository URL
+        id: repo
+        env:
+          SNOWFLAKE_DEFAULT_CONNECTION_NAME: spcs
+        run: |
+          set -euo pipefail
+          repo_fqn="${IMAGE_REPO_DB}.${IMAGE_REPO_SCHEMA}.${IMAGE_REPO_NAME}"
+          repo_url=$(snow spcs image-repository url "$repo_fqn")
+          echo "repo_url=$repo_url" >> "$GITHUB_OUTPUT"
+          # Path form (without the registry host) used inside the service spec.
+          echo "image_path=/${IMAGE_REPO_DB}/${IMAGE_REPO_SCHEMA}/${IMAGE_REPO_NAME}/spcs_probe:${IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the image registry
+        env:
+          SNOWFLAKE_DEFAULT_CONNECTION_NAME: spcs
+        run: snow spcs image-registry login
+
+      - name: Build and push the probe image
+        env:
+          REPO_URL: ${{ steps.repo.outputs.repo_url }}
+        run: |
+          set -euo pipefail
+          # Build the linux/amd64 image (SPCS runs amd64).
+          IMAGE_TAG="${REPO_URL}/spcs_probe:${IMAGE_VERSION}" ./tests/docker/spcs/build.sh
+          docker push "${REPO_URL}/spcs_probe:${IMAGE_VERSION}"
+
+      - name: Install Go (required by aws-lc-fips-sys)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+
+      - name: Run SPCS e2e test
+        env:
+          SPCS_PROBE_IMAGE: ${{ steps.repo.outputs.image_path }}
+        run: |
+          set -euo pipefail
+          export PARAMETER_PATH="$(pwd)/parameters.json"
+          cargo test --package sf_core --test e2e_tests --features auth_spcs_e2e \
+            -- --ignored --exact \
+            authentication::spcs_token::should_authenticate_inside_spcs_using_the_injected_session_token

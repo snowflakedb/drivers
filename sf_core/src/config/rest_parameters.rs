@@ -522,8 +522,10 @@ pub(crate) fn parse_required_url(
 
 impl OAuthAuthorizationCodeConfig {
     pub(crate) fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        let username = non_empty_string(settings, "user")
-            .context(MissingParameterSnafu { parameter: "user" })?;
+        // SNOW-3647715: `user` is optional for token-based authenticators —
+        // the principal is encoded in the IdP-issued token and resolved by
+        // GS at login time. Empty string ⇒ omit `LOGIN_NAME` on the wire.
+        let username = non_empty_string(settings, "user").unwrap_or_default();
         // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
         // missing client_id/client_secret at flow time
         // (analysis_feature_oauth.md §1, §9). Keep them empty here
@@ -584,8 +586,10 @@ impl OAuthClientCredentialsConfig {
         // CC is external-IdP only: Snowflake's GS does not issue
         // tokens for `grant_type=client_credentials` (analysis §4),
         // so client_id, client_secret and token_url are mandatory.
-        let username = non_empty_string(settings, "user")
-            .context(MissingParameterSnafu { parameter: "user" })?;
+        // SNOW-3647715: `user` is optional — the IdP-issued token's
+        // claims identify the Snowflake principal. Empty ⇒ omit
+        // `LOGIN_NAME` on the wire.
+        let username = non_empty_string(settings, "user").unwrap_or_default();
         let client_id =
             non_empty_string(settings, "oauth_client_id").context(MissingParameterSnafu {
                 parameter: "oauth_client_id",
@@ -759,8 +763,10 @@ impl LoginMethod {
                 passcode: settings.get_string("passcode").map(SensitiveString::from),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
-                username: non_empty_string(settings, "user")
-                    .context(MissingParameterSnafu { parameter: "user" })?,
+                // SNOW-3647715: `user` optional for token auth — the PAT
+                // encodes the principal (`ALTER USER … ADD PROGRAMMATIC
+                // ACCESS TOKEN`). Empty ⇒ omit `LOGIN_NAME` on the wire.
+                username: non_empty_string(settings, "user").unwrap_or_default(),
                 token: non_empty_string(settings, "token")
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),
@@ -807,8 +813,10 @@ impl LoginMethod {
                 }))
             }
             "OAUTH" => Ok(Self::OAuthAccessToken {
-                username: non_empty_string(settings, "user")
-                    .context(MissingParameterSnafu { parameter: "user" })?,
+                // SNOW-3647715: `user` optional for token auth — the
+                // pre-acquired access token's claims identify the
+                // principal. Empty ⇒ omit `LOGIN_NAME` on the wire.
+                username: non_empty_string(settings, "user").unwrap_or_default(),
                 token: non_empty_string(settings, "token")
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),

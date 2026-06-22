@@ -15,6 +15,7 @@ protobuf = ["prost", "proto_utils"]
 vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
+auth_spcs_e2e = []
 gcs_e2e = []
 perf_timing = []
 test-utils = []
@@ -185,6 +186,11 @@ required-features = ["cli"]
 [[bin]]
 name = "param_defs_export"
 path = "src/bin/param_defs_export.rs"
+
+[[bin]]
+name = "spcs_probe"
+path = "src/bin/spcs_probe.rs"
+required-features = ["protobuf"]
 
 [[bench]]
 name = "prefetch_bench"
