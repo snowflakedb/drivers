@@ -7,9 +7,10 @@ import java.sql.Types;
 import java.util.List;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 
 public class SnowflakeResultSetMetaDataImpl
-    implements ResultSetMetaData, SnowflakeResultSetMetaData {
+    implements ResultSetMetaData, SnowflakeResultSetMetaData, DelegatingWrapper {
   private final String[] columnNames;
   private final int[] columnTypes;
   private final String queryId;
@@ -157,19 +158,6 @@ public class SnowflakeResultSetMetaDataImpl
       default:
         return "java.lang.String";
     }
-  }
-
-  @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
-    }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
-  }
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isAssignableFrom(getClass());
   }
 
   private void checkColumnIndex(int column) throws SQLException {

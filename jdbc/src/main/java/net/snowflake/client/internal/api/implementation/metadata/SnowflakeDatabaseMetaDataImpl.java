@@ -13,9 +13,11 @@ import net.snowflake.client.internal.api.implementation.metadata.capabilities.Me
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataIdentity;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, SnowflakeDatabaseMetaData {
+public class SnowflakeDatabaseMetaDataImpl
+    implements DatabaseMetaData, SnowflakeDatabaseMetaData, DelegatingWrapper {
   private final SnowflakeConnectionImpl connection;
   private final MetaDataIdentity identity;
   private final MetaDataCapabilities capabilities;
@@ -946,19 +948,6 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public boolean generatedKeyAlwaysReturned() throws SQLException {
     throw new SQLFeatureNotSupportedException("generatedKeyAlwaysReturned not supported");
-  }
-
-  @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
-    }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
-  }
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    throw new SQLFeatureNotSupportedException("isWrapperFor not supported");
   }
 
   @Override

@@ -31,13 +31,14 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.apache.arrow.c.ArrowArrayStream;
 import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-public class SnowflakeResultSetImpl implements InternalResultSet {
+public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrapper {
 
   private final SnowflakeStatementImpl statement;
   private final String queryId;
@@ -1090,19 +1091,6 @@ public class SnowflakeResultSetImpl implements InternalResultSet {
   @Override
   public <T> T getObject(String columnLabel, Class<T> type) throws SQLException {
     return getObject(findColumn(columnLabel), type);
-  }
-
-  @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
-    }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
-  }
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isAssignableFrom(getClass());
   }
 
   private void checkClosed() throws SQLException {
