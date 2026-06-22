@@ -2307,6 +2307,95 @@ class TestExecuteSkipUploadOnContentMatch:
         )
 
 
+class TestExecuteNumStatements:
+    """`num_statements` is a per-call execute() kwarg: a value on call N
+    must not bleed into call N+1.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @staticmethod
+    def _capture_per_call(cursor):
+        captured = {}
+
+        def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        return captured, side_effect
+
+    def test_num_statements_passed_as_per_call_param(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3", num_statements=3)
+        assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 3
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in cursor._statement_parameters
+
+    def test_num_statements_default_passes_nothing(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 1")
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured
+
+    def test_num_statements_does_not_persist_across_calls(self, cursor):
+        # The BC-restoring regression guard. Captures what actually reaches
+        # `core_driver.statement_set_options` (i.e., the merged options),
+        # not just `statement_parameters` — a sticky bleed would manifest in
+        # the merged dict on the second call even with `statement_parameters`
+        # empty.
+        # The legacy Python connector builds its statement-params dict locally
+        # per execute() call and never stores it on the cursor instance, so a
+        # second call without `num_statements` runs as a single statement.
+        # This test pins that behaviour.
+        with (
+            patch.object(cursor, "_execute"),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3", num_statements=3)
+
+        # Drive the second call all the way through `_apply_statement_parameters`
+        # so we can observe what it would forward to the core.
+        captured_options: dict = {}
+
+        def capture_options(*, stmt_handle, options):
+            captured_options.update(options)
+
+        with (
+            patch(
+                "snowflake.connector.cursor._base.core_driver.statement_set_options",
+                side_effect=capture_options,
+            ),
+            patch("snowflake.connector.cursor._base.statement"),
+            patch.object(
+                cursor,
+                "_execute_query",
+                return_value=MagicMock(HasField=lambda f: False),
+            ),
+            patch.object(cursor, "_apply_result_set"),
+            patch.object(cursor, "reset"),
+            patch.object(cursor, "_prepare_query", return_value=("SELECT 1", None)),
+        ):
+            cursor.execute("SELECT 1")
+
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured_options, (
+            f"second call must NOT inherit MULTI_STATEMENT_COUNT=3 from the first call; got options={captured_options}"
+        )
+
+
 class TestStatementParameterCollection:
     """The per-call collection helper and the merged options builder that the
     sync and async cursors share on the cursor base mixin."""
@@ -2324,6 +2413,17 @@ class TestStatementParameterCollection:
     def test_collect_default_is_empty(self, cursor):
         assert cursor._collect_statement_params(skip_upload_on_content_match=False) == {}
 
+    def test_collect_num_statements(self, cursor):
+        params = cursor._collect_statement_params(skip_upload_on_content_match=False, num_statements=3)
+        assert params == {StatementParameterName.MULTI_STATEMENT_COUNT: 3}
+
+    def test_collect_both(self, cursor):
+        params = cursor._collect_statement_params(skip_upload_on_content_match=True, num_statements=2)
+        assert params == {
+            StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH: True,
+            StatementParameterName.MULTI_STATEMENT_COUNT: 2,
+        }
+
     def test_build_options_per_call_overrides_sticky(self, cursor):
         # Sticky False + per-call True for the same key: per-call must win.
         # A future reversal of the spread order ({**per_call, **sticky}) fails here.
@@ -2336,9 +2436,9 @@ class TestStatementParameterCollection:
         assert setting.bool_value is True
 
     def test_build_options_includes_sticky_when_no_per_call(self, cursor):
-        cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+        cursor.set_statement_parameter(StatementParameterName.MULTI_STATEMENT_COUNT, 3)
         options = cursor._build_statement_parameters_options()
-        assert "MULTI_STATEMENT_COUNT" in options
+        assert StatementParameterName.MULTI_STATEMENT_COUNT in options
 
 
 class TestAsyncExecuteSkipUploadOnContentMatch:
@@ -2381,6 +2481,54 @@ class TestAsyncExecuteSkipUploadOnContentMatch:
         ):
             asyncio.run(cursor.execute("PUT file://x @s"))
         assert StatementParameterName.SKIP_UPLOAD_ON_CONTENT_MATCH not in captured
+
+
+class TestAsyncExecuteNumStatements:
+    """Async cursor parity: `num_statements` on call N must not bleed into
+    call N+1, matching the sync cursor.
+    """
+
+    @pytest.fixture
+    def cursor(self):
+        mock_connection = MagicMock()
+        # aio cursor awaits self._connection.is_closed(), so it must be async.
+        mock_connection.is_closed = AsyncMock(return_value=False)
+        return AsyncSnowflakeCursor(mock_connection)
+
+    @staticmethod
+    def _capture_per_call():
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        return captured, side_effect
+
+    def test_num_statements_passed_as_per_call_param(self, cursor):
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(cursor.execute("SELECT 1; SELECT 2; SELECT 3", num_statements=3))
+        assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 3
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in cursor._statement_parameters
+
+    def test_num_statements_does_not_persist_across_calls(self, cursor):
+        with (
+            patch.object(cursor, "_execute", new=AsyncMock(return_value=MagicMock())),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(cursor.execute("SELECT 1; SELECT 2", num_statements=2))
+
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(cursor.execute("SELECT 99"))
+        assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured, "second call must NOT inherit the count"
 
 
 class TestParamsAliasAndForceQmark:
