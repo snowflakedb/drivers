@@ -13,6 +13,7 @@ import java.util.logging.Logger;
 import net.snowflake.client.api.datasource.SnowflakeDataSource;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 
 /**
  * Basic implementation of {@link SnowflakeDataSource} for Snowflake JDBC connections.
@@ -24,7 +25,7 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  * <p><b>Note:</b> This class is not intended for direct instantiation. Use {@link
  * net.snowflake.client.api.datasource.SnowflakeDataSourceFactory#createDataSource()} instead.
  */
-public class SnowflakeBasicDataSource implements SnowflakeDataSource {
+public class SnowflakeBasicDataSource implements SnowflakeDataSource, DelegatingWrapper {
 
   // TODO: [SNOW-3595091] align authenticator-promotion behavior across drivers.
   //  The legacy JDBC driver auto-set the authenticator to USERNAME_PASSWORD_MFA
@@ -121,18 +122,6 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
 
   @Override
   public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-    throw new SQLFeatureNotSupportedException();
-  }
-
-  // Wrapper methods -------------------------------------------------------------------------------
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLFeatureNotSupportedException {
-    throw new SQLFeatureNotSupportedException();
-  }
-
-  @Override
-  public <T> T unwrap(Class<T> iface) throws SQLFeatureNotSupportedException {
     throw new SQLFeatureNotSupportedException();
   }
 

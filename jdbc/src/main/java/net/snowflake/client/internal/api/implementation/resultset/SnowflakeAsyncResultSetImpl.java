@@ -131,8 +131,8 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
     if (iface.isInstance(this)) {
       return true;
     }
-    materialize();
-    return delegate.isWrapperFor(iface);
+    // Avoid materializing for introspection; the delegate is always SnowflakeResultSetImpl.
+    return iface.isAssignableFrom(SnowflakeResultSetImpl.class);
   }
 
   // =========================================================================

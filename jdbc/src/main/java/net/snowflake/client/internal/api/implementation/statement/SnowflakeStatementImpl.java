@@ -31,9 +31,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteAsyncResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.StringUtil;
 
-public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
+public class SnowflakeStatementImpl implements Statement, SnowflakeStatement, DelegatingWrapper {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeStatementImpl.class);
 
   protected final InternalSnowflakeConnection connection;
@@ -635,19 +636,6 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   public boolean isCloseOnCompletion() throws SQLException {
     checkClosed();
     return false;
-  }
-
-  @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
-    }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
-  }
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isAssignableFrom(getClass());
   }
 
   protected void checkClosed() throws SQLException {

@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import java.sql.SQLException;
 import java.util.UUID;
 import net.snowflake.client.api.resultset.QueryStatus;
+import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -183,6 +184,18 @@ class SnowflakeAsyncResultSetImplTest {
     assertThrows(SQLException.class, rs::next);
     assertThrows(SQLException.class, rs::getMetaData);
     assertThrows(SQLException.class, () -> rs.getString(1));
+  }
+
+  @Test
+  void shouldAnswerIsWrapperForWithoutMaterializing() throws Exception {
+    try (SnowflakeAsyncResultSetImpl rs = createAsyncResultSet()) {
+      assertTrue(rs.isWrapperFor(SnowflakeAsyncResultSetImpl.class));
+      assertTrue(rs.isWrapperFor(SnowflakeResultSet.class));
+      assertTrue(rs.isWrapperFor(SnowflakeResultSetImpl.class));
+      assertFalse(rs.isWrapperFor(String.class));
+
+      verify(mockConnection, never()).createResultSetFromSfqid(any(), any());
+    }
   }
 
   @Test

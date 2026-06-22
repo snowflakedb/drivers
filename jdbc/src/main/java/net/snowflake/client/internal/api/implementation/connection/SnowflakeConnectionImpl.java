@@ -50,9 +50,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity.Builder;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
+public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, DelegatingWrapper {
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
 
@@ -505,19 +506,6 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   @Override
   public int getNetworkTimeout() throws SQLException {
     throw new NotImplementedException();
-  }
-
-  @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
-    }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
-  }
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isInstance(this);
   }
 
   public void checkClosed() throws SQLException {

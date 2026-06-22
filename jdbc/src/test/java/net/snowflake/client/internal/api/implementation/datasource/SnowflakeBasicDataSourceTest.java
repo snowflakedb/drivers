@@ -1,9 +1,11 @@
 package net.snowflake.client.internal.api.implementation.datasource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.PrintWriter;
 import java.lang.reflect.Proxy;
@@ -182,14 +184,15 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void shouldThrowSQLFeatureNotSupportedExceptionFromIsWrapperFor() {
-    assertThrows(
-        SQLFeatureNotSupportedException.class, () -> dataSource.isWrapperFor(Object.class));
+  public void shouldSupportUnwrapToSnowflakeBasicDataSource() throws Exception {
+    assertSame(dataSource, dataSource.unwrap(SnowflakeBasicDataSource.class));
+    assertTrue(dataSource.isWrapperFor(SnowflakeBasicDataSource.class));
   }
 
   @Test
-  public void shouldThrowSQLFeatureNotSupportedExceptionFromUnwrap() {
-    assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.unwrap(Object.class));
+  public void shouldThrowSQLExceptionWhenUnwrappingToUnsupportedInterface() throws Exception {
+    assertFalse(dataSource.isWrapperFor(String.class));
+    assertThrows(SQLException.class, () -> dataSource.unwrap(String.class));
   }
 
   @Test
