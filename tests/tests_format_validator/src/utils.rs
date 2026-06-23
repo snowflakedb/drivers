@@ -19,15 +19,11 @@ pub fn clean_method_name(name: &str) -> &str {
 }
 
 /// Normalize a string for matching: lowercase, strip whitespace, underscores,
-/// hyphens, angle brackets, parentheses, and equals signs.
+/// hyphens, angle brackets, parentheses, equals signs, and dollar signs.
 ///
-/// Angle-bracket stripping lets Scenario Outline names like
-/// `"should throw <error_code> in strict"` match a test method named
-/// `should_throw_error_code_in_strict` (single parametrized method).
-///
-/// Equals-sign stripping lets scenario names that quote literal connect-string
-/// fragments (e.g. `"should forward AUTHENTICATOR=OAUTH with TOKEN to core"`)
-/// match Python/Rust/C++ method identifiers, which cannot contain ``=``.
+/// Dollar-sign stripping lets scenario names that reference Snowflake
+/// identifiers like `SYSTEM$BIND` match Python test method names where
+/// `$` is not a valid identifier character.
 fn normalize_for_matching(s: &str) -> String {
     s.to_lowercase()
         .replace(' ', "")
@@ -38,6 +34,7 @@ fn normalize_for_matching(s: &str) -> String {
         .replace('(', "")
         .replace(')', "")
         .replace('=', "")
+        .replace('$', "")
 }
 
 /// Check if two strings match when normalized (ignoring case, spaces,
@@ -159,5 +156,13 @@ mod tests {
     fn test_to_pascal_case() {
         assert_eq!(to_pascal_case("should throw error"), "ShouldThrowError");
         assert_eq!(to_pascal_case("should_throw_error"), "ShouldThrowError");
+    }
+
+    #[test]
+    fn test_strings_match_normalized_ignores_dollar_sign() {
+        assert!(strings_match_normalized(
+            "test_should_stage_bind_at_the_default_threshold_and_reuse_system_bind_across_consecutive_bulk_inserts",
+            "test_should_stage_bind_at_the_default_threshold_and_reuse_system$bind_across_consecutive_bulk_inserts",
+        ));
     }
 }

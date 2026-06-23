@@ -38,3 +38,9 @@ class StatementParameterName:
     MULTI_STATEMENT_COUNT = "MULTI_STATEMENT_COUNT"
     ASYNC_EXECUTION = "ASYNC_EXECUTION"
     SKIP_UPLOAD_ON_CONTENT_MATCH = "skip_upload_on_content_match"
+
+
+class SessionParameterName:
+    """Known Snowflake session parameter names referenced by the connector."""
+
+    CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD"

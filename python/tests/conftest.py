@@ -185,6 +185,11 @@ def with_paramstyle(style: str):
     return pytest.mark.parametrize("connection", [style], indirect=True)
 
 
+def with_paramstyles(*styles: str):
+    """Like ``with_paramstyle``, but run the decorated tests for multiple paramstyles."""
+    return pytest.mark.parametrize("connection", list(styles), indirect=True)
+
+
 @pytest.fixture(scope="module")
 def connection(request, connector_adapter, connection_backend, cursor_backend):
     """Module-scoped test connection; shared across tests in the same module.

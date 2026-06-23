@@ -7,12 +7,15 @@ import ctypes
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from ...constants import StatementParameterName
+from ...constants import SessionParameterName, StatementParameterName
 from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
 from ..binding_converters import (
+    BindingConverterBase,
     ClientSideBindingConverter,
+    CsvBindingConverter,
     JsonBindingConverter,
     ParamStyle,
+    parse_stage_binding_threshold,
 )
 from ..config_utils import create_config_setting
 from ..decorators import pep249
@@ -187,41 +190,67 @@ class CursorBaseMixin(ErrorHandlerMixin):
         """Whether the last executed command was a PUT or GET file transfer."""
         return self._query_result.is_file_transfer
 
-    def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
+    def _stage_binding_threshold(self) -> int:
+        raw = self._connection._session_parameters[SessionParameterName.CLIENT_STAGE_ARRAY_BINDING_THRESHOLD]
+        return parse_stage_binding_threshold(raw)
+
+    def _should_use_csv_binding(self, parameters: Sequence[Any], threshold: int, query: str = "") -> bool:
+        """Return whether array bindings should be uploaded as CSV to a stage.
+
+        Stage binding applies only to INSERT statements with multi-row (array)
+        bindings whose cell count meets ``CLIENT_STAGE_ARRAY_BINDING_THRESHOLD``.
+        The server rejects CSV stage bindings for non-INSERT queries, matching
+        the legacy connector's behavior of gating on INSERT.
+        Scalar binds always use inline JSON regardless of threshold.
+
+        """
+        if not query.lstrip().upper().startswith("INSERT"):
+            return False
+        if not any(isinstance(value, list) for value in parameters):
+            return False
+        effective_cells = BindingConverterBase.effective_binding_cells(parameters)
+        if effective_cells == 0 or threshold <= 0:
+            return False
+        return effective_cells >= threshold
+
+    def _build_query_bindings(self, parameters: Sequence[Any], query: str = "") -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
 
-        Converts Python parameter values to JSON via JsonBindingConverter, then
-        wraps the result in a zero-copy BinaryDataPtr so the Rust core can read
-        the JSON directly from Python memory.
+        Converts Python parameter values to JSON or CSV, then wraps the result
+        in a zero-copy BinaryDataPtr so the Rust core can read the bytes
+        directly from Python memory.
 
         The encoded bytes are stored on ``self._binding_data`` to prevent
         garbage collection while Rust holds the pointer.
 
         Returns:
-            QueryBindings with the serialized JSON, or None if parameters
+            QueryBindings with the serialized JSON or CSV, or None if parameters
             serialize to nothing (e.g. empty list).
         """
-        json_str, length = JsonBindingConverter.serialize_parameters(parameters)
-        if json_str is None:
-            return None
+        threshold = self._stage_binding_threshold()
+        use_csv = self._should_use_csv_binding(parameters, threshold, query)
 
-        # Convert string to bytes and keep a reference to prevent garbage
-        # collection while Rust uses the underlying buffer.
-        json_bytes = json_str.encode("utf-8")
-        self._binding_data = json_bytes
+        if use_csv:
+            binding_bytes = CsvBindingConverter.serialize_parameters_to_csv(parameters)
+            if binding_bytes is None:
+                return None
+        else:
+            json_str, _ = JsonBindingConverter.serialize_parameters(parameters)
+            if json_str is None:
+                return None
+            binding_bytes = json_str.encode("utf-8")
 
-        # Get memory address of the bytes buffer (no-copy scheme)
-        ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+        self._binding_data = binding_bytes
+        length = len(binding_bytes)
+
+        ptr_value = ctypes.cast(ctypes.c_char_p(self._binding_data), ctypes.c_void_p).value
         if ptr_value is None:
             raise RuntimeError("Failed to obtain memory pointer for binding data")
 
-        # Convert pointer to 8-byte little-endian representation
         ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
-
-        binary_data_ptr = BinaryDataPtr(
-            value=ptr_bytes,  # 8-byte pointer value
-            length=length,
-        )
+        binary_data_ptr = BinaryDataPtr(value=ptr_bytes, length=length)
+        if use_csv:
+            return QueryBindings(csv=binary_data_ptr)
         return QueryBindings(json=binary_data_ptr)
 
     def _prepare_query(
@@ -229,14 +258,19 @@ class CursorBaseMixin(ErrorHandlerMixin):
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None,
         _force_qmark_paramstyle: bool = False,
-    ) -> tuple[str, QueryBindings | None]:
-        """Prepare query and bindings based on paramstyle.
+    ) -> tuple[str, Sequence[Any] | None]:
+        """Prepare query and server-side binding parameters based on paramstyle.
 
         Args:
+            operation: SQL statement
+            parameters: Parameters to bind (sequence or dict)
             _force_qmark_paramstyle: If True, treat the call as qmark
                 regardless of the connection's configured paramstyle. Used by
                 callers (e.g. snowflake.core) that emit ``?`` placeholders
                 while connections may default to pyformat.
+
+        Returns:
+            Tuple of (query string, server-side binding parameters or None)
 
         Raises:
             ProgrammingError: If dict parameters used with server-side binding
@@ -269,8 +303,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
                     "Use pyformat paramstyle for named parameters.",
                     errno=ER_INVALID_VALUE,
                 )
-            bindings = self._build_query_bindings(parameters)
-            return operation, bindings
+            return operation, parameters
 
     def _format_query_for_log(self, query: str) -> str:
         return self._connection._format_query_for_log(query)
