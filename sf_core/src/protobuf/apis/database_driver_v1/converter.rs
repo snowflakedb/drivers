@@ -476,59 +476,31 @@ impl From<crate::rest::snowflake::QueryStatusResult> for ConnectionGetQueryStatu
 // Setting / config conversions
 // ---------------------------------------------------------------------------
 
-pub(super) fn setting_to_json(setting: Setting) -> serde_json::Value {
-    match setting {
-        Setting::String(s) => serde_json::Value::String(s),
-        Setting::Int(i) => serde_json::json!(i),
-        Setting::Double(d) => serde_json::json!(d),
-        Setting::Bool(b) => serde_json::Value::Bool(b),
-        Setting::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(&b).into_owned()),
+/// Recursively convert a TOML value into a JSON value, preserving all nesting.
+///
+/// Used to hand the full merged config document to Python via `json.loads`.
+/// Unlike a scalar-only flattening, nested tables (e.g. `[cli.plugins.<name>]`)
+/// and arrays are carried through intact.
+pub(super) fn toml_value_to_json(value: &toml::Value) -> serde_json::Value {
+    match value {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::Value::Number((*i).into()),
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        // TOML datetimes have no JSON counterpart; emit their RFC 3339 string.
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        toml::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(toml_value_to_json).collect())
+        }
+        toml::Value::Table(table) => serde_json::Value::Object(
+            table
+                .iter()
+                .map(|(k, v)| (k.clone(), toml_value_to_json(v)))
+                .collect(),
+        ),
     }
-}
-
-/// Convert the flat dot-separated section map from `load_all_config_sections`
-/// into a nested JSON object that Python can consume directly via `json.loads`.
-pub(super) fn flat_sections_to_nested_json(
-    flat: std::collections::HashMap<String, std::collections::HashMap<String, Setting>>,
-) -> serde_json::Value {
-    let mut root = serde_json::Map::new();
-
-    for (section_name, settings) in flat {
-        let settings_map: serde_json::Map<String, serde_json::Value> = settings
-            .into_iter()
-            .map(|(k, v)| (k, setting_to_json(v)))
-            .collect();
-
-        if section_name.is_empty() {
-            for (k, v) in settings_map {
-                root.insert(k, v);
-            }
-            continue;
-        }
-
-        let parts: Vec<&str> = section_name.split('.').collect();
-        let mut current = &mut root;
-        for part in &parts[..parts.len() - 1] {
-            current = current
-                .entry(part.to_string())
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
-                .as_object_mut()
-                .expect("intermediate path segment must be an object");
-        }
-
-        let last = parts.last().expect("section_name is non-empty");
-        if let Some(existing) = current.get_mut(*last) {
-            if let Some(obj) = existing.as_object_mut() {
-                for (k, v) in settings_map {
-                    obj.insert(k, v);
-                }
-            }
-        } else {
-            current.insert(last.to_string(), serde_json::Value::Object(settings_map));
-        }
-    }
-
-    serde_json::Value::Object(root)
 }
 
 pub(super) fn config_setting_to_setting(cs: ConfigSetting) -> Option<Setting> {

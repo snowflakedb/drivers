@@ -1,6 +1,6 @@
 use sf_core::apis::database_driver_v1::Setting;
 use sf_core::config::config_manager::{
-    load_all_config_sections_with_paths, load_config_section_with_paths,
+    load_all_config_merged_toml_with_paths, load_config_section_with_paths,
 };
 use sf_core::config::param_names;
 use sf_core::config::param_store::ParamStore;
@@ -286,17 +286,20 @@ account = "myaccount"
     );
 
     // When sf_core loads all config sections
-    let result = load_all_config_sections_with_paths(&paths);
-    assert!(result.is_ok());
+    let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+    let sections = merged.as_table().expect("root must be a table");
 
-    // Then All sections should be returned including connections
-    let sections = result.unwrap();
-    assert_eq!(sections.len(), 4); // log, proxy, retry, connections.testconn
+    // Then all sections should be returned, with nesting preserved, and
+    // connections nested under a single `connections` table.
+    assert_eq!(sections.len(), 4); // log, proxy, retry, connections
     assert!(sections.contains_key("log"));
     assert!(sections.contains_key("proxy"));
     assert!(sections.contains_key("retry"));
-    assert!(sections.contains_key("connections.testconn"));
-    assert!(!sections.contains_key("connections"));
+    assert!(sections.contains_key("connections"));
+    assert_eq!(
+        merged["connections"]["testconn"]["account"].as_str(),
+        Some("myaccount")
+    );
 }
 
 #[test]
