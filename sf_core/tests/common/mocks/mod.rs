@@ -10,4 +10,5 @@ pub mod oauth;
 pub mod okta;
 pub mod password;
 pub mod put_get;
+pub mod query;
 pub mod session;

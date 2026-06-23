@@ -49,6 +49,23 @@ Feature: Multistatement query execution
     When Single SELECT is executed with multi_statement_count set to 3
     Then an error is returned indicating statement count mismatch
 
+  # ============================================================================
+  # PER-CALL SCOPE
+  # ============================================================================
+  # Pins the server-observable consequence of per-call MULTI_STATEMENT_COUNT
+  # scoping: after a multistatement execute with num_statements=3, a
+  # follow-up single-statement execute on the same client must succeed.
+  # GS validates the declared count and rejects mismatches (see scenarios
+  # above), so a leak between executes would surface as a clean GS error,
+  # not a silent hang.
+
+  @core_e2e
+  Scenario: should not persist num_statements across executes
+    Given Snowflake client is logged in
+    When A multistatement query with num_statements=3 is executed
+    And On the same client, a single-statement query is executed
+    Then The single SELECT returns its row cleanly
+
   @jdbc_e2e @odbc_e2e @python_e2e
   Scenario: should fail when multistatement query has too few parameters
     Given Snowflake client is logged in

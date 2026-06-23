@@ -127,3 +127,46 @@ fn unwrap_multi_result(result: execute_query_response::Result) -> MultiStatement
         other => panic!("Expected multi-statement result, got: {other:?}"),
     }
 }
+
+/// Asserts num_statements doesn't bleed across executes: after a
+/// 3-statement multistatement, a single-statement query on the same
+/// client must succeed. A leak would surface as a GS count-mismatch.
+#[test]
+fn should_not_persist_num_statements_across_executes() {
+    // Given Snowflake client is logged in
+    let client = SnowflakeTestClient::connect_with_default_auth();
+
+    // When A multistatement query with num_statements=3 is executed
+    let multi_result =
+        client.execute_multistatement("SELECT 1 AS v; SELECT 2 AS v; SELECT 3 AS v", 3);
+    let multi = unwrap_multi_result(multi_result);
+    assert_eq!(
+        multi.query_ids.len(),
+        3,
+        "Expected 3 child query IDs from the multistatement execute"
+    );
+    for (i, query_id) in multi.query_ids.iter().enumerate() {
+        let rs = client.connection_get_result_set(query_id);
+        let rs_handle = rs.result_set_handle.unwrap();
+        let stream = client.result_set_get_stream(&rs_handle);
+        client.result_set_release(&rs_handle);
+        let mut helper = ArrowResultHelper::from_result(stream);
+        let rows = helper.transform_into_array::<i64>().unwrap();
+        assert_eq!(rows.len(), 1, "Child {i}: expected 1 row");
+        assert_eq!(
+            rows[0][0],
+            (i + 1) as i64,
+            "Child {i}: expected value {}",
+            i + 1
+        );
+    }
+
+    // And On the same client, a single-statement query is executed
+    let single_stream = client.execute_query("SELECT 99 AS v");
+
+    // Then The single SELECT returns its row cleanly.
+    let mut helper = ArrowResultHelper::from_result(single_stream);
+    let rows = helper.transform_into_array::<i64>().unwrap();
+    assert_eq!(rows.len(), 1, "Single SELECT should return exactly 1 row");
+    assert_eq!(rows[0][0], 99, "Single SELECT should yield 99");
+}
