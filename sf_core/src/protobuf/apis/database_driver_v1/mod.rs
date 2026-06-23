@@ -10,8 +10,8 @@ use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
     ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
-    flat_sections_to_nested_json, proto_chunk_format_to_kind, proto_options_to_hashmap,
-    reader_to_arrow_stream_ptr,
+    proto_chunk_format_to_kind, proto_options_to_hashmap, reader_to_arrow_stream_ptr,
+    toml_value_to_json,
 };
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
@@ -879,19 +879,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         &self,
         input: ConfigLoadAllSectionsRequest,
     ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
-        let all_sections = if input.config_file.is_some() || input.connections_file.is_some() {
+        let merged_toml = if input.config_file.is_some() || input.connections_file.is_some() {
             let paths = path_resolver::ConfigPaths {
                 config_file: input.config_file.map(std::path::PathBuf::from),
                 connections_file: input.connections_file.map(std::path::PathBuf::from),
             };
-            config_manager::load_all_config_sections_with_paths(&paths)
+            config_manager::load_all_config_merged_toml_with_paths(&paths)
         } else {
-            config_manager::load_all_config_sections()
+            config_manager::load_all_config_merged_toml()
         }
         .context(ConfigurationSnafu)
         .to_protobuf()?;
 
-        let nested_json = flat_sections_to_nested_json(all_sections);
+        let nested_json = toml_value_to_json(&merged_toml);
         let config_json = serde_json::to_string(&nested_json).map_err(|e| DriverException {
             message: format!("Failed to serialize config to JSON: {e}"),
             status_code: StatusCode::InternalError as i32,

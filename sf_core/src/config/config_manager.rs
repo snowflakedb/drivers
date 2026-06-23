@@ -223,93 +223,58 @@ pub fn load_config_section_with_paths(
     Ok(None)
 }
 
-/// Load all sections from config files (including connections)
+/// Load and merge every config source into a single TOML document.
 ///
-/// Returns a map of section names to their settings.
-/// Connections are included under "connections.<name>" keys.
-pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError>
-{
+/// Resolves the platform default config paths, then delegates to
+/// [`load_all_config_merged_toml_with_paths`].
+pub fn load_all_config_merged_toml() -> Result<toml::Value, ConfigError> {
     let paths = get_config_paths()?;
-    load_all_config_sections_with_paths(&paths)
+    load_all_config_merged_toml_with_paths(&paths)
 }
 
-/// Load all sections from config files using explicit config paths.
+/// Load and merge every config source using explicit config paths.
+///
+/// Returns the full `config.toml` document with **all nesting preserved**, so
+/// arbitrarily deep tables such as `[cli.plugins.<name>]` survive intact (the
+/// caller serializes the result to JSON). This is deliberately not flattened
+/// into a section→key→scalar map: that representation silently drops nested
+/// sub-tables, which is exactly the kind of config the CLI stores under `cli`.
 ///
 /// Only reads files for which a path is provided (`Some`). When a path is
 /// `None`, that file is skipped entirely — no fallback to platform defaults.
 ///
 /// When a `connections_file` is present and contains at least one connection,
-/// it **replaces** all connections from `config_file` rather than merging.
-/// Root-level scalar values are returned under the empty-string key `""`.
-pub fn load_all_config_sections_with_paths(
+/// its contents **replace** the `connections` table from `config_file` rather
+/// than merging, matching the precedence used elsewhere in the driver.
+pub fn load_all_config_merged_toml_with_paths(
     paths: &ConfigPaths,
-) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
-    let empty_toml = toml::Value::Table(toml::map::Map::new());
-    let config_toml = match &paths.config_file {
+) -> Result<toml::Value, ConfigError> {
+    let empty_table = || toml::Value::Table(toml::map::Map::new());
+
+    let mut merged = match &paths.config_file {
         Some(p) => load_toml_file(p)?,
-        None => empty_toml.clone(),
+        None => empty_table(),
     };
-    let mut all_sections = HashMap::new();
 
-    if let Some(table) = config_toml.as_table() {
-        for (section_name, section_value) in table {
-            if section_name == "connections" {
-                if let Some(connections_table) = section_value.as_table() {
-                    for (conn_name, conn_value) in connections_table {
-                        if let Some(conn_table) = conn_value.as_table() {
-                            let mut settings = HashMap::new();
-                            for (key, value) in conn_table {
-                                if let Some(setting) = toml_value_to_setting(value) {
-                                    settings.insert(key.clone(), setting);
-                                }
-                            }
-                            all_sections.insert(format!("connections.{conn_name}"), settings);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let Some(section_table) = section_value.as_table() {
-                let mut settings = HashMap::new();
-                for (key, value) in section_table {
-                    if let Some(setting) = toml_value_to_setting(value) {
-                        settings.insert(key.clone(), setting);
-                    }
-                }
-                all_sections.insert(section_name.clone(), settings);
-            } else if let Some(setting) = toml_value_to_setting(section_value) {
-                all_sections
-                    .entry(String::new())
-                    .or_insert_with(HashMap::new)
-                    .insert(section_name.clone(), setting);
-            }
-        }
+    // Guarantee a table at the root so callers always receive an object.
+    if !merged.is_table() {
+        merged = empty_table();
     }
 
     let connections_toml = match &paths.connections_file {
         Some(p) => load_toml_file(p)?,
-        None => empty_toml,
+        None => empty_table(),
     };
-    if let Some(table) = connections_toml.as_table() {
-        if !table.is_empty() {
-            // connections.toml replaces config.toml connections entirely.
-            all_sections.retain(|k, _| !k.starts_with("connections."));
-        }
-        for (conn_name, conn_config) in table {
-            if let Some(config_table) = conn_config.as_table() {
-                let mut settings = HashMap::new();
-                for (k, value) in config_table {
-                    if let Some(setting) = toml_value_to_setting(value) {
-                        settings.insert(k.clone(), setting);
-                    }
-                }
-                all_sections.insert(format!("connections.{conn_name}"), settings);
-            }
-        }
+
+    // connections.toml replaces config.toml's connections entirely when non-empty.
+    if let Some(conn_table) = connections_toml.as_table()
+        && !conn_table.is_empty()
+        && let Some(root_table) = merged.as_table_mut()
+    {
+        root_table.insert("connections".to_string(), connections_toml.clone());
     }
 
-    Ok(all_sections)
+    Ok(merged)
 }
 
 #[cfg(test)]
@@ -525,7 +490,7 @@ account = "myaccount"
     }
 
     #[test]
-    fn test_load_all_config_sections() {
+    fn test_load_all_config_merged_toml() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -545,32 +510,53 @@ account = "myaccount"
 "#,
         );
 
-        let result = load_all_config_sections_with_paths(&paths);
-        assert!(result.is_ok());
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let table = merged.as_table().expect("root must be a table");
 
-        let sections = result.unwrap();
-        assert_eq!(sections.len(), 3);
-        assert!(sections.contains_key("log"));
-        assert!(sections.contains_key("proxy"));
-        assert!(sections.contains_key("connections.testconn"));
+        assert_eq!(table["log"]["level"].as_str(), Some("debug"));
+        assert_eq!(table["proxy"]["host"].as_str(), Some("proxy.example.com"));
+        assert_eq!(table["proxy"]["port"].as_integer(), Some(8080));
+        assert_eq!(
+            table["connections"]["testconn"]["account"].as_str(),
+            Some("myaccount")
+        );
+    }
 
-        let log_settings = sections.get("log").unwrap();
-        assert!(matches!(
-            log_settings.get("level"),
-            Some(Setting::String(_))
-        ));
+    #[test]
+    fn test_merged_toml_preserves_deeply_nested_sections() {
+        // Regression: `[cli.plugins.<name>]` must survive intact. A scalar-only
+        // flattening dropped the `plugins` sub-table, leaving `cli` empty and
+        // breaking CLI plugin discovery.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
+[cli.plugins.broken_plugin]
+enabled = true
 
-        let proxy_settings = sections.get("proxy").unwrap();
-        assert!(matches!(
-            proxy_settings.get("host"),
-            Some(Setting::String(_))
-        ));
+[cli.plugins.snowpark_hello.config]
+greeting = "hello"
 
-        let conn_settings = sections.get("connections.testconn").unwrap();
-        assert!(matches!(
-            conn_settings.get("account"),
-            Some(Setting::String(_))
-        ));
+[connections.test]
+account = "test"
+"#,
+        );
+
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let table = merged.as_table().expect("root must be a table");
+
+        assert_eq!(
+            table["cli"]["plugins"]["broken_plugin"]["enabled"].as_bool(),
+            Some(true),
+            "nested plugin enablement must be preserved"
+        );
+        assert_eq!(
+            table["cli"]["plugins"]["snowpark_hello"]["config"]["greeting"].as_str(),
+            Some("hello"),
+            "arbitrarily deep plugin config must be preserved"
+        );
     }
 
     #[test]
@@ -718,7 +704,7 @@ level = "debug"
     }
 
     #[test]
-    fn test_connections_toml_replaces_config_toml_connections() {
+    fn test_merged_toml_connections_toml_replaces_config_toml_connections() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -747,35 +733,39 @@ database = "overridden_database"
 "#,
         );
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let connections = merged["connections"]
+            .as_table()
+            .expect("connections must be a table");
 
-        // Only the connections.toml connection should survive
+        // Only the connections.toml connection should survive.
         assert!(
-            result.contains_key("connections.default"),
+            connections.contains_key("default"),
             "connections.toml connection must be present"
         );
         assert!(
-            !result.contains_key("connections.full"),
+            !connections.contains_key("full"),
             "config.toml-only connection must be removed"
         );
-
-        let default_conn = result.get("connections.default").unwrap();
-        assert!(matches!(
-            default_conn.get("database"),
-            Some(Setting::String(s)) if s == "overridden_database"
-        ));
-        // config.toml settings for the same connection are NOT merged
+        assert_eq!(
+            connections["default"]["database"].as_str(),
+            Some("overridden_database")
+        );
+        // config.toml settings for the same connection are NOT merged.
         assert!(
-            !default_conn.contains_key("schema"),
+            !connections["default"]
+                .as_table()
+                .unwrap()
+                .contains_key("schema"),
             "config.toml settings must not leak into connections.toml connection"
         );
 
-        // Non-connection sections from config.toml are preserved
-        assert!(result.contains_key("log"));
+        // Non-connection sections from config.toml are preserved.
+        assert_eq!(merged["log"]["level"].as_str(), Some("debug"));
     }
 
     #[test]
-    fn test_root_level_values_use_empty_key() {
+    fn test_merged_toml_keeps_root_level_values() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -789,21 +779,14 @@ account = "acct"
 "#,
         );
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
 
-        // Root-level scalars should be under the empty-string key
-        let root = result
-            .get("")
-            .expect("root values must use empty-string key");
-        assert!(matches!(
-            root.get("default_connection_name"),
-            Some(Setting::String(s)) if s == "default"
-        ));
-        assert!(!result.contains_key("_root"), "_root key must not appear");
+        // Root-level scalars are top-level keys.
+        assert_eq!(merged["default_connection_name"].as_str(), Some("default"));
     }
 
     #[test]
-    fn test_empty_connections_toml_does_not_remove_config_connections() {
+    fn test_merged_toml_empty_connections_toml_keeps_config_connections() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -816,15 +799,18 @@ account = "acct"
         );
         write_config(&temp_dir, "connections.toml", "");
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
         assert!(
-            result.contains_key("connections.myconn"),
+            merged["connections"]
+                .as_table()
+                .unwrap()
+                .contains_key("myconn"),
             "config.toml connections should remain when connections.toml is empty"
         );
     }
 
     #[test]
-    fn test_nonexistent_connections_toml_keeps_config_connections() {
+    fn test_merged_toml_nonexistent_connections_toml_keeps_config_connections() {
         let temp_dir = TempDir::new().unwrap();
         let paths = ConfigPaths {
             config_file: Some(temp_dir.path().join("config.toml")),
@@ -840,9 +826,12 @@ account = "acct"
         );
         // connections.toml does not exist on disk
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
         assert!(
-            result.contains_key("connections.myconn"),
+            merged["connections"]
+                .as_table()
+                .unwrap()
+                .contains_key("myconn"),
             "config.toml connections should remain when connections.toml does not exist"
         );
     }
