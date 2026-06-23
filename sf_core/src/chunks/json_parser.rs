@@ -91,23 +91,58 @@ impl ParseChunk for JsonChunkParser {
     }
 }
 
-/// Scans JSON chunk bytes line-by-line, dispatching each cell directly to
-/// column builders. Each line is a JSON array ending with `,\n`, e.g.
-/// `["v1","v2",null],\n`.
+/// Scans JSON chunk bytes, dispatching each cell directly to column builders.
+///
+/// A Snowflake JSON result chunk is a sequence of row arrays separated by
+/// commas, with NO outer brackets and NO guaranteed newline delimiters — the
+/// whole chunk is typically a single line, e.g.
+/// `[ "v1", "v2", null ], [ "v3", "v4", null ], ...`. We therefore delimit
+/// rows by scanning for top-level `[...]` arrays (tracking bracket depth and
+/// skipping brackets that appear inside JSON strings) rather than splitting on
+/// `\n`. This also tolerates the legacy newline-delimited shape.
 fn parse_json_rows(data: &[u8], builders: &mut [ColumnBuilder]) -> Result<usize, ArrowError> {
     let mut row_count: usize = 0;
 
-    for line in data.split(|&b| b == b'\n') {
-        if line.is_empty() {
-            continue;
-        }
-        let line = line.strip_suffix(b",").unwrap_or(line);
-        if line.is_empty() {
+    let mut depth: i32 = 0;
+    let mut row_start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (i, &b) in data.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
             continue;
         }
 
-        scan_json_row(line, builders)?;
-        row_count += 1;
+        match b {
+            b'"' => in_string = true,
+            b'[' => {
+                if depth == 0 {
+                    row_start = Some(i);
+                }
+                depth += 1;
+            }
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = row_start.take() {
+                        scan_json_row(&data[start..=i], builders)?;
+                        row_count += 1;
+                    }
+                } else if depth < 0 {
+                    return Err(ArrowError::InvalidArgumentError(
+                        "Malformed JSON chunk: unbalanced ']'".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
     }
 
     Ok(row_count)
@@ -1321,6 +1356,54 @@ mod tests {
         assert_eq!(col.value(0), "hello");
         assert!(col.is_null(1));
         assert_eq!(col.value(2), "world");
+    }
+
+    #[test]
+    fn single_line_comma_separated_rows() {
+        // Real Snowflake JSON result chunks are a single line of comma-separated
+        // row arrays with NO newline delimiters and spaces inside the arrays.
+        // The parser must emit every row, not just the first.
+        let rt = vec![
+            RowType::text("name", true, 64, 256),
+            RowType::text("size", true, 64, 256),
+        ];
+        let data = br#"[ "a/f0.csv", "32" ], [ "a/f1.csv", "64" ], [ "a/f2.csv", null ]"#;
+        let batches = parse(rt, data);
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 3, "all single-line rows must be parsed");
+        let names = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(names.value(0), "a/f0.csv");
+        assert_eq!(names.value(1), "a/f1.csv");
+        assert_eq!(names.value(2), "a/f2.csv");
+        let sizes = batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(sizes.value(0), "32");
+        assert_eq!(sizes.value(1), "64");
+        assert!(sizes.is_null(2));
+    }
+
+    #[test]
+    fn brackets_inside_string_values_do_not_split_rows() {
+        // A `]` or `[` inside a quoted value must not be treated as a row
+        // boundary by the depth scanner.
+        let rt = vec![RowType::text("t", true, 64, 256)];
+        let data = br#"[ "a]b[c" ], [ "x,y]z" ]"#;
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(col.len(), 2);
+        assert_eq!(col.value(0), "a]b[c");
+        assert_eq!(col.value(1), "x,y]z");
     }
 
     #[test]
