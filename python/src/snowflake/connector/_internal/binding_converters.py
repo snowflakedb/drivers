@@ -130,8 +130,26 @@ _ZERO_EPOCH_DATE = date(1970, 1, 1)
 _ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 
 
-class JsonBindingConverter:
-    """Converts Python parameters to Snowflake binding JSON format for server-side binding."""
+DEFAULT_STAGE_ARRAY_BINDING_THRESHOLD = 65280
+Params = Sequence[Any]
+
+# Bulk (CSV/stage) date insertion overflows server-side once the epoch-millisecond
+# value reaches this bound (dates after ~year 2969), so such dates are encoded as
+# epoch nanoseconds instead. Mirrors the reference connector's threshold in
+# Converter._date_to_snowflake_bindings_in_bulk_insertion.
+_DATE_BULK_INSERTION_MS_OVERFLOW = 31_536_000_000_000
+
+
+def parse_stage_binding_threshold(raw: Any) -> int:
+    """Parse CLIENT_STAGE_ARRAY_BINDING_THRESHOLD; default 65280 when unset/invalid."""
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_STAGE_ARRAY_BINDING_THRESHOLD
+
+
+class BindingConverterBase:
+    """Shared Python-to-Snowflake value conversion for JSON and CSV bindings."""
 
     @staticmethod
     def _convert_datetime_to_epoch_nanoseconds(dt: datetime) -> str:
@@ -151,10 +169,34 @@ class JsonBindingConverter:
     def _convert_date_to_epoch_milliseconds(d: date) -> str:
         """Convert date to epoch milliseconds string.
 
-        Uses timezone-independent timedelta arithmetic from epoch date,
-        matching the reference connector's _convert_date_to_epoch_milliseconds.
+        Uses timezone-independent timedelta arithmetic from epoch date. This is
+        the representation used by inline JSON (non-bulk) date binding, matching
+        the reference connector's ``_date_to_snowflake_bindings``. The CSV/stage
+        (bulk) path uses ``_convert_date_for_bulk_insertion`` instead, which
+        guards against a server-side overflow for far-future dates.
         """
         return f"{(d - _ZERO_EPOCH_DATE).total_seconds():.3f}".replace(".", "")
+
+    @staticmethod
+    def _convert_date_to_epoch_nanoseconds(d: date) -> str:
+        """Convert date to epoch nanoseconds string (bulk-insertion overflow path)."""
+        return f"{(d - _ZERO_EPOCH_DATE).total_seconds():.9f}".replace(".", "")
+
+    @classmethod
+    def _convert_date_for_bulk_insertion(cls, d: date) -> str:
+        """Convert date for CSV/stage (bulk) insertion.
+
+        Returns epoch milliseconds, switching to epoch nanoseconds once the
+        millisecond value reaches the server's overflow bound (dates after
+        ~year 2969). Mirrors the reference connector's
+        ``_date_to_snowflake_bindings_in_bulk_insertion``: without this guard a
+        far-future date staged as CSV overflows server-side and round-trips to a
+        wrong value, diverging from the inline-JSON path for the same input.
+        """
+        milliseconds = cls._convert_date_to_epoch_milliseconds(d)
+        if int(milliseconds) < _DATE_BULK_INSERTION_MS_OVERFLOW:
+            return milliseconds
+        return cls._convert_date_to_epoch_nanoseconds(d)
 
     @staticmethod
     def _convert_time_to_nanoseconds(t: time) -> str:
@@ -176,61 +218,6 @@ class JsonBindingConverter:
         mins, secs = divmod(remainder, 60)
         hours += td.days * 24
         return str(hours * 3600 + mins * 60 + secs) + f"{td.microseconds:06d}" + "000"
-
-    @classmethod
-    def serialize_parameters(cls, params: Sequence[Any] | None) -> tuple[str | None, int]:
-        """
-        Serialize parameters to JSON format for binding.
-
-        Args:
-            params: Parameters to serialize (sequence for positional)
-
-        Returns:
-            Tuple of (JSON string or None, length in bytes)
-        """
-        if params is None or len(params) == 0:
-            return None, 0
-
-        bindings = cls._process_params(params)
-        if not bindings:
-            return None, 0
-
-        json_str = json.dumps(bindings)
-        return json_str, len(json_str.encode("utf-8"))
-
-    @classmethod
-    def _process_params(cls, params: Sequence[Any]) -> dict[str, dict[str, Any]]:
-        """
-        Process parameters into Snowflake binding format.
-
-        The format is:
-        {
-            "1": {"type": "FIXED", "value": "123"},
-            "2": {"type": "TEXT", "value": "hello"}
-        }
-
-        For arrays (multi-row):
-        {
-            "1": {"type": "FIXED", "value": ["1", "2", "3"]},
-            "2": {"type": "TEXT", "value": ["hello", "world", "foo"]}
-        }
-
-        Supports explicit type-hint tuples: ("SNOWFLAKE_TYPE", value).
-        This mirrors the reference connector's _get_snowflake_type_and_binding.
-        """
-        bindings = {}
-
-        # Positional parameters (e.g., ? or :1 style)
-        for idx, value in enumerate(params):
-            if isinstance(value, list):
-                # Array binding for bulk operations
-                snowflake_type, values = cls._convert_array(value)
-                bindings[str(idx + 1)] = {"type": snowflake_type, "value": values}
-            else:
-                snowflake_type, snowflake_value = cls._get_type_and_binding(value)
-                bindings[str(idx + 1)] = {"type": snowflake_type, "value": snowflake_value}
-
-        return bindings
 
     @classmethod
     def _get_type_and_binding(cls, value: Any) -> tuple[str, Any]:
@@ -336,9 +323,158 @@ class JsonBindingConverter:
 
         return snowflake_type, converted_values
 
-    # TODO: Implement stage binding decision logic in follow-up
-    # When data size exceeds CLIENT_STAGE_ARRAY_BINDING_THRESHOLD (default 65280),
-    # should serialize to CSV and upload to stage instead of using JSON binding.
+    @classmethod
+    def _array_binding_row_count(cls, params: Params) -> int:
+        row_count = 1
+        for value in params:
+            if isinstance(value, list):
+                if row_count == 1:
+                    row_count = len(value)
+                elif len(value) != row_count:
+                    # Width validation happens in _build_array_binding_params; keep this pure.
+                    row_count = len(value)
+        return row_count
+
+    @classmethod
+    def effective_binding_cells(cls, params: Params) -> int:
+        """Return row_count × param_count for array-binding threshold checks."""
+        if not params:
+            return 0
+        return cls._array_binding_row_count(params) * len(params)
+
+
+class JsonBindingConverter(BindingConverterBase):
+    """Converts Python parameters to Snowflake binding JSON for server-side binding."""
+
+    @classmethod
+    def serialize_parameters(cls, params: Sequence[Any] | None) -> tuple[str | None, int]:
+        """
+        Serialize parameters to JSON format for binding.
+
+        Args:
+            params: Parameters to serialize (sequence for positional)
+
+        Returns:
+            Tuple of (JSON string or None, length in bytes)
+        """
+        if params is None or len(params) == 0:
+            return None, 0
+
+        bindings = cls._process_params(params)
+        if not bindings:
+            return None, 0
+
+        json_str = json.dumps(bindings)
+        return json_str, len(json_str.encode("utf-8"))
+
+    @classmethod
+    def _process_params(cls, params: Sequence[Any]) -> dict[str, dict[str, Any]]:
+        """
+        Process parameters into Snowflake binding format.
+
+        The format is:
+        {
+            "1": {"type": "FIXED", "value": "123"},
+            "2": {"type": "TEXT", "value": "hello"}
+        }
+
+        For arrays (multi-row):
+        {
+            "1": {"type": "FIXED", "value": ["1", "2", "3"]},
+            "2": {"type": "TEXT", "value": ["hello", "world", "foo"]}
+        }
+
+        Supports explicit type-hint tuples: ("SNOWFLAKE_TYPE", value).
+        This mirrors the reference connector's _get_snowflake_type_and_binding.
+        """
+        bindings = {}
+
+        # Positional parameters (e.g., ? or :1 style)
+        for idx, value in enumerate(params):
+            if isinstance(value, list):
+                # Array binding for bulk operations
+                snowflake_type, values = cls._convert_array(value)
+                bindings[str(idx + 1)] = {"type": snowflake_type, "value": values}
+            else:
+                snowflake_type, snowflake_value = cls._get_type_and_binding(value)
+                bindings[str(idx + 1)] = {"type": snowflake_type, "value": snowflake_value}
+
+        return bindings
+
+
+class CsvBindingConverter(BindingConverterBase):
+    """Converts Python parameters to Snowflake binding CSV for stage upload."""
+
+    @classmethod
+    def _param_value_at(cls, params: Params, row_idx: int, col_idx: int) -> Any:
+        value = params[col_idx]
+        if isinstance(value, list):
+            return value[row_idx]
+        return value
+
+    @staticmethod
+    def _append_escaped_csv_cell(out: list[str], text: str) -> None:
+        """RFC-4180 cell quoting matching ODBC ``append_escaped_csv_cell``.
+
+        Every non-None cell is unconditionally quoted.  The legacy connector
+        quoted only when the value contained ``"``, newline, comma, or backslash;
+        both approaches are functionally equivalent under
+        ``field_optionally_enclosed_by='"'``: the critical NULL-vs-empty-string
+        distinction (empty string → ``""``; NULL → unquoted empty) is preserved
+        either way.  Unconditional quoting produces slightly larger upload
+        payloads but avoids a conditional branch and matches the ODBC driver.
+        """
+        out.append('"')
+        out.append(text.replace('"', '""'))
+        out.append('"')
+
+    @classmethod
+    def _format_csv_cell(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        # Bare date (not datetime): the bulk/stage path guards against a
+        # server-side overflow for far-future dates by switching to nanoseconds.
+        # This matches the reference connector, whose ``to_csv_bindings`` routes
+        # bare dates through ``_date_to_snowflake_bindings_in_bulk_insertion``.
+        if isinstance(value, date) and not isinstance(value, datetime):
+            converted: Any = cls._convert_date_for_bulk_insertion(value)
+        else:
+            _, converted = cls._get_type_and_binding(value)
+        if converted is None:
+            return ""
+        parts: list[str] = []
+        cls._append_escaped_csv_cell(parts, str(converted))
+        return "".join(parts)
+
+    @classmethod
+    def serialize_parameters_to_csv(cls, params: Params) -> bytes | None:
+        """Serialize column-major array bindings to CSV bytes for stage upload."""
+        if not params:
+            return None
+
+        expected_rows: int | None = None
+        for col_idx, col in enumerate(params):
+            if isinstance(col, list):
+                if expected_rows is None:
+                    expected_rows = len(col)
+                elif len(col) != expected_rows:
+                    raise ProgrammingError(
+                        msg=f"Array binding column widths must all match: "
+                        f"expected {expected_rows} rows but column {col_idx} has {len(col)} rows.",
+                    )
+
+        row_count = expected_rows if expected_rows is not None else 1
+        if row_count == 0:
+            return None
+
+        lines: list[str] = []
+        for row_idx in range(row_count):
+            cells = [
+                cls._format_csv_cell(cls._param_value_at(params, row_idx, col_idx)) for col_idx in range(len(params))
+            ]
+            lines.append(",".join(cells))
+
+        return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 class ClientSideBindingConverter:

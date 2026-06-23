@@ -218,11 +218,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
-        query, bindings = self._prepare_query(operation, parameters)
+        query, binding_params = self._prepare_query(operation, parameters)
 
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             await self._apply_statement_parameters(stmt_handle, statement_parameters)
 
+            bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await self._execute_query(stmt_handle, bindings)
 
             if response.HasField("multi"):
@@ -293,6 +294,31 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._query_result = QueryResult.from_programming_error(exc)
             raise
 
+    async def _executemany_per_row(
+        self,
+        operation: str,
+        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]],
+    ) -> None:
+        """Execute each parameter set individually and aggregate rowcount.
+
+        Used by ``executemany`` whenever array binding does not apply: client-side
+        paramstyles, dict parameters, or statements the server reports as not
+        array-bindable (e.g. UPDATE, DELETE, MERGE).
+        """
+        await self.reset()
+        total_rowcount = 0
+        unknown_rowcount = False
+        for params in seq_of_parameters:
+            await self._execute(operation, params)  # no reset between calls
+            rc = self._query_result.rowcount
+            if rc is None or rc == -1:
+                unknown_rowcount = True
+            elif not unknown_rowcount:
+                total_rowcount += rc
+        # Per PEP 249, -1 indicates that the number of rows is unknown,
+        # but for backward compatibility it's set to None.
+        self._query_result.rowcount = None if unknown_rowcount else total_rowcount
+
     @pep249
     @api_telemetry
     @requires_open
@@ -300,12 +326,18 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
-        For qmark/numeric paramstyles, uses array binding to execute all parameter
-        sets in a single request. For pyformat/format paramstyles, executes each
-        row individually with client-side interpolation.
+        For qmark/numeric paramstyles with sequence parameters, issues a describe
+        request first to read the server's ``arrayBindSupported`` flag (the same
+        mechanism used by the JDBC and ODBC drivers). If supported, all rows are
+        transposed into column-major arrays and sent in a single request. If not
+        supported (e.g. UPDATE, DELETE, MERGE), each parameter set is executed
+        individually with scalar JSON binding.
+
+        For pyformat/format paramstyles and dict parameters, executes each row
+        individually with client-side interpolation.
 
         Args:
-            operation (str): SQL statement (typically INSERT, UPDATE, or DELETE)
+            operation (str): SQL statement (INSERT, UPDATE, DELETE, etc.)
             seq_of_parameters (sequence): Sequence of parameter sequences or dicts
 
         Raises:
@@ -321,25 +353,25 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
-            await self.reset()
-            total_rowcount = 0
-            unknown_rowcount = False
-            for params in seq_of_parameters:
-                await self._execute(operation, params)  # no reset between calls
-                rc = self._query_result.rowcount
-                if rc is None or rc == -1:
-                    unknown_rowcount = True
-                elif not unknown_rowcount:
-                    total_rowcount += rc
-            # Per PEP 249, -1 indicates that the number of rows is unknown,
-            # but for backward compatibility it's set to None.
-            self._query_result.rowcount = None if unknown_rowcount else total_rowcount
+            await self._executemany_per_row(operation, seq_of_parameters)
             return
 
-        # Server-side binding: validate and transpose to array-binding params.
+        # Validate row widths and pre-compute column-major layout before the server
+        # round-trip so InterfaceError from mismatched lengths surfaces early.
         transposed = self._build_array_binding_params(operation, seq_of_parameters, first_params)
 
-        # Execute using array binding (existing path handles list values)
+        # Ask the server whether array binding is supported for this statement.
+        # Mirrors JDBC (describeSqlIfNotTried) and the C/ODBC driver describe-only request.
+        async with async_statement(self._connection.conn_handle, operation) as stmt_handle:  # type: ignore[arg-type]
+            prepare_result = await self._prepare(stmt_handle)
+
+        if prepare_result is None or not prepare_result.array_bind_supported:
+            # Per-row fallback: server does not support array binding for this
+            # statement type (e.g. UPDATE, DELETE, MERGE).
+            await self._executemany_per_row(operation, seq_of_parameters)
+            return
+
+        # Server confirmed array binding: use pre-computed column-major params.
         await self.execute(operation, transposed)
 
     @api_telemetry
@@ -368,7 +400,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             - Updates cursor.description with the column metadata
         """
         await self.reset()
-        query, bindings = self._prepare_query(operation, parameters)
+        query, _ = self._prepare_query(operation, parameters)
 
         prepare_result: PrepareResult | None = None
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
@@ -829,12 +861,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     async def _execute_async(
         self, command: str, params: Sequence[Any] | dict[str, Any] | None
     ) -> dict[str, str | None]:
-        query, bindings = self._prepare_query(command, params)
+        query, binding_params = self._prepare_query(command, params)
 
         response = None
         async with async_statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = await async_core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
-
         query_id = (response.query_id if response.query_id else None) if response else None
         self._query_result = QueryResult(sfqid=query_id)
 

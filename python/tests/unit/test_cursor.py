@@ -10,7 +10,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.api_client.client_api import core_driver
-from snowflake.connector._internal.binding_converters import ParamStyle
+from snowflake.connector._internal.binding_converters import ParamStyle, parse_stage_binding_threshold
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
 from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_NO_PYARROW
 from snowflake.connector._internal.extras import (
@@ -2529,6 +2529,52 @@ class TestAsyncExecuteNumStatements:
         ):
             asyncio.run(cursor.execute("SELECT 99"))
         assert StatementParameterName.MULTI_STATEMENT_COUNT not in captured, "second call must NOT inherit the count"
+
+
+class TestStageBindingDecision:
+    """Unit tests for cursor-side stage binding threshold decision."""
+
+    @pytest.fixture
+    def cursor(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.QMARK
+        conn._session_parameters = {}
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value.result = execute_result
+        cur = SnowflakeCursor(conn)
+        yield cur
+        cur.close()
+
+    def test_should_use_csv_binding_false_for_scalar(self, cursor):
+        assert not cursor._should_use_csv_binding((42,), threshold=1, query="INSERT INTO t VALUES (?)")
+
+    def test_should_use_csv_binding_true_at_threshold(self, cursor):
+        params = ([1] * 10, ["x"] * 10)
+        assert cursor._should_use_csv_binding(params, threshold=20, query="INSERT INTO t VALUES (?, ?)")
+
+    def test_should_use_csv_binding_false_below_threshold(self, cursor):
+        params = ([1, 2], ["a", "b"])
+        assert not cursor._should_use_csv_binding(params, threshold=100, query="INSERT INTO t VALUES (?, ?)")
+
+    def test_should_use_csv_binding_false_for_non_insert(self, cursor):
+        params = ([1] * 10, ["x"] * 10)
+        assert not cursor._should_use_csv_binding(params, threshold=1, query="SELECT * FROM t WHERE id = ?")
+        assert not cursor._should_use_csv_binding(params, threshold=1, query="UPDATE t SET name = ? WHERE id = ?")
+        assert not cursor._should_use_csv_binding(params, threshold=1, query="DELETE FROM t WHERE id = ?")
+
+    def test_should_use_csv_binding_false_for_empty_query(self, cursor):
+        params = ([1] * 10, ["x"] * 10)
+        assert not cursor._should_use_csv_binding(params, threshold=1, query="")
+
+    def test_stage_binding_threshold_parser_defaults(self):
+        assert parse_stage_binding_threshold(None) == 65280
+        assert parse_stage_binding_threshold("bad") == 65280
 
 
 class TestParamsAliasAndForceQmark:

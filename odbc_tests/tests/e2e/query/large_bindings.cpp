@@ -433,8 +433,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should preserve CSV escaping hazards via st
   CHECK(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should fall back to JSON when arrayBindSupported is false despite crossing the threshold",
+TEST_CASE_METHOD(ConnSchemaFixture, "should not stage-bind scalar or non-INSERT queries even when threshold is crossed",
                  "[query][large_bindings]") {
   // Given Snowflake client is logged in
 

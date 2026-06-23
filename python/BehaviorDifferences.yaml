@@ -451,3 +451,30 @@ behavior_differences:
       (the default). Set `disable_parallel_user_prompt=false` to opt out and let each
       concurrent connection show its own prompt. The lock is released on failure and
       on browser-callback timeout so a waiting connection can still authenticate.
+
+  34:
+    name: "executemany uses server arrayBindSupported flag to gate array binding"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      executemany detects INSERT via a client-side regex (^insert\s+into, IGNORECASE).
+      Statements that do not match the regex — including non-INSERT DML (UPDATE, DELETE,
+      MERGE) — fall back to per-row execution with scalar JSON binding.
+    new_driver_behavior: |
+      executemany issues a describe-only request first and reads the server's
+      arrayBindSupported flag, the same mechanism used by the JDBC and ODBC drivers.
+      If the server reports array binding is supported, all rows are transposed and
+      sent in a single array-bound request (with CSV stage upload above
+      CLIENT_STAGE_ARRAY_BINDING_THRESHOLD). If not supported, each parameter set is
+      executed individually with scalar JSON binding. For current Snowflake SQL, the
+      observable outcome is identical to the old regex approach; the server flag is
+      more robust for future statement types the server may make array-bindable.
+    description: |
+      The server's arrayBindSupported flag is the authoritative source and is already
+      used by JDBC (describeSqlIfNotTried in SnowflakePreparedStatementImpl) and the
+      C/ODBC driver (_snowflake_execute_ex describe-only request). The universal driver
+      now aligns with those implementations. The extra describe round-trip is the same
+      cost JDBC and ODBC already pay.
