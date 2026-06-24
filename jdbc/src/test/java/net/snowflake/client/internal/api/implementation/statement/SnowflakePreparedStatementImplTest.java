@@ -10,12 +10,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.BatchUpdateException;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
-import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
@@ -140,8 +140,7 @@ public class SnowflakePreparedStatementImplTest {
     ps.setInt(1, 3);
     ps.addBatch();
 
-    java.sql.BatchUpdateException ex =
-        assertThrows(java.sql.BatchUpdateException.class, ps::executeBatch);
+    BatchUpdateException ex = assertThrows(BatchUpdateException.class, ps::executeBatch);
     assertArrayEquals(
         new int[] {Statement.EXECUTE_FAILED, Statement.EXECUTE_FAILED, Statement.EXECUTE_FAILED},
         ex.getUpdateCounts());
@@ -161,17 +160,14 @@ public class SnowflakePreparedStatementImplTest {
     ps.setInt(1, 1);
     ps.addBatch();
     ps.executeBatch();
-    assertEquals(
-        1,
-        ((net.snowflake.client.api.statement.SnowflakeStatement) ps).getBatchQueryIDs().size(),
-        "PS array-bind batch is a single round-trip");
+    assertEquals(1, ps.getBatchQueryIDs().size(), "PS array-bind batch is a single round-trip");
 
     ps.setInt(1, 2);
     ps.addBatch();
     ps.executeBatch();
     assertEquals(
         1,
-        ((net.snowflake.client.api.statement.SnowflakeStatement) ps).getBatchQueryIDs().size(),
+        ps.getBatchQueryIDs().size(),
         "second executeBatch resets and re-populates rather than appending");
   }
 
@@ -184,7 +180,7 @@ public class SnowflakePreparedStatementImplTest {
     ps.setInt(1, 1);
     ps.executeUpdate();
 
-    assertEquals("qid-prepared", ((SnowflakeStatement) ps).getQueryID());
+    assertEquals("qid-prepared", ps.getQueryID());
   }
 
   @Test
@@ -196,13 +192,13 @@ public class SnowflakePreparedStatementImplTest {
 
     ps.setInt(1, 1);
     ps.executeUpdate();
-    assertEquals("qid-prior", ((SnowflakeStatement) ps).getQueryID());
+    assertEquals("qid-prior", ps.getQueryID());
 
     ps.setInt(1, 2);
     assertThrows(SQLException.class, ps::executeUpdate);
     assertEquals(
         "qid-prepared-failed",
-        ((SnowflakeStatement) ps).getQueryID(),
+        ps.getQueryID(),
         "Failed prepared execute should overwrite the prior id with the server-side one");
   }
 

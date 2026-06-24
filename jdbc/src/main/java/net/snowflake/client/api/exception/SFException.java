@@ -1,5 +1,6 @@
 package net.snowflake.client.api.exception;
 
+import java.text.MessageFormat;
 import java.util.Arrays;
 
 public class SFException extends RuntimeException {
@@ -17,9 +18,14 @@ public class SFException extends RuntimeException {
   }
 
   private static String buildMessage(ErrorCode errorCode, Object... params) {
-    if (params == null || params.length == 0) {
+    Object[] args = params == null ? new Object[0] : params;
+    String template = errorCode.getMessageTemplate();
+    if (template != null) {
+      return MessageFormat.format(template, args);
+    }
+    if (args.length == 0) {
       return String.valueOf(errorCode);
     }
-    return String.format("%s: %s", errorCode, Arrays.toString(params));
+    return String.format("%s: %s", errorCode, Arrays.toString(args));
   }
 }

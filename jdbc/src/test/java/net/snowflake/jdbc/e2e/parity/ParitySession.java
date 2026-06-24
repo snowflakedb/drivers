@@ -19,6 +19,23 @@ final class ParitySession {
   private final Connection conn;
   private Map<String, String> currentState = new TreeMap<>();
 
+  /**
+   * Clean, legacy-parseable defaults for every output-format param. Seeded on every apply so a
+   * format set for one type's test (e.g. the DATE {@code "Date: "YYYY-MM-DD} literal) cannot leak
+   * onto the shared, long-lived session and poison an unrelated type's prepare — the legacy driver
+   * compiles ALL date/time/timestamp formatters at describe time, so a stale unparseable format
+   * breaks prepares that have nothing to do with that type.
+   */
+  private static final Map<String, String> CLEAN_FORMAT_DEFAULTS = new LinkedHashMap<>();
+
+  static {
+    CLEAN_FORMAT_DEFAULTS.put("DATE_OUTPUT_FORMAT", "YYYY-MM-DD");
+    CLEAN_FORMAT_DEFAULTS.put("TIME_OUTPUT_FORMAT", "HH24:MI:SS");
+    CLEAN_FORMAT_DEFAULTS.put("TIMESTAMP_NTZ_OUTPUT_FORMAT", "YYYY-MM-DD HH24:MI:SS.FF3");
+    CLEAN_FORMAT_DEFAULTS.put("TIMESTAMP_LTZ_OUTPUT_FORMAT", "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM");
+    CLEAN_FORMAT_DEFAULTS.put("TIMESTAMP_TZ_OUTPUT_FORMAT", "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM");
+  }
+
   ParitySession(Connection conn) {
     this.conn = conn;
   }
@@ -57,6 +74,9 @@ final class ParitySession {
       throws SQLException {
     Map<String, String> combined = new LinkedHashMap<>();
     combined.put("TIMEZONE", tz);
+    // Reset every output format to a clean default first, then override only the one under test,
+    // so no exotic format leaks across cases on the shared session (see CLEAN_FORMAT_DEFAULTS).
+    combined.putAll(CLEAN_FORMAT_DEFAULTS);
     combined.put(formatParam, formatValue);
     combined.putAll(overlay);
     apply(combined);
