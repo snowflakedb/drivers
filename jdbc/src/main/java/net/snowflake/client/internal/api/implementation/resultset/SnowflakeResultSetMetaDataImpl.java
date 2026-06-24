@@ -13,11 +13,33 @@ public class SnowflakeResultSetMetaDataImpl
     implements ResultSetMetaData, SnowflakeResultSetMetaData, DelegatingWrapper {
   private final String[] columnNames;
   private final int[] columnTypes;
+  private final int[] columnScales;
+  private final int timeStringLength;
   private final String queryId;
 
+  /** Default formatted length for TIME ("HH:mm:ss"), matching snowflake-jdbc's default. */
+  private static final int DEFAULT_TIME_STRING_LENGTH = 8;
+
   public SnowflakeResultSetMetaDataImpl(String[] columnNames, int[] columnTypes, String queryId) {
+    this(
+        columnNames, columnTypes, new int[columnNames.length], DEFAULT_TIME_STRING_LENGTH, queryId);
+  }
+
+  public SnowflakeResultSetMetaDataImpl(
+      String[] columnNames, int[] columnTypes, int[] columnScales, String queryId) {
+    this(columnNames, columnTypes, columnScales, DEFAULT_TIME_STRING_LENGTH, queryId);
+  }
+
+  public SnowflakeResultSetMetaDataImpl(
+      String[] columnNames,
+      int[] columnTypes,
+      int[] columnScales,
+      int timeStringLength,
+      String queryId) {
     this.columnNames = columnNames;
     this.columnTypes = columnTypes;
+    this.columnScales = columnScales;
+    this.timeStringLength = timeStringLength;
     this.queryId = queryId;
   }
 
@@ -66,6 +88,11 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public int getColumnDisplaySize(int column) throws SQLException {
+    if (getColumnType(column) == Types.TIME) {
+      // snowflake-jdbc reports the formatted time-string length for both display size and
+      // precision of TIME columns.
+      return timeStringLength;
+    }
     return 255;
   }
 
@@ -87,12 +114,18 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public int getPrecision(int column) throws SQLException {
+    if (getColumnType(column) == Types.TIME) {
+      // snowflake-jdbc returns the formatted-string length (timeStringLength), which depends on
+      // TIME_OUTPUT_FORMAT (8 for the default "HH24:MI:SS", larger when fractional seconds show).
+      return timeStringLength;
+    }
     return 0;
   }
 
   @Override
   public int getScale(int column) throws SQLException {
-    return 0;
+    checkColumnIndex(column);
+    return columnScales[column - 1];
   }
 
   @Override
@@ -121,6 +154,8 @@ public class SnowflakeResultSetMetaDataImpl
         return "VARCHAR";
       case Types.DATE:
         return "DATE";
+      case Types.TIME:
+        return "TIME";
       case Types.TIMESTAMP:
         return "TIMESTAMP";
       default:
@@ -153,6 +188,8 @@ public class SnowflakeResultSetMetaDataImpl
         return "java.lang.String";
       case Types.DATE:
         return "java.sql.Date";
+      case Types.TIME:
+        return "java.sql.Time";
       case Types.TIMESTAMP:
         return "java.sql.Timestamp";
       default:

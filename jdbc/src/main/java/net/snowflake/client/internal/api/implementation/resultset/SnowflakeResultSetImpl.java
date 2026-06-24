@@ -24,13 +24,18 @@ import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
 import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
+import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
+import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.apache.arrow.c.ArrowArrayStream;
@@ -59,7 +64,11 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
     ArrowResources resources =
         new ArrowResources(stream, allocator, Data.importArrayStream(allocator, stream));
     this.resources = resources;
-    this.schema = new SchemaState(resources.getActiveRoot());
+    DataConversionContext conversionContext =
+        SessionDataConversionContext.fromConnection(
+            ProtobufApis.coreDriverApi,
+            ((InternalSnowflakeConnection) statement.getConnection()).getHandle());
+    this.schema = new SchemaState(resources.getActiveRoot(), conversionContext);
     this.batchManager = new ArrowBatchManager(cursor, resources, schema);
   }
 
@@ -158,12 +167,12 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
-    throw new NotImplementedException();
+    return convertColumn(columnIndex, ArrowVectorConverter::toTime);
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
-    throw new NotImplementedException();
+    return convertColumn(columnIndex, (converter, idx) -> converter.toTimestamp(idx, null));
   }
 
   @Override
@@ -282,7 +291,11 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   public ResultSetMetaData getMetaData() throws SQLException {
     checkClosed();
     return new SnowflakeResultSetMetaDataImpl(
-        schema.getColumnNames(), schema.getColumnTypes(), queryId);
+        schema.getColumnNames(),
+        schema.getColumnTypes(),
+        schema.getColumnScales(),
+        schema.getTimeStringLength(),
+        queryId);
   }
 
   @Override
@@ -1167,8 +1180,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
       cursor.setWasNull(converter.isNull(rowIndex));
       return value;
     } catch (SFException e) {
-      throw new SQLException(
-          "Cannot convert column " + columnIndex + " using " + converterFunction, e);
+      throw new SnowflakeSQLException(e.getErrorCode(), e.getMessage());
     }
   }
 

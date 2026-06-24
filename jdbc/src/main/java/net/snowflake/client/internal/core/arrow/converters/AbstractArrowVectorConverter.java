@@ -55,7 +55,8 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
     if (isNull(rowIndex)) {
       return 0;
     }
-    throw new SFException(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.INT_STR);
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.INT_STR, "");
   }
 
   @Override

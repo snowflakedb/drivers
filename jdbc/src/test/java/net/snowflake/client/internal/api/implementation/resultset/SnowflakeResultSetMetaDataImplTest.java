@@ -21,4 +21,27 @@ class SnowflakeResultSetMetaDataImplTest {
         new SnowflakeResultSetMetaDataImpl(new String[] {"C"}, new int[] {Types.INTEGER}, null);
     assertNull(meta.getQueryID());
   }
+
+  @Test
+  void shouldReportTypeNameClassNameScaleAndStringLengthForTimeColumn() throws Exception {
+    SnowflakeResultSetMetaDataImpl meta =
+        new SnowflakeResultSetMetaDataImpl(
+            new String[] {"T"}, new int[] {Types.TIME}, new int[] {9}, 18, "qid-2");
+
+    assertEquals(Types.TIME, meta.getColumnType(1));
+    assertEquals("TIME", meta.getColumnTypeName(1));
+    assertEquals("java.sql.Time", meta.getColumnClassName(1));
+    assertEquals(9, meta.getScale(1));
+    // precision and display size both equal the formatted time-string length.
+    assertEquals(18, meta.getPrecision(1));
+    assertEquals(18, meta.getColumnDisplaySize(1));
+  }
+
+  @Test
+  void shouldDefaultToStringLengthEightForTimeColumnWithoutFormat() throws Exception {
+    SnowflakeResultSetMetaDataImpl meta =
+        new SnowflakeResultSetMetaDataImpl(new String[] {"T"}, new int[] {Types.TIME}, "qid-3");
+    assertEquals(8, meta.getPrecision(1));
+    assertEquals(8, meta.getColumnDisplaySize(1));
+  }
 }

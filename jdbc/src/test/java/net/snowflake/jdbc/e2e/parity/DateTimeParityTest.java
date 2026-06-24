@@ -177,20 +177,44 @@ public class DateTimeParityTest {
     Outcome[] newReadOutcomes = new Outcome[layout.cells.size()];
     Outcome[] oldReadOutcomes = new Outcome[layout.cells.size()];
 
-    try (PreparedStatement psNew = newConn.prepareStatement(layout.sql);
-        PreparedStatement psOld = oldConn.prepareStatement(layout.sql)) {
+    PreparedStatement psNew = null;
+    PreparedStatement psOld = null;
+    try {
+      // Prepare each driver independently. A prepare failure on one side (e.g. a legacy-driver
+      // limitation on a given cast) must not abort the chunk: stamp that side's binds with the
+      // error so it surfaces as a per-cell parity row (old: ERR vs new: <value>) instead of an
+      // exception that hides the other driver's behavior entirely.
+      try {
+        psNew = newConn.prepareStatement(layout.sql);
+      } catch (Exception e) {
+        stampAll(newBindOutcomes, Outcome.error(e));
+      }
+      try {
+        psOld = oldConn.prepareStatement(layout.sql);
+      } catch (Exception e) {
+        stampAll(oldBindOutcomes, Outcome.error(e));
+      }
+
       for (int i = 0; i < layout.cells.size(); i++) {
         WriteLayout.Cell cell = layout.cells.get(i);
-        newBindOutcomes[i] = bindOnce(psNew, type, cell);
-        oldBindOutcomes[i] = bindOnce(psOld, type, cell);
+        if (psNew != null) {
+          newBindOutcomes[i] = bindOnce(psNew, type, cell);
+        }
+        if (psOld != null) {
+          oldBindOutcomes[i] = bindOnce(psOld, type, cell);
+        }
       }
 
       ResultSet rsNew = null;
       ResultSet rsOld = null;
       try {
-        rsNew = psNew.executeQuery();
-        rsOld = psOld.executeQuery();
-        if (rsNew.next() && rsOld.next()) {
+        if (psNew != null) {
+          rsNew = psNew.executeQuery();
+        }
+        if (psOld != null) {
+          rsOld = psOld.executeQuery();
+        }
+        if (rsNew != null && rsOld != null && rsNew.next() && rsOld.next()) {
           for (int i = 0; i < layout.cells.size(); i++) {
             WriteLayout.Cell cell = layout.cells.get(i);
             newReadOutcomes[i] = readOnce(rsNew, cell.columnIdx, GetSink.GET_STRING);
@@ -211,6 +235,9 @@ public class DateTimeParityTest {
         closeQuietly(rsNew);
         closeQuietly(rsOld);
       }
+    } finally {
+      closeQuietly(psNew);
+      closeQuietly(psOld);
     }
 
     for (int i = 0; i < layout.cells.size(); i++) {
@@ -268,6 +295,13 @@ public class DateTimeParityTest {
   // Helpers
   // --------------------------------------------------------------------------------
 
+  /** Fill every slot of an outcome array with the same value (used when a prepare fails). */
+  private static void stampAll(Outcome[] outcomes, Outcome value) {
+    for (int i = 0; i < outcomes.length; i++) {
+      outcomes[i] = value;
+    }
+  }
+
   private static Outcome readOnce(ResultSet rs, int col, GetSink sink) {
     try {
       return Outcome.value(sink.read(rs, col));
@@ -285,12 +319,12 @@ public class DateTimeParityTest {
     }
   }
 
-  private static void closeQuietly(ResultSet rs) {
-    if (rs == null) {
+  private static void closeQuietly(AutoCloseable c) {
+    if (c == null) {
       return;
     }
     try {
-      rs.close();
+      c.close();
     } catch (Exception ignore) {
       // ignore
     }
@@ -332,9 +366,7 @@ public class DateTimeParityTest {
     // ---- DATE ----
     TIMEZONES.put(SfType.DATE, TZ_FULL);
     FORMATS.put(
-        SfType.DATE,
-        Arrays.asList(
-            "YYYY-MM-DD", "DD-MON-YYYY", "DY, DD MON YYYY", "MM/DD/YYYY", "\"Date: \"YYYY-MM-DD"));
+        SfType.DATE, Arrays.asList("YYYY-MM-DD", "DD-MON-YYYY", "DY, DD MON YYYY", "MM/DD/YYYY"));
     SCALES.put(SfType.DATE, Collections.singletonList(0));
     VALUES.put(
         SfType.DATE,

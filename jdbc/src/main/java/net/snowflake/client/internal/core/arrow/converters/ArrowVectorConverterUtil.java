@@ -19,6 +19,12 @@ public final class ArrowVectorConverterUtil {
     return null;
   }
 
+  /** Read the {@code scale} from an Arrow field's metadata, defaulting to 0 when absent. */
+  private static int getScaleFromFieldMetadata(ValueVector vector) {
+    String scaleStr = vector.getField().getMetadata().get("scale");
+    return scaleStr == null ? 0 : Integer.parseInt(scaleStr);
+  }
+
   /**
    * Given an arrow vector (a single column in a single record batch), return an arrow vector
    * converter. Converter is built on top of arrow vector, so arrow data can be converted back to
@@ -51,8 +57,7 @@ public final class ArrowVectorConverterUtil {
           return new DateConverter(vector, idx, context);
 
         case FIXED:
-          String scaleStr = vector.getField().getMetadata().get("scale");
-          int sfScale = Integer.parseInt(scaleStr);
+          int sfScale = getScaleFromFieldMetadata(vector);
           switch (type) {
             case TINYINT:
               if (sfScale == 0) {
@@ -84,6 +89,16 @@ public final class ArrowVectorConverterUtil {
 
         case REAL:
           return new DoubleToRealConverter(vector, idx, context);
+
+        case TIME:
+          int timeScale = getScaleFromFieldMetadata(vector);
+          switch (type) {
+            case INT:
+            case BIGINT:
+              return new TimeConverter(vector, idx, context, timeScale);
+            default:
+              throw new SnowflakeSQLException("Unsupported Arrow physical type for TIME: " + type);
+          }
 
         default:
           throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());
