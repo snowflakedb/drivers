@@ -240,7 +240,11 @@ pub async fn get_chunk_data(
 
     let body = response.bytes().await.context(CommunicationSnafu)?;
     let bytes = body.to_vec();
-    maybe_decompress_gzip(bytes)
+    // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
+    // body doesn't stall this runtime worker.
+    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes))
+        .await
+        .context(SpawnBlockingFailedSnafu)?
 }
 
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];

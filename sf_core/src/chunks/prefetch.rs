@@ -174,7 +174,11 @@ async fn get_chunk(
     ticket: MemoryTicket,
 ) -> Result<Chunk, ArrowError> {
     let bytes = downloader.download_chunk(data).await?;
-    let batches = parser.parse_chunk(bytes)?;
+    // Arrow IPC / JSON→Arrow decode is CPU-bound; run it on the blocking pool so
+    // it doesn't occupy this runtime worker (result chunks are routinely multi-MB).
+    let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
+        .await
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)))??;
     Ok(Chunk {
         batches: batches.into(),
         ticket,
