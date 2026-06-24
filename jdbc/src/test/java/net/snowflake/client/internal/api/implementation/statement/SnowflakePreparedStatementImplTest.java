@@ -202,6 +202,36 @@ public class SnowflakePreparedStatementImplTest {
         "Failed prepared execute should overwrite the prior id with the server-side one");
   }
 
+  @Test
+  void getParameterMetaDataFallsBackToEmptyOnIgnoredDescribeErrorAndCachesResult()
+      throws Exception {
+    SnowflakePreparedStatementImpl ps = createPreparedStatement("CREATE TABLE t (id INT)");
+    // Error code 7 (statement cannot be prepared) is ignored in describe mode.
+    when(mockCoreApi.statementPrepare(any())).thenThrow(driverExceptionWithVendorCode(7));
+
+    assertEquals(0, ps.getParameterMetaData().getParameterCount());
+    // Second call must reuse the cached empty metadata rather than re-issuing describe.
+    assertEquals(0, ps.getParameterMetaData().getParameterCount());
+    verify(mockCoreApi, times(1)).statementPrepare(any());
+  }
+
+  @Test
+  void getParameterMetaDataPropagatesNonIgnoredDescribeError() throws Exception {
+    SnowflakePreparedStatementImpl ps = createPreparedStatement("SELECT ?");
+    when(mockCoreApi.statementPrepare(any())).thenThrow(driverExceptionWithVendorCode(1003));
+
+    assertThrows(SnowflakeSQLException.class, ps::getParameterMetaData);
+  }
+
+  private static SnowflakeSQLException driverExceptionWithVendorCode(int vendorCode) {
+    DriverException error =
+        DriverException.newBuilder()
+            .setMessage("describe failure")
+            .setVendorCode(vendorCode)
+            .build();
+    return new SnowflakeSQLException(error, new RuntimeException("test cause"));
+  }
+
   private static SnowflakeSQLException driverExceptionWithQueryId(String queryId) {
     DriverException error =
         DriverException.newBuilder().setMessage("server-side failure").setQueryId(queryId).build();

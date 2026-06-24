@@ -1,7 +1,6 @@
 package net.snowflake.client.internal.core.arrow.cursor;
 
 import java.sql.SQLException;
-import java.sql.Types;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
@@ -10,6 +9,7 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverterUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -45,7 +45,7 @@ public final class SchemaState {
       Field field = fields.get(i);
       columnNames[i] = field.getName();
       SnowflakeType logicalType = ArrowVectorConverterUtil.getSnowflakeTypeFromFieldMetadata(field);
-      columnTypes[i] = mapLogicalTypeToSqlType(logicalType);
+      columnTypes[i] = SnowflakeUtil.toSqlType(logicalType);
       columnScales[i] = readScale(field);
     }
   }
@@ -127,33 +127,5 @@ public final class SchemaState {
     columnNames = null;
     columnTypes = null;
     columnScales = null;
-  }
-
-  private int mapLogicalTypeToSqlType(SnowflakeType logicalType) {
-    if (logicalType == null) {
-      return Types.OTHER;
-    }
-    // TODO: Other types will be handled later
-    switch (logicalType) {
-      case TEXT:
-      case CHAR:
-      case VARIANT:
-        return Types.VARCHAR;
-      case FIXED:
-      case DECFLOAT:
-        return Types.DECIMAL;
-      case REAL:
-        return Types.DOUBLE;
-      case BOOLEAN:
-        return Types.BOOLEAN;
-      case BINARY:
-        return Types.BINARY;
-      case DATE:
-        return Types.DATE;
-      case TIME:
-        return Types.TIME;
-      default:
-        return Types.OTHER;
-    }
   }
 }

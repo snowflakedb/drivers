@@ -550,6 +550,7 @@ message PrepareResult {
   string query = 6;
   optional string sql_state = 7;
   bool array_bind_supported = 8;
+  repeated ColumnMetadata binds = 9;
 }
 
 message StatementPrepareRequest {
