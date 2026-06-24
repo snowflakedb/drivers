@@ -163,20 +163,30 @@ def setupRust(platform) {
   sh """
     whoami
     env
-    if ! command -v rustup >/dev/null 2>&1; then
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    fi
-    # Put the rustup/cargo proxies on PATH unconditionally - not only on the
-    # fresh-install path above. Recent macOS agent AMIs ship rustup already
-    # installed (so the install branch is skipped) but do NOT add ~/.cargo/bin
-    # to PATH for the non-login shell `sh` runs in, so the `cargo --version`
-    # below failed with exit 127 (command not found). Sourcing the env file
-    # (with a PATH export fallback) is safe whether rustup was just installed
+    # Put any pre-existing rustup/cargo proxies on PATH BEFORE deciding whether to
+    # install. Recent macOS agent AMIs ship rustup already installed but do NOT add
+    # ~/.cargo/bin to PATH for the non-login shell `sh` runs in. Sourcing the env
+    # file (with a PATH export fallback) is safe whether rustup was just installed
     # or pre-existed.
     [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
     export PATH="\$HOME/.cargo/bin:\$PATH"
+
+    # Install Rust only if `cargo` is still unavailable. We gate on `cargo` - the
+    # proxy we actually invoke - rather than `rustup`: some pre-provisioned macOS
+    # AMIs ship the `rustup` binary (e.g. Homebrew's at /opt/homebrew/bin/rustup)
+    # WITHOUT the cargo/rustc proxy shims in ~/.cargo/bin, so `command -v rustup`
+    # succeeds yet `cargo --version` fails with exit 127. Our Docker images install
+    # cargo elsewhere on PATH (e.g. /usr/local/cargo/bin in the official rust image,
+    # /root/.cargo/bin in Dockerfile.rocky), which `command -v cargo` honors - so
+    # this check does not trigger a needless reinstall there.
+    if ! command -v cargo >/dev/null 2>&1; then
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      [ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
+      export PATH="\$HOME/.cargo/bin:\$PATH"
+    fi
+
     # IMPORTANT: this assumes `cargo` is the rustup proxy binary.
-    # Our earlier rustup check/install ensures that is true on clean agents.
+    # The check/install above ensures that is true on clean agents.
     # Running `cargo --version` in this repo causes rustup to read
     # rust-toolchain.toml and install/select the requested channel/profile/components.
     # Then we query the resolved active toolchain name and use it explicitly when
