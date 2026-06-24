@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
@@ -12,6 +14,7 @@ import java.math.BigDecimal;
 import java.net.URL;
 import java.sql.CallableStatement;
 import java.sql.Date;
+import java.sql.ParameterMetaData;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Time;
 import java.sql.Timestamp;
@@ -20,11 +23,16 @@ import java.util.Calendar;
 import java.util.HashMap;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.PrepareResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryResponse;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class SnowflakeCallableStatementImplTest {
@@ -945,6 +953,151 @@ class SnowflakeCallableStatementImplTest {
       assertThrows(
           SQLFeatureNotSupportedException.class,
           () -> cs.setBlob("p", new ByteArrayInputStream(new byte[] {1}), 1L));
+    }
+  }
+
+  // ── getParameterMetaData ──────────────────────────────────────────────────
+
+  @Nested
+  class GetParameterMetaData {
+
+    private void stubDescribe(int numberOfBinds) throws Exception {
+      // The server returns one metaDataOfBinds entry per bind; mirror that so the
+      // reported parameter count (derived from the bind list) matches.
+      ColumnMetadata[] binds = new ColumnMetadata[numberOfBinds];
+      for (int i = 0; i < numberOfBinds; i++) {
+        binds[i] = bind("text", true, 0, 0);
+      }
+      stubDescribe(numberOfBinds, binds);
+    }
+
+    private void stubDescribe(int numberOfBinds, ColumnMetadata... binds) throws Exception {
+      when(mockCoreApi.statementSetSqlQuery(any(), any()))
+          .thenReturn(StatementSetSqlQueryResponse.getDefaultInstance());
+      PrepareResult.Builder result = PrepareResult.newBuilder().setNumberOfBinds(numberOfBinds);
+      for (ColumnMetadata bind : binds) {
+        result.addBinds(bind);
+      }
+      when(mockCoreApi.statementPrepare(any()))
+          .thenReturn(StatementPrepareResponse.newBuilder().setResult(result.build()).build());
+    }
+
+    private ColumnMetadata bind(String type, boolean nullable, long precision, long scale) {
+      return ColumnMetadata.newBuilder()
+          .setType(type)
+          .setNullable(nullable)
+          .setPrecision(precision)
+          .setScale(scale)
+          .build();
+    }
+
+    @Test
+    void shouldReportBindCountFromDescribe() throws Exception {
+      stubDescribe(2);
+      try (CallableStatement cs = createCallableStatement("call add_nums(?,?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(2, metaData.getParameterCount());
+      }
+    }
+
+    @Test
+    void shouldReportZeroBindsForLiteralCall() throws Exception {
+      stubDescribe(0);
+      try (CallableStatement cs = createCallableStatement("call square_it(5)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(0, metaData.getParameterCount());
+      }
+    }
+
+    @Test
+    void shouldDescribeOnceAndCacheResult() throws Exception {
+      stubDescribe(2);
+      try (CallableStatement cs = createCallableStatement("CALL add_nums(?,?)")) {
+        assertEquals(2, cs.getParameterMetaData().getParameterCount());
+        assertEquals(2, cs.getParameterMetaData().getParameterCount());
+        assertEquals(2, cs.getParameterMetaData().getParameterCount());
+
+        verify(mockCoreApi, times(1)).statementPrepare(any());
+        verify(mockCoreApi, times(1)).statementSetSqlQuery(any(), any());
+      }
+    }
+
+    @Test
+    void shouldThrowFeatureNotSupportedForUnsupportedPerParameterMethods() throws Exception {
+      stubDescribe(1, bind("FIXED", true, 38, 0));
+      try (CallableStatement cs = createCallableStatement("call square_it(?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertThrows(SQLFeatureNotSupportedException.class, () -> metaData.isSigned(1));
+        assertThrows(
+            SQLFeatureNotSupportedException.class, () -> metaData.getParameterClassName(1));
+        assertThrows(SQLFeatureNotSupportedException.class, () -> metaData.getParameterMode(1));
+      }
+    }
+
+    @Test
+    void shouldReportTypeForFixedBind() throws Exception {
+      stubDescribe(1, bind("FIXED", false, 38, 2));
+      try (CallableStatement cs = createCallableStatement("call square_it(?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(Types.OTHER, metaData.getParameterType(1));
+        assertEquals("FIXED", metaData.getParameterTypeName(1));
+        assertEquals(38, metaData.getPrecision(1));
+        assertEquals(2, metaData.getScale(1));
+        assertEquals(ParameterMetaData.parameterNoNulls, metaData.isNullable(1));
+      }
+    }
+
+    @Test
+    void shouldReportTypeForTextBind() throws Exception {
+      stubDescribe(1, bind("TEXT", true, 0, 0));
+      try (CallableStatement cs = createCallableStatement("call echo(?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(Types.VARCHAR, metaData.getParameterType(1));
+        assertEquals("TEXT", metaData.getParameterTypeName(1));
+        assertEquals(ParameterMetaData.parameterNullable, metaData.isNullable(1));
+      }
+    }
+
+    @Test
+    void shouldMapEachBindIndependently() throws Exception {
+      stubDescribe(2, bind("FIXED", false, 10, 0), bind("BOOLEAN", true, 0, 0));
+      try (CallableStatement cs = createCallableStatement("call add_nums(?,?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(Types.OTHER, metaData.getParameterType(1));
+        assertEquals(Types.BOOLEAN, metaData.getParameterType(2));
+      }
+    }
+
+    @Test
+    void shouldMapUnknownTypeToOther() throws Exception {
+      stubDescribe(1, bind("SOME_FUTURE_TYPE", true, 0, 0));
+      try (CallableStatement cs = createCallableStatement("call f(?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(Types.OTHER, metaData.getParameterType(1));
+      }
+    }
+
+    @Test
+    void shouldMapLowercaseServerTypeNamesCaseInsensitively() throws Exception {
+      // The server reports bind type names in lowercase (verified against a live
+      // describe-only response: e.g. {"type": "text"}). The SQL-type mapping is
+      // case-insensitive, but getParameterTypeName returns the value verbatim.
+      stubDescribe(1, bind("text", true, 0, 0));
+      try (CallableStatement cs = createCallableStatement("call echo(?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertEquals(Types.VARCHAR, metaData.getParameterType(1));
+        assertEquals("text", metaData.getParameterTypeName(1));
+      }
+    }
+
+    @Test
+    void shouldThrowForOutOfRangeIndex() throws Exception {
+      stubDescribe(1, bind("FIXED", true, 38, 0));
+      try (CallableStatement cs = createCallableStatement("call square_it(?)")) {
+        ParameterMetaData metaData = cs.getParameterMetaData();
+        assertThrows(java.sql.SQLException.class, () -> metaData.getParameterType(2));
+        assertThrows(java.sql.SQLException.class, () -> metaData.getParameterType(0));
+      }
     }
   }
 }

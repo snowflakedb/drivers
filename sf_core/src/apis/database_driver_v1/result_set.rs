@@ -6,7 +6,7 @@ use super::global_state::{DatabaseDriverV1, WrapperPresets};
 use super::query::build_reader_from_rowset_data;
 use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::query_response::{Data, RowsetData, Stats};
+use crate::rest::snowflake::query_response::{Data, RowType, RowsetData, Stats};
 use crate::rest::snowflake::snowflake_get_query_result;
 use arrow::array::RecordBatchReader;
 use snafu::{OptionExt, ResultExt};
@@ -36,6 +36,7 @@ pub struct ResultSetDescriptor {
     pub stats: Option<Stats>,
     pub number_of_binds: i32,
     pub array_bind_supported: bool,
+    pub binds: Vec<ColumnMetadata>,
 }
 
 /// A result set handle paired with its descriptor.
@@ -217,26 +218,13 @@ pub(super) fn response_to_descriptor(
     let columns = data
         .row_type
         .as_ref()
-        .map(|row_types| {
-            row_types
-                .iter()
-                .map(|rt| ColumnMetadata {
-                    name: rt.name.clone(),
-                    r#type: rt
-                        .ext_type_name
-                        .as_ref()
-                        .filter(|s| !s.is_empty())
-                        .cloned()
-                        .unwrap_or_else(|| rt.type_.clone()),
-                    precision: rt.precision.map(|v| v as i64),
-                    scale: rt.scale.map(|v| v as i64),
-                    length: rt.length.map(|v| v as i64),
-                    byte_length: rt.byte_length.map(|v| v as i64),
-                    nullable: rt.nullable,
-                })
-                .collect()
-        })
+        .map(|row_types| row_types_to_columns(row_types))
         .unwrap_or_else(|| put_get_columns(data.command.as_deref(), wrapper_presets));
+    let binds = data
+        .meta_data_of_binds
+        .as_ref()
+        .map(|row_types| row_types_to_columns(row_types))
+        .unwrap_or_default();
 
     let statement_type_id = data.statement_type_id.or(match data.command.as_deref() {
         Some("UPLOAD") => Some(STATEMENT_TYPE_ID_PUT_FILES),
@@ -253,7 +241,29 @@ pub(super) fn response_to_descriptor(
         stats: data.stats.clone(),
         number_of_binds: data.number_of_binds.unwrap_or(0),
         array_bind_supported: data.array_bind_supported.unwrap_or(false),
+        binds,
     }
+}
+
+/// Convert Snowflake `rowType`/`metaDataOfBinds` entries into [`ColumnMetadata`].
+fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
+    row_types
+        .iter()
+        .map(|rt| ColumnMetadata {
+            name: rt.name.clone(),
+            r#type: rt
+                .ext_type_name
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| rt.type_.clone()),
+            precision: rt.precision.map(|v| v as i64),
+            scale: rt.scale.map(|v| v as i64),
+            length: rt.length.map(|v| v as i64),
+            byte_length: rt.byte_length.map(|v| v as i64),
+            nullable: rt.nullable,
+        })
+        .collect()
 }
 
 /// Return client-synthesized column metadata for PUT/GET commands,

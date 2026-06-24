@@ -22,11 +22,16 @@ import java.sql.SQLXML;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
@@ -34,6 +39,7 @@ import net.snowflake.client.internal.core.arrow.converters.SessionDataConversion
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.util.HexUtil;
 
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
@@ -45,6 +51,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private final SqlPlaceholderMetadata placeholderMetadata;
   private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
   private final PreparedBatch batch = new PreparedBatch();
+
+  /** Cached metadata retrieved from server, populated lazily on the first metadata request. */
+  private ParameterMetaData parameterMetaData;
 
   /** Lazily resolved session conversion context, used for TIME binding semantics. */
   private DataConversionContext conversionContext;
@@ -437,13 +446,23 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ParameterMetaData getParameterMetaData() throws SQLException {
-    // TODO(SNOW-2881699): Implement parameter metadata for parity with the reference snowflake-jdbc
-    // driver. The reference driver backs ParameterMetaData with the server-side describe response
-    // (SFStatementMetaData#getNumberOfBinds plus per-bind type info). This driver has no describe
-    // round-trip in the core API yet, so getParameterMetaData() is unsupported for now. Adding it
-    // requires a core describe capability before the parameter count and per-parameter type methods
-    // can be answered correctly.
-    throw new SQLFeatureNotSupportedException("getParameterMetaData not supported");
+    checkClosed();
+    if (parameterMetaData == null) {
+      try {
+        coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+        StatementPrepareResponse response = coreDriverApi.statementPrepare(statementHandle);
+        parameterMetaData =
+            SnowflakeParameterMetadataImpl.from(response.getResult().getBindsList());
+      } catch (SnowflakeSQLException e) {
+        // Mirror snowflake-jdbc: some describe failures (DDL, unset bind variables, etc.) are
+        // expected and fall back to empty metadata instead of re-issuing describe on every call.
+        if (!ERROR_CODES_IGNORED_IN_DESCRIBE_MODE.contains(e.getErrorCode())) {
+          throw e;
+        }
+        parameterMetaData = SnowflakeParameterMetadataImpl.from(Collections.emptyList());
+      }
+    }
+    return parameterMetaData;
   }
 
   @Override
@@ -637,4 +656,29 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   public <T> void setMap(int parameterIndex, Map<String, T> map, int type) throws SQLException {
     throw new SQLFeatureNotSupportedException("setMap not supported");
   }
+
+  // =========================================================================
+  // Constants ported from snowflake-jdbc
+  // =========================================================================
+
+  /** Error code returned when describing a statement that is binding table name */
+  private static final int ERROR_CODE_TABLE_BIND_VARIABLE_NOT_SET = 2128;
+
+  /** Error code when preparing statement with binding object names */
+  private static final int ERROR_CODE_OBJECT_BIND_NOT_SET = 2129;
+
+  /** Error code returned when describing a ddl command */
+  private static final int ERROR_CODE_STATEMENT_CANNOT_BE_PREPARED = 7;
+
+  /** snow-44393 Workaround for compiler cannot prepare to_timestamp(?, 3) */
+  private static final int ERROR_CODE_FORMAT_ARGUMENT_NOT_STRING = 1026;
+
+  /** Error codes that should not lead to an exception in describe mode. */
+  private static final Set<Integer> ERROR_CODES_IGNORED_IN_DESCRIBE_MODE =
+      new HashSet<>(
+          Arrays.asList(
+              ERROR_CODE_TABLE_BIND_VARIABLE_NOT_SET,
+              ERROR_CODE_STATEMENT_CANNOT_BE_PREPARED,
+              ERROR_CODE_OBJECT_BIND_NOT_SET,
+              ERROR_CODE_FORMAT_ARGUMENT_NOT_STRING));
 }
