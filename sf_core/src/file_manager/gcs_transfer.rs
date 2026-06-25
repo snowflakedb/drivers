@@ -564,15 +564,14 @@ async fn upload_to_gcs(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError> {
-    // Take the source out of `prepared` once; `body_for` re-opens it per retry
-    // (a `Path` re-open or an O(1) `Bytes` refcount clone). The CSE params (cloud
-    // metadata + encryptor) are both present or both absent — unbundle them once.
-    let source = prepared.data;
+    // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
+    // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
+    // gzip-tempfile guard inside `prepared.source` outlives the upload + every
+    // retry. The CSE params (cloud metadata + encryptor) are both present or
+    // both absent — unbundle them once.
+    let source = prepared.source.byte_source();
     let digest = prepared.digest;
-    let (encryption_metadata, encryptor) = match prepared.cse {
-        Some(c) => (Some(c.metadata), Some(c.encryptor)),
-        None => (None, None),
-    };
+    let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
 
     let encryption_data_str = encryption_metadata
         .as_ref()
@@ -1389,9 +1388,7 @@ pub enum GcsDownloadError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
-    use crate::file_manager::types::{
-        ByteSource, RefreshFuture, StageInfoCache, StageInfoSnapshot,
-    };
+    use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
@@ -2203,7 +2200,9 @@ mod tests {
     /// irrelevant — the skip branch never gets to PUT them.
     fn make_prepared_for_skip(digest: &str) -> PreparedUpload {
         PreparedUpload {
-            data: ByteSource::Bytes(Bytes::from_static(b"payload-bytes")),
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(
+                b"payload-bytes",
+            )),
             digest: digest.to_string(),
             cse: None,
         }
@@ -2230,7 +2229,7 @@ mod tests {
         let (encryptor, metadata) =
             super::super::encryption::build_encryptor(&material, data.len() as i64).unwrap();
         PreparedUpload {
-            data: ByteSource::Bytes(data),
+            source: crate::file_manager::types::PreparedSource::Bytes(data),
             digest: digest.to_string(),
             cse: Some(crate::file_manager::types::CseParams {
                 metadata,
@@ -2496,7 +2495,7 @@ mod tests {
 
         let stage = make_stage_for_mock(&server.uri());
         let prepared = PreparedUpload {
-            data: ByteSource::Bytes(Bytes::new()),
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::new()),
             digest: EMPTY_SHA256_B64.to_string(),
             cse: None,
         };

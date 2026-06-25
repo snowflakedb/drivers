@@ -55,6 +55,7 @@ http = "1"
 http-body = "1"
 http-body-util = "0.1"
 pin-project-lite = "0.2"
+tempfile = "3.21.0"
 infer = "0.19.0"
 
 # Proto
@@ -117,7 +118,6 @@ libc = "0.2"
 sf_core = { path = ".", default-features = false, features = ["test-utils"] }
 tokio = { version = "1.47.1", features = ["fs", "test-util"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
-tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"
 brotli = "8.0.2"
