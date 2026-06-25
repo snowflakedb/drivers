@@ -552,6 +552,57 @@ pub async fn download_files(
     Ok(results)
 }
 
+/// GET path guard layer 1 (CWE-73, SNOW-3663590; mirrors JDBC
+/// `extractSafeDestFileName`): reduce the server-controlled `src_location` to a
+/// single safe basename, rejecting empty / `.` / `..` / NUL / separators / `:`.
+/// Replaces the old `file_name().unwrap_or(raw)` fallback that leaked the raw
+/// (possibly absolute) tainted string into `Path::join`.
+fn safe_download_file_name(src_location: &str) -> Result<&str, FileManagerError> {
+    let name = match src_location.rfind(['/', '\\']) {
+        Some(idx) => &src_location[idx + 1..],
+        None => src_location,
+    };
+
+    let rejected =
+        name.is_empty() || name == "." || name == ".." || name.contains(['\0', '/', '\\', ':']);
+    if rejected {
+        return DownloadPathRejectedSnafu {
+            src_location: src_location.to_string(),
+            local_location: String::new(),
+        }
+        .fail();
+    }
+    Ok(name)
+}
+
+/// GET path guard layer 2 (mirrors JDBC `assertWithinDirectory`): join the
+/// safe basename onto the canonicalized `local_location` and confirm the result
+/// stays inside it before any file is created. Canonicalizing also asserts the
+/// dir exists — behavior-preserving, since `File::create` never made parents.
+/// The containment check is defense-in-depth against future layer-1 changes and
+/// catches a leaf that already exists as a symlink escaping `base_dir`.
+fn resolve_validated_output_path(
+    local_location: &str,
+    src_location: &str,
+) -> Result<PathBuf, FileManagerError> {
+    let filename = safe_download_file_name(src_location)?;
+    let base_dir = std::fs::canonicalize(local_location).context(IoSnafu)?;
+    let output_path = base_dir.join(filename);
+    // Layer 1 guarantees a separator-free basename, so the lexical join can only
+    // be a direct child. But the leaf may already exist as a symlink pointing
+    // outside `base_dir` (JDBC canonicalizes the full dest to catch this); if so,
+    // resolve and re-check. A nonexistent leaf is the normal case — no escape.
+    let resolved = std::fs::canonicalize(&output_path).unwrap_or_else(|_| output_path.clone());
+    if !resolved.starts_with(&base_dir) {
+        return DownloadPathRejectedSnafu {
+            src_location: src_location.to_string(),
+            local_location: local_location.to_string(),
+        }
+        .fail();
+    }
+    Ok(output_path)
+}
+
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
 ///
 /// `per_file_index` is the file's index inside the GET batch — i.e. its
@@ -573,22 +624,30 @@ pub async fn download_single_file(
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
-    let filename = Path::new(&data.src_location)
-        .file_name()
-        .unwrap_or(std::ffi::OsStr::new(&data.src_location));
-    let output_path = Path::new(&data.local_location).join(filename);
-    // Atomic write via a sibling `.part` temp file: plaintext is decrypted (or
-    // copied, on the SSE branch) into the temp path, the digest is verified at
-    // finalize time, and only on success do we `rename` to `output_path`. On
-    // failure we `remove_file` the temp; the destination is never created, so
-    // concurrent FS observers (file watchers, antivirus, scripts) see no
-    // partial plaintext at the user-visible path. This restores parity with
-    // the pre-streaming behaviour where digest verification preceded any
-    // write to disk.
-    let partial_path = {
-        let mut s = output_path.as_os_str().to_owned();
-        s.push(".part");
-        PathBuf::from(s)
+    // `resolve_validated_output_path` runs blocking `canonicalize` syscalls;
+    // keep them off the async executor like every other blocking FS op below.
+    let (output_path, partial_path) = {
+        let local_location = data.local_location.clone();
+        let src_location = data.src_location.clone();
+        tokio::task::spawn_blocking(move || -> Result<(PathBuf, PathBuf), FileManagerError> {
+            let output_path = resolve_validated_output_path(&local_location, &src_location)?;
+            // Atomic write via a sibling `.part` temp file: plaintext is decrypted (or
+            // copied, on the SSE branch) into the temp path, the digest is verified at
+            // finalize time, and only on success do we `rename` to `output_path`. On
+            // failure we `remove_file` the temp; the destination is never created, so
+            // concurrent FS observers (file watchers, antivirus, scripts) see no
+            // partial plaintext at the user-visible path. This restores parity with
+            // the pre-streaming behaviour where digest verification preceded any
+            // write to disk.
+            let partial_path = {
+                let mut s = output_path.as_os_str().to_owned();
+                s.push(".part");
+                PathBuf::from(s)
+            };
+            Ok((output_path, partial_path))
+        })
+        .await
+        .context(BlockingTaskSnafu)??
     };
 
     // GCS and Azure use the streaming path: no intermediate Vec<u8> for ciphertext.
@@ -1015,6 +1074,19 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// A GET download was refused because the resolved output path is not a
+    /// safe, contained child of the target directory (CWE-73, SNOW-3663590).
+    /// Kept distinct from `Io` so the security refusal is discriminable.
+    #[snafu(display(
+        "Refusing to write GET download outside the target directory \
+         (src_location={src_location:?}, local_location={local_location:?})"
+    ))]
+    DownloadPathRejected {
+        src_location: String,
+        local_location: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Blocking task failed: {source}"))]
     BlockingTask {
         source: tokio::task::JoinError,
@@ -1252,6 +1324,132 @@ mod tests {
                 "Python flavor must report n={n} when cloud == output",
             );
         }
+    }
+
+    // CWE-73 (SNOW-3663590) — GET download path guard. Layer 1 strips to a
+    // safe basename; layer 2 confirms containment in the target dir. Mirrors
+    // JDBC's `DownloadPathValidatorTest`.
+
+    #[test]
+    fn safe_download_file_name_plain_basename_passes() {
+        assert_eq!(safe_download_file_name("file.csv").unwrap(), "file.csv");
+    }
+
+    #[test]
+    fn safe_download_file_name_strips_forward_slash_dirs() {
+        assert_eq!(safe_download_file_name("a/b/c.csv").unwrap(), "c.csv");
+    }
+
+    #[test]
+    fn safe_download_file_name_strips_backslash_dirs() {
+        assert_eq!(safe_download_file_name(r"a\b\c.csv").unwrap(), "c.csv");
+    }
+
+    #[test]
+    fn safe_download_file_name_strips_absolute_path_to_basename() {
+        // Pre-fix this leaked the raw path into `Path::join`; now only the
+        // basename survives, so it can never escape `local_location`.
+        assert_eq!(safe_download_file_name("/etc/passwd").unwrap(), "passwd");
+    }
+
+    #[test]
+    fn safe_download_file_name_rejects_traversal_and_self_refs() {
+        for bad in ["..", ".", "a/..", "a/.", "dir/"] {
+            assert!(
+                matches!(
+                    safe_download_file_name(bad),
+                    Err(FileManagerError::DownloadPathRejected { .. })
+                ),
+                "expected {bad:?} to be rejected",
+            );
+        }
+    }
+
+    #[test]
+    fn safe_download_file_name_rejects_empty_and_bare_separators() {
+        for bad in ["", "/", r"\"] {
+            assert!(
+                matches!(
+                    safe_download_file_name(bad),
+                    Err(FileManagerError::DownloadPathRejected { .. })
+                ),
+                "expected {bad:?} to be rejected",
+            );
+        }
+    }
+
+    #[test]
+    fn safe_download_file_name_rejects_nul_and_colon() {
+        // `:` guards Windows drive-letter / alternate-data-stream forms.
+        for bad in ["evil\0.csv", "C:evil", "stream:ads"] {
+            assert!(
+                matches!(
+                    safe_download_file_name(bad),
+                    Err(FileManagerError::DownloadPathRejected { .. })
+                ),
+                "expected {bad:?} to be rejected",
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_validated_output_path_safe_name_stays_in_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let out = resolve_validated_output_path(dir.path().to_str().unwrap(), "data.csv").unwrap();
+        assert_eq!(out, base.join("data.csv"));
+        assert!(out.starts_with(&base));
+    }
+
+    #[test]
+    fn resolve_validated_output_path_absolute_src_cannot_escape() {
+        // Server returns an absolute `src_location`; output must stay in the dir.
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let out = resolve_validated_output_path(dir.path().to_str().unwrap(), "/etc/cron.d/evil")
+            .unwrap();
+        assert_eq!(out, base.join("evil"));
+        assert!(
+            out.starts_with(&base),
+            "absolute src_location must not escape the target dir: {out:?}",
+        );
+    }
+
+    #[test]
+    fn resolve_validated_output_path_rejects_traversal_src() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            resolve_validated_output_path(dir.path().to_str().unwrap(), "subdir/.."),
+            Err(FileManagerError::DownloadPathRejected { .. })
+        ));
+    }
+
+    #[test]
+    fn resolve_validated_output_path_missing_dir_is_io_error() {
+        // Nonexistent dir → `Io`, matching the pre-fix `File::create` failure.
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        assert!(matches!(
+            resolve_validated_output_path(missing.to_str().unwrap(), "data.csv"),
+            Err(FileManagerError::Io { .. })
+        ));
+    }
+
+    // Mirrors JDBC `symlinkEscapeIsRejected`: a leaf that already exists as a
+    // symlink out of the target dir must be refused, not silently followed.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_validated_output_path_rejects_symlink_leaf_escape() {
+        let base = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("evil.bin");
+        std::fs::write(&target, b"x").unwrap();
+        let link = base.path().join("data.csv");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(matches!(
+            resolve_validated_output_path(base.path().to_str().unwrap(), "data.csv"),
+            Err(FileManagerError::DownloadPathRejected { .. })
+        ));
     }
 
     // BD#6 — when SOURCE_COMPRESSION=AUTO_DETECT detects an unsupported
