@@ -256,15 +256,14 @@ async fn upload_to_azure(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
-    // Take the source out of `prepared` once; `body_for` re-opens it per retry
-    // (a `Path` re-open or an O(1) `Bytes` refcount clone). The CSE params (cloud
-    // metadata + encryptor) are both present or both absent — unbundle them once.
-    let source = prepared.data;
+    // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
+    // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
+    // gzip-tempfile guard inside `prepared.source` outlives the upload + every
+    // retry. The CSE params (cloud metadata + encryptor) are both present or
+    // both absent — unbundle them once.
+    let source = prepared.source.byte_source();
     let digest = prepared.digest;
-    let (encryption_metadata, encryptor) = match prepared.cse {
-        Some(c) => (Some(c.metadata), Some(c.encryptor)),
-        None => (None, None),
-    };
+    let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
 
     let encryption_data_str = encryption_metadata
         .as_ref()
@@ -839,7 +838,6 @@ pub enum AzureDownloadError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
-    use crate::file_manager::types::ByteSource;
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
@@ -1167,7 +1165,7 @@ mod tests {
 
     fn prepared_with_digest(digest: &str) -> PreparedUpload {
         PreparedUpload {
-            data: ByteSource::Bytes(b"hello-azure".to_vec().into()),
+            source: ByteSource::Bytes(b"hello-azure".to_vec().into()).into(),
             digest: digest.to_string(),
             cse: None,
         }
@@ -1267,7 +1265,7 @@ mod tests {
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
             PreparedUpload {
-                data: source,
+                source: source.into(),
                 digest: real_digest,
                 cse: None,
             },
@@ -1484,7 +1482,7 @@ mod tests {
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
             PreparedUpload {
-                data: source,
+                source: source.into(),
                 digest: real_digest,
                 cse: None,
             },
@@ -1540,7 +1538,7 @@ mod tests {
         // PUT and the network failed (correct fail-open behaviour).
         let result = upload_to_azure_or_skip(
             PreparedUpload {
-                data: source,
+                source: source.into(),
                 digest: real_digest,
                 cse: None,
             },
@@ -1581,7 +1579,9 @@ mod tests {
         });
 
         let prepared = PreparedUpload {
-            data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(
+                b"hello world",
+            )),
             digest: "0".repeat(64),
             cse: None,
         };

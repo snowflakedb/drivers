@@ -361,16 +361,15 @@ async fn put_object(
     s3_key: &str,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
     // CSE params (cloud metadata + encryptor) are both present or both absent.
-    let (encryption_metadata, encryptor) = match prepared.cse {
-        Some(c) => (Some(c.metadata), Some(c.encryptor)),
-        None => (None, None),
-    };
+    let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
 
     // Ciphertext length for CSE (analytic), so `content_length` can be set
     // before the streaming body is read.
     let content_length = encryptor.as_ref().map(|e| e.cipher_len());
 
-    let body = match (prepared.data, encryptor) {
+    // `prepared` is held until this fn returns, so a gzip-tempfile guard inside
+    // `prepared.source` outlives the SDK send (and its internal retries).
+    let body = match (prepared.source.byte_source(), encryptor) {
         // CSE: lazy AES-CBC encrypting stream, retryable so SDK-internal retries
         // can replay the body (re-encryption is deterministic).
         (source, Some(encryptor)) => encrypting_byte_stream(source, encryptor),
@@ -1390,7 +1389,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn put_object_sends_unsigned_payload_for_unencrypted_upload() {
         assert_put_sends_unsigned_payload(PreparedUpload {
-            data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(
+                b"hello world",
+            )),
             digest: "0".repeat(64),
             cse: None,
         })
@@ -1470,7 +1471,7 @@ mod tests {
 
         upload_to_s3_or_skip(
             PreparedUpload {
-                data: ByteSource::Bytes(plaintext.into()),
+                source: crate::file_manager::types::PreparedSource::Bytes(plaintext.into()),
                 digest: "0".repeat(64),
                 cse: Some(crate::file_manager::types::CseParams {
                     metadata: encryption_metadata,

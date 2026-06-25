@@ -7,6 +7,7 @@ use snafu::{Location, Snafu};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use tempfile::TempPath;
 
 use super::encryption::Encryptor;
 
@@ -294,13 +295,16 @@ pub struct EncryptionMaterial {
 
 /// Prepared file data ready for cloud upload.
 ///
-/// `data` is always the **pre-encryption source** (the compressed bytes, the
+/// `source` is always the **pre-encryption source** (the gzip tempfile, the
 /// original file, or an in-memory buffer) — never ciphertext. For client-side
 /// encryption the body is encrypted lazily as the cloud SDK pulls it (see
-/// `encryptor`); for SSE the source is uploaded as-is.
+/// `CseParams`); for SSE the source is uploaded as-is.
 #[derive(Debug, Clone)]
 pub struct PreparedUpload {
-    pub data: ByteSource,
+    /// The upload body source. A [`PreparedSource::GzipTempfile`] carries its
+    /// own unlink guard, so the source can't be detached from — or outlive
+    /// without — the tempfile it reads.
+    pub(super) source: PreparedSource,
     /// SHA-256 digest of the pre-encryption source (the `sfc-digest`), always
     /// present for integrity verification and computed identically for CSE and
     /// SSE — matching the JDBC/ODBC convention.
@@ -312,11 +316,56 @@ pub struct PreparedUpload {
     pub(super) cse: Option<CseParams>,
 }
 
+/// The body source for an upload, bundled with any temp-file guard the body
+/// depends on. Replaces a bare `ByteSource` plus a parallel `Arc<TempPath>`
+/// keep-alive: the guard can no longer be dropped (or forgotten) separately
+/// from the path it protects, so a gzip-tempfile path with no live guard —
+/// which would unlink the file mid-upload — is unrepresentable.
+#[derive(Debug, Clone)]
+pub(super) enum PreparedSource {
+    /// In-memory buffer (an `auto_compress=false` in-memory payload, or test bytes).
+    Bytes(Bytes),
+    /// A user-provided file on disk; its lifetime is the caller's.
+    Path(PathBuf),
+    /// The streaming-gzip output tempfile. `_guard` unlinks it when the last
+    /// clone drops, so it travels with the `path` that points at it; held as
+    /// `Arc` so retry-clones of `PreparedUpload` share ownership. Never read —
+    /// its sole job is the unlink-on-drop.
+    GzipTempfile {
+        path: PathBuf,
+        _guard: Arc<TempPath>,
+    },
+}
+
+impl PreparedSource {
+    /// The wire-level [`ByteSource`] to stream as the upload body. The gzip
+    /// tempfile is read through its path like any other file source; the guard
+    /// stays held by `self`, keeping the file alive across retries.
+    pub(super) fn byte_source(&self) -> ByteSource {
+        match self {
+            PreparedSource::Bytes(b) => ByteSource::Bytes(b.clone()),
+            PreparedSource::Path(p) | PreparedSource::GzipTempfile { path: p, .. } => {
+                ByteSource::Path(p.clone())
+            }
+        }
+    }
+}
+
+impl From<ByteSource> for PreparedSource {
+    /// For a source with no temp-file guard (a user file or an in-memory buffer).
+    fn from(source: ByteSource) -> Self {
+        match source {
+            ByteSource::Bytes(b) => PreparedSource::Bytes(b),
+            ByteSource::Path(p) => PreparedSource::Path(p),
+        }
+    }
+}
+
 /// The two client-side-encryption artifacts an upload needs, always produced
 /// together by [`super::encryption::build_encryptor`]:
 /// - `metadata` — the encrypted file key / IV / material description the cloud
 ///   stores as object metadata headers.
-/// - `encryptor` — the lazy AES-CBC encryptor applied to `data` while building
+/// - `encryptor` — the lazy AES-CBC encryptor applied to `source` while building
 ///   the upload body. Carries the ciphertext length so `Content-Length` can be
 ///   set before the body streams; AES-CBC is deterministic, so each retry
 ///   re-encrypts to byte-identical ciphertext.
@@ -334,7 +383,7 @@ impl PreparedUpload {
     #[cfg(feature = "test-utils")]
     pub fn new_unencrypted_for_test(data: ByteSource, digest: String) -> Self {
         Self {
-            data,
+            source: data.into(),
             digest,
             cse: None,
         }
@@ -350,7 +399,7 @@ impl PreparedUpload {
         encryptor: Encryptor,
     ) -> Self {
         Self {
-            data,
+            source: data.into(),
             digest,
             cse: Some(CseParams {
                 metadata: encryption_metadata,

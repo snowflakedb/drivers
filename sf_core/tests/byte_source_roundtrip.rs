@@ -559,3 +559,51 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
 
     server.await.unwrap();
 }
+
+// Auto-compress + CSE preprocessing flow: the streaming gzip tempfile is the
+// lazy encryptor's source (no ciphertext tempfile). Decrypt then decompress
+// must reproduce the original; the gzip tempfile must unlink once its guard
+// drops.
+#[test]
+fn auto_compress_then_encrypt_decrypt_decompress_roundtrip() {
+    use flate2::read::GzDecoder;
+
+    let plaintext: Vec<u8> = (0..256 * 1024).map(|i| (i % 251) as u8).collect();
+    let material = test_encryption_material();
+
+    let (gzip_path, gzip_guard) = sf_core::file_manager::internal::compress_to_tempfile(
+        &ByteSource::Bytes(plaintext.clone().into()),
+    )
+    .expect("compress to tempfile");
+    assert!(
+        gzip_path.exists(),
+        "gzip tempfile must exist before encrypt"
+    );
+
+    // Encrypt the gzip tempfile lazily (the production CSE source) — no
+    // ciphertext file is produced.
+    let (ciphertext, enc_meta, digest) =
+        encrypt_source(ByteSource::Path(gzip_path.clone()), &material);
+
+    let mut compressed_back = Vec::<u8>::new();
+    sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
+        ciphertext.as_slice(),
+        &enc_meta,
+        &digest,
+        &material,
+        &mut compressed_back,
+    )
+    .expect("decrypt ciphertext");
+
+    let mut decompressed = Vec::new();
+    GzDecoder::new(compressed_back.as_slice())
+        .read_to_end(&mut decompressed)
+        .expect("decompress decrypted output");
+    assert_eq!(decompressed, plaintext, "round-trip must match input");
+
+    drop(gzip_guard);
+    assert!(
+        !gzip_path.exists(),
+        "gzip tempfile must be unlinked once its guard drops",
+    );
+}

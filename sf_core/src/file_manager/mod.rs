@@ -16,6 +16,7 @@ pub mod internal {
         decrypt_ciphertext_to_writer,
     };
     pub use super::gcs_transfer::download_from_gcs_streaming;
+    pub use crate::compression::compress_to_tempfile;
 
     /// Zero-backoff variant of the production Azure retry policy, for tests.
     /// Derives from `azure_retry_policy` (keeping the real `max_attempts` /
@@ -69,7 +70,7 @@ pub use gcs_transfer::{
 };
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
-use crate::compression::{CompressionError, compress_data};
+use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use azure_transfer::{
@@ -86,6 +87,7 @@ use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Message string emitted in the PUT result's `message` column when the
 /// upload outcome is `Skipped` under `PutGetResultsetFlavor::Odbc`. Mirrors
@@ -358,20 +360,26 @@ fn preprocess_file_before_upload(
     );
     let mut target = data.filename.clone();
 
-    let (upload_source, target_compression) =
+    let (upload_source, target_compression, gzip_tempfile) =
         if data.auto_compress && source_compression == CompressionType::None {
-            let bytes = source.into_bytes().context(IoSnafu)?;
-            let compressed = compress_data(bytes).context(CompressionSnafu)?;
+            // Stream the gzip output to a tempfile instead of buffering it in
+            // heap; that tempfile then becomes the upload source (read lazily
+            // during the body stream), so it must outlive the upload.
+            let (path, temp_path) = compress_to_tempfile(&source).context(CompressionSnafu)?;
             target = format!("{}.gz", data.filename);
-            (ByteSource::Bytes(compressed.into()), CompressionType::Gzip)
+            (
+                ByteSource::Path(path),
+                CompressionType::Gzip,
+                Some(temp_path),
+            )
         } else {
-            (source, source_compression.clone())
+            (source, source_compression.clone(), None)
         };
 
-    // The upload source after optional auto-compression: compressed bytes,
-    // the original file, or in-memory bytes. Encryption (CSE) is applied
-    // lazily while building the cloud body, so the source is what we measure
-    // and hash here; ciphertext is never materialized.
+    // The upload source after optional auto-compression: the gzip tempfile, the
+    // original file, or in-memory bytes. Encryption (CSE) is applied lazily
+    // while building the cloud body, so the source is what we measure and hash
+    // here; ciphertext is never materialized.
     let source_len = match &upload_source {
         ByteSource::Bytes(b) => b.len() as i64,
         ByteSource::Path(p) => std::fs::metadata(p).context(IoSnafu)?.len() as i64,
@@ -400,8 +408,19 @@ fn preprocess_file_before_upload(
         .map(|c| c.encryptor.cipher_len())
         .unwrap_or(source_len);
 
+    // Bundle the body source with its tempfile guard (if any). For the gzip
+    // path the tempfile *is* the source, so the guard travels with it; every
+    // other source carries no guard.
+    let source = match gzip_tempfile {
+        Some(temp_path) => PreparedSource::GzipTempfile {
+            path: temp_path.to_path_buf(),
+            _guard: Arc::new(temp_path),
+        },
+        None => PreparedSource::from(upload_source),
+    };
+
     let prepared = PreparedUpload {
-        data: upload_source,
+        source,
         digest,
         cse,
     };
@@ -1683,7 +1702,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(metadata.source_compression, CompressionType::Parquet);
         assert_eq!(
-            prepared.data.into_bytes().unwrap(),
+            prepared.source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical (no gzip wrap)",
         );
@@ -1702,7 +1721,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Orc);
         assert_eq!(metadata.source_compression, CompressionType::Orc);
         assert_eq!(
-            prepared.data.into_bytes().unwrap(),
+            prepared.source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical"
         );
@@ -1730,7 +1749,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(metadata.source_compression, CompressionType::Parquet);
         assert_eq!(
-            prepared.data.into_bytes().unwrap(),
+            prepared.source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical (no gzip wrap)",
         );
@@ -1752,7 +1771,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Orc);
         assert_eq!(metadata.source_compression, CompressionType::Orc);
         assert_eq!(
-            prepared.data.into_bytes().unwrap(),
+            prepared.source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical"
         );
@@ -1773,7 +1792,7 @@ mod tests {
 
         assert_eq!(metadata.target, "data.parquet");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
-        assert_eq!(prepared.data.into_bytes().unwrap(), payload);
+        assert_eq!(prepared.source.byte_source().into_bytes().unwrap(), payload);
     }
 
     #[test]
@@ -1787,7 +1806,31 @@ mod tests {
 
         assert_eq!(metadata.target, "data.orc");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
-        assert_eq!(prepared.data.into_bytes().unwrap(), payload);
+        assert_eq!(prepared.source.byte_source().into_bytes().unwrap(), payload);
+    }
+
+    // Auto-compress of a plain (not-already-compressed) payload must stream the
+    // gzip output to a tempfile and adopt it as the upload source: target gains
+    // a `.gz` suffix, target compression is Gzip, and the source becomes a
+    // `PreparedSource::GzipTempfile` whose `_guard` keeps the tempfile alive
+    // (the lazily-read source must outlive the upload). Complements the
+    // end-to-end `auto_compress_then_encrypt_decrypt_decompress_roundtrip` in
+    // `tests/byte_source_roundtrip.rs`.
+    #[test]
+    fn preprocess_auto_compress_streams_gzip_to_tempfile() {
+        let payload = b"plain csv payload that is not already compressed".to_vec();
+        let data = passthrough_upload_data("data.csv", PutGetResultsetFlavor::Python, false);
+
+        let (prepared, metadata) =
+            preprocess_file_before_upload(ByteSource::Bytes(Bytes::from(payload)), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.csv.gz", ".gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Gzip);
+        assert!(
+            matches!(prepared.source, PreparedSource::GzipTempfile { .. }),
+            "auto-compress must make the gzip tempfile (which carries its own \
+             unlink guard) the upload source",
+        );
     }
 
     // Prefix-read coverage: the 512-byte prefix window must be wide enough
@@ -1881,8 +1924,8 @@ mod tests {
         assert_eq!(meta_a.target, meta_b.target);
         assert_eq!(meta_a.target_compression, meta_b.target_compression);
 
-        let bytes_a = a.data.into_bytes().unwrap();
-        let bytes_b = b.data.into_bytes().unwrap();
+        let bytes_a = a.source.byte_source().into_bytes().unwrap();
+        let bytes_b = b.source.byte_source().into_bytes().unwrap();
         assert_eq!(
             bytes_a, bytes_b,
             "gzip output must be byte-identical across calls with the same input"
@@ -1964,7 +2007,7 @@ mod tests {
         // Real on-disk file so `upload_single_file`'s `File::open` works.
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
         let payload = b"hello-azure-cross-wrapper";
-        // Disable auto_compress so prepared.data == payload and the digest
+        // Disable auto_compress so the prepared source == payload and the digest
         // computed on the file matches what the test plants in the HEAD
         // response. With auto_compress=true the upload-prep would gzip the
         // bytes and the digest would be over the gzipped form.
