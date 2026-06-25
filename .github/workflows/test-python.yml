@@ -211,7 +211,7 @@ jobs:
         include: ${{ fromJSON(needs.load-python-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
-    timeout-minutes: 30
+    timeout-minutes: ${{ contains(matrix.os, 'windows') && 60 || 30 }}
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
     steps:
