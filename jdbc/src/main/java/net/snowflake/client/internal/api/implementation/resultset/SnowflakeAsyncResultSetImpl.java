@@ -26,6 +26,7 @@ import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 
 /**
@@ -148,7 +149,11 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     materialize();
-    return delegate.getMetaData();
+    SnowflakeResultSetMetaDataImpl metaData =
+        delegate.getMetaData().unwrap(SnowflakeResultSetMetaDataImpl.class);
+    // Non-mutating async view: original async query ID and ASYNC query type
+    // (which suppresses catalog/schema/table names).
+    return SnowflakeResultSetMetaDataImpl.toAsync(metaData, queryID);
   }
 
   @Override

@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static net.snowflake.client.internal.util.StringUtil.isNullOrEmpty;
+
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
@@ -24,7 +26,6 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.Calendar;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -34,11 +35,13 @@ import java.util.function.Function;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.PrepareResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.util.HexUtil;
 
@@ -52,8 +55,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
   private final PreparedBatch batch = new PreparedBatch();
 
-  /** Cached metadata retrieved from server, populated lazily on the first metadata request. */
-  private ParameterMetaData parameterMetaData;
+  /** Cached prepare result from the server, populated lazily on the first metadata request. */
+  // TODO(SNOW-3695645): should we replace proto message with POJO?
+  private PrepareResult prepareResult;
 
   /** Lazily resolved session conversion context, used for TIME binding semantics. */
   private DataConversionContext conversionContext;
@@ -64,6 +68,30 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     this.sql = sql;
     this.placeholderMetadata = SqlPlaceholderMetadata.analyze(sql);
     this.parameterValues = new HashMap<>();
+  }
+
+  /** Prepares the statement on the server once and caches the result. */
+  private PrepareResult getPrepareResult() throws SQLException {
+    checkClosed();
+    if (prepareResult == null) {
+      try {
+        coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+        StatementPrepareResponse response = coreDriverApi.statementPrepare(statementHandle);
+        prepareResult = response.getResult();
+      } catch (SnowflakeSQLException e) {
+        // Mirror snowflake-jdbc: some describe failures (DDL, unset bind variables, etc.) are
+        // expected and fall back to empty metadata instead of re-issuing describe on every call.
+        if (!ERROR_CODES_IGNORED_IN_DESCRIBE_MODE.contains(e.getErrorCode())) {
+          throw e;
+        }
+        PrepareResult.Builder builder = PrepareResult.newBuilder();
+        if (!isNullOrEmpty(e.getQueryId())) {
+          builder.setQueryId(e.getQueryId());
+        }
+        prepareResult = builder.build();
+      }
+    }
+    return prepareResult;
   }
 
   @Override
@@ -416,7 +444,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getMetaData not supported");
+    PrepareResult result = getPrepareResult();
+    return SnowflakeResultSetMetaDataImpl.from(result.getQueryId(), result.getColumnsList());
   }
 
   @Override
@@ -446,23 +475,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ParameterMetaData getParameterMetaData() throws SQLException {
-    checkClosed();
-    if (parameterMetaData == null) {
-      try {
-        coreDriverApi.statementSetSqlQuery(statementHandle, sql);
-        StatementPrepareResponse response = coreDriverApi.statementPrepare(statementHandle);
-        parameterMetaData =
-            SnowflakeParameterMetadataImpl.from(response.getResult().getBindsList());
-      } catch (SnowflakeSQLException e) {
-        // Mirror snowflake-jdbc: some describe failures (DDL, unset bind variables, etc.) are
-        // expected and fall back to empty metadata instead of re-issuing describe on every call.
-        if (!ERROR_CODES_IGNORED_IN_DESCRIBE_MODE.contains(e.getErrorCode())) {
-          throw e;
-        }
-        parameterMetaData = SnowflakeParameterMetadataImpl.from(Collections.emptyList());
-      }
-    }
-    return parameterMetaData;
+    PrepareResult prepareResult = getPrepareResult();
+    return SnowflakeParameterMetadataImpl.from(prepareResult.getBindsList());
   }
 
   @Override

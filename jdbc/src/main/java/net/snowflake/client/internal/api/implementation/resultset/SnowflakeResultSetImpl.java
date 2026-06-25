@@ -27,7 +27,9 @@ import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.core.arrow.ArrowStreamFactory;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
@@ -36,11 +38,9 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
 import net.snowflake.client.internal.unicore.ProtobufApis;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
-import org.apache.arrow.c.ArrowArrayStream;
-import org.apache.arrow.c.Data;
-import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrapper {
@@ -51,25 +51,27 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   private final SchemaState schema;
   private final ArrowResources resources;
   private final ArrowBatchManager batchManager;
+  private final SnowflakeResultSetMetaDataImpl resultSetMetaData;
   private boolean closed = false;
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
-  SnowflakeResultSetImpl(SnowflakeStatementImpl statement, String queryId, long arrowStreamPointer)
+  SnowflakeResultSetImpl(
+      SnowflakeStatementImpl statement,
+      String queryId,
+      long arrowStreamPointer,
+      List<ColumnMetadata> columns)
       throws SQLException {
     this.statement = statement;
     this.queryId = queryId;
-    ArrowArrayStream stream = ArrowArrayStream.wrap(arrowStreamPointer);
-    RootAllocator allocator = new RootAllocator();
-    ArrowResources resources =
-        new ArrowResources(stream, allocator, Data.importArrayStream(allocator, stream));
-    this.resources = resources;
+    this.resources = ArrowStreamFactory.createFromPointer(arrowStreamPointer);
     DataConversionContext conversionContext =
         SessionDataConversionContext.fromConnection(
             ProtobufApis.coreDriverApi,
             ((InternalSnowflakeConnection) statement.getConnection()).getHandle());
     this.schema = new SchemaState(resources.getActiveRoot(), conversionContext);
     this.batchManager = new ArrowBatchManager(cursor, resources, schema);
+    this.resultSetMetaData = SnowflakeResultSetMetaDataImpl.from(queryId, columns);
   }
 
   @Override
@@ -290,12 +292,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new SnowflakeResultSetMetaDataImpl(
-        schema.getColumnNames(),
-        schema.getColumnTypes(),
-        schema.getColumnScales(),
-        schema.getTimeStringLength(),
-        queryId);
+    return resultSetMetaData;
   }
 
   @Override
@@ -311,6 +308,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   @Override
   public int findColumn(String columnLabel) throws SQLException {
     checkClosed();
+    // TODO(SNOW-3695645): replace SchemaState with ResultSetMetaData
     String[] columnNames = schema.getColumnNames();
     for (int i = 0; i < columnNames.length; i++) {
       if (columnNames[i].equalsIgnoreCase(columnLabel)) {
@@ -1128,6 +1126,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   private void checkColumnIndex(int columnIndex) throws SQLException {
+    // TODO(SNOW-3695645): replace SchemaState with ResultSetMetaData
     int columnCount = schema.getColumnCount();
     if (columnIndex < 1 || columnIndex > columnCount) {
       throw new SQLException("Invalid column index: " + columnIndex);

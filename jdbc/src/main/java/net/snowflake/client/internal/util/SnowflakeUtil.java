@@ -1,5 +1,10 @@
 package net.snowflake.client.internal.util;
 
+import java.math.BigDecimal;
+import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.sql.Types;
 import net.snowflake.client.api.resultset.SnowflakeType;
 
@@ -17,29 +22,109 @@ public class SnowflakeUtil {
   public static final String BYTE_STR = "byte";
   public static final String BYTES_STR = "byte array";
 
+  // ported from snowflake-jdbc
   public static int toSqlType(SnowflakeType sfType) {
     if (sfType == null) {
       return Types.OTHER;
     }
-    // TODO: Other types will be handled later
     switch (sfType) {
       case TEXT:
-      case CHAR:
       case VARIANT:
+      case GEOGRAPHY:
+      case GEOMETRY:
         return Types.VARCHAR;
+
+      case CHAR:
+        return Types.CHAR;
+
+      case INTEGER:
+        return Types.INTEGER;
+
       case FIXED:
       case DECFLOAT:
         return Types.DECIMAL;
+
       case REAL:
         return Types.DOUBLE;
+
       case BOOLEAN:
         return Types.BOOLEAN;
+
       case BINARY:
         return Types.BINARY;
+
       case DATE:
         return Types.DATE;
+
+      case TIME:
+        return Types.TIME;
+
+      case TIMESTAMP:
+      case TIMESTAMP_NTZ:
+      case TIMESTAMP_LTZ:
+        return Types.TIMESTAMP;
+
+      case TIMESTAMP_TZ:
+        return Types.TIMESTAMP_WITH_TIMEZONE;
+
+      case VECTOR:
+        return SnowflakeType.EXTRA_TYPES_VECTOR;
+
+      case ARRAY:
+        return Types.ARRAY;
+
+      case OBJECT:
+      case MAP:
+        return Types.STRUCT;
+
       default:
         return Types.OTHER;
+    }
+  }
+
+  // ported from snowflake-jdbc
+  public static String javaTypeToClassName(int type) throws SQLException {
+    switch (type) {
+      case Types.VARCHAR:
+      case Types.CHAR:
+      case Types.STRUCT:
+      case Types.ARRAY:
+        return String.class.getName();
+
+      case Types.BINARY:
+        return SnowflakeTypeHelper.BINARY_CLASS_NAME;
+
+      case Types.INTEGER:
+        return Integer.class.getName();
+
+      case Types.DECIMAL:
+        return BigDecimal.class.getName();
+
+      case Types.DOUBLE:
+        return Double.class.getName();
+
+      case Types.TIMESTAMP:
+      case Types.TIMESTAMP_WITH_TIMEZONE:
+        return Timestamp.class.getName();
+
+      case Types.DATE:
+        return java.sql.Date.class.getName();
+
+      case Types.TIME:
+        return Time.class.getName();
+
+      case Types.BOOLEAN:
+        return Boolean.class.getName();
+
+      case Types.BIGINT:
+        return Long.class.getName();
+
+      case Types.SMALLINT:
+        return Short.class.getName();
+
+      default:
+        throw new SQLFeatureNotSupportedException(
+            String.format("No corresponding Java type is found for java.sql.Type: %d", type));
     }
   }
 }
