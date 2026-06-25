@@ -11,7 +11,10 @@ pub mod types;
 pub mod internal {
     pub use super::azure_transfer::download_from_azure_streaming;
     pub use super::cloud_http::{CloudStreamingDownload, CseDownloadInfo, StreamReader};
-    pub use super::encryption::{EncryptionError, decrypt_ciphertext_to_writer, encrypt_file_data};
+    pub use super::encryption::{
+        EncryptingReader, EncryptionError, Encryptor, build_encryptor, compute_sha256_digest,
+        decrypt_ciphertext_to_writer,
+    };
     pub use super::gcs_transfer::download_from_gcs_streaming;
 
     /// Zero-backoff variant of the production Azure retry policy, for tests.
@@ -74,10 +77,9 @@ use azure_transfer::{
     upload_to_azure_or_skip,
 };
 use encryption::{
-    EncryptionError, compute_sha256_digest, decrypt_ciphertext_to_writer, encrypt_file_data,
+    EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
 use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
-use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use snafu::{Location, ResultExt, Snafu};
@@ -366,28 +368,42 @@ fn preprocess_file_before_upload(
             (source, source_compression.clone())
         };
 
-    let prepared = match &data.encryption_material {
-        Some(material) => encrypt_file_data(upload_source, material).context(EncryptionSnafu)?,
-        None => {
-            let bytes = upload_source.into_bytes().context(IoSnafu)?;
-            let digest = compute_sha256_digest(&bytes).context(DigestComputationSnafu)?;
-            PreparedUpload {
-                data: ByteSource::Bytes(bytes.into()),
-                digest,
-                encryption_metadata: None,
-            }
-        }
+    // The upload source after optional auto-compression: compressed bytes,
+    // the original file, or in-memory bytes. Encryption (CSE) is applied
+    // lazily while building the cloud body, so the source is what we measure
+    // and hash here; ciphertext is never materialized.
+    let source_len = match &upload_source {
+        ByteSource::Bytes(b) => b.len() as i64,
+        ByteSource::Path(p) => std::fs::metadata(p).context(IoSnafu)?.len() as i64,
     };
 
-    let target_size = match &prepared.data {
-        ByteSource::Bytes(b) => b.len() as i64,
-        // Both branches above always produce `ByteSource::Bytes`; PR-2 will
-        // change that for the streaming-PUT path. Until then, a `Path` here
-        // is a programmer bug — fail loudly rather than stat the disk and
-        // emit a confusing `IoSnafu` for "preprocessing produced a path".
-        ByteSource::Path(_) => {
-            unreachable!("preprocess_file_before_upload always produces ByteSource::Bytes")
+    // `sfc-digest` is the SHA-256 of the pre-encryption source for both CSE and
+    // SSE (matching JDBC/ODBC), so it can be computed once, up front.
+    let digest = compute_sha256_digest(&upload_source).context(DigestComputationSnafu)?;
+
+    let cse = match &data.encryption_material {
+        Some(material) => {
+            let (encryptor, metadata) =
+                build_encryptor(material, source_len).context(EncryptionSnafu)?;
+            Some(CseParams {
+                metadata,
+                encryptor,
+            })
         }
+        None => None,
+    };
+
+    // What actually lands in the stage: ciphertext length for CSE (analytic,
+    // from the encryptor), or the source length for SSE.
+    let target_size = cse
+        .as_ref()
+        .map(|c| c.encryptor.cipher_len())
+        .unwrap_or(source_len);
+
+    let prepared = PreparedUpload {
+        data: upload_source,
+        digest,
+        cse,
     };
 
     Ok((
@@ -407,11 +423,13 @@ fn preprocess_file_before_upload(
 /// auto-detect, plus the source's total byte count.
 ///
 /// For `ByteSource::Path` this opens the file once for the prefix + metadata
-/// read; the upload path opens it again later (in `encrypt_file_data` for
-/// CSE stages, or `into_bytes()` for SSE stages). If the file changes between
-/// opens, `source_size` reported here can disagree with the bytes actually
-/// uploaded — that's the cost of streaming. The pre-streaming code did one
-/// `read_to_end`, which was atomic but defeated the entire memory bound.
+/// read; the upload path opens it again later (to compute the digest, and again
+/// per attempt to stream/encrypt the body). If the file changes between opens,
+/// the `source_size` reported here — and, for CSE, the analytic `Content-Length`
+/// derived from it — can disagree with the bytes actually produced, which the
+/// cloud SDK rejects (a digest mismatch is the milder failure). This is inherent
+/// to streaming a mutable on-disk source; the pre-streaming code did one atomic
+/// `read_to_end`, at the cost of the entire memory bound.
 fn read_prefix_and_size(source: &ByteSource) -> Result<(Vec<u8>, i64), FileManagerError> {
     match source {
         ByteSource::Path(p) => {
@@ -932,7 +950,7 @@ pub enum FileManagerError {
     },
     #[snafu(display("Failed to compute file digest"))]
     DigestComputation {
-        source: OpenSslErrorStack,
+        source: EncryptionError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1760,7 +1778,9 @@ mod tests {
             .write_all(payload)
             .unwrap();
 
-        let real_digest = encryption::compute_sha256_digest(payload).expect("digest");
+        let real_digest =
+            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
+                .expect("digest");
 
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))

@@ -1,8 +1,8 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::types::{
-    CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
-    PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
-    build_encryption_metadata_json, percent_encode_path,
+    ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
+    MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
+    UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -564,8 +564,17 @@ async fn upload_to_gcs(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError> {
-    let encryption_data_str = prepared
-        .encryption_metadata
+    // Take the source out of `prepared` once; `body_for` re-opens it per retry
+    // (a `Path` re-open or an O(1) `Bytes` refcount clone). The CSE params (cloud
+    // metadata + encryptor) are both present or both absent — unbundle them once.
+    let source = prepared.data;
+    let digest = prepared.digest;
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
+    };
+
+    let encryption_data_str = encryption_metadata
         .as_ref()
         .map(|enc_meta| {
             let encryption_data = build_encryption_metadata_json(enc_meta);
@@ -574,27 +583,52 @@ async fn upload_to_gcs(
         .transpose()
         .context(SerializationSnafu)?;
 
-    let mat_desc_str = prepared
-        .encryption_metadata
+    let mat_desc_str = encryption_metadata
         .as_ref()
         .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
         .transpose()
         .context(SerializationSnafu)?;
 
-    let source = prepared.data;
-    let digest = prepared.digest;
+    // Set Content-Length explicitly on every GCS upload, mirroring Azure: a
+    // streaming `reqwest::Body` (a wrapped CSE stream, or a `tokio::fs::File`
+    // for an SSE `Path` source) has no length reqwest can infer, so without this
+    // it falls back to `Transfer-Encoding: chunked`. CSE uses the analytic
+    // ciphertext length; SSE uses the source length (file metadata / buffer len).
+    let content_length = match &encryptor {
+        Some(enc) => enc.cipher_len(),
+        None => match &source {
+            ByteSource::Bytes(b) => b.len() as i64,
+            ByteSource::Path(p) => {
+                tokio::fs::metadata(p).await.context(SourceIoSnafu)?.len() as i64
+            }
+        },
+    };
+
+    // Own everything the per-attempt async closure touches so the closure is
+    // self-contained (`'static`): an `AsyncFn` whose returned future borrowed
+    // these from this frame couldn't satisfy the `'static` bound the FFI/trait
+    // futures require. `reqwest::Client` clone is a cheap `Arc` bump.
+    let client = client.clone();
+    let url = url.to_string();
+    let token = token.map(str::to_string);
 
     gcs_upload_with_retry(
-        || {
-            // Build the streaming body via the shared helper:
-            //   ByteSource::Path → fresh tokio::fs::File on each retry attempt;
-            //   ByteSource::Bytes → O(1) Arc clone of the in-memory ciphertext.
-            let body = cloud_http::body_for(&source).context(SourceIoSnafu)?;
+        async move || {
+            // CSE → lazy AES-CBC encrypting stream; SSE Path → fresh
+            // tokio::fs::File per retry; SSE Bytes → O(1) Arc clone.
+            let body = cloud_http::body_for(&source, encryptor.as_ref())
+                .await
+                .context(SourceIoSnafu)?;
 
+            // TODO(SNOW-3701467): add an in-transit integrity checksum (GCS verifies
+            // `x-goog-hash: crc32c=<base64>` on upload, 400 on mismatch) to match the
+            // S3 PUT path. Today this relies only on TLS + the GET-time `sfc-digest`
+            // (verified over plaintext, on read), so corruption isn't caught at PUT.
             let mut req = client
-                .put(url)
+                .put(&url)
                 .header(GCS_META_SFC_DIGEST, &digest)
                 .header("content-encoding", "")
+                .header(reqwest::header::CONTENT_LENGTH, content_length)
                 .body(body);
 
             if let Some(ref enc_str) = encryption_data_str {
@@ -603,7 +637,7 @@ async fn upload_to_gcs(
             if let Some(ref md_str) = mat_desc_str {
                 req = req.header(GCS_META_MATDESC, md_str);
             }
-            if let Some(t) = token {
+            if let Some(t) = &token {
                 req = req.bearer_auth(t);
             }
             Ok(req)
@@ -751,7 +785,7 @@ async fn gcs_upload_with_retry<F>(
     policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError>
 where
-    F: Fn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
+    F: AsyncFn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
 {
     cloud_http::upload_with_retry(policy, &GcsUploadRetry, build_request).await
 }
@@ -2171,27 +2205,36 @@ mod tests {
         PreparedUpload {
             data: ByteSource::Bytes(Bytes::from_static(b"payload-bytes")),
             digest: digest.to_string(),
-            encryption_metadata: None,
+            cse: None,
         }
     }
 
     /// Constructs a CSE-shaped `PreparedUpload` — the only structural
-    /// difference is `encryption_metadata = Some(_)`. The `digest` field
-    /// drives the skip comparison; for both SSE and CSE it is the SHA-256
-    /// of the plaintext (see `encryption.rs`), so the skip fires whenever
-    /// the remote digest matches.
+    /// difference is that `cse` is `Some(_)`. The `digest` field drives the
+    /// skip comparison; for both SSE and CSE it is the SHA-256 of the
+    /// plaintext (see `encryption.rs`), so the skip fires whenever the remote
+    /// digest matches.
     fn make_prepared_cse_for_skip(digest: &str) -> PreparedUpload {
+        // The skip branch returns before any body is built, so the bytes are
+        // never encrypted — but `CseParams` couples the cloud metadata with a
+        // real encryptor, so build both from test material.
+        let material = crate::file_manager::types::EncryptionMaterial {
+            query_stage_master_key: SensitiveString::from(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                [0u8; 32],
+            )),
+            query_id: "qid".to_string(),
+            smk_id: "1".to_string(),
+        };
+        let data = Bytes::from_static(b"would-be-ciphertext-bytes");
+        let (encryptor, metadata) =
+            super::super::encryption::build_encryptor(&material, data.len() as i64).unwrap();
         PreparedUpload {
-            data: ByteSource::Bytes(Bytes::from_static(b"would-be-ciphertext-bytes")),
+            data: ByteSource::Bytes(data),
             digest: digest.to_string(),
-            encryption_metadata: Some(EncryptedFileMetadata {
-                encrypted_key: "ZW5jLWtleQ==".to_string(),
-                iv: "aXY=".to_string(),
-                material_desc: MaterialDescription {
-                    query_id: "qid".to_string(),
-                    smk_id: "1".to_string(),
-                    key_size: "256".to_string(),
-                },
+            cse: Some(crate::file_manager::types::CseParams {
+                metadata,
+                encryptor,
             }),
         }
     }
@@ -2455,7 +2498,7 @@ mod tests {
         let prepared = PreparedUpload {
             data: ByteSource::Bytes(Bytes::new()),
             digest: EMPTY_SHA256_B64.to_string(),
-            encryption_metadata: None,
+            cse: None,
         };
         let status = upload_to_gcs_or_skip(
             prepared,

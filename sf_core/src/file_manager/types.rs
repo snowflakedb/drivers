@@ -8,6 +8,8 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use super::encryption::Encryptor;
+
 /// Result of an upload-or-skip operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStatus {
@@ -39,6 +41,36 @@ impl ByteSource {
         match self {
             ByteSource::Path(p) => std::fs::read(p),
             ByteSource::Bytes(b) => Ok(b.to_vec()),
+        }
+    }
+
+    /// Opens the source as a fresh blocking `Read`. A `Path` re-opens the file;
+    /// a `Bytes` is an O(1) refcount clone behind a `Cursor`. Cheap to call once
+    /// per upload retry. A `Path` open failure surfaces here (before the request
+    /// body streams) rather than mid-stream.
+    pub(crate) fn open(&self) -> std::io::Result<Box<dyn std::io::Read + Send>> {
+        match self {
+            ByteSource::Path(p) => Ok(Box::new(std::fs::File::open(p)?)),
+            ByteSource::Bytes(b) => Ok(Box::new(std::io::Cursor::new(b.clone()))),
+        }
+    }
+
+    /// Async sibling of [`open`](Self::open) for the reqwest upload path. A
+    /// `Path` is opened with `tokio::fs::File::open` so the syscall runs on
+    /// tokio's blocking pool — a slow open on a networked filesystem (NFS, EBS)
+    /// never stalls the runtime thread — then handed back as a blocking
+    /// `std::fs::File` for the encrypting stream, which reads it on its own
+    /// `spawn_blocking` task. A `Bytes` is the same O(1) `Cursor` clone, no
+    /// syscall. The `Path` open failure still surfaces here, before the body
+    /// streams, so it stays a clean non-retryable error rather than a mid-stream
+    /// one.
+    pub(crate) async fn open_async(&self) -> std::io::Result<Box<dyn std::io::Read + Send>> {
+        match self {
+            ByteSource::Path(p) => {
+                let file = tokio::fs::File::open(p).await?;
+                Ok(Box::new(file.into_std().await))
+            }
+            ByteSource::Bytes(b) => Ok(Box::new(std::io::Cursor::new(b.clone()))),
         }
     }
 }
@@ -261,15 +293,71 @@ pub struct EncryptionMaterial {
 }
 
 /// Prepared file data ready for cloud upload.
-/// For client-side encryption: contains encrypted data + encryption metadata.
-/// For server-side encryption (SSE): contains raw data with no encryption metadata.
+///
+/// `data` is always the **pre-encryption source** (the compressed bytes, the
+/// original file, or an in-memory buffer) — never ciphertext. For client-side
+/// encryption the body is encrypted lazily as the cloud SDK pulls it (see
+/// `encryptor`); for SSE the source is uploaded as-is.
 #[derive(Debug, Clone)]
 pub struct PreparedUpload {
     pub data: ByteSource,
-    /// SHA-256 digest of the data (always present for integrity verification).
+    /// SHA-256 digest of the pre-encryption source (the `sfc-digest`), always
+    /// present for integrity verification and computed identically for CSE and
+    /// SSE — matching the JDBC/ODBC convention.
     pub digest: String,
-    /// Client-side encryption metadata. `None` for SSE stages.
-    pub encryption_metadata: Option<EncryptedFileMetadata>,
+    /// Client-side-encryption parameters: `Some` on the CSE path, `None` for
+    /// SSE. Bundling the cloud metadata and the encryptor into one `Option`
+    /// makes the invalid "one set, the other unset" state unrepresentable —
+    /// on the CSE path both are always present, on SSE neither is.
+    pub(super) cse: Option<CseParams>,
+}
+
+/// The two client-side-encryption artifacts an upload needs, always produced
+/// together by [`super::encryption::build_encryptor`]:
+/// - `metadata` — the encrypted file key / IV / material description the cloud
+///   stores as object metadata headers.
+/// - `encryptor` — the lazy AES-CBC encryptor applied to `data` while building
+///   the upload body. Carries the ciphertext length so `Content-Length` can be
+///   set before the body streams; AES-CBC is deterministic, so each retry
+///   re-encrypts to byte-identical ciphertext.
+#[derive(Debug, Clone)]
+pub(super) struct CseParams {
+    pub(super) metadata: EncryptedFileMetadata,
+    pub(super) encryptor: Encryptor,
+}
+
+impl PreparedUpload {
+    /// Test-only constructor for an unencrypted (SSE) prepared upload — the
+    /// `encryptor` injection seam is `pub(super)`, so out-of-crate tests can't
+    /// use a struct literal. Production builds `PreparedUpload` directly in
+    /// `preprocess_file_before_upload`.
+    #[cfg(feature = "test-utils")]
+    pub fn new_unencrypted_for_test(data: ByteSource, digest: String) -> Self {
+        Self {
+            data,
+            digest,
+            cse: None,
+        }
+    }
+
+    /// Test-only constructor for a client-side-encrypted prepared upload. Pair
+    /// the `encryptor` + `encryption_metadata` from `encryption::build_encryptor`.
+    #[cfg(feature = "test-utils")]
+    pub fn new_encrypted_for_test(
+        data: ByteSource,
+        digest: String,
+        encryption_metadata: EncryptedFileMetadata,
+        encryptor: Encryptor,
+    ) -> Self {
+        Self {
+            data,
+            digest,
+            cse: Some(CseParams {
+                metadata: encryption_metadata,
+                encryptor,
+            }),
+        }
+    }
 }
 
 /// Client-side encryption metadata that gets bundled with the uploaded data.
