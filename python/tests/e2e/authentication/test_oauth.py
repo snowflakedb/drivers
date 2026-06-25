@@ -9,6 +9,7 @@ import pytest
 
 from snowflake.connector.errors import DatabaseError
 
+from ...compatibility import NEW_DRIVER_ONLY
 from ...config import get_test_parameters
 from .auth_helpers import (
     connect_with_browser_automation,
@@ -207,7 +208,23 @@ class TestOAuthAuthorizationCode:
             )
 
         # Then Connection fails with an authentication / login error
-        verify_login_error(exc_info, ["invalid_client"])
+        if NEW_DRIVER_ONLY("BD#35"):
+            verify_login_error(
+                exc_info,
+                [
+                    "identity provider responded with error",
+                    "invalid_client",
+                    "oauth flow failed",
+                ],
+            )
+        else:
+            verify_login_error(
+                exc_info,
+                [
+                    "invalid http request from web browser",
+                    "idp authentication could have failed",
+                ],
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -303,4 +320,20 @@ class TestOAuthClientCredentials:
             connection_factory(**connect_params)
 
         # Then Connection fails with an authentication / login error
-        verify_login_error(exc_info, ["invalid_client"])
+        if NEW_DRIVER_ONLY("BD#35"):
+            verify_login_error(
+                exc_info,
+                [
+                    "identity provider responded with error",
+                    "invalid_client",
+                    "oauth flow failed",
+                ],
+            )
+        else:
+            verify_login_error(
+                exc_info,
+                [
+                    "invalid http request from web browser",
+                    "idp authentication could have failed",
+                ],
+            )

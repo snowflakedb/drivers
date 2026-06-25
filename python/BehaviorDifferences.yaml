@@ -478,3 +478,22 @@ behavior_differences:
       C/ODBC driver (_snowflake_execute_ex describe-only request). The universal driver
       now aligns with those implementations. The extra describe round-trip is the same
       cost JDBC and ODBC already pay.
+
+  35:
+    name: "OAuth bad client secret surfaces IdP error slug instead of generic browser message"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When `oauth_client_secret` is wrong during `OAUTH_AUTHORIZATION_CODE` or
+      `OAUTH_CLIENT_CREDENTIALS`, the legacy connector fails with a generic
+      login error such as `Invalid HTTP request from web browser. Idp
+      authentication could have failed.` The IdP's OAuth `error` slug (for example
+      `invalid_client`) is not surfaced.
+    new_driver_behavior: |
+      The universal driver propagates the IdP token-endpoint error into the login
+      failure message, for example `Identity Provider responded with error:
+      invalid_client: ... OAuth flow failed`. The OAuth error slug is visible to
+      callers parsing the exception text.
