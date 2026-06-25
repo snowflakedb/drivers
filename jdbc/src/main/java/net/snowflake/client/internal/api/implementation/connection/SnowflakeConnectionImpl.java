@@ -572,8 +572,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   public InternalResultSet createResultSetFromSfqid(
       String queryID, SnowflakeStatementImpl statement) throws SQLException {
     ResultSetResponse rsResponse = coreDriverApi.connectionGetResultSet(connectionHandle, queryID);
-    return ResultSetFactory.create(
-        coreDriverApi, statement, queryID, rsResponse.getResultSetHandle());
+    return ResultSetFactory.create(coreDriverApi, statement, queryID, rsResponse);
   }
 
   @Override

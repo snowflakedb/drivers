@@ -184,8 +184,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement, De
     queryId = descriptor.getQueryId();
 
     if (StatementTypeClassifier.producesResultSet(descriptor)) {
-      currentResultSet =
-          ResultSetFactory.create(coreDriverApi, this, queryId, rsResponse.getResultSetHandle());
+      currentResultSet = ResultSetFactory.create(coreDriverApi, this, queryId, rsResponse);
       currentUpdateCount = NO_UPDATE_COUNT;
       return true;
     }
@@ -194,8 +193,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement, De
       // DML/DDL that returned via executeQuery() — still surface a ResultSet if the server
       // provides a stream (matches old JDBC driver behavior)
       InternalResultSet maybeResultSet =
-          ResultSetFactory.createIfHasStream(
-              coreDriverApi, this, queryId, rsResponse.getResultSetHandle());
+          ResultSetFactory.createIfHasStream(coreDriverApi, this, queryId, rsResponse);
       if (maybeResultSet != null) {
         currentResultSet = maybeResultSet;
         currentUpdateCount = NO_UPDATE_COUNT;
@@ -234,9 +232,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement, De
     }
 
     if (producesResultSet) {
-      currentResultSet =
-          ResultSetFactory.create(
-              coreDriverApi, this, childQueryId, rsResponse.getResultSetHandle());
+      currentResultSet = ResultSetFactory.create(coreDriverApi, this, childQueryId, rsResponse);
       currentUpdateCount = NO_UPDATE_COUNT;
     } else {
       currentResultSet = null;

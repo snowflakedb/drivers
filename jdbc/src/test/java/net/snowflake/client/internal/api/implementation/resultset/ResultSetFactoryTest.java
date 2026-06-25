@@ -16,6 +16,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Arrow
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +24,8 @@ class ResultSetFactoryTest {
 
   private static final ResultSetHandle HANDLE =
       ResultSetHandle.newBuilder().setId(42).setMagic(99).build();
+  private static final ResultSetResponse RESPONSE =
+      ResultSetResponse.newBuilder().setResultSetHandle(HANDLE).build();
   private static final String QUERY_ID = "01ab-cdef-0000-0000";
 
   private CoreDriverApi mockCoreApi;
@@ -41,21 +44,21 @@ class ResultSetFactoryTest {
   // =========================================================================
 
   @Test
-  void createReleasesHandleWhenGetStreamThrows() throws Exception {
+  void shouldCreateReleasesHandleWhenGetStreamThrows() throws Exception {
     SQLException fetchError = new SQLException("stream fetch failed");
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenThrow(fetchError);
 
     SQLException thrown =
         assertThrows(
             SQLException.class,
-            () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, HANDLE));
+            () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, RESPONSE));
 
     assertSame(fetchError, thrown);
     verify(mockCoreApi).resultSetRelease(HANDLE);
   }
 
   @Test
-  void createPropagatesOriginalExceptionWhenBothGetStreamAndReleaseThrow() throws Exception {
+  void shouldCreatePropagatesOriginalExceptionWhenBothGetStreamAndReleaseThrow() throws Exception {
     SQLException fetchError = new SQLException("stream fetch failed");
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenThrow(fetchError);
     when(mockCoreApi.resultSetRelease(HANDLE)).thenThrow(new SQLException("release also failed"));
@@ -63,7 +66,7 @@ class ResultSetFactoryTest {
     SQLException thrown =
         assertThrows(
             SQLException.class,
-            () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, HANDLE));
+            () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, RESPONSE));
 
     assertSame(
         fetchError, thrown, "Original fetch exception should propagate, not the release one");
@@ -75,19 +78,19 @@ class ResultSetFactoryTest {
   // =========================================================================
 
   @Test
-  void createIfHasStreamReturnsNullWhenNoStreamField() throws Exception {
+  void shouldCreateIfHasStreamReturnsNullWhenNoStreamField() throws Exception {
     when(mockCoreApi.resultSetGetStream(HANDLE))
         .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
 
     InternalResultSet result =
-        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE);
+        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, RESPONSE);
 
     assertNull(result);
     verify(mockCoreApi).resultSetRelease(HANDLE);
   }
 
   @Test
-  void createIfHasStreamReturnsNullForZeroLengthStream() throws Exception {
+  void shouldCreateIfHasStreamReturnsNullForZeroLengthStream() throws Exception {
     ResultSetGetStreamResponse emptyStreamResponse =
         ResultSetGetStreamResponse.newBuilder()
             .setStream(ArrowArrayStreamPtr.newBuilder().setValue(ByteString.EMPTY))
@@ -95,7 +98,7 @@ class ResultSetFactoryTest {
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenReturn(emptyStreamResponse);
 
     InternalResultSet result =
-        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE);
+        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, RESPONSE);
 
     assertNull(result);
     verify(mockCoreApi).resultSetRelease(HANDLE);
@@ -106,25 +109,26 @@ class ResultSetFactoryTest {
   // =========================================================================
 
   @Test
-  void createIfHasStreamReleasesHandleWhenGetStreamThrows() throws Exception {
+  void shouldCreateIfHasStreamReleasesHandleWhenGetStreamThrows() throws Exception {
     SQLException fetchError = new SQLException("stream fetch failed");
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenThrow(fetchError);
 
     SQLException thrown =
         assertThrows(
             SQLException.class,
-            () -> ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE));
+            () ->
+                ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, RESPONSE));
 
     assertSame(fetchError, thrown);
     verify(mockCoreApi).resultSetRelease(HANDLE);
   }
 
   @Test
-  void createIfHasStreamReleasesHandleOnNullReturn() throws Exception {
+  void shouldCreateIfHasStreamReleasesHandleOnNullReturn() throws Exception {
     when(mockCoreApi.resultSetGetStream(HANDLE))
         .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
 
-    ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE);
+    ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, RESPONSE);
 
     verify(mockCoreApi).resultSetGetStream(HANDLE);
     verify(mockCoreApi).resultSetRelease(HANDLE);
