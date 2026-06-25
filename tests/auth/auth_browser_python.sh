@@ -30,6 +30,12 @@ case "${AUTH_BROWSER_MODE:-universal}" in
         pip install -e ".[dev,test]"
         ;;
     reference)
+        # The legacy driver's loopback redirect server does not set SO_REUSEADDR,
+        # so back-to-back authorization-code tests that reuse the fixed redirect
+        # port (8001) hit `Errno 98 Address already in use` while the previous
+        # socket lingers in TIME_WAIT. Opt into SO_REUSEPORT, which the old driver
+        # honours via this env var, so the next test can rebind immediately.
+        export SNOWFLAKE_AUTH_SOCKET_REUSE_PORT=true
         # Test deps come from the editable install; swap the connector itself for
         # the legacy PyPI release. Mirrors the `reference` hatch env in pyproject.
         echo "=== Installing reference snowflake-connector-python ==="
