@@ -17,9 +17,31 @@ python3 -m venv "${VENV_DIR}"
 # shellcheck disable=SC1091
 source "${VENV_DIR}/bin/activate"
 
-echo "=== Installing Python connector (building sf_core from source) ==="
 cd "${WORKSPACE_ROOT}/python"
-pip install -e ".[dev,test]"
+
+# AUTH_BROWSER_MODE selects which connector to test (default: universal/new):
+#   universal -> editable install of this repo's connector (builds sf_core)
+#   reference -> legacy snowflake-connector-python from PyPI, for compatibility
+# The test suite auto-detects which is installed via
+# tests/compatibility.IS_UNIVERSAL_DRIVER, so the same suite runs either way.
+case "${AUTH_BROWSER_MODE:-universal}" in
+    universal)
+        echo "=== Installing Python connector (building sf_core from source) ==="
+        pip install -e ".[dev,test]"
+        ;;
+    reference)
+        # Test deps come from the editable install; swap the connector itself for
+        # the legacy PyPI release. Mirrors the `reference` hatch env in pyproject.
+        echo "=== Installing reference snowflake-connector-python ==="
+        pip install -e ".[dev,test]"
+        pip uninstall -y snowflake-connector-python
+        pip install "snowflake-connector-python${PYTHON_REFERENCE_DRIVER_VERSION:->=4,<5}"
+        ;;
+    *)
+        echo "ERROR: unknown AUTH_BROWSER_MODE '${AUTH_BROWSER_MODE}'" >&2
+        exit 1
+        ;;
+esac
 
 echo ""
 echo "=== Running Python auth browser E2E tests ==="

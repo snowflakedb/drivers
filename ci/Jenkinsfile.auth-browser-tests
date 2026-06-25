@@ -124,13 +124,26 @@ pipeline {
             expression { runPython }
           }
           agent { label 'build-node-extra-large' }
-          steps {
-            script {
-              authenticateDocker()
-              withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+          stages {
+            stage('Setup') {
+              steps {
+                script {
+                  authenticateDocker()
+                  withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+                  }
+                }
               }
-              sh label: 'Run Python auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh python"
+            }
+            stage('Universal') {
+              steps {
+                sh label: 'Run Python auth browser tests (universal)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh python universal"
+              }
+            }
+            stage('Reference') {
+              steps {
+                sh label: 'Run Python auth browser tests (reference)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh python reference"
+              }
             }
           }
         }
@@ -139,13 +152,26 @@ pipeline {
             expression { runOdbc }
           }
           agent { label 'build-node-extra-large' }
-          steps {
-            script {
-              authenticateDocker()
-              withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+          stages {
+            stage('Setup') {
+              steps {
+                script {
+                  authenticateDocker()
+                  withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+                  }
+                }
               }
-              sh label: 'Run ODBC auth browser tests', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh odbc"
+            }
+            stage('Universal') {
+              steps {
+                sh label: 'Run ODBC auth browser tests (universal)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh odbc universal"
+              }
+            }
+            stage('Reference') {
+              steps {
+                sh label: 'Run ODBC auth browser tests (reference)', script: "DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} ./tests/auth/run_auth_browser.sh odbc reference"
+              }
             }
           }
         }
@@ -154,17 +180,34 @@ pipeline {
             expression { runJdbc }
           }
           agent { label 'build-node-extra-large' }
-          steps {
-            script {
-              authenticateDocker()
-              withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+          stages {
+            stage('Setup') {
+              steps {
+                script {
+                  authenticateDocker()
+                  withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh preprod parameters_preprod.json'
+                  }
+                }
               }
-              sh label: 'Run JDBC auth browser tests', script: """
-                DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} \\
-                DOCKER_RUN_EXTRA_ARGS='-e JENKINS_HOME' \\
-                ./tests/auth/run_auth_browser.sh jdbc
-              """
+            }
+            stage('Universal') {
+              steps {
+                sh label: 'Run JDBC auth browser tests (universal)', script: """
+                  DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} \\
+                  DOCKER_RUN_EXTRA_ARGS='-e JENKINS_HOME' \\
+                  ./tests/auth/run_auth_browser.sh jdbc universal
+                """
+              }
+            }
+            stage('Reference') {
+              steps {
+                sh label: 'Run JDBC auth browser tests (reference)', script: """
+                  DOCKER_IMAGE=${AUTH_BROWSER_DOCKER_IMAGE} \\
+                  DOCKER_RUN_EXTRA_ARGS='-e JENKINS_HOME' \\
+                  ./tests/auth/run_auth_browser.sh jdbc reference
+                """
+              }
             }
           }
         }
