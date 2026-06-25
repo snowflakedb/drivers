@@ -1,7 +1,8 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::types::{
-    CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
-    PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
+    MaterialDescription, PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json,
+    percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -255,8 +256,17 @@ async fn upload_to_azure(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
-    let encryption_data_str = prepared
-        .encryption_metadata
+    // Take the source out of `prepared` once; `body_for` re-opens it per retry
+    // (a `Path` re-open or an O(1) `Bytes` refcount clone). The CSE params (cloud
+    // metadata + encryptor) are both present or both absent — unbundle them once.
+    let source = prepared.data;
+    let digest = prepared.digest;
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
+    };
+
+    let encryption_data_str = encryption_metadata
         .as_ref()
         .map(|enc_meta| {
             let encryption_data = build_encryption_metadata_json(enc_meta);
@@ -265,27 +275,56 @@ async fn upload_to_azure(
         .transpose()
         .context(azure_upload_error::SerializationSnafu)?;
 
-    let mat_desc_str = prepared
-        .encryption_metadata
+    let mat_desc_str = encryption_metadata
         .as_ref()
         .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
         .transpose()
         .context(azure_upload_error::SerializationSnafu)?;
 
-    let source = prepared.data;
-    let digest = prepared.digest;
+    // Content-Length must be set explicitly on every Azure upload: the body is
+    // a streaming `reqwest::Body` (a wrapped CSE stream, or a `tokio::fs::File`
+    // for an SSE `Path` source) whose length reqwest can't infer, so without
+    // this header it would fall back to `Transfer-Encoding: chunked` — which
+    // Azure rejects with `400 UnsupportedHeader`. CSE uses the analytic
+    // ciphertext length; SSE uses the source length (file metadata / buffer len).
+    let content_length = match &encryptor {
+        Some(enc) => enc.cipher_len(),
+        None => match &source {
+            ByteSource::Bytes(b) => b.len() as i64,
+            ByteSource::Path(p) => tokio::fs::metadata(p)
+                .await
+                .context(azure_upload_error::SourceIoSnafu)?
+                .len() as i64,
+        },
+    };
+
+    // Own everything the per-attempt async closure touches so the closure is
+    // self-contained (`'static`): an `AsyncFn` whose returned future borrowed
+    // these from this frame couldn't satisfy the `'static` bound the FFI/trait
+    // futures require. `reqwest::Client` clone is a cheap `Arc` bump; the SAS
+    // token stays a `SensitiveString` and is revealed only inside the closure
+    // (per attempt), so the raw secret still never lands in this outer scope.
+    let client = client.clone();
+    let url = url.to_string();
+    let sas_token = sas_token.clone();
 
     azure_upload_with_retry(
-        || {
-            // Build the streaming body via the shared helper:
-            //   ByteSource::Path → fresh tokio::fs::File on each retry attempt;
-            //   ByteSource::Bytes → O(1) Arc clone of the in-memory ciphertext.
-            let body = cloud_http::body_for(&source).context(azure_upload_error::SourceIoSnafu)?;
+        async move || {
+            // CSE → lazy AES-CBC encrypting stream; SSE Path → fresh
+            // tokio::fs::File per retry; SSE Bytes → O(1) Arc clone.
+            let body = cloud_http::body_for(&source, encryptor.as_ref())
+                .await
+                .context(azure_upload_error::SourceIoSnafu)?;
 
+            // TODO(SNOW-3701467): add an in-transit integrity checksum (Azure verifies
+            // `Content-MD5` / `x-ms-content-crc64`, or per-segment CRC64 via the
+            // structured-body format) to match the S3 PUT path. Today this relies only
+            // on TLS + the GET-time `sfc-digest` (verified over plaintext, on read).
             let mut req = client
-                .put(build_sas_url(url, sas_token.reveal()))
+                .put(build_sas_url(&url, sas_token.reveal()))
                 .header("x-ms-blob-type", "BlockBlob")
                 .header(AZURE_META_SFC_DIGEST, &digest)
+                .header(reqwest::header::CONTENT_LENGTH, content_length)
                 .body(body);
 
             if let Some(ref enc_str) = encryption_data_str {
@@ -423,7 +462,7 @@ async fn azure_upload_with_retry<F>(
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError>
 where
-    F: Fn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
+    F: AsyncFn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
 {
     cloud_http::upload_with_retry(policy, &AzureUploadRetry, build_request).await
 }
@@ -1130,7 +1169,7 @@ mod tests {
         PreparedUpload {
             data: ByteSource::Bytes(b"hello-azure".to_vec().into()),
             digest: digest.to_string(),
-            encryption_metadata: None,
+            cse: None,
         }
     }
 
@@ -1207,8 +1246,8 @@ mod tests {
     async fn skip_when_overwrite_true_and_skip_match_true_and_digests_match() {
         use super::super::encryption::compute_sha256_digest;
 
-        let data = b"hello-azure".to_vec();
-        let real_digest = compute_sha256_digest(&data).expect("digest computation");
+        let source = ByteSource::Bytes(b"hello-azure".to_vec().into());
+        let real_digest = compute_sha256_digest(&source).expect("digest computation");
 
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
@@ -1228,9 +1267,9 @@ mod tests {
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
             PreparedUpload {
-                data: ByteSource::Bytes(data.into()),
+                data: source,
                 digest: real_digest,
-                encryption_metadata: None,
+                cse: None,
             },
             &stage,
             "f.dat",
@@ -1440,14 +1479,14 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let data = b"hello-azure".to_vec();
-        let real_digest = compute_sha256_digest(&data).expect("digest");
+        let source = ByteSource::Bytes(b"hello-azure".to_vec().into());
+        let real_digest = compute_sha256_digest(&source).expect("digest");
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
             PreparedUpload {
-                data: ByteSource::Bytes(data.into()),
+                data: source,
                 digest: real_digest,
-                encryption_metadata: None,
+                cse: None,
             },
             &stage,
             "f.dat",
@@ -1489,8 +1528,8 @@ mod tests {
         use super::super::encryption::compute_sha256_digest;
         // Pick a port unlikely to be bound. We never start a server here.
         let stage = mock_stage("http://127.0.0.1:1");
-        let data = b"hello-azure".to_vec();
-        let real_digest = compute_sha256_digest(&data).expect("digest");
+        let source = ByteSource::Bytes(b"hello-azure".to_vec().into());
+        let real_digest = compute_sha256_digest(&source).expect("digest");
 
         // Note: `azure_request_with_retry` for the PUT will also fail since
         // the same address is unreachable. The point of this test is to
@@ -1501,9 +1540,9 @@ mod tests {
         // PUT and the network failed (correct fail-open behaviour).
         let result = upload_to_azure_or_skip(
             PreparedUpload {
-                data: ByteSource::Bytes(data.into()),
+                data: source,
                 digest: real_digest,
-                encryption_metadata: None,
+                cse: None,
             },
             &stage,
             "f.dat",
@@ -1544,7 +1583,7 @@ mod tests {
         let prepared = PreparedUpload {
             data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
             digest: "0".repeat(64),
-            encryption_metadata: None,
+            cse: None,
         };
 
         // overwrite=true skips the existence-check HEAD probe so the

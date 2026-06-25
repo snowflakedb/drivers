@@ -1,9 +1,15 @@
+use super::cloud_http;
+use super::encryption::Encryptor;
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription,
     PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::refresh::{Refresher, execute_with_refresh};
+use bytes::Bytes;
+use futures::TryStreamExt as _;
+use http_body::Frame;
+use http_body_util::StreamBody;
 use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -18,6 +24,7 @@ use aws_sdk_s3::config::timeout::TimeoutConfig as AwsTimeoutConfig;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::types::BucketAccelerateStatus;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
+use aws_smithy_types::body::SdkBody;
 
 const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
@@ -279,6 +286,72 @@ fn is_expired_token_error(err: &aws_sdk_s3::Error) -> bool {
     err.code() == Some("ExpiredToken")
 }
 
+pin_project_lite::pin_project! {
+    /// Wraps a streaming body to advertise an exact `Content-Length`. The AWS
+    /// SDK's checksum interceptor rejects a streaming request body of unknown
+    /// size (`UnsizedRequestBody`); the file-path `ByteStream` avoids this
+    /// because it reports the file length. The encrypting stream's length is
+    /// known analytically (`Encryptor::cipher_len`), so we surface it here.
+    struct SizedBody<B> {
+        #[pin]
+        inner: B,
+        len: u64,
+    }
+}
+
+impl<B> http_body::Body for SizedBody<B>
+where
+    B: http_body::Body<Data = Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        self.project().inner.poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.len)
+    }
+}
+
+/// Builds a retryable S3 upload body that lazily AES-CBC-encrypts `source`
+/// (see `EncryptingReader`); ciphertext is never materialized. Wrapped in
+/// [`SdkBody::retryable`] so the SDK's internal retries can replay the body —
+/// re-encryption with the fixed key+IV is deterministic, so the advertised
+/// `Content-Length` (`SizedBody`) and `sfc-digest` stay valid.
+fn encrypting_byte_stream(source: ByteSource, encryptor: Encryptor) -> ByteStream {
+    let len = encryptor.cipher_len() as u64;
+    let body = SdkBody::retryable(move || {
+        // Defer `source.open()` into the encrypting stream's `spawn_blocking`
+        // task so the open() syscall runs on the blocking pool, not the tokio
+        // runtime thread — a slow or hung open on a networked FS (NFS/EBS, in
+        // scope for CSE) must not stall a runtime worker. `SdkBody::retryable`
+        // takes a sync `Fn`, so the async-open approach used for GCS/Azure can't
+        // apply here; instead the open runs as the first step inside the task,
+        // and an open failure surfaces as the stream's first (error) frame —
+        // before any body bytes — so the SDK fails this attempt cleanly and
+        // retries per policy. `source`/`encryptor` are re-cloned per retry so
+        // each rebuilt body re-opens and re-encrypts deterministically.
+        let source = source.clone();
+        let encryptor = encryptor.clone();
+        let stream = cloud_http::encrypting_body_stream(move || source.open(), encryptor)
+            .map_ok(Frame::data);
+        SdkBody::from_body_1_x(SizedBody {
+            inner: StreamBody::new(stream),
+            len,
+        })
+    });
+    ByteStream::new(body)
+}
+
 /// Issues the S3 `PutObject` call and folds `ExpiredToken` into the
 /// `S3AttemptError::StsExpired` arm so the generic refresh helper can catch it.
 async fn put_object(
@@ -287,32 +360,47 @@ async fn put_object(
     stage_info: &StageInfo,
     s3_key: &str,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
-    let body =
-        match prepared.data {
-            ByteSource::Path(ref path) => ByteStream::read_from()
-                .path(path)
-                .build()
-                .await
-                .map_err(|e| {
-                    S3AttemptError::Other(
-                        upload_file_error::SourceOpenSnafu {
-                            detail: e.to_string(),
-                        }
-                        .build(),
-                    )
-                })?,
-            ByteSource::Bytes(bytes) => ByteStream::from(bytes),
-        };
+    // CSE params (cloud metadata + encryptor) are both present or both absent.
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
+    };
+
+    // Ciphertext length for CSE (analytic), so `content_length` can be set
+    // before the streaming body is read.
+    let content_length = encryptor.as_ref().map(|e| e.cipher_len());
+
+    let body = match (prepared.data, encryptor) {
+        // CSE: lazy AES-CBC encrypting stream, retryable so SDK-internal retries
+        // can replay the body (re-encryption is deterministic).
+        (source, Some(encryptor)) => encrypting_byte_stream(source, encryptor),
+        // SSE Path: hand the SDK the file directly (FsBuilder is retryable).
+        (ByteSource::Path(ref path), None) => ByteStream::read_from()
+            .path(path)
+            .build()
+            .await
+            .map_err(|e| {
+                S3AttemptError::Other(
+                    upload_file_error::SourceOpenSnafu {
+                        detail: e.to_string(),
+                    }
+                    .build(),
+                )
+            })?,
+        // SSE in-memory (small / passthrough payloads).
+        (ByteSource::Bytes(bytes), None) => ByteStream::from(bytes),
+    };
 
     let mut put_object_request = s3_client
         .put_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
         .body(body)
+        .set_content_length(content_length)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
         .metadata("sfc-digest", &prepared.digest);
 
-    if let Some(ref enc_meta) = prepared.encryption_metadata {
+    if let Some(ref enc_meta) = encryption_metadata {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
             .map_err(|e| upload_file_error::SerializationSnafu.into_error(e))
             .map_err(S3AttemptError::Other)?;
@@ -572,6 +660,10 @@ async fn create_s3_client(
 /// they wire the AWS config the same way.
 fn build_s3_client(config: &SdkConfig, endpoint_url: Option<String>) -> S3Client {
     let mut s3_config = aws_sdk_s3::config::Builder::from(config);
+    // Keep the SDK's default CRC32 checksum on PUT. It streams as an `aws-chunked`
+    // trailer (no buffering), with `SizedBody` advertising the body's exact size so
+    // the checksum interceptor accepts the stream instead of rejecting it as
+    // `UnsizedRequestBody`. S3 then verifies the checksum on receipt.
     if let Some(ep) = endpoint_url {
         tracing::debug!("Using S3 endpoint: {ep}");
         s3_config = s3_config.endpoint_url(ep);
@@ -1291,35 +1383,122 @@ mod tests {
         .expect("upload should succeed against the mock");
     }
 
+    // SSE body is sent whole (`UNSIGNED-PAYLOAD`). The CSE path's unsigned-payload
+    // sentinel (`STREAMING-UNSIGNED-PAYLOAD-TRAILER`) is asserted in
+    // `put_object_encrypted_streams_with_crc32_trailer`, which exercises the same
+    // upload end-to-end.
     #[tokio::test(flavor = "multi_thread")]
     async fn put_object_sends_unsigned_payload_for_unencrypted_upload() {
         assert_put_sends_unsigned_payload(PreparedUpload {
             data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
             digest: "0".repeat(64),
-            encryption_metadata: None,
+            cse: None,
         })
         .await;
     }
 
+    // Pins the wire contract for the lazy encrypting `SdkBody`: the SDK streams
+    // it under `aws-chunked` with a CRC32 trailer (so S3 verifies integrity on
+    // receipt) while conveying the exact ciphertext length analytically via
+    // `x-amz-decoded-content-length` — i.e. CRC32 without buffering the body.
     #[tokio::test(flavor = "multi_thread")]
-    async fn put_object_sends_unsigned_payload_for_encrypted_upload() {
-        // Most production stage uploads are client-side encrypted, which
-        // attaches three extra metadata headers before signing — confirm
-        // the override still applies on that path.
-        assert_put_sends_unsigned_payload(PreparedUpload {
-            data: ByteSource::Bytes(Bytes::from_static(b"hello world")),
-            digest: "0".repeat(64),
-            encryption_metadata: Some(EncryptedFileMetadata {
-                encrypted_key: "k".to_string(),
-                iv: "i".to_string(),
-                material_desc: MaterialDescription {
-                    query_id: "q".to_string(),
-                    smk_id: "1".to_string(),
-                    key_size: "256".to_string(),
-                },
-            }),
-        })
-        .await;
+    async fn put_object_encrypted_streams_with_crc32_trailer() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use wiremock::Request;
+
+        let plaintext = b"client-side-encrypted S3 upload body".to_vec();
+        let material = crate::file_manager::types::EncryptionMaterial {
+            query_stage_master_key: crate::sensitive::SensitiveString::from(
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 32]),
+            ),
+            query_id: "q".to_string(),
+            smk_id: "1".to_string(),
+        };
+        let (encryptor, encryption_metadata) =
+            super::super::encryption::build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let expected_len = encryptor.cipher_len() as u64;
+
+        let mock = MockServer::start().await;
+        let seen_decoded_len = Arc::new(AtomicU64::new(u64::MAX));
+        let seen_crc32_trailer = Arc::new(AtomicBool::new(false));
+        let seen_unsigned_payload = Arc::new(AtomicBool::new(false));
+        let seen_decoded_len_c = seen_decoded_len.clone();
+        let seen_crc32_trailer_c = seen_crc32_trailer.clone();
+        let seen_unsigned_payload_c = seen_unsigned_payload.clone();
+        Mock::given(method("PUT"))
+            .respond_with(move |req: &Request| {
+                if let Some(len) = req
+                    .headers
+                    .get("x-amz-decoded-content-length")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    seen_decoded_len_c.store(len, Ordering::SeqCst);
+                }
+                let crc32 = req
+                    .headers
+                    .get("x-amz-trailer")
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.contains("x-amz-checksum-crc32"));
+                seen_crc32_trailer_c.store(crc32, Ordering::SeqCst);
+                let unsigned = req
+                    .headers
+                    .get("x-amz-content-sha256")
+                    .and_then(|v| v.to_str().ok())
+                    == Some("STREAMING-UNSIGNED-PAYLOAD-TRAILER");
+                seen_unsigned_payload_c.store(unsigned, Ordering::SeqCst);
+                ResponseTemplate::new(200)
+            })
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage_info = StageInfo {
+            location_type: crate::file_manager::types::LocationType::S3,
+            bucket: "test-bucket".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "us-east-1".to_string(),
+            creds: s3_creds("AKIA-TEST"),
+            endpoint: Some(mock.uri()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
+        };
+
+        upload_to_s3_or_skip(
+            PreparedUpload {
+                data: ByteSource::Bytes(plaintext.into()),
+                digest: "0".repeat(64),
+                cse: Some(crate::file_manager::types::CseParams {
+                    metadata: encryption_metadata,
+                    encryptor,
+                }),
+            },
+            &stage_info,
+            "f.dat",
+            true,
+            DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            &mut None,
+        )
+        .await
+        .expect("encrypted S3 upload should succeed against the mock");
+
+        assert_eq!(
+            seen_decoded_len.load(Ordering::SeqCst),
+            expected_len,
+            "x-amz-decoded-content-length must equal the analytic ciphertext length",
+        );
+        assert!(
+            seen_crc32_trailer.load(Ordering::SeqCst),
+            "the streamed body must carry a CRC32 checksum trailer for S3 to verify on receipt",
+        );
+        assert!(
+            seen_unsigned_payload.load(Ordering::SeqCst),
+            "the CSE body must stay payload-unsigned (STREAMING-UNSIGNED-PAYLOAD-TRAILER)",
+        );
     }
 
     // --- Acceleration probe (wiremock) ---

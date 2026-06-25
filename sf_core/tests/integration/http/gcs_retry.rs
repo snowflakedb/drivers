@@ -1314,11 +1314,10 @@ async fn gcs_upload_401_then_refresh_then_200() {
         presigned_urls: None,
     });
 
-    let prepared = PreparedUpload {
-        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
-        digest: "test-digest".to_string(),
-        encryption_metadata: None,
-    };
+    let prepared = PreparedUpload::new_unencrypted_for_test(
+        ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
+        "test-digest".to_string(),
+    );
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
@@ -1403,11 +1402,10 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         presigned_urls: None,
     });
 
-    let prepared = PreparedUpload {
-        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
-        digest: "test-digest".to_string(),
-        encryption_metadata: None,
-    };
+    let prepared = PreparedUpload::new_unencrypted_for_test(
+        ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
+        "test-digest".to_string(),
+    );
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
@@ -1483,11 +1481,10 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         presigned_urls: None,
     });
 
-    let prepared = PreparedUpload {
-        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
-        digest: "test-digest".to_string(),
-        encryption_metadata: None,
-    };
+    let prepared = PreparedUpload::new_unencrypted_for_test(
+        ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
+        "test-digest".to_string(),
+    );
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
@@ -1557,11 +1554,10 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         presigned_urls: None,
     });
 
-    let prepared = PreparedUpload {
-        data: ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
-        digest: "test-digest".to_string(),
-        encryption_metadata: None,
-    };
+    let prepared = PreparedUpload::new_unencrypted_for_test(
+        ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
+        "test-digest".to_string(),
+    );
     let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
     let err = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
@@ -1807,5 +1803,91 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         fake.refresh_calls.load(Ordering::SeqCst),
         0,
         "coalesced refresh() must NOT fire during per-file URL refresh"
+    );
+}
+
+// A client-side-encrypted GCS upload streams a lazily-encrypting `reqwest`
+// body of unknown length, so the driver must set `Content-Length` to the
+// analytic ciphertext length explicitly. This pins that contract end-to-end:
+// the mock requires the exact `Content-Length` and rejects a chunked body
+// (no `Transfer-Encoding`), so a regression to chunked or a wrong length
+// fails the request — which a download-only test could never catch.
+#[tokio::test]
+async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
+    let plaintext = b"client-side-encrypted GCS upload body".to_vec();
+
+    // Build the encryptor the way preprocessing does: digest over the source,
+    // analytic ciphertext length on the encryptor.
+    let material = sf_core::file_manager::types::EncryptionMaterial {
+        query_stage_master_key: SensitiveString::from({
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode([0u8; 32])
+        }),
+        query_id: "q".to_string(),
+        smk_id: "1".to_string(),
+    };
+    let digest = sf_core::file_manager::internal::compute_sha256_digest(&ByteSource::Bytes(
+        plaintext.clone().into(),
+    ))
+    .unwrap();
+    let (encryptor, enc_meta) =
+        sf_core::file_manager::internal::build_encryptor(&material, plaintext.len() as i64)
+            .unwrap();
+    let expected_len = encryptor.cipher_len();
+
+    let server = MockServer::start().await;
+    let seen_len = Arc::new(AtomicU32::new(0));
+    let seen_chunked = Arc::new(AtomicU32::new(0));
+    let seen_len_c = seen_len.clone();
+    let seen_chunked_c = seen_chunked.clone();
+    Mock::given(method("PUT"))
+        .and(path("/test-bucket/prefix/file.bin"))
+        .respond_with(move |req: &Request| {
+            if let Some(cl) = req
+                .headers
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u32>().ok())
+            {
+                seen_len_c.store(cl, Ordering::SeqCst);
+            }
+            if req.headers.contains_key("transfer-encoding") {
+                seen_chunked_c.fetch_add(1, Ordering::SeqCst);
+            }
+            ResponseTemplate::new(200)
+        })
+        .mount(&server)
+        .await;
+
+    let prepared = PreparedUpload::new_encrypted_for_test(
+        ByteSource::Bytes(plaintext.into()),
+        digest,
+        enc_meta,
+        encryptor,
+    );
+    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = None;
+    let result = sf_core::file_manager::upload_to_gcs_or_skip(
+        prepared,
+        &gcs_stage_with_token(&server.uri()),
+        "file.bin",
+        true,
+        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut refresher_opt,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "CSE GCS upload should succeed; got {result:?}"
+    );
+    assert_eq!(
+        seen_len.load(Ordering::SeqCst) as i64,
+        expected_len,
+        "Content-Length must equal the analytic ciphertext length",
+    );
+    assert_eq!(
+        seen_chunked.load(Ordering::SeqCst),
+        0,
+        "encrypted body must be sent with Content-Length, not Transfer-Encoding: chunked",
     );
 }

@@ -1,11 +1,12 @@
-use bytes::Bytes;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::types::{
-    ByteSource, CloudCredentials, EncryptionMaterial, LocationType, SingleDownloadData, StageInfo,
+    ByteSource, CloudCredentials, EncryptedFileMetadata, EncryptionMaterial, LocationType,
+    SingleDownloadData, StageInfo,
 };
 use sf_core::sensitive::SensitiveString;
+use std::io::Read;
 
 fn test_encryption_material() -> EncryptionMaterial {
     use base64::Engine;
@@ -17,23 +18,44 @@ fn test_encryption_material() -> EncryptionMaterial {
     }
 }
 
+/// Encrypts `source` through the production lazy path (`build_encryptor` +
+/// `EncryptingReader`) and collects the ciphertext for the test. Returns the
+/// ciphertext, the cloud encryption metadata, and the `sfc-digest` (computed
+/// over the pre-encryption source, matching JDBC/ODBC).
+fn encrypt_source(
+    source: ByteSource,
+    material: &EncryptionMaterial,
+) -> (Vec<u8>, EncryptedFileMetadata, String) {
+    use sf_core::file_manager::internal::{build_encryptor, compute_sha256_digest};
+
+    let source_len = match &source {
+        ByteSource::Bytes(b) => b.len() as i64,
+        ByteSource::Path(p) => std::fs::metadata(p).expect("source metadata").len() as i64,
+    };
+    let digest = compute_sha256_digest(&source).expect("digest over source");
+    let (encryptor, metadata) = build_encryptor(material, source_len).expect("build_encryptor");
+
+    let reader: Box<dyn Read + Send> = match source {
+        ByteSource::Bytes(b) => Box::new(std::io::Cursor::new(b)),
+        ByteSource::Path(p) => Box::new(std::fs::File::open(p).expect("open source")),
+    };
+    let mut ciphertext = Vec::new();
+    encryptor
+        .encrypting_reader(reader)
+        .expect("encrypting_reader")
+        .read_to_end(&mut ciphertext)
+        .expect("read ciphertext");
+
+    (ciphertext, metadata, digest)
+}
+
 #[test]
 fn bytes_source_encrypt_decrypt_roundtrip() {
     let plaintext = b"Hello, ByteSource::Bytes round-trip test!".to_vec();
     let material = test_encryption_material();
 
-    // Encrypt via the ByteSource::Bytes path.
-    let prepared = sf_core::file_manager::internal::encrypt_file_data(
-        ByteSource::Bytes(plaintext.clone().into()),
-        &material,
-    )
-    .expect("encryption must succeed");
-
-    // The output must be a Bytes variant (not a Path).
-    let ciphertext = match prepared.data {
-        ByteSource::Bytes(ref b) => b.clone(),
-        ByteSource::Path(_) => panic!("expected ByteSource::Bytes from encrypt_file_data"),
-    };
+    let (ciphertext, enc_meta, digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.clone().into()), &material);
 
     // Ciphertext must be non-empty and different from plaintext.
     assert!(!ciphertext.is_empty(), "ciphertext must not be empty");
@@ -42,18 +64,12 @@ fn bytes_source_encrypt_decrypt_roundtrip() {
         "ciphertext must differ from plaintext"
     );
 
-    // Metadata must be present (client-side encryption).
-    let enc_meta = prepared
-        .encryption_metadata
-        .as_ref()
-        .expect("encryption metadata present");
-
     // Decrypt back to plaintext via the streaming writer.
     let mut output = Vec::<u8>::new();
     let written = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
-        ciphertext.as_ref(),
-        enc_meta,
-        &prepared.digest,
+        ciphertext.as_slice(),
+        &enc_meta,
+        &digest,
         &material,
         &mut output,
     )
@@ -68,23 +84,14 @@ fn bytes_source_encrypt_decrypt_large_payload() {
     let plaintext: Vec<u8> = (0..256 * 1024).map(|i| (i % 251) as u8).collect();
     let material = test_encryption_material();
 
-    let prepared = sf_core::file_manager::internal::encrypt_file_data(
-        ByteSource::Bytes(plaintext.clone().into()),
-        &material,
-    )
-    .expect("encryption must succeed");
+    let (ciphertext, enc_meta, digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.clone().into()), &material);
 
-    let ciphertext = match prepared.data {
-        ByteSource::Bytes(ref b) => b.clone(),
-        ByteSource::Path(_) => panic!("expected ByteSource::Bytes"),
-    };
-
-    let enc_meta = prepared.encryption_metadata.as_ref().unwrap();
     let mut output = Vec::<u8>::new();
     let written = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
-        ciphertext.as_ref(),
-        enc_meta,
-        &prepared.digest,
+        ciphertext.as_slice(),
+        &enc_meta,
+        &digest,
         &material,
         &mut output,
     )
@@ -99,24 +106,14 @@ fn bytes_source_decrypt_detects_tampered_digest() {
     let plaintext = b"tampered digest test".to_vec();
     let material = test_encryption_material();
 
-    let prepared = sf_core::file_manager::internal::encrypt_file_data(
-        ByteSource::Bytes(plaintext.clone().into()),
-        &material,
-    )
-    .expect("encryption must succeed");
-
-    let ciphertext = match prepared.data {
-        ByteSource::Bytes(ref b) => b.clone(),
-        ByteSource::Path(_) => panic!("expected ByteSource::Bytes"),
-    };
-
-    let enc_meta = prepared.encryption_metadata.as_ref().unwrap();
+    let (ciphertext, enc_meta, _digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.into()), &material);
     let bad_digest = "AAAA";
 
     let mut output = Vec::<u8>::new();
     let result = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
-        ciphertext.as_ref(),
-        enc_meta,
+        ciphertext.as_slice(),
+        &enc_meta,
         bad_digest,
         &material,
         &mut output,
@@ -146,26 +143,16 @@ fn path_source_encrypt_decrypt_roundtrip() {
         f.write_all(&plaintext).expect("write plaintext");
     }
 
-    let prepared = sf_core::file_manager::internal::encrypt_file_data(
-        ByteSource::Path(plaintext_path.clone()),
-        &material,
-    )
-    .expect("encryption from Path must succeed");
-
-    let ciphertext = match prepared.data {
-        ByteSource::Bytes(ref b) => b.clone(),
-        ByteSource::Path(_) => panic!("expected ByteSource::Bytes from encrypt_file_data"),
-    };
-
-    let enc_meta = prepared.encryption_metadata.as_ref().unwrap();
+    let (ciphertext, enc_meta, digest) =
+        encrypt_source(ByteSource::Path(plaintext_path.clone()), &material);
 
     // Decrypt directly into an output file (the production GET pattern).
     let output_path = dir.path().join("decrypted.bin");
     let mut output_file = std::fs::File::create(&output_path).expect("create output");
     let written = sf_core::file_manager::internal::decrypt_ciphertext_to_writer(
-        ciphertext.as_ref(),
-        enc_meta,
-        &prepared.digest,
+        ciphertext.as_slice(),
+        &enc_meta,
+        &digest,
         &material,
         &mut output_file,
     )
@@ -193,17 +180,8 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
     let material = test_encryption_material();
 
     // Encrypt to get valid ciphertext + the matching enc-metadata headers.
-    let prepared = sf_core::file_manager::internal::encrypt_file_data(
-        ByteSource::Bytes(Bytes::from(plaintext)),
-        &material,
-    )
-    .expect("encryption must succeed");
-
-    let ciphertext = match prepared.data {
-        ByteSource::Bytes(ref b) => b.clone(),
-        ByteSource::Path(_) => panic!("expected Bytes from encrypt_file_data"),
-    };
-    let enc_meta = prepared.encryption_metadata.as_ref().unwrap();
+    let (ciphertext, enc_meta, _digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.into()), &material);
     let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
 
     // Mock S3: return the valid ciphertext but with a deliberately wrong digest.
@@ -320,18 +298,8 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
     let plaintext = format!("{cloud:?} streaming round-trip test payload, PR-2!").into_bytes();
     let material = test_encryption_material();
 
-    let prepared = sf_core::file_manager::internal::encrypt_file_data(
-        ByteSource::Bytes(plaintext.clone().into()),
-        &material,
-    )
-    .expect("encryption must succeed");
-
-    let ciphertext = match &prepared.data {
-        ByteSource::Bytes(b) => b.clone(),
-        ByteSource::Path(_) => panic!("expected Bytes from encrypt_file_data"),
-    };
-    let enc_meta = prepared.encryption_metadata.as_ref().unwrap();
-    let digest = &prepared.digest;
+    let (ciphertext, enc_meta, digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.clone().into()), &material);
 
     // --- 2. Start a mock cloud server that serves the ciphertext ---
     let server = MockServer::start().await;

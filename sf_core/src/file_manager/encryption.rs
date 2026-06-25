@@ -1,12 +1,11 @@
-use super::types::{
-    ByteSource, EncryptedFileMetadata, EncryptionMaterial, MaterialDescription, PreparedUpload,
-};
+use super::types::{ByteSource, EncryptedFileMetadata, EncryptionMaterial, MaterialDescription};
+use crate::sensitive::Sensitive;
 use snafu::{Location, ResultExt, Snafu};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
 use openssl::{
     error::ErrorStack as OpenSslErrorStack,
-    hash::{Hasher, MessageDigest, hash},
+    hash::{Hasher, MessageDigest},
     rand::rand_bytes,
     symm::{Cipher, Crypter, Mode, decrypt, encrypt},
 };
@@ -44,11 +43,76 @@ impl CipherSuite {
     }
 }
 
-/// Encrypts file data using AES-CBC with PKCS#7 padding.
-pub fn encrypt_file_data(
-    source: ByteSource,
+/// AES-CBC/PKCS#7 ciphertext length for a `source_len`-byte plaintext: always
+/// rounds up to the next full block, adding a whole padding block when
+/// `source_len` is already a block multiple (PKCS#7 always pads).
+fn cbc_ciphertext_len(source_len: i64) -> i64 {
+    let block = AES_BLOCK_SIZE_IN_BYTES as i64;
+    source_len + (block - source_len % block)
+}
+
+/// Everything needed to encrypt an upload body on demand: the per-file AES key,
+/// the IV, and the exact ciphertext length (so the cloud `Content-Length` can be
+/// set before the body streams). AES-CBC with a fixed key+IV is deterministic,
+/// so a fresh [`EncryptingReader`] per retry reproduces byte-identical
+/// ciphertext — the digest (computed over the *plaintext* source) stays valid.
+///
+/// The per-file key is held in [`Sensitive`] so it is zeroized on drop and
+/// redacted from `Debug` (an `Encryptor` rides on the `Debug`-derived
+/// `PreparedUpload`, e.g. via `tracing`). The IV is not secret — it travels in
+/// the `x-amz-iv` / `encryptiondata` metadata header — so it is left bare.
+#[derive(Debug, Clone)]
+pub struct Encryptor {
+    file_key: Sensitive<Vec<u8>>,
+    iv: Vec<u8>,
+    cipher_len: i64,
+}
+
+impl Encryptor {
+    /// Exact length of the ciphertext this encryptor will produce.
+    pub fn cipher_len(&self) -> i64 {
+        self.cipher_len
+    }
+
+    /// Wraps `source` in a streaming AES-CBC encryptor — the sync analogue of
+    /// JDBC's `CipherInputStream` / libsnowflakeclient's `CipherStreamBuf`.
+    /// Ciphertext is produced lazily as the reader is pulled; nothing beyond
+    /// `~CRYPT_CHUNK_SIZE` is buffered.
+    pub fn encrypting_reader<R: Read>(
+        &self,
+        source: R,
+    ) -> Result<EncryptingReader<R>, EncryptionError> {
+        let cipher_suite = CipherSuite::from_key_len(self.file_key.reveal().len())?;
+        let mut crypter = Crypter::new(
+            cipher_suite.cbc,
+            Mode::Encrypt,
+            self.file_key.reveal(),
+            Some(&self.iv),
+        )
+        .context(OpenSSLSnafu {
+            operation: "initializing AES-CBC encryptor",
+        })?;
+        crypter.pad(true);
+        Ok(EncryptingReader {
+            source,
+            crypter,
+            chunk: vec![0u8; CRYPT_CHUNK_SIZE],
+            staged: Vec::new(),
+            staged_pos: 0,
+            source_done: false,
+            finalized: false,
+        })
+    }
+}
+
+/// Builds the per-file [`Encryptor`] and the `EncryptedFileMetadata` the cloud
+/// needs (encrypted file key, IV, material description). Pure: no file I/O —
+/// the ciphertext length is analytic (from `source_len`) and the `sfc-digest`
+/// is computed separately over the source by [`compute_sha256_digest`].
+pub fn build_encryptor(
     encryption_material: &EncryptionMaterial,
-) -> Result<PreparedUpload, EncryptionError> {
+    source_len: i64,
+) -> Result<(Encryptor, EncryptedFileMetadata), EncryptionError> {
     let master_key = BASE64_ENGINE
         .decode(encryption_material.query_stage_master_key.reveal())
         .context(Base64DecodingSnafu {
@@ -63,110 +127,89 @@ pub fn encrypt_file_data(
         operation: "generating initialization vector",
     })?;
 
-    let (mut reader, capacity_hint): (Box<dyn Read>, usize) = match source {
-        ByteSource::Path(p) => {
-            let f = std::fs::File::open(&p).context(IoSnafu {
-                operation: "opening source file for encryption",
-            })?;
-            // Capacity hint is just an optimisation; on metadata failure fall
-            // back to one chunk's worth so we still avoid the first realloc.
-            let hint = match f.metadata() {
-                Ok(m) => m.len() as usize,
-                Err(e) => {
-                    tracing::debug!(
-                        "metadata() failed on encryption source {}; using chunk-sized capacity hint: {}",
-                        p.display(),
-                        e
-                    );
-                    CRYPT_CHUNK_SIZE
-                }
-            };
-            (Box::new(f), hint)
-        }
-        ByteSource::Bytes(b) => {
-            let hint = b.len();
-            (Box::new(std::io::Cursor::new(b)), hint)
-        }
-    };
-
-    let mut crypter = Crypter::new(cipher_suite.cbc, Mode::Encrypt, &file_key, Some(&iv)).context(
-        OpenSSLSnafu {
-            operation: "initializing AES-CBC encryptor",
-        },
-    )?;
-    crypter.pad(true);
-
-    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
-        operation: "initializing SHA-256 hasher for encryption",
-    })?;
-
-    let mut plaintext_buf = vec![0u8; CRYPT_CHUNK_SIZE];
-    // PKCS#7 padding can append one extra block on finalize.
-    let mut cipher_buf = vec![0u8; CRYPT_CHUNK_SIZE + AES_BLOCK_SIZE_IN_BYTES];
-    let mut encrypted_data: Vec<u8> =
-        Vec::with_capacity(capacity_hint.saturating_add(AES_BLOCK_SIZE_IN_BYTES));
-
-    loop {
-        let n = reader.read(&mut plaintext_buf).context(IoSnafu {
-            operation: "reading plaintext for encryption",
-        })?;
-        if n == 0 {
-            break;
-        }
-        // Digest is computed over the (compressed) plaintext, not the ciphertext.
-        // Each upload uses a fresh random IV, so a ciphertext digest would change
-        // every time and never match the stored header. Hashing the plaintext keeps
-        // the digest stable across uploads and interoperable with other drivers.
-        hasher.update(&plaintext_buf[..n]).context(OpenSSLSnafu {
-            operation: "hashing plaintext chunk",
-        })?;
-        let written = crypter
-            .update(&plaintext_buf[..n], &mut cipher_buf)
-            .context(OpenSSLSnafu {
-                operation: "encrypting data chunk with AES-CBC",
-            })?;
-        encrypted_data.extend_from_slice(&cipher_buf[..written]);
-    }
-
-    let tail_written = crypter.finalize(&mut cipher_buf).context(OpenSSLSnafu {
-        operation: "finalizing AES-CBC encryption",
-    })?;
-    encrypted_data.extend_from_slice(&cipher_buf[..tail_written]);
-
-    let digest_bytes = hasher.finish().context(OpenSSLSnafu {
-        operation: "finalizing SHA-256 digest",
-    })?;
-    let digest = BASE64_ENGINE.encode(digest_bytes);
-
     let encrypted_file_key =
         encrypt(cipher_suite.ecb, &master_key, None, &file_key).context(OpenSSLSnafu {
             operation: "encrypting file key with AES-ECB",
         })?;
 
-    let material_desc = MaterialDescription {
-        query_id: encryption_material.query_id.clone(),
-        smk_id: encryption_material.smk_id.clone(),
-        key_size: (cipher_suite.key_len * 8).to_string(),
-    };
-
     let metadata = EncryptedFileMetadata {
         encrypted_key: BASE64_ENGINE.encode(&encrypted_file_key),
         iv: BASE64_ENGINE.encode(&iv),
-        material_desc,
+        material_desc: MaterialDescription {
+            query_id: encryption_material.query_id.clone(),
+            smk_id: encryption_material.smk_id.clone(),
+            key_size: (cipher_suite.key_len * 8).to_string(),
+        },
     };
 
-    Ok(PreparedUpload {
-        // The plaintext is streamed through Crypter, but the ciphertext is
-        // accumulated into one Vec because PUT bodies are randomly accessed
-        // (signature, retries) and a Path destination would mean a temp file
-        // per upload. Peak memory for an encrypted upload is therefore still
-        // ~file_size; a future refactor that wants true streaming end-to-end
-        // would spill the ciphertext to a temp file and return ByteSource::Path
-        // here, which the cloud upload paths already know how to stream.
-        data: ByteSource::Bytes(encrypted_data.into()),
-        digest,
-        encryption_metadata: Some(metadata),
-    })
+    let encryptor = Encryptor {
+        file_key: file_key.into(),
+        iv,
+        cipher_len: cbc_ciphertext_len(source_len),
+    };
+    Ok((encryptor, metadata))
+}
+
+/// Streaming AES-CBC/PKCS#7 encryptor over an arbitrary `Read` source. Each
+/// `read` drains previously-produced ciphertext, then encrypts the next
+/// `CRYPT_CHUNK_SIZE` plaintext chunk (or emits the final padded block at EOF).
+/// Peak resident memory is `~CRYPT_CHUNK_SIZE`, independent of file size.
+pub struct EncryptingReader<R: Read> {
+    source: R,
+    crypter: Crypter,
+    /// Reused plaintext read buffer.
+    chunk: Vec<u8>,
+    /// Ciphertext produced but not yet handed to the caller.
+    staged: Vec<u8>,
+    staged_pos: usize,
+    source_done: bool,
+    finalized: bool,
+}
+
+impl<R: Read> Read for EncryptingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            // 1. Hand back any staged ciphertext first.
+            if self.staged_pos < self.staged.len() {
+                let n = (self.staged.len() - self.staged_pos).min(buf.len());
+                buf[..n].copy_from_slice(&self.staged[self.staged_pos..self.staged_pos + n]);
+                self.staged_pos += n;
+                return Ok(n);
+            }
+            if self.finalized {
+                return Ok(0);
+            }
+
+            self.staged.clear();
+            self.staged_pos = 0;
+
+            // 2. At source EOF, emit the final padded block exactly once.
+            if self.source_done {
+                self.staged.resize(AES_BLOCK_SIZE_IN_BYTES * 2, 0);
+                let w = self
+                    .crypter
+                    .finalize(&mut self.staged)
+                    .map_err(std::io::Error::other)?;
+                self.staged.truncate(w);
+                self.finalized = true;
+                continue;
+            }
+
+            // 3. Encrypt the next plaintext chunk. `update` may yield 0 bytes
+            //    (CBC buffers a partial block) — loop and read more.
+            let n = self.source.read(&mut self.chunk)?;
+            if n == 0 {
+                self.source_done = true;
+                continue;
+            }
+            self.staged.resize(n + AES_BLOCK_SIZE_IN_BYTES, 0);
+            let w = self
+                .crypter
+                .update(&self.chunk[..n], &mut self.staged)
+                .map_err(std::io::Error::other)?;
+            self.staged.truncate(w);
+        }
+    }
 }
 
 /// Decrypts `ciphertext` into `output`, verifying the SHA-256 digest at
@@ -277,9 +320,41 @@ fn generate_random_bytes(size: usize) -> Result<Vec<u8>, OpenSslErrorStack> {
     Ok(buffer)
 }
 
-/// Computes the SHA-256 digest of the data and returns it as a Base64 string.
-pub(super) fn compute_sha256_digest(data: &[u8]) -> Result<String, OpenSslErrorStack> {
-    let digest = hash(MessageDigest::sha256(), data)?;
+/// SHA-256 of `source` as Base64 — the `sfc-digest` over the pre-encryption
+/// bytes (matching JDBC/ODBC). `Path` streams 64 KiB chunks; `Bytes` hashes in
+/// place. Used by **both** the CSE and SSE upload paths so the source is never
+/// materialized as a `Vec<u8>` just to compute a digest.
+pub fn compute_sha256_digest(source: &ByteSource) -> Result<String, EncryptionError> {
+    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
+        operation: "initializing SHA-256 hasher",
+    })?;
+    match source {
+        ByteSource::Path(p) => {
+            let mut f = std::fs::File::open(p).context(IoSnafu {
+                operation: "opening source for SHA-256 digest",
+            })?;
+            let mut buf = vec![0u8; CRYPT_CHUNK_SIZE];
+            loop {
+                let n = f.read(&mut buf).context(IoSnafu {
+                    operation: "reading source for SHA-256 digest",
+                })?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]).context(OpenSSLSnafu {
+                    operation: "hashing data chunk",
+                })?;
+            }
+        }
+        ByteSource::Bytes(b) => {
+            hasher.update(b).context(OpenSSLSnafu {
+                operation: "hashing in-memory bytes",
+            })?;
+        }
+    }
+    let digest = hasher.finish().context(OpenSSLSnafu {
+        operation: "finalizing SHA-256 digest",
+    })?;
     Ok(BASE64_ENGINE.encode(digest))
 }
 
@@ -323,7 +398,6 @@ pub enum EncryptionError {
 mod tests {
     use super::*;
     use crate::sensitive::SensitiveString;
-    use bytes::Bytes;
 
     fn test_material() -> EncryptionMaterial {
         // 32-byte master key (AES-256), Base64-encoded as the wire format.
@@ -335,50 +409,105 @@ mod tests {
         }
     }
 
-    #[test]
-    fn encrypt_digest_is_sha256_of_plaintext_not_ciphertext() {
-        let plaintext = b"the quick brown fox jumps over the lazy dog";
-        let material = test_material();
+    /// Encrypts `plaintext` through the lazy `EncryptingReader` and collects
+    /// the ciphertext — the production upload body, materialized for the test.
+    fn encrypt_to_vec(enc: &Encryptor, plaintext: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        enc.encrypting_reader(std::io::Cursor::new(plaintext.to_vec()))
+            .unwrap()
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    }
 
-        let prepared = encrypt_file_data(
-            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
-            &material,
-        )
-        .unwrap();
-
-        let expected = compute_sha256_digest(plaintext).unwrap();
-        assert_eq!(prepared.digest, expected);
-        // The ciphertext digest must NOT be what we store, otherwise the
-        // random per-upload IV would make the digest non-reproducible.
-        let ciphertext = prepared.data.into_bytes().unwrap();
-        let ciphertext_digest = compute_sha256_digest(&ciphertext).unwrap();
-        assert_ne!(prepared.digest, ciphertext_digest);
+    fn digest_of(bytes: &[u8]) -> String {
+        compute_sha256_digest(&ByteSource::Bytes(bytes::Bytes::copy_from_slice(bytes))).unwrap()
     }
 
     #[test]
-    fn encrypt_digest_is_stable_across_uploads_of_same_content() {
-        let plaintext = b"identical content";
+    fn sfc_digest_is_sha256_of_plaintext_not_ciphertext() {
+        let plaintext = b"the quick brown fox jumps over the lazy dog";
         let material = test_material();
 
-        let first = encrypt_file_data(
-            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
-            &material,
-        )
-        .unwrap();
-        let second = encrypt_file_data(
-            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
-            &material,
-        )
-        .unwrap();
+        let (enc, _meta) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let ciphertext = encrypt_to_vec(&enc, plaintext);
 
-        // Fresh IV per upload => different ciphertext bytes ...
-        assert_ne!(
-            first.data.into_bytes().unwrap(),
-            second.data.into_bytes().unwrap()
-        );
-        // ... but identical plaintext digest, which is what enables the
-        // content-match upload skip.
-        assert_eq!(first.digest, second.digest);
+        // The `sfc-digest` is over the plaintext; the ciphertext digest must
+        // differ (the random per-upload IV would otherwise make it unstable).
+        assert_ne!(digest_of(plaintext), digest_of(&ciphertext));
+    }
+
+    /// The lazy `EncryptingReader` must produce exactly the same ciphertext as a
+    /// one-shot `openssl::symm::encrypt` with the same key+IV, at and around the
+    /// chunk/block boundaries — and must be deterministic across rebuilds, which
+    /// is what makes upload retries (re-encryption) safe.
+    #[test]
+    fn encrypting_reader_matches_one_shot_and_is_deterministic() {
+        let material = test_material();
+        for len in [
+            0usize,
+            1,
+            15,
+            16,
+            17,
+            CRYPT_CHUNK_SIZE - 1,
+            CRYPT_CHUNK_SIZE + 5,
+        ] {
+            let plaintext = vec![0xABu8; len];
+            let (enc, _meta) = build_encryptor(&material, len as i64).unwrap();
+
+            let lazy = encrypt_to_vec(&enc, &plaintext);
+
+            let cbc = CipherSuite::from_key_len(enc.file_key.reveal().len())
+                .unwrap()
+                .cbc;
+            let one_shot = encrypt(cbc, enc.file_key.reveal(), Some(&enc.iv), &plaintext)
+                .expect("one-shot encrypt");
+            assert_eq!(
+                lazy, one_shot,
+                "lazy ciphertext must match one-shot (len {len})"
+            );
+            assert_eq!(
+                enc.cipher_len(),
+                lazy.len() as i64,
+                "analytic cipher_len must match actual (len {len})",
+            );
+
+            let again = encrypt_to_vec(&enc, &plaintext);
+            assert_eq!(
+                lazy, again,
+                "re-encryption must be byte-identical (len {len})"
+            );
+        }
+    }
+
+    /// Reading the `EncryptingReader` through a buffer smaller than a staged
+    /// ciphertext block exercises the partial-drain branch (`staged_pos`) that
+    /// the bulk `read_to_end` path never hits. Output must still equal one-shot.
+    #[test]
+    fn encrypting_reader_partial_reads_into_small_buffer() {
+        let material = test_material();
+        let plaintext = vec![0x42u8; CRYPT_CHUNK_SIZE + 100];
+        let (enc, _meta) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+
+        let mut reader = enc
+            .encrypting_reader(std::io::Cursor::new(plaintext.clone()))
+            .unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0u8; 7]; // deliberately tiny, not a block multiple
+        loop {
+            let n = reader.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+        }
+
+        let cbc = CipherSuite::from_key_len(enc.file_key.reveal().len())
+            .unwrap()
+            .cbc;
+        let one_shot = encrypt(cbc, enc.file_key.reveal(), Some(&enc.iv), &plaintext).unwrap();
+        assert_eq!(out, one_shot);
     }
 
     #[test]
@@ -386,19 +515,15 @@ mod tests {
         let plaintext = b"round-trip payload";
         let material = test_material();
 
-        let prepared = encrypt_file_data(
-            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
-            &material,
-        )
-        .unwrap();
-        let metadata = prepared.encryption_metadata.unwrap();
+        let (enc, metadata) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let ciphertext = encrypt_to_vec(&enc, plaintext);
+        let digest = digest_of(plaintext);
 
-        let ciphertext = prepared.data.into_bytes().unwrap();
         let mut decrypted = Vec::new();
         decrypt_ciphertext_to_writer(
             &ciphertext[..],
             &metadata,
-            &prepared.digest,
+            &digest,
             &material,
             &mut decrypted,
         )
@@ -412,15 +537,10 @@ mod tests {
         let plaintext = b"payload to tamper-check";
         let material = test_material();
 
-        let prepared = encrypt_file_data(
-            ByteSource::Bytes(Bytes::copy_from_slice(plaintext)),
-            &material,
-        )
-        .unwrap();
-        let metadata = prepared.encryption_metadata.unwrap();
-        let wrong_digest = compute_sha256_digest(b"different content").unwrap();
+        let (enc, metadata) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let ciphertext = encrypt_to_vec(&enc, plaintext);
+        let wrong_digest = digest_of(b"different content");
 
-        let ciphertext = prepared.data.into_bytes().unwrap();
         let mut output = Vec::new();
         let result = decrypt_ciphertext_to_writer(
             &ciphertext[..],

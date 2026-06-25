@@ -6,14 +6,20 @@
 //! async-stream → sync-`Read` bridge, and a couple of one-liner helpers
 //! aren't reimplemented twice.
 
+use super::encryption::Encryptor;
 use super::types::{ByteSource, EncryptedFileMetadata};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use bytes::Bytes;
 use futures::StreamExt as _;
+use futures::stream::Stream;
 use reqwest::StatusCode;
+use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+/// Read-buffer size in bytes for the streaming upload producer — one channel chunk.
+const UPLOAD_CHUNK_SIZE_BYTES: usize = 64 * 1024;
 
 /// Per-attempt HTTP timeout. Matches the cloud transfer modules' historical
 /// 300s cap; the retry budget (`policy.max_elapsed`) must exceed this so at
@@ -182,22 +188,99 @@ pub struct CloudStreamingDownload {
     pub reader: StreamReader,
 }
 
-/// Builds a streaming `reqwest::Body` from a [`ByteSource`] for upload.
-///
-/// `ByteSource::Path` opens a fresh file handle on each call (suitable for
-/// reuse across retry attempts) and wraps it as a `tokio::fs::File` so the
-/// body streams without resident-memory overhead. `ByteSource::Bytes` is an
-/// Arc-backed `bytes::Bytes` buffer — the clone here is O(1) regardless of
-/// how many times the retry loop calls this function.
-pub(super) fn body_for(source: &ByteSource) -> std::io::Result<reqwest::Body> {
-    match source {
-        ByteSource::Path(p) => {
-            let std_file = tokio::task::block_in_place(|| std::fs::File::open(p))?;
-            let tokio_file = tokio::fs::File::from_std(std_file);
-            Ok(reqwest::Body::from(tokio_file))
+/// Builds a streaming `reqwest::Body` for a GCS/Azure upload. CSE wraps the
+/// source in a lazy `EncryptingReader` (ciphertext produced on demand, never
+/// materialized); callers then set `Content-Length` to `cipher_len`, as a
+/// wrapped stream has no known length. SSE streams the source as-is (handing
+/// reqwest a `File` / `Bytes` so it can derive `Content-Length` itself).
+pub(super) async fn body_for(
+    source: &ByteSource,
+    encryptor: Option<&Encryptor>,
+) -> std::io::Result<reqwest::Body> {
+    match encryptor {
+        Some(enc) => {
+            // Open async up-front so a slow open on a networked FS (NFS/EBS)
+            // runs off the runtime thread *and* a failure surfaces here as a
+            // non-retryable build error (before the body streams), not
+            // mid-stream. The encrypting stream then just consumes the
+            // already-open reader, so its opener is infallible.
+            let reader = source.open_async().await?;
+            Ok(reqwest::Body::wrap_stream(encrypting_body_stream(
+                move || Ok(reader),
+                enc.clone(),
+            )))
         }
-        ByteSource::Bytes(v) => Ok(reqwest::Body::from(v.clone())),
+        None => match source {
+            ByteSource::Path(p) => {
+                // Async open: the `open()` syscall runs on tokio's blocking pool,
+                // so a slow open on a networked filesystem (NFS, EBS) never stalls
+                // the runtime thread (and, unlike `block_in_place`, this works on a
+                // current-thread runtime). The failure still surfaces here as a
+                // non-retryable build error, before the body streams — not
+                // mid-stream. reqwest then streams the file body off-thread.
+                let tokio_file = tokio::fs::File::open(p).await?;
+                Ok(reqwest::Body::from(tokio_file))
+            }
+            ByteSource::Bytes(b) => Ok(reqwest::Body::from(b.clone())),
+        },
     }
+}
+
+/// Drives an `EncryptingReader` on a `spawn_blocking` task (AES runs off the
+/// runtime thread, mirroring the GET-side decrypt) and exposes the ciphertext
+/// chunks as a `Stream` — the upload-side counterpart of
+/// [`spawn_byte_stream_producer`]. The `Crypter` is built inside the task with
+/// the fixed key+IV, so rebuilding the stream per retry yields identical bytes.
+///
+/// The source is supplied as an `open` closure rather than an already-open
+/// reader so the `open()` syscall itself runs inside the blocking task, off the
+/// runtime thread — a slow or hung open on a networked FS (NFS/EBS) must not
+/// stall a tokio worker. The S3 CSE path relies on this: its `SdkBody::retryable`
+/// builder is a sync `Fn` that can't `await`, so it can't open async up-front
+/// like GCS/Azure do; instead it hands in `move || source.open()` and the open
+/// happens here. A failed open arrives as the stream's first (error) frame,
+/// before any body bytes. GCS/Azure open async up-front and pass an infallible
+/// `move || Ok(reader)`, keeping their open failure an up-front build error.
+pub(super) fn encrypting_body_stream(
+    open: impl FnOnce() -> std::io::Result<Box<dyn Read + Send>> + Send + 'static,
+    encryptor: Encryptor,
+) -> impl Stream<Item = std::io::Result<Bytes>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(8);
+    tokio::task::spawn_blocking(move || {
+        let reader = match open() {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(e));
+                return;
+            }
+        };
+        let mut enc_reader = match encryptor.encrypting_reader(reader) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                return;
+            }
+        };
+        let mut buf = vec![0u8; UPLOAD_CHUNK_SIZE_BYTES];
+        loop {
+            match enc_reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx
+                        .blocking_send(Ok(Bytes::copy_from_slice(&buf[..n])))
+                        .is_err()
+                    {
+                        break; // consumer (request body) dropped
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+    tokio_stream::wrappers::ReceiverStream::new(rx)
 }
 
 /// Strategy each cloud module implements to wire its error variants into
@@ -217,16 +300,17 @@ pub(super) trait UploadRetryAdapter {
     fn on_exhausted(&self, detail: String) -> Self::Err;
 }
 
-/// Shared retry/backoff loop for the cloud upload paths. The closure may
-/// fail (e.g. a per-retry file open) — failures are non-retryable and surface
-/// via `adapter.on_build_err`.
+/// Shared retry/backoff loop for the cloud upload paths. The async closure
+/// rebuilds the request per attempt (re-opening the source off the runtime
+/// thread via `body_for`) and may fail (e.g. a per-retry file open) — failures
+/// are non-retryable and surface via `adapter.on_build_err`.
 pub(super) async fn upload_with_retry<F, M>(
     policy: &RetryPolicy,
     adapter: &M,
     build_request: F,
 ) -> Result<(), M::Err>
 where
-    F: Fn() -> Result<reqwest::RequestBuilder, M::BuildErr>,
+    F: AsyncFn() -> Result<reqwest::RequestBuilder, M::BuildErr>,
     M: UploadRetryAdapter,
 {
     let max_attempts = policy.max_attempts;
@@ -244,7 +328,7 @@ where
         let remaining = policy.max_elapsed - elapsed;
         let timeout = remaining.min(Duration::from_secs(REQUEST_TIMEOUT_SECS));
 
-        let req = match build_request() {
+        let req = match build_request().await {
             Ok(r) => r.timeout(timeout),
             Err(e) => return Err(adapter.on_build_err(e)),
         };
