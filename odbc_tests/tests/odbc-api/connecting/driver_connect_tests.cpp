@@ -943,3 +943,63 @@ TEST_CASE("SQLDriverConnect: Threaded concurrent connections",
   }
   REQUIRE(successful == NUM_THREADS);
 }
+
+// ============================================================================
+// SQLDriverConnect - Connection Pooling Repro
+// ============================================================================
+// Reproduces, outside the replay harness, the connect setup used by the Excel
+// Power Query replay `excel/powerquery/raw_sql/all_datatypes`, which fails its
+// first SQLDriverConnect with SQL_ERROR (and, on the Windows DM, an *empty*
+// diagnostic record) on the new driver. That replay and its sibling
+// `raw_sql/select_1` share byte-identical connect code, yet only the former
+// fails — the distinguishing factor versus every other case in this file is
+// process-wide connection pooling (SQL_ATTR_CONNECTION_POOLING =
+// SQL_CP_ONE_PER_HENV) combined with a full connection string (not DSN=) and a
+// short login timeout.
+//
+// This test mirrors that exact sequence: two pooling-enabled environments, a
+// DBC allocated on the second, SQL_ATTR_LOGIN_TIMEOUT, then a connect via the
+// full connection string. It intentionally runs on BOTH drivers (no
+// SKIP_NEW_DRIVER_NOT_IMPLEMENTED) so CI confirms whether the failure
+// reproduces here; on failure the matcher prints the return code and any
+// diagnostic records, closing the "empty diagnostic" blind spot.
+TEST_CASE("SQLDriverConnect: connection pooling repro (Excel all_datatypes)",
+          "[odbc-api][driverconnect][dsn][integration][pooling][repro]") {
+  const auto config = DataSourceConfig::Snowflake().install();
+  const std::string connStr = config.connection_string();
+
+  // First pooling-enabled environment (mirrors the captured trace's env0).
+  SQLHENV env0 = SQL_NULL_HENV;
+  REQUIRE(SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env0) == SQL_SUCCESS);
+  REQUIRE(SQLSetEnvAttr(env0, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0) == SQL_SUCCESS);
+  CHECK_THAT(
+      OdbcResult(SQLSetEnvAttr(env0, SQL_ATTR_CONNECTION_POOLING, reinterpret_cast<SQLPOINTER>(SQL_CP_ONE_PER_HENV), 0),
+                 SQL_HANDLE_ENV, env0),
+      OdbcMatchers::IsSuccess());
+
+  // Second pooling-enabled environment; the connection is allocated here (env1).
+  SQLHENV env1 = SQL_NULL_HENV;
+  REQUIRE(SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env1) == SQL_SUCCESS);
+  REQUIRE(SQLSetEnvAttr(env1, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0) == SQL_SUCCESS);
+  CHECK_THAT(
+      OdbcResult(SQLSetEnvAttr(env1, SQL_ATTR_CONNECTION_POOLING, reinterpret_cast<SQLPOINTER>(SQL_CP_ONE_PER_HENV), 0),
+                 SQL_HANDLE_ENV, env1),
+      OdbcMatchers::IsSuccess());
+
+  SQLHDBC dbc = SQL_NULL_HDBC;
+  REQUIRE_THAT(OdbcResult(SQLAllocHandle(SQL_HANDLE_DBC, env1, &dbc), SQL_HANDLE_ENV, env1), OdbcMatchers::IsSuccess());
+  REQUIRE(dbc != SQL_NULL_HDBC);
+
+  SQLRETURN ret = SQLSetConnectAttr(dbc, SQL_ATTR_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(15), 0);
+  CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::IsSuccess());
+
+  ret = SQLDriverConnect(dbc, nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
+
+  if (SQL_SUCCEEDED(ret)) {
+    SQLDisconnect(dbc);
+  }
+  SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+  SQLFreeHandle(SQL_HANDLE_ENV, env1);
+  SQLFreeHandle(SQL_HANDLE_ENV, env0);
+}
