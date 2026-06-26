@@ -439,6 +439,27 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Error reading arrow record batch: {source}"))]
+    ArrowBatchRead {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Error concatenating arrow record batches: {source}"))]
+    ArrowBatchConcat {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Error building arrow record batch: {source}"))]
+    RecordBatchBuild {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     // `error_source()` returns [`ErrorSource::Unknown`]; the wire payload
     // uses `telemetry_classification` to map the inner
     // `CoreProtobufError` (Transport → connectivity, Application → server_error).
@@ -664,6 +685,9 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => ErrorSource::DataConversion,
             OdbcError::InvalidWideChar { .. } => ErrorSource::DataConversion,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => ErrorSource::InternalError,
+            OdbcError::ArrowBatchRead { .. } => ErrorSource::InternalError,
+            OdbcError::ArrowBatchConcat { .. } => ErrorSource::InternalError,
+            OdbcError::RecordBatchBuild { .. } => ErrorSource::InternalError,
             OdbcError::CoreError { .. } => ErrorSource::Unknown,
             OdbcError::ProtoRequiredFieldMissing { .. } => ErrorSource::InternalError,
             OdbcError::InvalidFreeStmtOption { .. } => ErrorSource::ApiMisuse,
@@ -919,6 +943,9 @@ impl OdbcError {
             },
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
+            OdbcError::ArrowBatchRead { .. } => SqlState::GeneralError,
+            OdbcError::ArrowBatchConcat { .. } => SqlState::GeneralError,
+            OdbcError::RecordBatchBuild { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
             OdbcError::InvalidFreeStmtOption { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,

@@ -1096,6 +1096,13 @@ fn set_state(stmt: &mut StatementInner, state: StatementState) {
     stmt.state = state.into();
 }
 
+/// Set statement state for catalog functions (SQLTables, etc.).
+/// Does NOT call `finalize_execute_response` — catalog results don't need
+/// parameter metadata refresh or multi-statement tracking.
+pub(crate) fn set_state_for_catalog(inner: &mut StatementInner, state: StatementState) {
+    set_state(inner, state);
+}
+
 /// Process an `ExecuteQueryResponse` and apply the resulting state to the statement.
 ///
 /// For Single results: uses the returned ResultSetHandle to fetch the Arrow stream,

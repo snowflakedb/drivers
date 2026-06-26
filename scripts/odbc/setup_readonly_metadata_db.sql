@@ -14,6 +14,11 @@ USE ROLE TESTROLE_UNIVERSAL;
 -- treat '_' as a single-character wildcard in pattern arguments, which causes
 -- painfully slow metadata queries when identifiers contain them.
 --
+-- Likewise, do not add objects whose names match the BASIC% wildcard prefix
+-- used by tables_tests.cpp (BASICTABLE, BASICVIEW, etc.). A fixture such as
+-- "BASIC%TABLE" also matches BASIC% and breaks CI assertions that expect
+-- exactly those two BASIC* catalog objects.
+--
 -- Usage:
 --   Via the C++ runner (recommended):
 --     cd odbc_tests
@@ -45,6 +50,15 @@ CREATE TABLE THREECOLTABLE (cola INT, colb VARCHAR(50), colc FLOAT);
 CREATE TABLE NULLABILITYTABLE (id INTEGER NOT NULL, name VARCHAR(100));
 CREATE TABLE WILDCARDCOLTABLE (ca INT, cb INT, ddd INT);
 CREATE TABLE NOPKTABLE (id INT, name VARCHAR(50));
+
+-- Escape-pattern regression fixtures (SQLTables coarse LIKE + client-side filter).
+-- General object names above avoid '_' because it slows pattern queries. These
+-- quoted identifiers exist solely to assert escaped \_ and \% semantics E2E.
+-- Use VAL* / MY* prefixes here — never BASIC* (see header comment).
+CREATE TABLE MY1TABLE (id INT);
+CREATE TABLE "MY_TABLE" (id INT);
+CREATE TABLE VAL1TABLE (id INT);
+CREATE TABLE "VAL%TABLE" (id INT);
 
 -- =============================================================================
 -- Primary key tables (used by SQLPrimaryKeys, SQLStatistics,

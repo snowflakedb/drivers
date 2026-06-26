@@ -18,25 +18,34 @@
 
 namespace sql_script_runner {
 
-inline std::string strip_comments_and_trim(const std::string& raw) {
-  std::istringstream stream(raw);
-  std::string line;
+// Collapses all runs of whitespace (including newlines) into single spaces and
+// trims the ends. Comments are removed by `parse_sql_statements` before this runs.
+inline std::string collapse_whitespace_and_trim(const std::string& raw) {
   std::string result;
-
-  while (std::getline(stream, line)) {
-    size_t start = line.find_first_not_of(" \t\r");
-    if (start == std::string::npos) continue;
-    if (line.size() >= start + 2 && line[start] == '-' && line[start + 1] == '-') continue;
-    if (!result.empty()) result += ' ';
-    result += line.substr(start);
+  bool prev_space = false;
+  for (char c : raw) {
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      if (!result.empty() && !prev_space) {
+        result += ' ';
+        prev_space = true;
+      }
+    } else {
+      result += c;
+      prev_space = false;
+    }
   }
-
-  while (!result.empty() && (result.back() == ' ' || result.back() == '\t' || result.back() == '\r')) {
+  while (!result.empty() && result.back() == ' ') {
     result.pop_back();
   }
   return result;
 }
 
+// Splits a SQL script into individual statements on `;`.
+//
+// Comments (`-- ... <eol>`) are stripped first, so semicolons, apostrophes, and
+// inline comments inside comment text never affect statement splitting or the
+// single-quote string tracking. A `--` inside a single-quoted string literal is
+// preserved as data, not treated as a comment.
 inline std::vector<std::string> parse_sql_statements(const std::string& sql) {
   std::vector<std::string> statements;
   std::string current;
@@ -45,12 +54,20 @@ inline std::vector<std::string> parse_sql_statements(const std::string& sql) {
   for (size_t i = 0; i < sql.size(); ++i) {
     char c = sql[i];
 
+    // Line comment outside a string literal: skip through end of line.
+    if (!in_single_quote && c == '-' && i + 1 < sql.size() && sql[i + 1] == '-') {
+      while (i < sql.size() && sql[i] != '\n')
+        ++i;
+      current += ' ';  // preserve the boundary as whitespace
+      continue;
+    }
+
     if (c == '\'' && (i == 0 || sql[i - 1] != '\\')) {
       in_single_quote = !in_single_quote;
     }
 
     if (c == ';' && !in_single_quote) {
-      std::string cleaned = strip_comments_and_trim(current);
+      std::string cleaned = collapse_whitespace_and_trim(current);
       if (!cleaned.empty()) {
         statements.push_back(cleaned);
       }
@@ -60,7 +77,7 @@ inline std::vector<std::string> parse_sql_statements(const std::string& sql) {
     }
   }
 
-  std::string trailing = strip_comments_and_trim(current);
+  std::string trailing = collapse_whitespace_and_trim(current);
   if (!trailing.empty()) {
     statements.push_back(trailing);
   }

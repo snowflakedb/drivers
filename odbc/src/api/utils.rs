@@ -14,6 +14,7 @@ use crate::conversion::{
 };
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
+use sf_core::apis::database_driver_v1::ESCAPE_CHAR;
 use snafu::ResultExt;
 use tracing;
 
@@ -40,6 +41,51 @@ pub(crate) fn process_catalog_arg(
         (Some(s), true) => Ok(Some(s.trim_end().to_uppercase())),
         (Some(s), false) => Ok(Some(s.to_string())),
     }
+}
+
+/// Converts a catalog function string argument to a core search pattern.
+///
+/// Pattern mode (metadata_id=false, ODBC default): pass through verbatim.
+///   NULL → None (no filter); non-NULL → Some(as-is, app's wildcards carry core semantics).
+///
+/// Identifier mode (metadata_id=true):
+///   NULL → HY009 (NullPointer error)
+///   Quoted: strip surrounding `"`, collapse `""` → `"`, then escape `%`/`_`/`\` for core.
+///   Unquoted: trim trailing blanks, uppercase, then escape `%`/`_`/`\` → `\%`/`\_`/`\\`.
+///
+/// In both modes, empty string passes through (core yields empty result per policy).
+pub(crate) fn catalog_arg_to_pattern(
+    arg: Option<&str>,
+    metadata_id: bool,
+) -> OdbcResult<Option<String>> {
+    match (arg, metadata_id) {
+        (None, true) => NullPointerSnafu.fail(),
+        (None, false) => Ok(None),
+        (Some(s), false) => Ok(Some(s.to_string())),
+        (Some(s), true) => {
+            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                let inner = &s[1..s.len() - 1];
+                let literal = inner.replace("\"\"", "\"");
+                Ok(Some(escape_like_wildcards(&literal)))
+            } else {
+                let trimmed = s.trim_end().to_uppercase();
+                Ok(Some(escape_like_wildcards(&trimmed)))
+            }
+        }
+    }
+}
+
+/// Escapes `%`, `_`, and `\` in a literal identifier so the core treats it as an
+/// exact-match pattern via `is_exact`.
+pub(crate) fn escape_like_wildcards(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        if c == ESCAPE_CHAR || c == '%' || c == '_' {
+            out.push(ESCAPE_CHAR);
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Get the number of result columns
@@ -513,5 +559,104 @@ mod tests {
             process_catalog_arg(Some("straße"), false).unwrap(),
             Some("straße".to_string())
         );
+    }
+
+    // ---- catalog_arg_to_pattern ----
+
+    #[test]
+    fn new_pattern_mode_none_returns_none() {
+        assert_eq!(catalog_arg_to_pattern(None, false).unwrap(), None);
+    }
+
+    #[test]
+    fn new_pattern_mode_passes_through_verbatim() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("hello%_world"), false).unwrap(),
+            Some("hello%_world".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_none_returns_hy009() {
+        let result = catalog_arg_to_pattern(None, true);
+        assert!(matches!(result, Err(OdbcError::NullPointer { .. })));
+    }
+
+    #[test]
+    fn new_identifier_mode_unquoted_uppercases_and_escapes_wildcards() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("hello%world"), true).unwrap(),
+            Some("HELLO\\%WORLD".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_unquoted_trims_trailing() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("FOO  "), true).unwrap(),
+            Some("FOO".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_quoted_strips_quotes_and_escapes() {
+        // "hello%world" → strip quotes → hello%world → escape → hello\%world
+        assert_eq!(
+            catalog_arg_to_pattern(Some("\"hello%world\""), true).unwrap(),
+            Some("hello\\%world".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_quoted_collapses_double_quotes() {
+        // "he""llo" → strip outer → he""llo → collapse → he"llo → escape → he"llo
+        assert_eq!(
+            catalog_arg_to_pattern(Some("\"he\"\"llo\""), true).unwrap(),
+            Some("he\"llo".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_quoted_preserves_case() {
+        // Quoted identifiers keep their case
+        assert_eq!(
+            catalog_arg_to_pattern(Some("\"MixedCase\""), true).unwrap(),
+            Some("MixedCase".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_unquoted_escapes_backslash() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("foo\\bar"), true).unwrap(),
+            Some("FOO\\\\BAR".to_string())
+        );
+    }
+
+    #[test]
+    fn connection_context_catalog_with_underscore_is_escaped_for_exact_match() {
+        let db = "SNOWFLAKE_SAMPLE_DATA";
+        let escaped = escape_like_wildcards(db);
+        assert_eq!(escaped, "SNOWFLAKE\\_SAMPLE\\_DATA");
+
+        // resolve_null_catalog_to_connection_context returns the escaped form;
+        // pattern mode passes it through unchanged to the core.
+        let pattern = catalog_arg_to_pattern(Some(&escaped), false)
+            .unwrap()
+            .expect("pattern");
+        assert_eq!(pattern, escaped);
+
+        // Without escaping, the bare name would reach the core as a pattern containing
+        // wildcards and is_exact() would fail, falling through to IN ACCOUNT.
+        assert_eq!(
+            catalog_arg_to_pattern(Some(db), false).unwrap(),
+            Some(db.to_string())
+        );
+    }
+
+    #[test]
+    fn escape_like_wildcards_escapes_percent_and_backslash() {
+        assert_eq!(escape_like_wildcards("DB%1"), "DB\\%1");
+        assert_eq!(escape_like_wildcards("A\\B"), "A\\\\B");
     }
 }
