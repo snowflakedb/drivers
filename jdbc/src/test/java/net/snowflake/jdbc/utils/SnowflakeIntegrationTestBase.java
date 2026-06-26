@@ -5,6 +5,7 @@ import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 import net.snowflake.client.api.driver.SnowflakeDriver;
@@ -31,7 +32,7 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
     defaultConnection = null;
   }
 
-  protected Connection getDefaultConnection() throws Exception {
+  protected Connection getDefaultConnection() throws SQLException {
     if (defaultConnection == null) {
       throw new IllegalStateException("Default test connection is not initialized");
     }
@@ -41,7 +42,11 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
     return defaultConnection;
   }
 
-  protected Connection openConnection() throws Exception {
+  protected Connection openConnection() throws SQLException {
+    return openConnection(null);
+  }
+
+  protected Connection openConnection(Properties overrides) throws SQLException {
     Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
 
     // Read QUERY_RESULT_FORMAT from environment
@@ -50,12 +55,16 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
       props.setProperty("PYTHON_CONNECTOR_QUERY_RESULT_FORMAT", resultFormat);
     }
 
+    if (overrides != null) {
+      props.putAll(overrides);
+    }
+
     String url = TestParameters.buildJdbcUrl(props);
     prepareDriver();
     return DriverManager.getConnection(url, props);
   }
 
-  protected void ensureDatabaseAndSchema(Connection conn) throws Exception {
+  protected void ensureDatabaseAndSchema(Connection conn) throws SQLException {
     Properties props = loadDefaultConnectionProperties();
 
     String database = props.getProperty("db");
@@ -70,7 +79,11 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
     }
   }
 
-  private static synchronized void prepareDriver() throws Exception {
-    Class.forName(SnowflakeDriver.class.getName());
+  private static synchronized void prepareDriver() throws SQLException {
+    try {
+      Class.forName(SnowflakeDriver.class.getName());
+    } catch (ClassNotFoundException e) {
+      throw new SQLException(e);
+    }
   }
 }

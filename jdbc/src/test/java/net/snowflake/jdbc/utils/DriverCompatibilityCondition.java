@@ -1,6 +1,7 @@
 package net.snowflake.jdbc.utils;
 
-import java.lang.reflect.AnnotatedElement;
+import java.lang.annotation.Annotation;
+import java.util.Optional;
 import org.junit.jupiter.api.extension.ConditionEvaluationResult;
 import org.junit.jupiter.api.extension.ExecutionCondition;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -15,21 +16,44 @@ public class DriverCompatibilityCondition implements ExecutionCondition {
 
   @Override
   public ConditionEvaluationResult evaluateExecutionCondition(ExtensionContext context) {
-    AnnotatedElement element = context.getElement().orElse(null);
-    if (element == null) {
-      return ConditionEvaluationResult.enabled("No annotation present");
-    }
-
-    SkipOldDriver skipOld = element.getAnnotation(SkipOldDriver.class);
+    SkipOldDriver skipOld = findAnnotation(context, SkipOldDriver.class);
     if (skipOld != null && DriverCompatibility.isOldDriver()) {
       return ConditionEvaluationResult.disabled(skipOld.value() + ": Skipped on old driver");
     }
 
-    SkipNewDriver skipNew = element.getAnnotation(SkipNewDriver.class);
+    SkipNewDriver skipNew = findAnnotation(context, SkipNewDriver.class);
     if (skipNew != null && DriverCompatibility.isNewDriver()) {
       return ConditionEvaluationResult.disabled(skipNew.value() + ": Skipped on new driver");
     }
 
     return ConditionEvaluationResult.enabled("Driver compatibility check passed");
+  }
+
+  private static <A extends Annotation> A findAnnotation(ExtensionContext ctx, Class<A> type) {
+    Optional<A> onElement =
+        ctx.getElement().flatMap(element -> Optional.ofNullable(element.getAnnotation(type)));
+    if (onElement.isPresent()) {
+      return onElement.get();
+    }
+
+    Optional<A> onTestClass =
+        ctx.getTestClass().flatMap(testClass -> Optional.ofNullable(testClass.getAnnotation(type)));
+    if (onTestClass.isPresent()) {
+      return onTestClass.get();
+    }
+
+    Optional<Class<?>> testClass = ctx.getTestClass();
+    if (testClass.isPresent()) {
+      Class<?> enclosing = testClass.get().getEnclosingClass();
+      while (enclosing != null) {
+        A annotation = enclosing.getAnnotation(type);
+        if (annotation != null) {
+          return annotation;
+        }
+        enclosing = enclosing.getEnclosingClass();
+      }
+    }
+
+    return null;
   }
 }

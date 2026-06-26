@@ -113,11 +113,15 @@ public class TestParameters {
   }
 
   public static String buildJdbcUrl(Properties props) {
-    String defaultUrl =
-        "jdbc:snowflake://" + props.getProperty("account") + ".snowflakecomputing.com";
-    if (props.getProperty("port") != null) {
-      defaultUrl += ":" + props.getProperty("port");
+    String url;
+    if (props.getProperty("host") != null) {
+      url = "jdbc:snowflake://" + props.getProperty("host");
+    } else {
+      url = "jdbc:snowflake://" + props.getProperty("account") + ".snowflakecomputing.com";
     }
-    return props.getProperty("url", defaultUrl);
+    if (props.getProperty("port") != null) {
+      url += ":" + props.getProperty("port");
+    }
+    return props.getProperty("url", url);
   }
 }

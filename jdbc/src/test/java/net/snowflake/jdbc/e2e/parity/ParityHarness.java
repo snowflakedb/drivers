@@ -29,7 +29,7 @@ import org.json.JSONTokener;
  *
  * <ul>
  *   <li>{@code parity.newClasspath} - universal-driver runtime classpath
- *   <li>{@code parity.oldClasspath} - legacy snowflake-jdbc 4.0.1 runtime classpath
+ *   <li>{@code parity.oldClasspath} - legacy snowflake-jdbc 4.3.1 runtime classpath
  * </ul>
  *
  * <p>On open, both connections are forced onto the Arrow result format via {@code ALTER SESSION SET

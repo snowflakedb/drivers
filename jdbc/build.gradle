@@ -14,7 +14,7 @@ plugins {
 // ====================
 // Project metadata
 // ====================
-def oldJdbcVersion = '4.0.1'
+def oldJdbcVersion = '4.3.1'
 def slf4jVersion = '2.0.9'
 def lombokVersion = '1.18.42'
 
@@ -376,7 +376,7 @@ jacocoTestReport {
     }
 }
 
-// Single-JVM parity oracle: loads universal-driver and snowflake-jdbc 4.0.1 into isolated
+// Single-JVM parity oracle: loads universal-driver and snowflake-jdbc 4.3.1 into isolated
 // URLClassLoaders so DateTimeParityTest can hit both drivers side-by-side and diff their output
 // directly (instead of running the suite twice and reconciling JUnit XML).
 //
