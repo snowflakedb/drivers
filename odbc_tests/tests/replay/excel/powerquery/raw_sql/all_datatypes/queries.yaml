@@ -1,0 +1,23 @@
+queries:
+- index: 0
+  original: |-
+    SELECT * REPLACE(
+      DATEADD('day', -1, TSLTZ) AS TSLTZ,
+      DATEADD('day', -1, TSTZ)  AS TSTZ
+    ) FROM ALLDATATYPES;
+  mapped: |-
+    SELECT * REPLACE(
+      DATEADD('day', -1, TSLTZ) AS TSLTZ,
+      DATEADD('day', -1, TSTZ)  AS TSTZ
+    ) FROM ODBCMETADATATESTDB.DATATYPETESTS.ALLDATATYPES;
+- index: 1
+  original: |-
+    SELECT * REPLACE(
+      DATEADD('day', -1, TSLTZ) AS TSLTZ,
+      DATEADD('day', -1, TSTZ)  AS TSTZ
+    ) FROM ALLDATATYPES;
+  mapped: |-
+    SELECT * REPLACE(
+      DATEADD('day', -1, TSLTZ) AS TSLTZ,
+      DATEADD('day', -1, TSTZ)  AS TSTZ
+    ) FROM ODBCMETADATATESTDB.DATATYPETESTS.ALLDATATYPES;
