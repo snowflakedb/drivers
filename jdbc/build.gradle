@@ -252,6 +252,31 @@ def configureCommonTestTask = { t ->
     t.minHeapSize = '1g'
     t.maxHeapSize = '4g'
 
+    // Run test classes across parallel JVM forks (one Snowflake session each).
+    // Defaults to 4; override via GRADLE_MAX_PARALLEL_FORKS.
+    def rawForks = System.getenv('GRADLE_MAX_PARALLEL_FORKS')
+    def forks = rawForks?.trim()
+    if (forks) {
+        int parsedForks
+        try {
+            parsedForks = Integer.parseInt(forks)
+            if (parsedForks < 1) {
+                throw new NumberFormatException("value must be >= 1")
+            }
+        } catch (NumberFormatException e) {
+            throw new GradleException("Environment variable GRADLE_MAX_PARALLEL_FORKS must be a positive integer, but was: '${rawForks}'", e)
+        }
+        t.maxParallelForks = parsedForks
+    } else {
+        t.maxParallelForks = 4
+    }
+
+    // Log the effective fork count for CI visibility.
+    t.doFirst {
+        t.logger.lifecycle("[parallel] ${t.name}: maxParallelForks=${t.maxParallelForks} " +
+            "(runner availableProcessors=${Runtime.runtime.availableProcessors()})")
+    }
+
     if (JavaVersion.current().isJava9Compatible()) {
         t.jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
     }
@@ -302,7 +327,10 @@ def configureCommonTestTask = { t ->
     // Collect failed tests and reprint them at the end of the run so they're
     // not buried in 500+ lines of pass output. test-logger has no end-of-run
     // failure block; this hooks Gradle's TestListener directly.
-    def failures = [] as List<String>
+    // Synchronized: with maxParallelForks > 1 Gradle may invoke afterTest from
+    // multiple forks concurrently, so the backing list must be thread-safe and
+    // the afterSuite iteration must hold the list's monitor.
+    def failures = Collections.synchronizedList([] as List<String>)
     t.afterTest { desc, result ->
         if (result.resultType.toString() == 'FAILURE') {
             def msg = result.exceptions ? result.exceptions[0].toString().readLines()[0] : 'no message'
@@ -312,7 +340,9 @@ def configureCommonTestTask = { t ->
     t.afterSuite { desc, result ->
         if (desc.parent == null && failures) {
             t.logger.lifecycle("\nFAILED TESTS (${failures.size()}):")
-            failures.each { t.logger.lifecycle(it) }
+            synchronized (failures) {
+                failures.each { t.logger.lifecycle(it) }
+            }
             t.logger.lifecycle("")
         }
     }
