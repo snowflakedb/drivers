@@ -22,6 +22,9 @@
 
 inline constexpr auto READONLY_DB_NAME = "ODBCMETADATATESTDB";
 inline constexpr auto READONLY_SCHEMA_NAME = "CATALOGTESTS";
+// Second schema in the same database, used to verify that NULL-schema metadata
+// queries span all schemas in the connected database (not just the current one).
+inline constexpr auto READONLY_SECOND_SCHEMA_NAME = "DATATYPETESTS";
 
 // =============================================================================
 // Object name constants
@@ -51,6 +54,16 @@ inline constexpr auto FK_MULTI_CHILD_B = "FKMULTICHILDB";
 
 // Views
 inline constexpr auto BASIC_VIEW = "BASICVIEW";
+
+// Table living in READONLY_SECOND_SCHEMA_NAME (DATATYPETESTS), used to verify
+// NULL-schema queries are not narrowed to the connection's current schema.
+inline constexpr auto SECOND_SCHEMA_TABLE = "ALLDATATYPES";
+
+// SQLTables escape-pattern regression (see setup_readonly_metadata_db.sql)
+inline constexpr auto ESCAPE_LITERAL_UNDERSCORE_TABLE = "MY_TABLE";
+inline constexpr auto ESCAPE_UNDERSCORE_DECOY_TABLE = "MY1TABLE";
+inline constexpr auto ESCAPE_LITERAL_PERCENT_TABLE = "VAL%TABLE";
+inline constexpr auto ESCAPE_PERCENT_DECOY_TABLE = "VAL1TABLE";
 
 // Procedures
 inline constexpr auto BASIC_PROC = "BASICPROC";

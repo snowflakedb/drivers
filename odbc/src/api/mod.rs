@@ -1,4 +1,5 @@
 pub mod bitmask;
+pub mod catalog;
 pub mod connection;
 pub mod data;
 pub mod descriptor;
