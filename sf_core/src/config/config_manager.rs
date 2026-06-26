@@ -19,6 +19,7 @@ pub fn load_connection_config_with_paths(
 ) -> Result<HashMap<String, Setting>, ConfigError> {
     let mut settings = HashMap::new();
     let empty_toml = toml::Value::Table(toml::map::Map::new());
+    let registry = super::param_registry::registry();
 
     let config_toml = match &paths.config_file {
         Some(p) => load_toml_file(p)?,
@@ -32,7 +33,11 @@ pub fn load_connection_config_with_paths(
     {
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
-                settings.insert(key.clone(), setting);
+                let canonical = registry
+                    .resolve(key)
+                    .map(|def| def.canonical_name.to_owned())
+                    .unwrap_or_else(|| key.clone());
+                settings.insert(canonical, setting);
             }
         }
     }
@@ -48,7 +53,11 @@ pub fn load_connection_config_with_paths(
     {
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
-                settings.insert(key.clone(), setting);
+                let canonical = registry
+                    .resolve(key)
+                    .map(|def| def.canonical_name.to_owned())
+                    .unwrap_or_else(|| key.clone());
+                settings.insert(canonical, setting);
             }
         }
     }
@@ -927,5 +936,76 @@ account = "acct"
         drop(_lock);
 
         assert_eq!(result.unwrap(), "from_env_var");
+    }
+
+    #[test]
+    fn test_toml_alias_resolves_to_canonical_name() {
+        // Regression: `private_key_file_pwd` (legacy alias) written in connections.toml
+        // must be stored under the canonical name `private_key_password` so that
+        // downstream ParamStore lookups succeed.  Before the fix, verbatim key insertion
+        // meant the passphrase was never found and OpenSSL prompted interactively.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[test]
+account = "myaccount"
+user = "myuser"
+private_key_file = "/path/to/key.p8"
+private_key_file_pwd = "supersecret"
+"#,
+        );
+
+        let result = load_connection_config_with_paths("test", &paths);
+        assert!(result.is_ok(), "load failed: {:?}", result.err());
+
+        let settings = result.unwrap();
+        // The alias `private_key_file_pwd` must be stored under the canonical name.
+        assert!(
+            settings.contains_key("private_key_password"),
+            "canonical key `private_key_password` must be present; got keys: {:?}",
+            settings.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !settings.contains_key("private_key_file_pwd"),
+            "alias key `private_key_file_pwd` must not be stored verbatim"
+        );
+        assert!(
+            matches!(settings.get("private_key_password"), Some(Setting::String(s)) if s == "supersecret")
+        );
+    }
+
+    #[test]
+    fn test_toml_canonical_keys_pass_through_unchanged() {
+        // Canonical keys written directly in connections.toml must not be mangled
+        // by the alias-resolution step (regression guard for the resolve() call).
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[test]
+account = "myaccount"
+user = "myuser"
+private_key_file = "/path/to/key.p8"
+private_key_password = "supersecret"
+"#,
+        );
+
+        let result = load_connection_config_with_paths("test", &paths);
+        assert!(result.is_ok(), "load failed: {:?}", result.err());
+
+        let settings = result.unwrap();
+        assert!(
+            matches!(settings.get("private_key_password"), Some(Setting::String(s)) if s == "supersecret"),
+            "canonical key `private_key_password` must be preserved as-is"
+        );
+        assert!(
+            matches!(settings.get("account"), Some(Setting::String(s)) if s == "myaccount"),
+            "other canonical keys must be preserved unchanged"
+        );
     }
 }

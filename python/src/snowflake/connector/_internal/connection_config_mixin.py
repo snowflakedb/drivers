@@ -13,6 +13,7 @@ touch.
 
 from __future__ import annotations
 
+import os
 import re
 import warnings
 
@@ -452,6 +453,9 @@ class ConnectionConfigMixin:
         """
         proto: dict[str, ConfigSetting] = {}
         for key, value in self.to_options(options_modifiers).items():
+            # PathLike objects (e.g. pathlib.Path) map to str — convert before type dispatch.
+            if isinstance(value, os.PathLike):
+                value = str(value)
             # ``bool`` is a subclass of ``int``, so the bool branch has to come first.
             if isinstance(value, bool):
                 proto[key] = ConfigSetting(bool_value=value)
