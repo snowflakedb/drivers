@@ -461,6 +461,52 @@ impl DatabaseDriverV1 {
         self.results.add_handle(Mutex::new(result_set))
     }
 
+    /// Registers a pre-built Arrow RecordBatch as a streamable ResultSet.
+    ///
+    /// Serializes the batch to Arrow IPC, base64-encodes it as `ArrowSingleChunk`,
+    /// and stores it in the handle manager. Used by synthetic result-set paths
+    /// (e.g., `connection_get_objects`) that build results in memory rather than
+    /// fetching from Snowflake.
+    pub fn register_arrow_batch_as_result_set(
+        &self,
+        batch: &arrow::array::RecordBatch,
+        http_client: reqwest::Client,
+    ) -> Result<ResultSetInfo, ApiError> {
+        use arrow::ipc::writer::StreamWriter;
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+
+        let schema = batch.schema();
+        let mut buf = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buf, &schema).context(ArrowParsingSnafu)?;
+            writer.write(batch).context(ArrowParsingSnafu)?;
+            writer.finish().context(ArrowParsingSnafu)?;
+        }
+
+        let chunk_base64 = BASE64.encode(&buf);
+        let data = RowsetData::ArrowSingleChunk { chunk_base64 };
+
+        let descriptor = ResultSetDescriptor {
+            query_id: String::new(),
+            columns: Vec::new(),
+            rows_affected: Some(-1),
+            statement_type_id: None,
+            sql_state: None,
+            stats: None,
+            number_of_binds: 0,
+            array_bind_supported: false,
+            binds: Vec::new(),
+        };
+
+        let reader_ctx = ReaderContext {
+            http_client,
+            prefetch_config: PrefetchConfig::default(),
+        };
+
+        let handle = self.create_result_set(descriptor.clone(), data, reader_ctx);
+        Ok(ResultSetInfo { handle, descriptor })
+    }
+
     /// Creates a ResultSet by fetching data from Snowflake by query_id.
     ///
     /// This path is used for multi-statement child results and async query result

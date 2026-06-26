@@ -289,14 +289,34 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self, _input))]
+    #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self, input))]
     async fn connection_get_objects(
         &self,
-        _input: ConnectionGetObjectsRequest,
+        input: ConnectionGetObjectsRequest,
     ) -> Result<ConnectionGetObjectsResponse, DriverException> {
-        Err(not_implemented(
-            "connection_get_objects is not yet implemented",
-        ))
+        use crate::apis::database_driver_v1::GetObjectsRequest;
+
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?.into();
+
+        let req = GetObjectsRequest {
+            conn_handle,
+            depth: input.depth,
+            catalog: input.catalog,
+            db_schema: input.db_schema,
+            table_name: input.table_name,
+            table_type: input.table_type,
+        };
+
+        let info = self
+            .driver
+            .connection_get_objects(req)
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionGetObjectsResponse {
+            result_set_handle: Some(info.handle.into()),
+            result_descriptor: Some(info.descriptor.into()),
+        })
     }
 
     #[instrument(

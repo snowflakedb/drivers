@@ -4,6 +4,7 @@ pub mod async_query_registry;
 pub mod connection;
 mod database;
 pub(crate) mod error;
+pub(crate) mod get_objects;
 mod global_state;
 // Gated public visibility so integration tests (via the `test-utils` feature) can reach
 // `spawn_heartbeat_task` / `HeartbeatHandle` without widening the production surface of `sf_core`.
@@ -12,6 +13,7 @@ mod global_state;
 pub mod heartbeat;
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) mod heartbeat;
+pub(crate) mod like_pattern;
 mod logout;
 pub(crate) mod multistatement;
 mod query;
@@ -26,7 +28,14 @@ pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
 pub use error::ApiError;
+pub use get_objects::{
+    DEPTH_CATALOGS, DEPTH_COLUMNS, DEPTH_DB_SCHEMAS, DEPTH_TABLES, FIELD_CATALOG_DB_SCHEMAS,
+    FIELD_CATALOG_NAME, FIELD_DB_SCHEMA_NAME, FIELD_DB_SCHEMA_TABLES, FIELD_TABLE_COLUMNS,
+    FIELD_TABLE_CONSTRAINTS, FIELD_TABLE_NAME, FIELD_TABLE_TYPE, GetObjectsRequest,
+    nested_get_objects_schema,
+};
 pub use global_state::{DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor, WrapperPresets};
+pub use like_pattern::ESCAPE_CHAR;
 pub use result_set::{
     ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult, InlineData,
     ResultSetDescriptor, ResultSetInfo,
