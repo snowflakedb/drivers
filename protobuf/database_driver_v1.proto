@@ -345,8 +345,36 @@ message ConnectionGetObjectsRequest {
   optional string column_name = 7;
 }
 
+// ConnectionGetObjects returns a result set (streaming, via result_set_get_stream)
+// containing a nested ADBC-shaped Arrow batch:
+//   catalog_name: utf8
+//   catalog_db_schemas: list<struct<
+//     db_schema_name: utf8,
+//     db_schema_tables: list<struct<
+//       table_name: utf8,
+//       table_type: utf8,
+//       table_columns: list (always empty in this impl),
+//       table_constraints: list (always empty in this impl)
+//     >>
+//   >>
+//
+// depth constants:
+//   0 = ALL (not used)
+//   1 = CATALOGS  -> populates only catalog_name
+//   2 = DB_SCHEMAS -> populates catalog_name + db_schema_name
+//   3 = TABLES    -> populates down to table_name/table_type
+//   4 = COLUMNS   -> deferred (not implemented yet)
+//
+// Filter semantics (search patterns, ADBC + backslash-escape extension):
+//   - NULL filter = no filter (account-wide or connection-context if
+//     CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX is set)
+//   - empty string "" = matches nothing (returns empty result)
+//   - % = any sequence, _ = any single char
+//   - \%, \_, \\ = literal %, _, \ (escape extension, not in ADBC spec)
+//   - Matching is case-insensitive (Snowflake unquoted-identifier semantics)
 message ConnectionGetObjectsResponse {
-  bytes objects_data = 1;
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
 }
 
 message ConnectionGetTableSchemaRequest {
