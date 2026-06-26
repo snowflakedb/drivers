@@ -56,6 +56,14 @@ public interface WithQueryUtils {
     }
   }
 
+  default int getSizeOfResultSet(ResultSet resultSet) throws SQLException {
+    int count = 0;
+    while (resultSet.next()) {
+      count++;
+    }
+    return count;
+  }
+
   default void assertSimpleQuerySucceeds(Connection conn) throws SQLException {
     try (Statement stmt = conn.createStatement();
         ResultSet rs = stmt.executeQuery("SELECT 1")) {
