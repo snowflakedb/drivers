@@ -30,3 +30,4 @@ thin pointers that reference the canonical. Skills fire on demand — the agent
 reads the canonical file fresh at invocation — so pointer files are safe.
 
 @./.claude/rules/code-review-design-discipline.md
+@./.claude/rules/apply-review-rulesets.md
