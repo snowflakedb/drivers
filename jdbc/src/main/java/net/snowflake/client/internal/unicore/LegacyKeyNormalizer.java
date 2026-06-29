@@ -25,6 +25,12 @@ public final class LegacyKeyNormalizer {
     LEGACY_KEY_ALIASES.put("oktausername", "okta_username");
     LEGACY_KEY_ALIASES.put("logintimeout", "authentication_timeout");
     LEGACY_KEY_ALIASES.put("disablesamlurlcheck", "disable_saml_url_check");
+    LEGACY_KEY_ALIASES.put("oauthclientid", "oauth_client_id");
+    LEGACY_KEY_ALIASES.put("oauthclientsecret", "oauth_client_secret");
+    LEGACY_KEY_ALIASES.put("oauthauthorizationurl", "oauth_authorization_url");
+    LEGACY_KEY_ALIASES.put("oauthtokenrequesturl", "oauth_token_request_url");
+    LEGACY_KEY_ALIASES.put("oauthredirecturi", "oauth_redirect_uri");
+    LEGACY_KEY_ALIASES.put("oauthscope", "oauth_scope");
   }
 
   /**

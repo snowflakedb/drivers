@@ -125,9 +125,9 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       Properties props = loadDefaultConnectionProperties();
       props.setProperty("authenticator", "OAUTH_AUTHORIZATION_CODE");
       props.setProperty("user", USER);
-      props.setProperty("oauth_client_id", CLIENT_ID);
-      props.setProperty("oauth_client_secret", CLIENT_SECRET);
-      props.setProperty("oauth_redirect_uri", REDICTED_URI);
+      props.setProperty("oauthClientId", CLIENT_ID);
+      props.setProperty("oauthClientSecret", CLIENT_SECRET);
+      props.setProperty("oauthRedirectUri", REDICTED_URI);
 
       cleanBrowserProcesses();
       try {
@@ -153,9 +153,9 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       Properties props = loadDefaultConnectionProperties();
       props.setProperty("authenticator", "OAUTH_AUTHORIZATION_CODE");
       props.setProperty("user", USER);
-      props.setProperty("oauth_client_id", CLIENT_ID);
-      props.setProperty("oauth_client_secret", "invalid_client_secret_12345");
-      props.setProperty("oauth_redirect_uri", REDICTED_URI);
+      props.setProperty("oauthClientId", CLIENT_ID);
+      props.setProperty("oauthClientSecret", "invalid_client_secret_12345");
+      props.setProperty("oauthRedirectUri", REDICTED_URI);
 
       cleanBrowserProcesses();
       try {
@@ -202,10 +202,10 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       Properties props = loadDefaultConnectionProperties();
       props.setProperty("authenticator", "OAUTH_CLIENT_CREDENTIALS");
       props.setProperty("user", CLIENT_ID);
-      props.setProperty("oauth_client_id", CLIENT_ID);
-      props.setProperty("oauth_client_secret", CLIENT_SECRET);
-      props.setProperty("oauth_token_request_url", TOKEN_URL);
-      props.setProperty("oauth_scope", SCOPE);
+      props.setProperty("oauthClientId", CLIENT_ID);
+      props.setProperty("oauthClientSecret", CLIENT_SECRET);
+      props.setProperty("oauthTokenRequestUrl", TOKEN_URL);
+      props.setProperty("oauthScope", SCOPE);
 
       // When Trying to Connect
       try (Connection conn = connect(props)) {
@@ -221,10 +221,10 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       Properties props = loadDefaultConnectionProperties();
       props.setProperty("authenticator", "OAUTH_CLIENT_CREDENTIALS");
       props.setProperty("user", CLIENT_ID);
-      props.setProperty("oauth_client_id", CLIENT_ID);
-      props.setProperty("oauth_client_secret", "invalid_client_secret_12345");
-      props.setProperty("oauth_token_request_url", TOKEN_URL);
-      props.setProperty("oauth_scope", SCOPE);
+      props.setProperty("oauthClientId", CLIENT_ID);
+      props.setProperty("oauthClientSecret", "invalid_client_secret_12345");
+      props.setProperty("oauthTokenRequestUrl", TOKEN_URL);
+      props.setProperty("oauthScope", SCOPE);
 
       // When Trying to Connect
       Executable connect = () -> connect(props);

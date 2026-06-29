@@ -25,4 +25,4 @@ cargo build -p jdbc_bridge
 echo ""
 echo "=== Running JDBC auth browser E2E tests (task: ${GRADLE_TASK}, tag: requires_browser) ==="
 cd "${WORKSPACE_ROOT}/jdbc"
-GRADLE_INCLUDE_TAGS=requires_browser ./gradlew "${GRADLE_TASK}"
+GRADLE_INCLUDE_TAGS=requires_browser GRADLE_MAX_PARALLEL_FORKS=1 ./gradlew "${GRADLE_TASK}"
