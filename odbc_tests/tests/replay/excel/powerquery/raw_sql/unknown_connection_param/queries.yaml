@@ -1,0 +1,10 @@
+queries:
+- index: 0
+  original: SELECT 'Irrelevant';
+  mapped: SELECT 'Irrelevant';
+- index: 1
+  original: SELECT 'Irrelevant';
+  mapped: SELECT 'Irrelevant';
+- index: 2
+  original: SELECT 'Irrelevant';
+  mapped: SELECT 'Irrelevant';
