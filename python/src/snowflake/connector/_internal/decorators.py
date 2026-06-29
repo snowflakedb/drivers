@@ -160,6 +160,41 @@ def _telemetry_client_for(self: Any) -> Any:
     raise TypeError(f"Unexpected telemetry target: {type(self)!r}")
 
 
+def _passed_argument_names(
+    sig: inspect.Signature,
+    self: Any,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> list[str]:
+    """Return the names of the arguments the caller explicitly passed.
+
+    Signature only — never argument values. Parameters the caller left at
+    their default are omitted, because :attr:`BoundArguments.arguments` only
+    contains arguments that were actually supplied (we deliberately do not
+    call ``apply_defaults()``). ``**kwargs`` entries are expanded to the
+    keyword names the caller used, since the var-keyword parameter name
+    itself (e.g. ``"kwargs"``) carries no signal. The first positional
+    (connection/cursor instance) is dropped.
+
+    Defensive by design: any binding failure yields ``[]`` so telemetry can
+    never break the wrapped call.
+    """
+    try:
+        bound = sig.bind(self, *args, **kwargs)
+    except TypeError:
+        return []
+    names: list[str] = []
+    for index, (name, bound_arg) in enumerate(bound.arguments.items()):
+        if index == 0:
+            continue  # first positional (connection/cursor), always bound first by the wrapper
+        param = sig.parameters[name]
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            names.extend(bound_arg.keys())
+        else:
+            names.append(name)
+    return names
+
+
 def _schedule_async_telemetry(coro: Any) -> None:
     """Fire-and-forget async telemetry when a sync decorated method runs under a loop."""
     try:
@@ -169,28 +204,28 @@ def _schedule_async_telemetry(coro: Any) -> None:
         logger.debug("Skipped async telemetry with no running event loop", exc_info=True)
 
 
-def _send_api_usage(self: Any, func: Callable[..., Any]) -> None:
+def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
     from snowflake.connector._internal.telemetry import AsyncTelemetryClient
 
     api_name = f"{type(self).__name__}.{func.__name__}"
     client = _telemetry_client_for(self)
     if isinstance(client, AsyncTelemetryClient):
-        _schedule_async_telemetry(client.send_api_usage(api_name))
+        _schedule_async_telemetry(client.send_api_usage(api_name, passed_arguments))
     else:
-        client.send_api_usage(api_name)
+        client.send_api_usage(api_name, passed_arguments)
 
 
-async def _send_api_usage_async(self: Any, func: Callable[..., Any]) -> None:
+async def _send_api_usage_async(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Async counterpart of :func:`_send_api_usage`."""
     from snowflake.connector._internal.telemetry import AsyncTelemetryClient
 
     api_name = f"{type(self).__name__}.{func.__name__}"
     client = _telemetry_client_for(self)
     if isinstance(client, AsyncTelemetryClient):
-        await client.send_api_usage(api_name)
+        await client.send_api_usage(api_name, passed_arguments)
     else:
-        client.send_api_usage(api_name)
+        client.send_api_usage(api_name, passed_arguments)
 
 
 def api_telemetry(func: F) -> F:
@@ -204,13 +239,20 @@ def api_telemetry(func: F) -> F:
     functions — the suppression always spans the actual execution of the
     wrapped callable (the awaited body or each iteration step), so async
     methods record telemetry exactly like their sync counterparts.
+
+    Alongside the method name, the names of the arguments the caller
+    explicitly passed are recorded (see :func:`_passed_argument_names`) —
+    names only, never values, and parameters left at their default are
+    omitted.
     """
+    sig = inspect.signature(func)
+
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
         async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
             if _TRACKING.get():
-                await _send_api_usage_async(self, func)
+                await _send_api_usage_async(self, func, _passed_argument_names(sig, self, args, kwargs))
                 _TRACKING.set(False)
                 try:
                     return await func(self, *args, **kwargs)
@@ -225,7 +267,7 @@ def api_telemetry(func: F) -> F:
         @functools.wraps(func)
         async def async_gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
             if _TRACKING.get():
-                await _send_api_usage_async(self, func)
+                await _send_api_usage_async(self, func, _passed_argument_names(sig, self, args, kwargs))
                 async for value in _suppress_tracking_async_generator(func(self, *args, **kwargs)):
                     yield value
             else:
@@ -237,7 +279,7 @@ def api_telemetry(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _TRACKING.get():
-            _send_api_usage(self, func)
+            _send_api_usage(self, func, _passed_argument_names(sig, self, args, kwargs))
 
             _TRACKING.set(False)
             try:

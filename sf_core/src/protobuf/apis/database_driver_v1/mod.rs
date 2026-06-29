@@ -962,7 +962,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let session_id = self.driver.session_id_for_conn(handle).await;
         let span = crate::snowflake_op_span!("wrapper_api_usage", session_id);
         let _guard = span.enter();
-        crate::telemetry::record_api_call(&input.api_method);
+        crate::telemetry::record_api_call(&input.api_method, &input.passed_arguments);
 
         Ok(TelemetrySendResponse {})
     }

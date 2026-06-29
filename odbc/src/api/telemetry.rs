@@ -27,6 +27,9 @@ pub fn record_api_usage(
             .telemetry_send_api_usage(TelemetrySendApiUsageRequest {
                 conn_handle: Some(conn_handle),
                 api_method: api_method.to_string(),
+                // ODBC records bare entry-point names; argument capture is a
+                // wrapper-level concern that ODBC does not implement.
+                passed_arguments: Vec::new(),
             })
             .await
     });

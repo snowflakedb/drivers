@@ -833,6 +833,10 @@ message ConfigGetPathsResponse {
 message TelemetrySendApiUsageRequest {
   ConnectionHandle conn_handle = 1;
   string api_method = 2;
+  // Names of the arguments the caller explicitly passed to the API method.
+  // Names only — never argument values, and parameters left at their default
+  // are omitted. Used to learn which optional fields callers actually exercise.
+  repeated string passed_arguments = 3;
 }
 
 message TelemetrySendWrapperErrorRequest {

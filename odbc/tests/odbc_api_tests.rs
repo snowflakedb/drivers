@@ -190,6 +190,7 @@ fn telemetry_rpcs_accept_unknown_handles_silently() {
         .telemetry_send_api_usage_blocking(TelemetrySendApiUsageRequest {
             conn_handle: Some(conn),
             api_method: "SQLExecDirect".to_string(),
+            passed_arguments: Vec::new(),
         })
         .expect("telemetry_send_api_usage on unknown handle must not error");
     client

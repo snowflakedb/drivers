@@ -31,12 +31,17 @@ class TelemetryClient:
     def __init__(self, conn_handle: ConnectionHandle) -> None:
         self._conn_handle = conn_handle
 
-    def send_api_usage(self, api_method: str) -> None:
-        """Record an API method call for telemetry."""
+    def send_api_usage(self, api_method: str, passed_arguments: list[str] | None = None) -> None:
+        """Record an API method call for telemetry.
+
+        ``passed_arguments`` lists the names of the arguments the caller
+        explicitly supplied (names only, no values, defaults omitted).
+        """
         try:
             core_driver.telemetry_send_api_usage(
                 conn_handle=self._conn_handle,
                 api_method=api_method,
+                passed_arguments=passed_arguments or [],
             )
         except Exception:
             logger.debug("Failed to send api_usage telemetry", exc_info=True)
@@ -63,12 +68,17 @@ class AsyncTelemetryClient:
     def __init__(self, conn_handle: ConnectionHandle) -> None:
         self._conn_handle = conn_handle
 
-    async def send_api_usage(self, api_method: str) -> None:
-        """Record an API method call for telemetry."""
+    async def send_api_usage(self, api_method: str, passed_arguments: list[str] | None = None) -> None:
+        """Record an API method call for telemetry.
+
+        ``passed_arguments`` lists the names of the arguments the caller
+        explicitly supplied (names only, no values, defaults omitted).
+        """
         try:
             await async_core_driver.telemetry_send_api_usage(
                 conn_handle=self._conn_handle,
                 api_method=api_method,
+                passed_arguments=passed_arguments or [],
             )
         except Exception:
             logger.debug("Failed to send api_usage telemetry", exc_info=True)
