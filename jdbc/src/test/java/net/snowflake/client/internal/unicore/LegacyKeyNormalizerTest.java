@@ -33,6 +33,16 @@ class LegacyKeyNormalizerTest {
   }
 
   @Test
+  void shouldMapLegacyOauthProperties() {
+    assertEquals("oauth_client_id", LegacyKeyNormalizer.normalize("oauthClientId"));
+    assertEquals("oauth_client_secret", LegacyKeyNormalizer.normalize("oauthClientSecret"));
+    assertEquals("oauth_authorization_url", LegacyKeyNormalizer.normalize("oauthAuthorizationUrl"));
+    assertEquals("oauth_token_request_url", LegacyKeyNormalizer.normalize("oauthTokenRequestUrl"));
+    assertEquals("oauth_redirect_uri", LegacyKeyNormalizer.normalize("oauthRedirectUri"));
+    assertEquals("oauth_scope", LegacyKeyNormalizer.normalize("oauthScope"));
+  }
+
+  @Test
   void shouldLeaveUnknownKeysUnchanged() {
     assertEquals("authenticator", LegacyKeyNormalizer.normalize("authenticator"));
   }

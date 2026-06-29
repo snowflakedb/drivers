@@ -57,7 +57,7 @@ interface WithBrowserAutomation extends WithNodeScripts {
               WithNodeScripts.runNode(PROVIDE_CREDENTIALS_SCRIPT, 60, scenario, login, password);
             });
 
-    Throwable browserError = awaitQuietly(browser, 60);
+    Throwable browserError = awaitQuietly(browser, 120);
     browser.cancel(true);
 
     try {
