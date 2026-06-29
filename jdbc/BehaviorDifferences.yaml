@@ -107,3 +107,42 @@ behavior_differences:
       The universal driver routes OAUTH_CLIENT_CREDENTIALS through sf_core, which rejects missing
       oauth_client_id, oauth_client_secret, and oauth_token_request_url synchronously at connect
       time. The old driver does not surface the same offline validation or error text.
+  7:
+    name: "DATE bind tolerates MON-bearing DATE_OUTPUT_FORMAT (legacy throws at prepare)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      When the session DATE_OUTPUT_FORMAT contains the MON element (e.g. "DD-MON-YYYY" or
+      "DY, DD MON YYYY"), the old driver throws java.lang.IllegalArgumentException
+      ("Illegal pattern character 'O'") at prepareStatement time for any statement with a DATE
+      result column (e.g. SELECT ?::DATE) — regardless of the bind setter used (it fails before
+      any value is bound). The crash comes from the old driver's prepare/describe path eagerly
+      building a java.text.SimpleDateFormat from a mis-translated pattern, even though its read
+      path translates the same MON format correctly (MON -> MMM). MON is a valid Snowflake format
+      element and both drivers read/render "DD-MON-YYYY" identically (READ parity passes).
+
+      The universal driver does not parse output formats at prepareStatement time (no describe
+      round-trip), so it prepares and binds successfully. The bound DATE value is
+      format-independent (epoch-millis), and read-back rendering uses the same
+      SnowflakeDateTimeFormat already proven correct on the read path, so the universal driver's
+      MON-format DATE writes are correct. Replicating the old driver's exception would mean
+      re-introducing a crash for a valid format, so the difference is accepted as a bugfix.
+  8:
+    name: "getDate(int, Calendar) tolerates a null Calendar (legacy NPEs)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      snowflake-jdbc's SnowflakeBaseResultSet.getDate(int, Calendar) threads cal.getTimeZone()
+      into the converter and dereferences the Calendar unconditionally, so passing a null Calendar
+      throws NullPointerException. The JDBC spec permits a null Calendar for ResultSet.getDate
+      (meaning "use the default timezone"), so the legacy NPE is non-compliant. The universal
+      driver treats a null Calendar as "no timezone" (raw epoch-day date) and returns the value
+      instead of throwing. Replicating the legacy NPE would re-introduce a crash for a spec-allowed
+      argument, so the difference is accepted as a bugfix.
+

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.Date;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -15,6 +16,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TimeZone;
+import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.internal.core.arrow.TestHelper;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -105,7 +107,7 @@ public class VarCharConverterTest extends BaseConverterTest {
   }
 
   @Test
-  public void testGetDate() {
+  public void testGetDate() throws SFException {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");
 
@@ -119,8 +121,8 @@ public class VarCharConverterTest extends BaseConverterTest {
 
     ArrowVectorConverter converter = new VarCharConverter(vector, 0, this);
 
-    TestHelper.assertSFException(
-        invalidConversionErrorCode, () -> converter.toDate(1, TimeZone.getDefault(), false));
+    assertNull(converter.toDate(0, TimeZone.getDefault(), false));
+    assertEquals(Date.valueOf("2023-10-26"), converter.toDate(1, TimeZone.getDefault(), false));
     TestHelper.assertSFException(
         invalidConversionErrorCode, () -> converter.toDate(2, TimeZone.getDefault(), false));
 

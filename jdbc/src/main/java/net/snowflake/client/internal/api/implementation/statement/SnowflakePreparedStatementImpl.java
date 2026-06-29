@@ -31,11 +31,13 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.function.Function;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
+import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
 import net.snowflake.client.internal.log.SFLogger;
@@ -186,8 +188,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void setDate(int parameterIndex, Date x) throws SQLException {
     checkClosed();
-    setNullableParameter(
-        parameterIndex, Types.DATE, "TEXT", x, date -> date.toLocalDate().toString());
+    setDate(parameterIndex, x, TimeZone.getDefault());
   }
 
   @Override
@@ -450,7 +451,23 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public void setDate(int parameterIndex, Date x, Calendar cal) throws SQLException {
-    setDate(parameterIndex, x);
+    checkClosed();
+    setDate(parameterIndex, x, cal == null ? TimeZone.getDefault() : cal.getTimeZone());
+  }
+
+  /**
+   * Binds a DATE value, mirroring snowflake-jdbc's {@code setDate}: the server receives sfType
+   * {@code "DATE"} with the value being milliseconds-since-epoch in {@code tz}, after applying the
+   * Julian→Gregorian correction for pre-1582-10-05 dates. {@code tz} is the JVM default for {@code
+   * setDate(int, Date)} and the Calendar's timezone for {@code setDate(int, Date, Calendar)}.
+   */
+  private void setDate(int parameterIndex, Date x, TimeZone tz) throws SQLException {
+    setNullableParameter(
+        parameterIndex,
+        Types.DATE,
+        "DATE",
+        x,
+        date -> String.valueOf(ArrowDateUtil.dateToBindMillis(date, tz)));
   }
 
   @Override
