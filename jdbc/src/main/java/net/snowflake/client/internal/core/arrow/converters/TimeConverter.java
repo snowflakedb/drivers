@@ -1,14 +1,18 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
+import java.nio.ByteBuffer;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.LocalTime;
 import java.util.TimeZone;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.BaseIntVector;
+import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.ValueVector;
 
 public class TimeConverter extends AbstractArrowVectorConverter {
@@ -83,5 +87,31 @@ public class TimeConverter extends AbstractArrowVectorConverter {
   @Override
   public Object toObject(int index) throws SFException {
     return toTime(index);
+  }
+
+  @Override
+  public boolean toBoolean(int index) throws SFException {
+    if (isNull(index)) {
+      return false;
+    }
+    Time val = toTime(index);
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, val);
+  }
+
+  @Override
+  public byte[] toBytes(int index) throws SFException {
+    if (isNull(index)) {
+      return null;
+    }
+    // Only INT-backed TIME exposes raw bytes; BIGINT-backed TIME has no toBytes and falls through
+    // to the unsupported-conversion error.
+    if (intVector instanceof IntVector) {
+      ByteBuffer byteBuf = ByteBuffer.allocate(IntVector.TYPE_WIDTH);
+      byteBuf.putInt(
+          0, ((IntVector) intVector).getDataBuffer().getInt((long) index * IntVector.TYPE_WIDTH));
+      return byteBuf.array();
+    }
+    return super.toBytes(index);
   }
 }

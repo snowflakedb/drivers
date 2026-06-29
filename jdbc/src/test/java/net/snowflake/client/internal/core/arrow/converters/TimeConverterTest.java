@@ -1,15 +1,19 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.nio.ByteBuffer;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
+import net.snowflake.client.internal.core.arrow.TestHelper;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
@@ -253,6 +257,73 @@ public class TimeConverterTest extends BaseConverterTest {
     try {
       TimeConverter converter = new TimeConverter(vector, 0, this, 0);
       assertNull(converter.toTimestamp(0, null));
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
+  public void shouldReturnFalseBooleanForNullIndex() throws Exception {
+    FieldType fieldType =
+        new FieldType(true, Types.MinorType.INT.getType(), null, timeFieldMeta(0));
+    IntVector vector = new IntVector("col_time", fieldType, allocator);
+    vector.setNull(0);
+    vector.setValueCount(1);
+    try {
+      TimeConverter converter = new TimeConverter(vector, 0, this, 0);
+      assertFalse(converter.toBoolean(0));
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
+  public void shouldThrowWhenConvertingTimeToBoolean() throws Exception {
+    IntVector vector = createIntVector(0, 45296);
+    try {
+      TimeConverter converter = new TimeConverter(vector, 0, this, 0);
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
+  public void shouldReturnNullBytesForNullIndex() throws Exception {
+    FieldType fieldType =
+        new FieldType(true, Types.MinorType.INT.getType(), null, timeFieldMeta(0));
+    IntVector vector = new IntVector("col_time", fieldType, allocator);
+    vector.setNull(0);
+    vector.setValueCount(1);
+    try {
+      TimeConverter converter = new TimeConverter(vector, 0, this, 0);
+      assertNull(converter.toBytes(0));
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
+  public void shouldReturnRawBigEndianBytesForIntBackedTime() throws Exception {
+    // 45296 seconds since midnight, big-endian 4-byte image (matches snowflake-jdbc IntToTime).
+    IntVector vector = createIntVector(0, 45296);
+    try {
+      TimeConverter converter = new TimeConverter(vector, 0, this, 0);
+      assertArrayEquals(
+          ByteBuffer.allocate(Integer.BYTES).putInt(45296).array(), converter.toBytes(0));
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
+  public void shouldThrowWhenConvertingBigIntBackedTimeToBytes() throws Exception {
+    // snowflake-jdbc's BigIntToTimeConverter does not implement toBytes; BIGINT-backed TIME stays
+    // an unsupported conversion.
+    BigIntVector vector = createBigIntVector(9, 45296L * 1_000_000_000L);
+    try {
+      TimeConverter converter = new TimeConverter(vector, 0, this, 9);
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBytes(0));
     } finally {
       vector.close();
     }

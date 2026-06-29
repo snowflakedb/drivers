@@ -10,9 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalTime;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -141,6 +143,52 @@ public class SnowflakeResultSetGettersTest extends SnowflakeIntegrationTestBase 
       assertTrue(rs.wasNull());
 
       assertFalse(rs.next());
+    }
+  }
+
+  // TIME getBytes/getBoolean parity with snowflake-jdbc. Running in this package (vs. e2e/types)
+  // exercises the same assertions against both universal-driver and the legacy driver under the
+  // referenceTest task, without the Gherkin/feature-file alignment the e2e packages require.
+
+  @Test
+  public void shouldReturnRawBigEndianBytesForIntBackedTime() throws Exception {
+    // TIME(0) is SB4-encoded (IntVector), so getBytes() exposes the raw 4-byte big-endian image of
+    // the seconds-since-midnight value, matching snowflake-jdbc's IntToTimeConverter.toBytes.
+    int secondsSinceMidnight = (int) (LocalTime.of(12, 34, 56).toNanoOfDay() / 1_000_000_000L);
+    byte[] expected = ByteBuffer.allocate(Integer.BYTES).putInt(secondsSinceMidnight).array();
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT '12:34:56'::TIME(0)")) {
+      assertTrue(rs.next());
+      assertArrayEquals(expected, rs.getBytes(1), "getBytes mismatch for INT-backed TIME");
+      assertFalse(rs.wasNull());
+    }
+  }
+
+  @Test
+  public void shouldThrowWhenGettingBytesFromBigIntBackedTime() throws Exception {
+    // TIME(9) is SB8-encoded (BigIntVector); snowflake-jdbc's BigIntToTimeConverter does not
+    // implement toBytes, so getBytes falls through to the unsupported-conversion error.
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT '12:34:56.123456789'::TIME(9)")) {
+      assertTrue(rs.next());
+      assertThrows(
+          SQLException.class, () -> rs.getBytes(1), "getBytes should fail for BIGINT-backed TIME");
+    }
+  }
+
+  @Test
+  public void shouldReturnFalseForGetBooleanOnNullTimeAndThrowOtherwise() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT NULL::TIME, '10:30:00'::TIME")) {
+      assertTrue(rs.next());
+
+      // getBoolean on a SQL NULL TIME returns false (matching the legacy converter).
+      assertFalse(rs.getBoolean(1), "getBoolean of NULL TIME should be false");
+      assertTrue(rs.wasNull());
+
+      // getBoolean on a non-null TIME is an unsupported conversion on both drivers.
+      assertThrows(
+          SQLException.class, () -> rs.getBoolean(2), "getBoolean of a non-null TIME should fail");
     }
   }
 }

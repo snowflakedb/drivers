@@ -145,4 +145,15 @@ behavior_differences:
       driver treats a null Calendar as "no timezone" (raw epoch-day date) and returns the value
       instead of throwing. Replicating the legacy NPE would re-introduce a crash for a spec-allowed
       argument, so the difference is accepted as a bugfix.
+  9:
+    name: "TIME->boolean conversion error uses lowercase type token for INT-backed TIME"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      getBoolean on INT-backed TIME throws INVALID_VALUE_CONVERT with "type:boolean" where legacy
+      renders "type:Boolean"; the universal driver normalizes legacy's Int/BigIntToTimeConverter
+      casing inconsistency, so the lowercase token is accepted.
 
