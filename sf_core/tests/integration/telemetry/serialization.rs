@@ -154,3 +154,34 @@ fn span_with_multiple_events_produces_multiple_entries() {
     assert_eq!(logs[1]["message"]["api_method"], "cursor.execute");
     assert_eq!(logs[1]["message"]["snowflake.session.id"], 1);
 }
+
+#[test]
+fn api_call_event_serializes_passed_arguments() {
+    use opentelemetry::trace::Event;
+
+    let mut span = make_span(
+        "wrapper_api_usage",
+        vec![KeyValue::new("snowflake.session.id", 7i64)],
+    );
+    let mut events = opentelemetry_sdk::trace::SpanEvents::default();
+    // Mirrors what `telemetry::record_api_call` attaches: a comma-joined list
+    // of argument names (names only — never values).
+    events.events.push(Event::new(
+        "api_call",
+        UNIX_EPOCH + Duration::from_millis(1700000000100),
+        vec![
+            KeyValue::new("api_method", "SnowflakeCursor.execute"),
+            KeyValue::new("api_arguments", "command,params"),
+        ],
+        0,
+    ));
+    span.events = events;
+
+    let payload = spans_to_snowflake_payload(&[span]);
+    let logs = payload["logs"].as_array().unwrap();
+
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["message"]["type"], "api_call");
+    assert_eq!(logs[0]["message"]["api_method"], "SnowflakeCursor.execute");
+    assert_eq!(logs[0]["message"]["api_arguments"], "command,params");
+}

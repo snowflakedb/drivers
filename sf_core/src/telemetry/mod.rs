@@ -80,14 +80,23 @@ pub fn record_session_init(env: &environment::EnvironmentInfo) {
 }
 
 /// Record an api_call event on the **current** tracing span.
-pub fn record_api_call(api_method: &str) {
-    tracing::Span::current().add_event(
-        "api_call",
-        vec![opentelemetry::KeyValue::new(
-            "api_method",
-            api_method.to_string(),
-        )],
-    );
+///
+/// `passed_arguments` are the names of the arguments the caller explicitly
+/// passed to the API method (names only — never values, defaults omitted).
+/// When non-empty they are attached as a comma-joined `api_arguments`
+/// attribute so the serialized payload stays a flat string.
+pub fn record_api_call(api_method: &str, passed_arguments: &[String]) {
+    let mut attrs = vec![opentelemetry::KeyValue::new(
+        "api_method",
+        api_method.to_string(),
+    )];
+    if !passed_arguments.is_empty() {
+        attrs.push(opentelemetry::KeyValue::new(
+            "api_arguments",
+            passed_arguments.join(","),
+        ));
+    }
+    tracing::Span::current().add_event("api_call", attrs);
 }
 
 /// Record an exception event on the **current** tracing span.

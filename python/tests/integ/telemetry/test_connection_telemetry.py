@@ -164,6 +164,57 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
 
 
+@pytest.mark.skip_reference(reason="api_usage telemetry is universal-driver only")
+def test_api_usage_telemetry_records_passed_arguments(int_test_connection_factory, wiremock):
+    """Verify the names of explicitly-passed arguments reach the api_call event.
+
+    ``Connection.cursor`` is decorated with ``@api_telemetry``. When the caller
+    passes an argument explicitly (here ``cursor_class``), the decorator records
+    its *name* (never its value) and threads it through to sf_core, which
+    attaches it as a comma-joined ``api_arguments`` attribute on the ``api_call``
+    event. Calling ``cursor()`` with no arguments (see
+    :func:`test_api_usage_telemetry_sent_on_cursor_creation`) omits the
+    attribute entirely.
+    """
+    from snowflake.connector.cursor import DictCursor
+
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    try:
+        # Pass cursor_class explicitly so the decorator captures its name.
+        cursor = connection.cursor(cursor_class=DictCursor)
+        cursor.close()
+    finally:
+        connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after cursor creation"
+
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    cursor_entries = [
+        entry
+        for entry in log_entries
+        if entry["message"].get("type") == "api_call" and entry["message"].get("api_method") == "Connection.cursor"
+    ]
+    assert len(cursor_entries) == 1, (
+        "Expected exactly one api_call telemetry log entry with "
+        f"api_method='Connection.cursor'. Got entries: {log_entries}"
+    )
+
+    message = cursor_entries[0]["message"]
+
+    # The captured argument name — names only, never the value (DictCursor).
+    assert message.get("api_arguments") == "cursor_class", (
+        f"api_call message['api_arguments'] expected 'cursor_class', got {message.get('api_arguments')!r}. "
+        f"Full message: {message}"
+    )
+    # The class object passed as the value must never appear in telemetry.
+    assert "DictCursor" not in json.dumps(message), f"argument value leaked into telemetry payload: {message}"
+
+
 def _jwt_private_key_params() -> dict:
     """Return connection overrides needed for JWT auth against Wiremock.
 

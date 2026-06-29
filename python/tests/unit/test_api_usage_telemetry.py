@@ -1,6 +1,7 @@
 """Unit tests for api_telemetry decorator and api_usage tracking."""
 
 import asyncio
+import inspect
 
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -86,6 +87,20 @@ def reset_tracking():
 def _get_api_methods(mock_db_api):
     """Extract api_method strings from all telemetry_send_api_usage calls."""
     return [call[0][0].api_method for call in mock_db_api.telemetry_send_api_usage.call_args_list]
+
+
+def _passed_arguments_for(mock_db_api, api_method):
+    """Return the passed_arguments list recorded for the given api_method.
+
+    Asserts exactly one matching call so callers get a single unambiguous list.
+    """
+    matches = [
+        list(call[0][0].passed_arguments)
+        for call in mock_db_api.telemetry_send_api_usage.call_args_list
+        if call[0][0].api_method == api_method
+    ]
+    assert len(matches) == 1, f"expected exactly one {api_method} call, got {len(matches)}"
+    return matches[0]
 
 
 def _run_async(coro):
@@ -436,3 +451,83 @@ class TestAsyncApiTelemetryFailureIsolation:
 
         _run_async(async_connection.close())
         assert _run_async(async_connection.is_closed())
+
+
+class TestPassedArgumentNames:
+    """Unit tests for _passed_argument_names: names only, no values, no defaults."""
+
+    @staticmethod
+    def _names(func, *args, **kwargs):
+        from snowflake.connector._internal.decorators import _passed_argument_names
+
+        sig = inspect.signature(func)
+        # The decorator binds the receiver first; mirror that by treating the
+        # first positional as ``self``.
+        self_obj, rest = args[0], args[1:]
+        return _passed_argument_names(sig, self_obj, rest, kwargs)
+
+    def test_only_passed_positional_and_keyword_named(self):
+        def fn(self, command, parameters=None, num_statements=None): ...
+
+        assert self._names(fn, object(), "SELECT 1") == ["command"]
+        assert self._names(fn, object(), "SELECT 1", num_statements=2) == ["command", "num_statements"]
+
+    def test_defaults_are_excluded(self):
+        def fn(self, a, b=1, c=2): ...
+
+        # b and c are left at their defaults -> omitted.
+        assert self._names(fn, object(), "x") == ["a"]
+
+    def test_explicitly_passed_value_equal_to_default_is_kept(self):
+        def fn(self, a, b=None): ...
+
+        # Caller supplied b explicitly (even though it equals the default).
+        assert self._names(fn, object(), "x", b=None) == ["a", "b"]
+
+    def test_self_is_dropped(self):
+        def fn(self): ...
+
+        assert self._names(fn, object()) == []
+
+    def test_var_keyword_keys_are_expanded(self):
+        def fn(self, **kwargs): ...
+
+        # The var-keyword param name ("kwargs") carries no signal; expand to keys.
+        names = self._names(fn, object(), account="a", user="u")
+        assert "kwargs" not in names
+        assert set(names) == {"account", "user"}
+
+    def test_no_argument_values_are_captured(self):
+        secret = "super-secret-password"
+
+        def fn(self, password=None): ...
+
+        names = self._names(fn, object(), password=secret)
+        assert names == ["password"]
+        assert secret not in names
+
+    def test_binding_failure_returns_empty(self):
+        def fn(self, a): ...
+
+        # Too many positional args -> bind raises TypeError -> defensive [].
+        assert self._names(fn, object(), "x", "y", "z") == []
+
+
+class TestPassedArgumentsThroughStack:
+    """End-to-end: argument names reach the TelemetrySendApiUsageRequest."""
+
+    def test_execute_records_only_passed_arguments(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1")
+        assert _passed_arguments_for(mock_db_api, "SnowflakeCursor.execute") == ["operation"]
+
+    def test_execute_records_extra_keyword(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1", num_statements=1)
+        assert _passed_arguments_for(mock_db_api, "SnowflakeCursor.execute") == [
+            "operation",
+            "num_statements",
+        ]
+
+    def test_cursor_no_args_records_empty(self, connection, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+        assert _passed_arguments_for(mock_db_api, "Connection.cursor") == []

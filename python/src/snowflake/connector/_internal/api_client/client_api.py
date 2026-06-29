@@ -501,8 +501,12 @@ class CoreDriver:
     # Telemetry
     # =====================================================================
 
-    def telemetry_send_api_usage(self, conn_handle: ConnectionHandle, api_method: str) -> TelemetrySendResponse:
-        request = TelemetrySendApiUsageRequest(conn_handle=conn_handle, api_method=api_method)
+    def telemetry_send_api_usage(
+        self, conn_handle: ConnectionHandle, api_method: str, passed_arguments: list[str] | None = None
+    ) -> TelemetrySendResponse:
+        request = TelemetrySendApiUsageRequest(
+            conn_handle=conn_handle, api_method=api_method, passed_arguments=passed_arguments or []
+        )
         return self.client.telemetry_send_api_usage(request)
 
     def telemetry_send_wrapper_error(
@@ -681,9 +685,13 @@ class AsyncCoreDriver:
     # Telemetry
     # =====================================================================
 
-    async def telemetry_send_api_usage(self, conn_handle: ConnectionHandle, api_method: str) -> TelemetrySendResponse:
+    async def telemetry_send_api_usage(
+        self, conn_handle: ConnectionHandle, api_method: str, passed_arguments: list[str] | None = None
+    ) -> TelemetrySendResponse:
         return await self.client.telemetry_send_api_usage(
-            TelemetrySendApiUsageRequest(conn_handle=conn_handle, api_method=api_method)
+            TelemetrySendApiUsageRequest(
+                conn_handle=conn_handle, api_method=api_method, passed_arguments=passed_arguments or []
+            )
         )
 
     async def telemetry_send_wrapper_error(
