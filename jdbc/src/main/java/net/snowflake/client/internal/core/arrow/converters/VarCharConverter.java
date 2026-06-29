@@ -2,6 +2,11 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.sql.Date;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.SnowflakeType;
@@ -10,6 +15,11 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarCharVector;
 
 public class VarCharConverter extends AbstractArrowVectorConverter {
+  // Parsed once and cloned per call: SimpleDateFormat is not thread-safe and re-parsing the pattern
+  // on every row (VARCHAR scans can be large) is needless GC churn. The pattern, and its lenient
+  // parsing, mirror snowflake-jdbc's VarCharConverter exactly.
+  private static final SimpleDateFormat DATE_FORMAT_TEMPLATE = new SimpleDateFormat("yyyy-MM-dd");
+
   private final VarCharVector varCharVector;
 
   public VarCharConverter(ValueVector valueVector, int columnIndex, DataConversionContext context) {
@@ -129,6 +139,26 @@ public class VarCharConverter extends AbstractArrowVectorConverter {
     } else {
       throw new SFException(
           ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, str);
+    }
+  }
+
+  @Override
+  public Date toDate(int index, TimeZone jvmTz, boolean useDateFormat) throws SFException {
+    if (isNull(index)) {
+      return null;
+    }
+    // NOTE: jvmTz and useDateFormat are intentionally ignored, matching snowflake-jdbc's
+    // VarCharConverter. The string is anchored at midnight in the JVM default timezone, so a
+    // caller-supplied Calendar zone has no effect on a VARCHAR-typed DATE column (unlike
+    // DateConverter, which is zone-aware). Parsing is also lenient (legacy parity): inputs like
+    // "2024-13-45" roll over and a valid prefix of "2024-01-15garbage" is accepted rather than
+    // rejected with INVALID_VALUE_CONVERT.
+    try {
+      DateFormat dateFormat = (DateFormat) DATE_FORMAT_TEMPLATE.clone();
+      return new Date(dateFormat.parse(toString(index)).getTime());
+    } catch (ParseException e) {
+      throw new SFException(
+          ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.DATE_STR, "");
     }
   }
 }

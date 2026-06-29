@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Time;
 import java.time.LocalTime;
@@ -24,6 +25,13 @@ public class DataConversionContextTest {
           return true;
         }
       };
+
+  @Test
+  public void shouldDefaultGetDateUseNullTimezoneToTrue() {
+    // Mirrors snowflake-jdbc's SFBaseSession.getDateUseNullTimezone default (true), which makes the
+    // no-Calendar getDate(int) pass a null timezone (raw epoch-day date).
+    assertTrue(UTC.isGetDateUseNullTimezone());
+  }
 
   @Test
   public void shouldUseUtcEpochModuloDayForTimeToNanosByDefault() {

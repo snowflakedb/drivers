@@ -23,6 +23,7 @@ import java.sql.Timestamp;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
@@ -164,7 +165,23 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Date getDate(int columnIndex) throws SQLException {
-    return convertColumn(columnIndex, (converter, idx) -> converter.toDate(idx, null, false));
+    // Mirrors snowflake-jdbc's SnowflakeBaseResultSet.getDate(int): JDBC_GET_DATE_USE_NULL_TIMEZONE
+    // (default true) selects a null timezone (raw epoch-day date); when false the JVM default
+    // timezone is used, which the converter shifts only if JDBC_FORMAT_DATE_WITH_TIMEZONE is set.
+    TimeZone tz =
+        schema.getConversionContext().isGetDateUseNullTimezone() ? null : TimeZone.getDefault();
+    return getDate(columnIndex, tz);
+  }
+
+  /**
+   * Shared DATE materialization mirroring snowflake-jdbc's {@code SFArrowResultSet.getDate(int,
+   * TimeZone)}: the caller timezone and the runtime {@code JDBC_FORMAT_DATE_WITH_TIMEZONE} flag are
+   * threaded into {@link ArrowVectorConverter#toDate}, which applies the session-vs-caller timezone
+   * shift only when both are present and the flag is set.
+   */
+  private Date getDate(int columnIndex, TimeZone tz) throws SQLException {
+    boolean useDateFormat = schema.getConversionContext().isFormatDateWithTimezone();
+    return convertColumn(columnIndex, (converter, idx) -> converter.toDate(idx, tz, useDateFormat));
   }
 
   @Override
@@ -751,7 +768,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Date getDate(int columnIndex, Calendar cal) throws SQLException {
-    return getDate(columnIndex);
+    return getDate(columnIndex, cal == null ? null : cal.getTimeZone());
   }
 
   @Override

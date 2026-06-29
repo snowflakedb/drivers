@@ -69,6 +69,11 @@ public final class SchemaState {
     return columnNames;
   }
 
+  /** The session-derived conversion context (timezone, date/time formatters, date flags). */
+  public DataConversionContext getConversionContext() {
+    return context;
+  }
+
   public int[] getColumnTypes() {
     return columnTypes;
   }
