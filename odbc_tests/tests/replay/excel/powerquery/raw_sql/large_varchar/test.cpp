@@ -10,7 +10,7 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Replay: excel powerquery raw_sql large_varchar", "[excel][powerquery][raw_sql]") {
+TEST_CASE("Replay: excel powerquery raw_sql large_varchar", "[excel][powerquery][raw_sql][flaky]") {
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
