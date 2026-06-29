@@ -93,8 +93,7 @@ impl DatabaseDriverV1 {
             }
             .fail();
         }
-        // TODO: ensure that this is correct escaping
-        let escaped = db.replace('"', "\"\"");
+        let escaped = escape_sql_identifier(db);
         let sql = format!("USE DATABASE \"{escaped}\"");
 
         match self.connections.get_obj(conn_handle) {
@@ -107,6 +106,43 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
+                self.execute_session_sql(&conn, &sql).await
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Execute `USE SCHEMA "<name>"` or `USE SCHEMA "<db>"."<name>"` when a session database is set.
+    /// Schema and database names are escaped (internal `"` doubled).
+    /// Must only be called after the connection is initialised (`is_post_connect()`).
+    pub async fn connection_use_schema(
+        &self,
+        conn_handle: Handle,
+        schema: &str,
+    ) -> Result<(), ApiError> {
+        let schema = schema.trim();
+        if schema.is_empty() {
+            return InvalidArgumentSnafu {
+                argument: "schema name must not be empty".to_string(),
+            }
+            .fail();
+        }
+
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                if !conn.is_post_connect() {
+                    return InvalidArgumentSnafu {
+                        argument: "connection_use_schema called before connection is open"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let database = resolve_session_database(&conn)?;
+                let sql = build_use_schema_sql(database.as_deref(), schema);
                 self.execute_session_sql(&conn, &sql).await
             }
             None => InvalidArgumentSnafu {
@@ -1495,6 +1531,34 @@ fn get_session_or_setting(
     resolved_or_seed_string(conn, setting_key)
 }
 
+// TODO: ensure that this is correct escaping
+fn escape_sql_identifier(name: &str) -> String {
+    name.replace('"', "\"\"")
+}
+
+fn build_use_schema_sql(database: Option<&str>, schema: &str) -> String {
+    let escaped_schema = escape_sql_identifier(schema);
+    match database.filter(|db| !db.is_empty()) {
+        Some(db) => {
+            let escaped_db = escape_sql_identifier(db);
+            format!("USE SCHEMA \"{escaped_db}\".\"{escaped_schema}\"")
+        }
+        None => format!("USE SCHEMA \"{escaped_schema}\""),
+    }
+}
+
+fn resolve_session_database(conn: &Connection) -> Result<Option<String>, ApiError> {
+    let final_names = conn
+        .final_session_names
+        .read()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    Ok(final_names
+        .database
+        .clone()
+        .or_else(|| get_session_or_setting(conn, "DATABASE", param_names::DATABASE))
+        .filter(|db| !db.is_empty()))
+}
+
 impl DatabaseDriverV1 {
     /// Get connection information for the given connection handle
     pub async fn connection_get_info(
@@ -2215,6 +2279,30 @@ mod tests {
     fn get_connection_seed_string_returns_none_for_non_string_type() {
         let conn = make_connection_with_settings(vec![("port", Setting::Int(443))]);
         assert_eq!(get_connection_seed_string(&conn, param_names::PORT), None);
+    }
+
+    #[test]
+    fn build_use_schema_sql_without_database() {
+        assert_eq!(
+            build_use_schema_sql(None, "PUBLIC"),
+            "USE SCHEMA \"PUBLIC\""
+        );
+    }
+
+    #[test]
+    fn build_use_schema_sql_with_database() {
+        assert_eq!(
+            build_use_schema_sql(Some("TEST_DB"), "MY_SCHEMA"),
+            "USE SCHEMA \"TEST_DB\".\"MY_SCHEMA\""
+        );
+    }
+
+    #[test]
+    fn build_use_schema_sql_escapes_quotes() {
+        assert_eq!(
+            build_use_schema_sql(Some("DB\"1"), "SC\"2"),
+            "USE SCHEMA \"DB\"\"1\".\"SC\"\"2\""
+        );
     }
 
     #[test]

@@ -404,6 +404,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_use_schema",
+        skip(self, input),
+        fields(conn_handle = tracing::field::Empty, schema = tracing::field::Empty)
+    )]
+    async fn connection_use_schema(
+        &self,
+        input: ConnectionUseSchemaRequest,
+    ) -> Result<ConnectionUseSchemaResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
+        tracing::Span::current().record("schema", input.schema.trim());
+        self.driver
+            .connection_use_schema(conn_handle.into(), &input.schema)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUseSchemaResponse {})
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_set_session_parameters",
         skip(self, input)
     )]

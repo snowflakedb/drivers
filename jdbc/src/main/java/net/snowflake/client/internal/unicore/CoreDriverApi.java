@@ -20,6 +20,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
@@ -75,8 +77,13 @@ public interface CoreDriverApi {
   ConnectionHeartbeatResponse connectionHeartbeat(ConnectionHandle connHandle, int timeoutSeconds)
       throws SQLException;
 
-  ConnectionGetInfoResponse connectionGetInfo(
-      ConnectionHandle connHandle, boolean includeMasterToken) throws SQLException;
+  ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle) throws SQLException;
+
+  ConnectionUseDatabaseResponse connectionUseDatabase(ConnectionHandle connHandle, String database)
+      throws SQLException;
+
+  ConnectionUseSchemaResponse connectionUseSchema(ConnectionHandle connHandle, String schema)
+      throws SQLException;
 
   ConnectionGetQueryStatusResponse connectionGetQueryStatus(
       ConnectionHandle connHandle, String queryId) throws SQLException;

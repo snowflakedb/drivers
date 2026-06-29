@@ -42,6 +42,7 @@ import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.LegacyKeyNormalizer;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
@@ -292,12 +293,24 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void setCatalog(String catalog) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    coreDriverApi.connectionUseDatabase(connectionHandle, catalog);
+    this.catalog = readCurrentCatalog();
   }
 
   @Override
   public String getCatalog() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    catalog = readCurrentCatalog();
+    return catalog;
+  }
+
+  private String readCurrentCatalog() throws SQLException {
+    ConnectionGetInfoResponse info = coreDriverApi.connectionGetInfo(connectionHandle);
+    if (info == null || !info.hasDatabase() || info.getDatabase().isEmpty()) {
+      return null;
+    }
+    return info.getDatabase();
   }
 
   @Override
@@ -485,12 +498,24 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void setSchema(String schema) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    coreDriverApi.connectionUseSchema(connectionHandle, schema);
+    this.schema = readCurrentSchema();
   }
 
   @Override
   public String getSchema() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    schema = readCurrentSchema();
+    return schema;
+  }
+
+  private String readCurrentSchema() throws SQLException {
+    ConnectionGetInfoResponse info = coreDriverApi.connectionGetInfo(connectionHandle);
+    if (info == null || !info.hasSchema() || info.getSchema().isEmpty()) {
+      return null;
+    }
+    return info.getSchema();
   }
 
   @Override

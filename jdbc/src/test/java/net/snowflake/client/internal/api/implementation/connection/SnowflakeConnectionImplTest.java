@@ -22,12 +22,15 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHeartbeatResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
@@ -354,6 +357,206 @@ class SnowflakeConnectionImplTest {
         assertTrue(conn.isValid(5));
         verify(mockCoreApi).connectionHeartbeat(any(), org.mockito.ArgumentMatchers.eq(5));
       }
+    }
+  }
+
+  @Nested
+  class Catalog {
+
+    private final DatabaseHandle dbHandle =
+        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
+    private final ConnectionHandle connHandle =
+        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = mock(CoreDriverApi.class);
+      when(mockCoreApi.databaseNew())
+          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
+      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
+      when(mockCoreApi.connectionNew())
+          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
+      when(mockCoreApi.connectionSetOptions(any(), any()))
+          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
+      when(mockCoreApi.connectionInit(any(), any(), any()))
+          .thenReturn(ConnectionInitResponse.getDefaultInstance());
+      when(mockCoreApi.connectionClose(any()))
+          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
+      when(mockCoreApi.connectionRelease(any()))
+          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+      when(mockCoreApi.databaseRelease(any()))
+          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+    }
+
+    private SnowflakeConnectionImpl createConnection() throws SQLException {
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "test_password");
+      return new SnowflakeConnectionImpl(
+          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    }
+
+    @Test
+    void shouldReturnSessionDatabaseFromCoreOnConnect() throws Exception {
+      when(mockCoreApi.connectionGetInfo(any()))
+          .thenReturn(ConnectionGetInfoResponse.newBuilder().setDatabase("TEST_DB").build());
+
+      try (Connection conn = createConnection()) {
+        assertEquals("TEST_DB", conn.getCatalog());
+      }
+    }
+
+    @Test
+    void shouldReturnNullWhenSessionHasNoDatabase() throws Exception {
+      when(mockCoreApi.connectionGetInfo(any()))
+          .thenReturn(ConnectionGetInfoResponse.getDefaultInstance());
+
+      try (Connection conn = createConnection()) {
+        assertNull(conn.getCatalog());
+      }
+    }
+
+    @Test
+    void shouldUseDatabaseViaCoreOnSetCatalog() throws Exception {
+      when(mockCoreApi.connectionUseDatabase(any(), org.mockito.ArgumentMatchers.eq("SECOND_DB")))
+          .thenReturn(ConnectionUseDatabaseResponse.getDefaultInstance());
+      when(mockCoreApi.connectionGetInfo(any()))
+          .thenReturn(
+              ConnectionGetInfoResponse.newBuilder().setDatabase("TEST_DB").build(),
+              ConnectionGetInfoResponse.newBuilder().setDatabase("SECOND_DB").build());
+
+      try (Connection conn = createConnection()) {
+        assertEquals("TEST_DB", conn.getCatalog());
+        conn.setCatalog("SECOND_DB");
+        assertEquals("SECOND_DB", conn.getCatalog());
+      }
+
+      verify(mockCoreApi)
+          .connectionUseDatabase(any(), org.mockito.ArgumentMatchers.eq("SECOND_DB"));
+    }
+
+    @Test
+    void shouldThrowWhenSetCatalogFails() throws Exception {
+      when(mockCoreApi.connectionUseDatabase(any(), any()))
+          .thenThrow(new SQLException("Object does not exist", "42000", 2003));
+
+      try (Connection conn = createConnection()) {
+        SQLException ex = assertThrows(SQLException.class, () -> conn.setCatalog("MISSING_DB"));
+        assertEquals("42000", ex.getSQLState());
+        assertEquals(2003, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowWhenClosed() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+
+      assertThrows(SQLException.class, conn::getCatalog);
+      assertThrows(SQLException.class, () -> conn.setCatalog("OTHER_DB"));
+    }
+  }
+
+  @Nested
+  class Schema {
+
+    private final DatabaseHandle dbHandle =
+        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
+    private final ConnectionHandle connHandle =
+        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = mock(CoreDriverApi.class);
+      when(mockCoreApi.databaseNew())
+          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
+      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
+      when(mockCoreApi.connectionNew())
+          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
+      when(mockCoreApi.connectionSetOptions(any(), any()))
+          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
+      when(mockCoreApi.connectionInit(any(), any(), any()))
+          .thenReturn(ConnectionInitResponse.getDefaultInstance());
+      when(mockCoreApi.connectionClose(any()))
+          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
+      when(mockCoreApi.connectionRelease(any()))
+          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+      when(mockCoreApi.databaseRelease(any()))
+          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+    }
+
+    private SnowflakeConnectionImpl createConnection() throws SQLException {
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "test_password");
+      return new SnowflakeConnectionImpl(
+          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    }
+
+    @Test
+    void shouldReturnSessionSchemaFromCore() throws Exception {
+      when(mockCoreApi.connectionGetInfo(any()))
+          .thenReturn(ConnectionGetInfoResponse.newBuilder().setSchema("TEST_SCHEMA").build());
+
+      try (Connection conn = createConnection()) {
+        assertEquals("TEST_SCHEMA", conn.getSchema());
+      }
+    }
+
+    @Test
+    void shouldReturnNullWhenSessionHasNoSchema() throws Exception {
+      when(mockCoreApi.connectionGetInfo(any()))
+          .thenReturn(ConnectionGetInfoResponse.getDefaultInstance());
+
+      try (Connection conn = createConnection()) {
+        assertNull(conn.getSchema());
+      }
+    }
+
+    @Test
+    void shouldUseSchemaViaCoreOnSetSchema() throws Exception {
+      when(mockCoreApi.connectionUseSchema(any(), org.mockito.ArgumentMatchers.eq("SECOND_SCHEMA")))
+          .thenReturn(ConnectionUseSchemaResponse.getDefaultInstance());
+      when(mockCoreApi.connectionGetInfo(any()))
+          .thenReturn(
+              ConnectionGetInfoResponse.newBuilder().setSchema("TEST_SCHEMA").build(),
+              ConnectionGetInfoResponse.newBuilder().setSchema("SECOND_SCHEMA").build());
+
+      try (Connection conn = createConnection()) {
+        assertEquals("TEST_SCHEMA", conn.getSchema());
+        conn.setSchema("SECOND_SCHEMA");
+        assertEquals("SECOND_SCHEMA", conn.getSchema());
+      }
+
+      verify(mockCoreApi)
+          .connectionUseSchema(any(), org.mockito.ArgumentMatchers.eq("SECOND_SCHEMA"));
+    }
+
+    @Test
+    void shouldThrowWhenSetSchemaFails() throws Exception {
+      when(mockCoreApi.connectionUseSchema(any(), any()))
+          .thenThrow(new SQLException("Object does not exist", "42000", 2003));
+
+      try (Connection conn = createConnection()) {
+        SQLException ex = assertThrows(SQLException.class, () -> conn.setSchema("MISSING_SCHEMA"));
+        assertEquals("42000", ex.getSQLState());
+        assertEquals(2003, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowWhenClosed() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+
+      assertThrows(SQLException.class, conn::getSchema);
+      assertThrows(SQLException.class, () -> conn.setSchema("OTHER_SCHEMA"));
     }
   }
 }

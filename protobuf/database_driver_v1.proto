@@ -426,6 +426,14 @@ message ConnectionUseDatabaseRequest {
 message ConnectionUseDatabaseResponse {
 }
 
+message ConnectionUseSchemaRequest {
+  ConnectionHandle conn_handle = 1;
+  string schema = 2;
+}
+
+message ConnectionUseSchemaResponse {
+}
+
 message ConnectionSetSessionParametersRequest {
   ConnectionHandle conn_handle = 1;
   map<string, string> parameters = 2;
@@ -873,6 +881,7 @@ service DatabaseDriver {
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
   rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse);
   rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse);
+  rpc ConnectionUseSchema(ConnectionUseSchemaRequest) returns (ConnectionUseSchemaResponse);
   // sets initial session parameters connection should be initialized with
   // call before opening the connection
   rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
