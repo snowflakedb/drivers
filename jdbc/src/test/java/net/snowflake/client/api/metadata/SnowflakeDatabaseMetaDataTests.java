@@ -11,9 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Statement;
 import java.sql.Types;
+import java.util.HashSet;
 import java.util.Properties;
+import java.util.Set;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -952,11 +956,47 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
         metaData().getTimeDateFunctions());
   }
 
-  // ---------- Disabled: ResultSet-returning methods that issue Snowflake queries ----------
+  // ---------- ResultSet-returning methods that issue Snowflake queries ----------
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void getCatalogsReturnsCurrentDatabases() {}
+  void getCatalogsReturnsCurrentDatabases() throws Exception {
+    Connection conn = getDefaultConnection();
+    DatabaseMetaData metaData = conn.getMetaData();
+    String currentDatabase;
+    try (Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE()")) {
+      assertTrue(rs.next());
+      currentDatabase = rs.getString(1);
+    }
+
+    try (ResultSet resultSet = metaData.getCatalogs()) {
+      ResultSetMetaData rsMeta = resultSet.getMetaData();
+      assertEquals(1, rsMeta.getColumnCount());
+      assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
+      assertEquals("TABLE_CAT", rsMeta.getColumnLabel(1));
+      assertEquals(Types.VARCHAR, rsMeta.getColumnType(1));
+      assertEquals("TEXT", rsMeta.getColumnTypeName(1));
+      assertEquals("", rsMeta.getCatalogName(1));
+      assertEquals("", rsMeta.getSchemaName(1));
+      assertEquals("T", rsMeta.getTableName(1));
+      assertEquals(25, rsMeta.getColumnDisplaySize(1));
+      assertEquals(9, rsMeta.getPrecision(1));
+      assertEquals(9, rsMeta.getScale(1));
+      assertEquals(ResultSetMetaData.columnNullableUnknown, rsMeta.isNullable(1));
+      assertFalse(rsMeta.isAutoIncrement(1));
+      assertFalse(rsMeta.isSigned(1));
+      assertTrue(rsMeta.isSearchable(1));
+      assertTrue(rsMeta.isReadOnly(1));
+      assertFalse(rsMeta.isWritable(1));
+
+      Set<String> databases = new HashSet<>();
+      while (resultSet.next()) {
+        databases.add(resultSet.getString(1));
+      }
+      assertFalse(databases.isEmpty());
+      assertTrue(databases.contains(currentDatabase));
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")

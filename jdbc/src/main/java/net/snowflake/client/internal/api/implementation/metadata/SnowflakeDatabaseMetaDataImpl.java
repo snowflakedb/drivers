@@ -12,16 +12,19 @@ import net.snowflake.client.internal.api.implementation.connection.SnowflakeConn
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataCapabilities;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataIdentity;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
+import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeDatabaseMetaDataImpl
     implements DatabaseMetaData, SnowflakeDatabaseMetaData, DelegatingWrapper {
+
   private final SnowflakeConnectionImpl connection;
   private final MetaDataIdentity identity;
   private final MetaDataCapabilities capabilities;
   private final MetaDataLimits limits;
+  private final MetaDataObjects queries;
 
   public SnowflakeDatabaseMetaDataImpl(
       SnowflakeConnectionImpl connection, Properties properties, CoreDriverApi coreDriverApi) {
@@ -29,6 +32,7 @@ public class SnowflakeDatabaseMetaDataImpl
     this.identity = new MetaDataIdentity(connection, properties);
     this.capabilities = new MetaDataCapabilities(connection);
     this.limits = new MetaDataLimits(connection, coreDriverApi);
+    this.queries = new MetaDataObjects(connection);
   }
 
   @Override
@@ -621,7 +625,6 @@ public class SnowflakeDatabaseMetaDataImpl
     return capabilities.dataDefinitionIgnoredInTransactions();
   }
 
-  // Stub implementations for remaining methods
   @Override
   public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern)
       throws SQLException {
@@ -654,7 +657,7 @@ public class SnowflakeDatabaseMetaDataImpl
   @Override
   public ResultSet getCatalogs() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return queries.getCatalogs();
   }
 
   @Override
