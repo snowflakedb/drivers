@@ -170,6 +170,9 @@ impl ConnectionAttribute {
 #[repr(u16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfoType {
+    /// `SQL_ACTIVE_STATEMENTS` (1) — maximum number of active statements (`SQLUSMALLINT`).
+    /// Alias of `SQL_MAX_CONCURRENT_ACTIVITIES`.
+    ActiveStatements = 1,
     /// `SQL_DRIVER_NAME` (6) — name of the driver shared library (string).
     DriverName = 6,
     /// `SQL_DRIVER_VER` (7) — driver release version (string).
@@ -180,6 +183,12 @@ pub enum InfoType {
     DbmsName = 17,
     /// `SQL_DBMS_VER` (18) — version of the DBMS the connection is talking to (string).
     DbmsVer = 18,
+    /// `SQL_DATABASE_NAME` (16) — name of the current catalog/database (string).
+    DatabaseName = 16,
+    /// `SQL_DATA_SOURCE_READ_ONLY` (25) — whether the data source is read-only (string `"Y"`/`"N"`).
+    DataSourceReadOnly = 25,
+    /// `SQL_DEFAULT_TXN_ISOLATION` (26) — default transaction isolation level (`SQLUINTEGER`).
+    DefaultTxnIsolation = 26,
     /// `SQL_CONCAT_NULL_BEHAVIOR` (22) — concat-with-null result (`SQLUSMALLINT`).
     ConcatNullBehavior = 22,
     /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
@@ -194,6 +203,18 @@ pub enum InfoType {
     CatalogNameSeparator = 41,
     /// `SQL_CATALOG_TERM` (42) — DBMS term for catalog (string).
     CatalogTerm = 42,
+    /// `SQL_MAX_SCHEMA_NAME_LEN` (32) — max schema name length in characters (`SQLUSMALLINT`).
+    MaxSchemaNameLen = 32,
+    /// `SQL_MULT_RESULT_SETS` (36) — whether the driver supports multiple result sets (string `"Y"`/`"N"`).
+    MultResultSets = 36,
+    /// `SQL_SCROLL_CONCURRENCY` (43) — supported scroll concurrency bitmask (`SQLUINTEGER`).
+    ScrollConcurrency = 43,
+    /// `SQL_SCROLL_OPTIONS` (44) — supported scroll options bitmask (`SQLUINTEGER`).
+    ScrollOptions = 44,
+    /// `SQL_TABLE_TERM` (45) — DBMS term for table (string).
+    TableTerm = 45,
+    /// `SQL_TXN_CAPABLE` (46) — transaction support level (`SQLUSMALLINT`).
+    TxnCapable = 46,
     /// `SQL_CONVERT_FUNCTIONS` (48) — supported `CAST`/`CONVERT` function bitmask.
     ConvertFunctions = 48,
     /// `SQL_NUMERIC_FUNCTIONS` (49) — supported numeric scalar functions bitmask.
@@ -244,10 +265,38 @@ pub enum InfoType {
     ConvertLongVarbinary = 71,
     /// `SQL_DRIVER_ODBC_VER` (77) — ODBC version the driver conforms to (string).
     DriverOdbcVer = 77,
+    /// `SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1` (146) — forward-only cursor attribute set 1 bitmask.
+    ForwardOnlyCursorAttributes1 = 146,
+    /// `SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES2` (147) — forward-only cursor attribute set 2 bitmask.
+    ForwardOnlyCursorAttributes2 = 147,
+    /// `SQL_KEYSET_CURSOR_ATTRIBUTES1` (150) — keyset cursor attribute set 1 bitmask.
+    KeysetCursorAttributes1 = 150,
+    /// `SQL_KEYSET_CURSOR_ATTRIBUTES2` (151) — keyset cursor attribute set 2 bitmask.
+    KeysetCursorAttributes2 = 151,
+    /// `SQL_STATIC_CURSOR_ATTRIBUTES1` (167) — static cursor attribute set 1 bitmask.
+    StaticCursorAttributes1 = 167,
+    /// `SQL_STATIC_CURSOR_ATTRIBUTES2` (168) — static cursor attribute set 2 bitmask.
+    StaticCursorAttributes2 = 168,
     /// `SQL_DYNAMIC_CURSOR_ATTRIBUTES1` (144) — dynamic-cursor attribute set 1 bitmask.
     DynamicCursorAttributes1 = 144,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_TXN_ISOLATION_OPTION` (72) — supported transaction isolation levels bitmask (`SQLUINTEGER`).
+    TxnIsolationOption = 72,
+    /// `SQL_CORRELATION_NAME` (74) — correlation name support (`SQLUSMALLINT`).
+    CorrelationName = 74,
+    /// `SQL_NON_NULLABLE_COLUMNS` (75) — nullability of columns (`SQLUSMALLINT`).
+    NonNullableColumns = 75,
+    /// `SQL_LOCK_TYPES` (78) — supported lock types bitmask (`SQLUINTEGER`).
+    LockTypes = 78,
+    /// `SQL_POS_OPERATIONS` (79) — supported positioned operations bitmask (`SQLUINTEGER`).
+    PosOperations = 79,
+    /// `SQL_BOOKMARK_PERSISTENCE` (82) — bookmark persistence bitmask (`SQLUINTEGER`).
+    BookmarkPersistence = 82,
+    /// `SQL_STATIC_SENSITIVITY` (83) — static cursor sensitivity bitmask (`SQLUINTEGER`).
+    StaticSensitivity = 83,
+    /// `SQL_FILE_USAGE` (84) — file-based data source usage (`SQLUSMALLINT`).
+    FileUsage = 84,
     /// `SQL_COLUMN_ALIAS` (87) — whether the driver supports column aliases (string `"Y"`/`"N"`).
     ColumnAlias = 87,
     /// `SQL_GROUP_BY` (88) — `GROUP BY` relationship to selected columns (`SQLUSMALLINT`).
@@ -270,6 +319,8 @@ pub enum InfoType {
     TimedateAddIntervals = 109,
     /// `SQL_TIMEDATE_DIFF_INTERVALS` (110) — supported intervals for `TIMESTAMPDIFF` bitmask.
     TimedateDiffIntervals = 110,
+    /// `SQL_NEED_LONG_DATA_LEN` (111) — whether long data length indicator is needed (string `"Y"`/`"N"`).
+    NeedLongDataLen = 111,
     /// `SQL_CATALOG_LOCATION` (114) — whether catalog appears before or after the schema (`SQLUSMALLINT`).
     CatalogLocation = 114,
     /// `SQL_SQL_CONFORMANCE` (118) — SQL-92 conformance level (`SQLUINTEGER`).
@@ -311,18 +362,28 @@ impl TryFrom<u16> for InfoType {
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
+            1 => Ok(InfoType::ActiveStatements),
             6 => Ok(InfoType::DriverName),
             7 => Ok(InfoType::DriverVer),
             14 => Ok(InfoType::SearchPatternEscape),
+            16 => Ok(InfoType::DatabaseName),
             17 => Ok(InfoType::DbmsName),
             18 => Ok(InfoType::DbmsVer),
             22 => Ok(InfoType::ConcatNullBehavior),
             23 => Ok(InfoType::CursorCommitBehavior),
             24 => Ok(InfoType::CursorRollbackBehavior),
+            25 => Ok(InfoType::DataSourceReadOnly),
+            26 => Ok(InfoType::DefaultTxnIsolation),
             29 => Ok(InfoType::IdentifierQuoteChar),
+            32 => Ok(InfoType::MaxSchemaNameLen),
+            36 => Ok(InfoType::MultResultSets),
             39 => Ok(InfoType::SchemaTerm),
             41 => Ok(InfoType::CatalogNameSeparator),
             42 => Ok(InfoType::CatalogTerm),
+            43 => Ok(InfoType::ScrollConcurrency),
+            44 => Ok(InfoType::ScrollOptions),
+            45 => Ok(InfoType::TableTerm),
+            46 => Ok(InfoType::TxnCapable),
             48 => Ok(InfoType::ConvertFunctions),
             49 => Ok(InfoType::NumericFunctions),
             50 => Ok(InfoType::StringFunctions),
@@ -347,9 +408,16 @@ impl TryFrom<u16> for InfoType {
             69 => Ok(InfoType::ConvertVarbinary),
             70 => Ok(InfoType::ConvertVarchar),
             71 => Ok(InfoType::ConvertLongVarbinary),
+            72 => Ok(InfoType::TxnIsolationOption),
+            74 => Ok(InfoType::CorrelationName),
+            75 => Ok(InfoType::NonNullableColumns),
             77 => Ok(InfoType::DriverOdbcVer),
-            144 => Ok(InfoType::DynamicCursorAttributes1),
+            78 => Ok(InfoType::LockTypes),
+            79 => Ok(InfoType::PosOperations),
             81 => Ok(InfoType::GetDataExtensions),
+            82 => Ok(InfoType::BookmarkPersistence),
+            83 => Ok(InfoType::StaticSensitivity),
+            84 => Ok(InfoType::FileUsage),
             87 => Ok(InfoType::ColumnAlias),
             88 => Ok(InfoType::GroupBy),
             90 => Ok(InfoType::OrderByColumnsInSelect),
@@ -361,15 +429,23 @@ impl TryFrom<u16> for InfoType {
             100 => Ok(InfoType::MaxColumnsInSelect),
             109 => Ok(InfoType::TimedateAddIntervals),
             110 => Ok(InfoType::TimedateDiffIntervals),
+            111 => Ok(InfoType::NeedLongDataLen),
             114 => Ok(InfoType::CatalogLocation),
             118 => Ok(InfoType::SqlConformance),
             122 => Ok(InfoType::ConvertWchar),
             125 => Ok(InfoType::ConvertWlongVarchar),
             126 => Ok(InfoType::ConvertWvarchar),
+            144 => Ok(InfoType::DynamicCursorAttributes1),
+            146 => Ok(InfoType::ForwardOnlyCursorAttributes1),
+            147 => Ok(InfoType::ForwardOnlyCursorAttributes2),
+            150 => Ok(InfoType::KeysetCursorAttributes1),
+            151 => Ok(InfoType::KeysetCursorAttributes2),
             152 => Ok(InfoType::OdbcInterfaceConformance),
             160 => Ok(InfoType::Sql92Predicates),
             161 => Ok(InfoType::Sql92RelationalJoinOperators),
             165 => Ok(InfoType::Sql92ValueExpressions),
+            167 => Ok(InfoType::StaticCursorAttributes1),
+            168 => Ok(InfoType::StaticCursorAttributes2),
             169 => Ok(InfoType::AggregateFunctions),
             173 => Ok(InfoType::ConvertGuid),
             10003 => Ok(InfoType::CatalogName),

@@ -12,20 +12,25 @@ use crate::api::error::{
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::get_info_bitmasks::{
-    AGGREGATE_FUNCTIONS, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY, CONVERT_BIT, CONVERT_CHAR,
-    CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT, CONVERT_FUNCTIONS, CONVERT_GUID,
-    CONVERT_INTEGER, CONVERT_LONGVARBINARY, CONVERT_LONGVARCHAR, CONVERT_NUMERIC, CONVERT_REAL,
-    CONVERT_SMALLINT, CONVERT_TIME, CONVERT_TIMESTAMP, CONVERT_TINYINT, CONVERT_VARBINARY,
-    CONVERT_VARCHAR, CONVERT_WCHAR, CONVERT_WLONGVARCHAR, CONVERT_WVARCHAR, NUMERIC_FUNCTIONS,
-    SCHEMA_USAGE, SQL92_PREDICATES, SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_VALUE_EXPRESSIONS,
-    STRING_FUNCTIONS, SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, synthesize,
+    AGGREGATE_FUNCTIONS, BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY,
+    CONVERT_BIT, CONVERT_CHAR, CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT,
+    CONVERT_FUNCTIONS, CONVERT_GUID, CONVERT_INTEGER, CONVERT_LONGVARBINARY, CONVERT_LONGVARCHAR,
+    CONVERT_NUMERIC, CONVERT_REAL, CONVERT_SMALLINT, CONVERT_TIME, CONVERT_TIMESTAMP,
+    CONVERT_TINYINT, CONVERT_VARBINARY, CONVERT_VARCHAR, CONVERT_WCHAR, CONVERT_WLONGVARCHAR,
+    CONVERT_WVARCHAR, DYNAMIC_CURSOR_ATTRIBUTES1, FORWARD_ONLY_CURSOR_ATTRIBUTES1,
+    FORWARD_ONLY_CURSOR_ATTRIBUTES2, KEYSET_CURSOR_ATTRIBUTES1, KEYSET_CURSOR_ATTRIBUTES2,
+    LOCK_TYPES, NUMERIC_FUNCTIONS, POS_OPERATIONS, SCHEMA_USAGE, SCROLL_CONCURRENCY,
+    SCROLL_OPTIONS, SQL92_PREDICATES, SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_VALUE_EXPRESSIONS,
+    STATIC_CURSOR_ATTRIBUTES1, STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS,
+    SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, synthesize,
 };
+use crate::api::handle_registry::HandleGuard;
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_path;
 use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
-    types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
+    types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
 };
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
@@ -1062,45 +1067,8 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
-            let maybe_conn_handle = match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
-                ConnectionState::Disconnected => None,
-            };
-            let cached_catalog = connection.current_catalog.clone();
             drop(connection);
-            let database = match maybe_conn_handle {
-                Some(conn_handle) => {
-                    match global().context(OdbcRuntimeSnafu).and_then(|rt| {
-                        rt.block_on(async |c| {
-                            let info = c
-                                .connection_get_info(ConnectionGetInfoRequest {
-                                    conn_handle: Some(conn_handle),
-                                    info_codes: vec![],
-                                    include_master_token: false,
-                                })
-                                .await?;
-                            Ok::<Option<String>, crate::api::OdbcError>(info.database)
-                        })
-                    }) {
-                        Ok(db) => {
-                            dbc.connection.lock().current_catalog = db.clone();
-                            db
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "get_connect_attr: failed to fetch current catalog from server: \
-                                 {e:?}; falling back to cached value"
-                            );
-                            cached_catalog
-                        }
-                    }
-                }
-                // When disconnected, return the cached catalog (or empty string).
-                // Per ODBC spec the catalog is indeterminate before connecting;
-                // returning an error would break applications that probe this attribute
-                // before calling SQLConnect.
-                None => cached_catalog,
-            };
+            let database = current_database(&dbc)?;
             let database_str = database.as_deref().unwrap_or("");
             write_string_bytes_i32::<E>(
                 database_str,
@@ -1283,6 +1251,48 @@ fn write_get_info_u32(
     }
 }
 
+/// Current database (catalog) for this connection.
+///
+/// Reads sf_core's authoritative, continuously-updated session state via
+/// `connection_get_info` — an in-process lock read, not a Snowflake round
+/// trip — so it reflects server-side `USE DATABASE` issued as queries, which
+/// the odbc-layer `current_catalog` cache does not track. The cache is
+/// refreshed as a side-effect on success.
+///
+/// Failure policy (matches `SQL_DBMS_VER` in `get_info`):
+///
+/// * Disconnected: returns `Ok(cached value)`. Catalog is indeterminate
+///   pre-connect; erroring would break apps that probe before `SQLConnect`.
+/// * Connected, RPC ok: returns `Ok(database)`, cache refreshed.
+/// * Connected, RPC err: propagates (missing handle / poisoned lock only).
+fn current_database(dbc: &HandleGuard<Dbc>) -> OdbcResult<Option<String>> {
+    let (conn_handle, cached) = {
+        let conn = dbc.connection.lock();
+        let ch = match conn.state {
+            ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+            ConnectionState::Disconnected => None,
+        };
+        (ch, conn.current_catalog.clone())
+    };
+    match conn_handle {
+        Some(handle) => {
+            let db = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                let info = c
+                    .connection_get_info(ConnectionGetInfoRequest {
+                        conn_handle: Some(handle),
+                        info_codes: vec![],
+                        include_master_token: false,
+                    })
+                    .await?;
+                Ok::<Option<String>, crate::api::OdbcError>(info.database)
+            })?;
+            dbc.connection.lock().current_catalog = db.clone();
+            Ok(db)
+        }
+        None => Ok(cached),
+    }
+}
+
 /// Retrieve general information about the driver and data source
 /// (SQLGetInfo / SQLGetInfoW).
 pub fn get_info<E: OdbcEncoding>(
@@ -1324,6 +1334,10 @@ pub fn get_info<E: OdbcEncoding>(
         }
         InfoType::DriverVer => write_str(ODBC_DRIVER_VERSION),
         InfoType::DbmsName => write_str("Snowflake"),
+        InfoType::DatabaseName => {
+            let db = current_database(&dbc)?;
+            write_str(db.as_deref().unwrap_or(""))
+        }
         InfoType::DbmsVer => {
             // Sourced from `serverVersion` in the login response (parsed in
             // [`sf_core::rest::snowflake::auth::AuthResponseMain`]). Matches
@@ -1373,22 +1387,33 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::SchemaTerm => write_str("schema"),
         InfoType::CatalogNameSeparator => write_str("."),
         InfoType::CatalogTerm => write_str("database"),
+        InfoType::DataSourceReadOnly => write_str("N"),
+        InfoType::MultResultSets => write_str("N"),
+        InfoType::TableTerm => write_str("table"),
         InfoType::ColumnAlias => write_str("Y"),
         InfoType::OrderByColumnsInSelect => write_str("N"),
         InfoType::SpecialCharacters => write_str(""),
+        InfoType::NeedLongDataLen => write_str("N"),
         InfoType::CatalogName => write_str("Y"),
 
         // ----- Scalar `SQLUSMALLINT` --------------------------------------
+        InfoType::ActiveStatements => write_u16(0),
         InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => write_u16(1), // SQL_CB_CLOSE
         InfoType::ConcatNullBehavior => write_u16(0), // SQL_CB_NULL
         InfoType::GroupBy => write_u16(2),            // SQL_GB_GROUP_BY_CONTAINS_SELECT
+        InfoType::MaxSchemaNameLen => write_u16(255),
         InfoType::MaxColumnsInGroupBy => write_u16(65535),
         InfoType::MaxColumnsInOrderBy => write_u16(65535),
         InfoType::MaxColumnsInSelect => write_u16(65535),
         InfoType::CatalogLocation => write_u16(1), // SQL_CL_START
         InfoType::MaxIdentifierLen => write_u16(255),
+        InfoType::TxnCapable => write_u16(3), // SQL_TC_DDL_COMMIT
+        InfoType::CorrelationName => write_u16(2), // SQL_CN_ANY
+        InfoType::NonNullableColumns => write_u16(0), // SQL_NNC_NULL
+        InfoType::FileUsage => write_u16(0),  // SQL_FILE_NOT_SUPPORTED
 
         // ----- Scalar `SQLUINTEGER` ---------------------------------------
+        InfoType::DefaultTxnIsolation => write_u32(SQL_TXN_READ_COMMITTED),
         InfoType::SqlConformance => write_u32(1), // SQL_SC_SQL92_ENTRY
         InfoType::OdbcInterfaceConformance => write_u32(1), // SQL_OIC_CORE
         InfoType::AsyncMode => write_u32(2),      // SQL_AM_STATEMENT
@@ -1420,6 +1445,24 @@ pub fn get_info<E: OdbcEncoding>(
             write_u32(synthesize(SQL92_RELATIONAL_JOIN_OPERATORS))
         }
         InfoType::Sql92ValueExpressions => write_u32(synthesize(SQL92_VALUE_EXPRESSIONS)),
+        InfoType::ScrollConcurrency => write_u32(synthesize(SCROLL_CONCURRENCY)),
+        InfoType::ScrollOptions => write_u32(synthesize(SCROLL_OPTIONS)),
+        InfoType::TxnIsolationOption => write_u32(synthesize(TXN_ISOLATION_OPTION)),
+        InfoType::LockTypes => write_u32(synthesize(LOCK_TYPES)),
+        InfoType::PosOperations => write_u32(synthesize(POS_OPERATIONS)),
+        InfoType::BookmarkPersistence => write_u32(synthesize(BOOKMARK_PERSISTENCE)),
+        InfoType::StaticSensitivity => write_u32(synthesize(STATIC_SENSITIVITY)),
+        InfoType::ForwardOnlyCursorAttributes1 => {
+            write_u32(synthesize(FORWARD_ONLY_CURSOR_ATTRIBUTES1))
+        }
+        InfoType::ForwardOnlyCursorAttributes2 => {
+            write_u32(synthesize(FORWARD_ONLY_CURSOR_ATTRIBUTES2))
+        }
+        InfoType::KeysetCursorAttributes1 => write_u32(synthesize(KEYSET_CURSOR_ATTRIBUTES1)),
+        InfoType::KeysetCursorAttributes2 => write_u32(synthesize(KEYSET_CURSOR_ATTRIBUTES2)),
+        InfoType::StaticCursorAttributes1 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES1)),
+        InfoType::StaticCursorAttributes2 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES2)),
+        InfoType::DynamicCursorAttributes1 => write_u32(synthesize(DYNAMIC_CURSOR_ATTRIBUTES1)),
 
         // ----- `SQL_CONVERT_<source>` bitmasks (per-source-type) ----------
         InfoType::ConvertBigint => write_u32(synthesize(CONVERT_BIGINT)),
@@ -1445,10 +1488,6 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::ConvertWchar => write_u32(synthesize(CONVERT_WCHAR)),
         InfoType::ConvertWlongVarchar => write_u32(synthesize(CONVERT_WLONGVARCHAR)),
         InfoType::ConvertWvarchar => write_u32(synthesize(CONVERT_WVARCHAR)),
-
-        // ----- Zero-valued `SQLUINTEGER` bitmasks --------------------------
-        // The reference driver advertises no dynamic-cursor capabilities.
-        InfoType::DynamicCursorAttributes1 => write_u32(0),
     }
 
     Ok(())
