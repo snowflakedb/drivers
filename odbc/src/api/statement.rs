@@ -9,16 +9,17 @@ use crate::api::error::{
     InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
     NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
     ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, StillExecutingSnafu,
-    UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
+    UnsupportedFeatureSnafu,
 };
+use crate::api::handle_registry::HandleId;
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::{
-    ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord,
-    OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK, SQL_CONCUR_READ_ONLY,
-    SQL_CONCUR_VALUES, SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF, SQL_NOSCAN_ON,
-    SQL_RD_OFF, SQL_RD_ON, SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner,
-    StatementState, stmt_from_handle,
+    ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
+    FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
+    SQL_CONCUR_READ_ONLY, SQL_CONCUR_VALUES, SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF,
+    SQL_NOSCAN_ON, SQL_RD_OFF, SQL_RD_ON, SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType,
+    StatementInner, StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::{odbc_bindings_to_csv, odbc_bindings_to_json};
@@ -1615,7 +1616,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
         }
         FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");
-            inner.ard.unbind_all();
+            inner.with_active_ard_mut(|ard| ard.unbind_all());
         }
         FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameter bindings");
@@ -1789,7 +1790,9 @@ pub fn bind_col(
     // Per ODBC specification, if target_value_ptr is null, unbind the column
     if target_value_ptr.is_null() {
         tracing::debug!("bind_col: unbinding column {}", column_number);
-        inner.ard.bindings.remove(&column_number);
+        inner.with_active_ard_mut(|ard| {
+            ard.bindings.remove(&column_number);
+        });
     } else {
         if buffer_length < 0 {
             return InvalidBufferLengthSnafu {
@@ -1797,21 +1800,47 @@ pub fn bind_col(
             }
             .fail();
         }
-        inner.ard.bindings.insert(
-            column_number,
-            Binding {
-                target_type,
-                target_value_ptr,
-                buffer_length,
-                octet_length_ptr: str_len_or_ind_ptr,
-                indicator_ptr: str_len_or_ind_ptr,
-                precision: None,
-                scale: None,
-                datetime_interval_precision: None,
-            },
-        );
+        inner.with_active_ard_mut(|ard| {
+            ard.bindings.insert(
+                column_number,
+                Binding {
+                    target_type,
+                    target_value_ptr,
+                    buffer_length,
+                    octet_length_ptr: str_len_or_ind_ptr,
+                    indicator_ptr: str_len_or_ind_ptr,
+                    precision: None,
+                    scale: None,
+                    datetime_interval_precision: None,
+                },
+            );
+        });
     }
     Ok(())
+}
+
+/// Look up the `ExplicitDesc` Arc for `desc_handle` on connection `conn_id`.
+/// Does NOT hold the statement `inner` lock — call this after dropping it to
+/// preserve the Connection-before-inner lock ordering.
+fn lookup_explicit_desc(desc_handle: sql::Handle, conn_id: HandleId) -> OdbcResult<ExplicitDesc> {
+    let desc_id = HandleId::from(desc_handle);
+    let g = global().context(OdbcRuntimeSnafu)?;
+    let desc_guard = g.desc_manager.get(desc_id)?;
+    match *desc_guard {
+        crate::api::handle_registry::DescLookup::Explicit { conn_id: owner }
+            if owner == conn_id =>
+        {
+            drop(desc_guard);
+            let dbc = g.dbc_registry.get(conn_id)?;
+            let conn = dbc.connection.lock();
+            conn.child_descriptors
+                .iter()
+                .find(|(id, _)| *id == desc_id)
+                .map(|(_, a)| a.clone())
+                .ok_or_else(|| InvalidHandleSnafu.build())
+        }
+        _ => InvalidHandleSnafu.fail(),
+    }
 }
 
 /// Set a statement attribute value
@@ -1872,7 +1901,9 @@ pub fn set_stmt_attr(
             } else {
                 size
             };
-            inner.ard.array_size = effective_size;
+            inner.with_active_ard_mut(|ard| {
+                ard.array_size = effective_size;
+            });
             Ok(())
         }
         StmtAttr::RowStatusPtr => {
@@ -1890,13 +1921,17 @@ pub fn set_stmt_attr(
         StmtAttr::RowBindType => {
             let raw_bind_type = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: RowBindType (raw) = {}", raw_bind_type);
-            inner.ard.bind_type = raw_bind_type;
+            inner.with_active_ard_mut(|ard| {
+                ard.bind_type = raw_bind_type;
+            });
             Ok(())
         }
         StmtAttr::RowBindOffsetPtr => {
             let ptr = value_ptr as *mut sql::Len;
             tracing::debug!("set_stmt_attr: RowBindOffsetPtr = {:?}", ptr);
-            inner.ard.bind_offset_ptr = ptr;
+            inner.with_active_ard_mut(|ard| {
+                ard.bind_offset_ptr = ptr;
+            });
             Ok(())
         }
         StmtAttr::ParamBindType => {
@@ -1937,6 +1972,34 @@ pub fn set_stmt_attr(
         StmtAttr::MetadataId => {
             let val = value_ptr as sql::ULen;
             inner.metadata_id = val != 0;
+            Ok(())
+        }
+        StmtAttr::AppRowDesc => {
+            let handle = value_ptr as sql::Handle;
+            if handle.is_null() || HandleId::from(handle) == inner.ard_handle {
+                // NULL means "revert to implicit". The Windows DM also sends
+                // the statement's own implicit ARD handle to mean the same thing.
+                inner.active_ard = None;
+            } else {
+                let conn_id = guard.conn_id;
+                drop(inner);
+                let arc = lookup_explicit_desc(handle, conn_id)?;
+                let mut inner = guard.inner.lock();
+                inner.active_ard = Some((HandleId::from(handle), arc));
+            }
+            Ok(())
+        }
+        StmtAttr::AppParamDesc => {
+            let handle = value_ptr as sql::Handle;
+            if handle.is_null() || HandleId::from(handle) == inner.apd_handle {
+                inner.active_apd = None;
+            } else {
+                let conn_id = guard.conn_id;
+                drop(inner);
+                let arc = lookup_explicit_desc(handle, conn_id)?;
+                let mut inner = guard.inner.lock();
+                inner.active_apd = Some((HandleId::from(handle), arc));
+            }
             Ok(())
         }
         StmtAttr::SnowflakeLastQueryId | StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
@@ -2146,10 +2209,6 @@ pub fn set_stmt_attr(
                 .fail(),
             }
         }
-        _ => {
-            tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
-            UnsupportedAttributeSnafu { attribute }.fail()
-        }
     }
 }
 
@@ -2202,7 +2261,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         }
         StmtAttr::AppRowDesc => {
             unsafe {
-                *(value_ptr as *mut sql::Handle) = inner.ard_handle.into();
+                *(value_ptr as *mut sql::Handle) = inner.active_ard_handle().into();
             }
             Ok(())
         }
@@ -2214,7 +2273,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         }
         StmtAttr::AppParamDesc => {
             unsafe {
-                *(value_ptr as *mut sql::Handle) = inner.apd_handle.into();
+                *(value_ptr as *mut sql::Handle) = inner.active_apd_handle().into();
             }
             Ok(())
         }
@@ -2225,12 +2284,12 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::RowArraySize => {
-            unsafe {
-                *(value_ptr as *mut sql::ULen) = inner.ard.array_size as sql::ULen;
+            inner.with_active_ard(|ard| unsafe {
+                *(value_ptr as *mut sql::ULen) = ard.array_size as sql::ULen;
                 if !string_length_ptr.is_null() {
                     *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
-            }
+            });
             Ok(())
         }
         StmtAttr::RowStatusPtr => {
@@ -2246,18 +2305,18 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::RowBindType => {
-            unsafe {
-                *(value_ptr as *mut sql::ULen) = inner.ard.bind_type;
+            inner.with_active_ard(|ard| unsafe {
+                *(value_ptr as *mut sql::ULen) = ard.bind_type;
                 if !string_length_ptr.is_null() {
                     *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
-            }
+            });
             Ok(())
         }
         StmtAttr::RowBindOffsetPtr => {
-            unsafe {
-                *(value_ptr as *mut *mut sql::Len) = inner.ard.bind_offset_ptr;
-            }
+            inner.with_active_ard(|ard| unsafe {
+                *(value_ptr as *mut *mut sql::Len) = ard.bind_offset_ptr;
+            });
             Ok(())
         }
         StmtAttr::ParamBindType => {

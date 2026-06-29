@@ -18,8 +18,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_COUNT on explicit descriptor",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
   REQUIRE(ret == SQL_SUCCESS);
@@ -37,8 +35,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_COUNT on expl
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_ARRAY_SIZE on ARD",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 0, SQL_DESC_ARRAY_SIZE, reinterpret_cast<SQLPOINTER>(5), 0);
@@ -52,8 +48,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_ARRAY_SIZE on
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Decreasing DESC_COUNT unbinds higher records",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER col1 = 0, col2 = 0;
   SQLLEN ind1 = 0, ind2 = 0;
   SQLRETURN ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col1, 0, &ind1);
@@ -82,8 +76,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Decreasing DESC_COUNT 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_TYPE on ARD record",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
@@ -97,8 +89,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_TYPE on ARD r
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set CONCISE_TYPE sets TYPE implicitly",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
   REQUIRE(ret == SQL_SUCCESS);
@@ -172,8 +162,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set UNNAMED to SQL_UNN
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: ARRAY_STATUS_PTR allowed on IRD",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLUSMALLINT status_arr[1] = {};
@@ -183,8 +171,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: ARRAY_STATUS_PTR allow
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: ROWS_PROCESSED_PTR allowed on IRD",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLULEN rows_proc = 0;
@@ -197,16 +183,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: ROWS_PROCESSED_PTR all
 // ============================================================================
 
 TEST_CASE("SQLSetDescField: SQL_INVALID_HANDLE for null descriptor", "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLSetDescField(SQL_NULL_HDESC, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(1), 0);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY091 - Read-only field ALLOC_TYPE",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 0, SQL_DESC_ALLOC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_DESC_ALLOC_USER), 0);
@@ -215,8 +197,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY091 - Read-only fiel
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY091 - Invalid field identifier",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 0, 9999, reinterpret_cast<SQLPOINTER>(1), 0);
@@ -276,8 +256,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - RecNumber 0 on
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - Negative RecNumber",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, -1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
@@ -335,8 +313,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY010 - Called during 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set PARAMETER_TYPE on IPD",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_PARAMETER_TYPE, reinterpret_cast<SQLPOINTER>(SQL_PARAM_INPUT), 0);
@@ -354,8 +330,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set PARAMETER_TYPE on 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set INDICATOR_PTR on ARD",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);

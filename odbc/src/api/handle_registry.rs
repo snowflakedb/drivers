@@ -9,9 +9,14 @@ use crate::api::types::DescriptorKind;
 use odbc_sys as sql;
 
 #[derive(Debug, Clone, Copy)]
-pub struct DescLookup {
-    pub stmt_id: HandleId,
-    pub kind: DescriptorKind,
+pub enum DescLookup {
+    Implicit {
+        stmt_id: HandleId,
+        kind: DescriptorKind,
+    },
+    Explicit {
+        conn_id: HandleId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
