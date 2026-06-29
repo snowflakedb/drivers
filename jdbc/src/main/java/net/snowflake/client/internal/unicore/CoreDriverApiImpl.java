@@ -39,6 +39,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
@@ -179,14 +183,28 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionHeartbeat(builder.build()));
   }
 
-  public ConnectionGetInfoResponse connectionGetInfo(
-      ConnectionHandle connHandle, boolean includeMasterToken) throws SQLException {
+  public ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle)
+      throws SQLException {
     ConnectionGetInfoRequest request =
-        ConnectionGetInfoRequest.newBuilder()
-            .setConnHandle(connHandle)
-            .setIncludeMasterToken(includeMasterToken)
-            .build();
+        ConnectionGetInfoRequest.newBuilder().setConnHandle(connHandle).build();
     return invoke(() -> client.connectionGetInfo(request));
+  }
+
+  public ConnectionUseDatabaseResponse connectionUseDatabase(
+      ConnectionHandle connHandle, String database) throws SQLException {
+    ConnectionUseDatabaseRequest request =
+        ConnectionUseDatabaseRequest.newBuilder()
+            .setConnHandle(connHandle)
+            .setDatabase(database)
+            .build();
+    return invoke(() -> client.connectionUseDatabase(request));
+  }
+
+  public ConnectionUseSchemaResponse connectionUseSchema(ConnectionHandle connHandle, String schema)
+      throws SQLException {
+    ConnectionUseSchemaRequest request =
+        ConnectionUseSchemaRequest.newBuilder().setConnHandle(connHandle).setSchema(schema).build();
+    return invoke(() -> client.connectionUseSchema(request));
   }
 
   public ConnectionGetQueryStatusResponse connectionGetQueryStatus(
