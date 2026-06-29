@@ -87,6 +87,17 @@ class SFResultSetMetaData {
 
   private List<Boolean> isAutoIncrementList;
 
+  public SFResultSetMetaData(
+      int columnCount,
+      List<String> columnNames,
+      List<String> columnTypeNames,
+      List<Integer> columnTypes) {
+    this.columnCount = columnCount;
+    this.columnNames = columnNames;
+    this.columnTypeNames = columnTypeNames;
+    this.columnTypes = columnTypes;
+  }
+
   SFResultSetMetaData(
       List<SnowflakeColumnMetadata> columnMetadata,
       String queryId,

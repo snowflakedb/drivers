@@ -58,6 +58,20 @@ public class SnowflakeResultSetMetaDataImpl
     return new SnowflakeResultSetMetaDataImpl(sfResultSetMetaData, queryId, QueryType.SYNC);
   }
 
+  // TODO(SNOW-3695645): the minimal SFResultSetMetaData constructor leaves precisions, scales,
+  //  displaySizes, and source table/schema/catalog null, so accessors fall back to defaults
+  //  (precision 9, scale 9, displaySize 25, tableName "T", etc.). These match the old driver's
+  //  behavior for fabricated metadata result sets but should be revisited.
+  public static SnowflakeResultSetMetaDataImpl fromColumnSpec(
+      String queryId,
+      List<String> columnNames,
+      List<String> columnTypeNames,
+      List<Integer> columnTypes) {
+    SFResultSetMetaData sfResultSetMetaData =
+        new SFResultSetMetaData(columnNames.size(), columnNames, columnTypeNames, columnTypes);
+    return new SnowflakeResultSetMetaDataImpl(sfResultSetMetaData, queryId, QueryType.SYNC);
+  }
+
   /**
    * Returns an async view of {@code sync}: same column layout, {@link QueryType#ASYNC} (which
    * suppresses catalog/schema/table names), and {@code asyncQueryId} as the reported query ID. Does

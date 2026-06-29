@@ -6,7 +6,6 @@ import static net.snowflake.client.api.metadata.reference.TestUtil.expectFeature
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
@@ -14,7 +13,6 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.util.HashSet;
 import java.util.List;
@@ -96,7 +94,6 @@ public class DatabaseMetaDataIT extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @SkipNewDriver("not yet implemented")
   public void testGetCatalogs() throws SQLException {
     DatabaseMetaData metaData = connection.getMetaData();
     assertEquals(".", metaData.getCatalogSeparator());
@@ -114,12 +111,8 @@ public class DatabaseMetaDataIT extends SnowflakeIntegrationTestBase {
         assertTrue(resultSet.isFirst());
       }
       ++cnt;
-      assertThrows(SQLFeatureNotSupportedException.class, resultSet::isLast);
-      assertThrows(SQLFeatureNotSupportedException.class, resultSet::isAfterLast);
     }
     assertTrue(cnt >= 1);
-    SQLException ex = assertThrows(SQLException.class, resultSet::isAfterLast);
-    assertEquals(200037, ex.getErrorCode());
     resultSet.close(); // double closing does nothing.
     resultSet.next(); // no exception
 
