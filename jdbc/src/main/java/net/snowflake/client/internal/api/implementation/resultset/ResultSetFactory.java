@@ -5,11 +5,16 @@ import java.util.List;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.core.arrow.ArrowStreamFactory;
+import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
+import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
@@ -65,6 +70,25 @@ public class ResultSetFactory {
     return null;
   }
 
+  /**
+   * Wraps an existing result set with a {@link ConvertingRowReader} that projects/filters rows into
+   * a new column layout. The source result set is detached (marked closed and unregistered from the
+   * statement) and its {@link RowReader} ownership transfers to the new result set.
+   */
+  public static InternalResultSet wrapWithConverter(
+      SnowflakeStatementImpl statement,
+      SnowflakeResultSetImpl resultSet,
+      SnowflakeResultSetMetaDataImpl metaData,
+      RowConverter converter)
+      throws SQLException {
+    String queryID = metaData.getQueryID();
+    RowReader sourceReader = resultSet.detachRowReader();
+    String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
+    ConvertingRowReader convertingReader = new ConvertingRowReader(sourceReader, names, converter);
+
+    return new SnowflakeResultSetImpl(statement, queryID, convertingReader, metaData, true);
+  }
+
   private static InternalResultSet resultSetFromResponse(
       SnowflakeStatementImpl statement,
       String queryId,
@@ -73,7 +97,18 @@ public class ResultSetFactory {
       throws SQLException {
     byte[] streamPointerBytes = response.getStream().getValue().toByteArray();
     long pointer = ArrowStreamFactory.pointerFromBytes(streamPointerBytes);
-    return new SnowflakeResultSetImpl(statement, queryId, pointer, columns);
+    ArrowResources arrowResources = ArrowStreamFactory.createFromPointer(pointer);
+    SnowflakeResultSetMetaDataImpl metaData = SnowflakeResultSetMetaDataImpl.from(queryId, columns);
+    DataConversionContext conversionContext = buildConversionContext(statement);
+    ArrowRowReader rowReader = new ArrowRowReader(arrowResources, conversionContext);
+    return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, false);
+  }
+
+  private static DataConversionContext buildConversionContext(SnowflakeStatementImpl statement)
+      throws SQLException {
+    return SessionDataConversionContext.fromConnection(
+        ProtobufApis.coreDriverApi,
+        statement.getConnection().unwrap(InternalSnowflakeConnection.class).getHandle());
   }
 
   private static ResultSetGetStreamResponse fetchStreamAndRelease(
