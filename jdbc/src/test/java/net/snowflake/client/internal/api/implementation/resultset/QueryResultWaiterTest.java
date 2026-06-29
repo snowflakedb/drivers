@@ -15,6 +15,11 @@ class QueryResultWaiterTest {
 
   private final String queryId = UUID.randomUUID().toString();
 
+  // No-op backoff so polling tests don't sleep through real wall-clock retries.
+  // (The NO_DATA path alone backs off ~124s.) Tests that exercise the real
+  // Thread.sleep interrupt path use the default two-arg constructor instead.
+  private static final QueryResultWaiter.Sleeper NO_SLEEP = millis -> {};
+
   private static QueryStatus status(String name) {
     return new QueryStatus(0, 0, "", "", name, 0, "", 0, name, 0, "", 0, "", "");
   }
@@ -44,7 +49,8 @@ class QueryResultWaiterTest {
               }
               return status("SUCCESS");
             },
-            queryId);
+            queryId,
+            NO_SLEEP);
 
     QueryStatus result = waiter.waitForCompletion();
 
@@ -76,7 +82,7 @@ class QueryResultWaiterTest {
 
   @Test
   void shouldThrowAfterMaxNoDataRetries() {
-    QueryResultWaiter waiter = new QueryResultWaiter(() -> status("NO_DATA"), queryId);
+    QueryResultWaiter waiter = new QueryResultWaiter(() -> status("NO_DATA"), queryId, NO_SLEEP);
 
     SQLException thrown = assertThrows(SQLException.class, waiter::waitForCompletion);
 
@@ -96,7 +102,8 @@ class QueryResultWaiterTest {
               if (n <= 5) return status("RUNNING");
               return status("SUCCESS");
             },
-            queryId);
+            queryId,
+            NO_SLEEP);
 
     QueryStatus result = waiter.waitForCompletion();
 

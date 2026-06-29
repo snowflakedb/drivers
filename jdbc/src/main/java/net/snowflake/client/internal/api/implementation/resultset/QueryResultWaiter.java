@@ -1,11 +1,9 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
 import java.sql.SQLException;
-import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.QueryStatus;
 
 /** Polls query status with capped exponential backoff until the query completes or errors. */
-@RequiredArgsConstructor
 class QueryResultWaiter {
 
   private static final int[] RETRY_PATTERN = {1, 1, 2, 3, 4, 8, 10};
@@ -13,10 +11,30 @@ class QueryResultWaiter {
 
   private final QueryStatusCheck statusCheck;
   private final String queryId;
+  private final Sleeper sleeper;
 
   @FunctionalInterface
   interface QueryStatusCheck {
     QueryStatus get() throws SQLException;
+  }
+
+  /**
+   * Backoff sleep seam. Production uses {@link Thread#sleep(long)}; tests inject a no-op so the
+   * polling paths don't sleep through real wall-clock backoff (the NO_DATA path alone is ~124s).
+   */
+  @FunctionalInterface
+  interface Sleeper {
+    void sleep(long millis) throws InterruptedException;
+  }
+
+  QueryResultWaiter(QueryStatusCheck statusCheck, String queryId) {
+    this(statusCheck, queryId, Thread::sleep);
+  }
+
+  QueryResultWaiter(QueryStatusCheck statusCheck, String queryId, Sleeper sleeper) {
+    this.statusCheck = statusCheck;
+    this.queryId = queryId;
+    this.sleeper = sleeper;
   }
 
   /**
@@ -54,7 +72,7 @@ class QueryResultWaiter {
         }
       }
       try {
-        Thread.sleep(500L * RETRY_PATTERN[retryIdx]);
+        sleeper.sleep(500L * RETRY_PATTERN[retryIdx]);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new SQLException("Interrupted while waiting for async query to complete", e);
