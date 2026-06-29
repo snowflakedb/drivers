@@ -605,6 +605,348 @@ pub const SQL92_VALUE_EXPRESSIONS: &[Flag] = &[
     }, // bit 3
 ];
 
+/// `SQL_SCROLL_CONCURRENCY` (43) — supported scroll concurrency options.
+pub const SCROLL_CONCURRENCY: &[Flag] = &[
+    Flag {
+        name: "SQL_SCCO_READ_ONLY",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SCCO_LOCK",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_SCCO_OPT_ROWVER",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_SCCO_OPT_VALUES",
+        enabled: false,
+    }, // bit 3
+];
+
+/// `SQL_SCROLL_OPTIONS` (44) — supported scroll options.
+pub const SCROLL_OPTIONS: &[Flag] = &[
+    Flag {
+        name: "SQL_SO_FORWARD_ONLY",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SO_KEYSET_DRIVEN",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_SO_DYNAMIC",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_SO_MIXED",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_SO_STATIC",
+        enabled: false,
+    }, // bit 4
+];
+
+/// `SQL_TXN_ISOLATION_OPTION` (72) — supported transaction isolation levels.
+pub const TXN_ISOLATION_OPTION: &[Flag] = &[
+    Flag {
+        name: "SQL_TXN_READ_UNCOMMITTED",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_TXN_READ_COMMITTED",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_TXN_REPEATABLE_READ",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_TXN_SERIALIZABLE",
+        enabled: false,
+    }, // bit 3
+];
+
+/// `SQL_LOCK_TYPES` (78) — supported lock types.
+pub const LOCK_TYPES: &[Flag] = &[
+    Flag {
+        name: "SQL_LCK_NO_CHANGE",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_LCK_EXCLUSIVE",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_LCK_UNLOCK",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_POS_OPERATIONS` (79) — supported positioned operations.
+pub const POS_OPERATIONS: &[Flag] = &[
+    Flag {
+        name: "SQL_POS_POSITION",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_POS_REFRESH",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_POS_UPDATE",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_POS_DELETE",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_POS_ADD",
+        enabled: false,
+    }, // bit 4
+];
+
+/// `SQL_BOOKMARK_PERSISTENCE` (82) — bookmark persistence options.
+pub const BOOKMARK_PERSISTENCE: &[Flag] = &[
+    Flag {
+        name: "SQL_BP_CLOSE",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_BP_DELETE",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_BP_DROP",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_BP_TRANSACTION",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_BP_UPDATE",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_BP_OTHER_HSTMT",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_BP_SCROLL",
+        enabled: false,
+    }, // bit 6
+];
+
+/// `SQL_STATIC_SENSITIVITY` (83) — static cursor sensitivity options.
+pub const STATIC_SENSITIVITY: &[Flag] = &[
+    Flag {
+        name: "SQL_SS_ADDITIONS",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SS_DELETIONS",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SS_UPDATES",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_CA1_*` layout shared by the cursor-attributes1 info types. Bits 4–5 are
+/// reserved in the ODBC spec; placeholder entries keep index aligned to bit number.
+macro_rules! ca1_cursor_attributes {
+    ($next:expr) => {
+        &[
+            Flag {
+                name: "SQL_CA1_NEXT",
+                enabled: $next,
+            }, // bit 0
+            Flag {
+                name: "SQL_CA1_ABSOLUTE",
+                enabled: false,
+            }, // bit 1
+            Flag {
+                name: "SQL_CA1_RELATIVE",
+                enabled: false,
+            }, // bit 2
+            Flag {
+                name: "SQL_CA1_BOOKMARK",
+                enabled: false,
+            }, // bit 3
+            Flag {
+                name: "reserved",
+                enabled: false,
+            }, // bit 4
+            Flag {
+                name: "reserved",
+                enabled: false,
+            }, // bit 5
+            Flag {
+                name: "SQL_CA1_LOCK_NO_CHANGE",
+                enabled: false,
+            }, // bit 6
+            Flag {
+                name: "SQL_CA1_LOCK_EXCLUSIVE",
+                enabled: false,
+            }, // bit 7
+            Flag {
+                name: "SQL_CA1_LOCK_UNLOCK",
+                enabled: false,
+            }, // bit 8
+            Flag {
+                name: "SQL_CA1_POS_POSITION",
+                enabled: false,
+            }, // bit 9
+            Flag {
+                name: "SQL_CA1_POS_UPDATE",
+                enabled: false,
+            }, // bit 10
+            Flag {
+                name: "SQL_CA1_POS_DELETE",
+                enabled: false,
+            }, // bit 11
+            Flag {
+                name: "SQL_CA1_SELECT_FOR_UPDATE",
+                enabled: false,
+            }, // bit 12
+            Flag {
+                name: "SQL_CA1_BULK_ADD",
+                enabled: false,
+            }, // bit 13
+            Flag {
+                name: "SQL_CA1_BULK_UPDATE_BY_BOOKMARK",
+                enabled: false,
+            }, // bit 14
+            Flag {
+                name: "SQL_CA1_BULK_DELETE_BY_BOOKMARK",
+                enabled: false,
+            }, // bit 15
+            Flag {
+                name: "SQL_CA1_BULK_FETCH_BY_BOOKMARK",
+                enabled: false,
+            }, // bit 16
+            Flag {
+                name: "SQL_CA1_POS_REFRESH",
+                enabled: false,
+            }, // bit 17
+            Flag {
+                name: "SQL_CA1_POSITIONED_UPDATE",
+                enabled: false,
+            }, // bit 18
+            Flag {
+                name: "SQL_CA1_POSITIONED_DELETE",
+                enabled: false,
+            }, // bit 19
+        ]
+    };
+}
+
+/// `SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1` (146).
+pub const FORWARD_ONLY_CURSOR_ATTRIBUTES1: &[Flag] = ca1_cursor_attributes!(true);
+
+/// `SQL_KEYSET_CURSOR_ATTRIBUTES1` (150).
+pub const KEYSET_CURSOR_ATTRIBUTES1: &[Flag] = ca1_cursor_attributes!(false);
+
+/// `SQL_STATIC_CURSOR_ATTRIBUTES1` (167).
+pub const STATIC_CURSOR_ATTRIBUTES1: &[Flag] = ca1_cursor_attributes!(false);
+
+/// `SQL_DYNAMIC_CURSOR_ATTRIBUTES1` (144).
+pub const DYNAMIC_CURSOR_ATTRIBUTES1: &[Flag] = ca1_cursor_attributes!(false);
+
+/// `SQL_CA2_*` layout shared by the cursor-attributes2 info types.
+macro_rules! ca2_cursor_attributes {
+    () => {
+        &[
+            Flag {
+                name: "SQL_CA2_READ_ONLY_CONCURRENCY",
+                enabled: false,
+            }, // bit 0
+            Flag {
+                name: "SQL_CA2_LOCK_CONCURRENCY",
+                enabled: false,
+            }, // bit 1
+            Flag {
+                name: "SQL_CA2_OPT_ROWVER_CONCURRENCY",
+                enabled: false,
+            }, // bit 2
+            Flag {
+                name: "SQL_CA2_OPT_VALUES_CONCURRENCY",
+                enabled: false,
+            }, // bit 3
+            Flag {
+                name: "SQL_CA2_SENSITIVITY_ADDITIONS",
+                enabled: false,
+            }, // bit 4
+            Flag {
+                name: "SQL_CA2_SENSITIVITY_DELETIONS",
+                enabled: false,
+            }, // bit 5
+            Flag {
+                name: "SQL_CA2_SENSITIVITY_UPDATES",
+                enabled: false,
+            }, // bit 6
+            Flag {
+                name: "SQL_CA2_MAX_ROWS_SELECT",
+                enabled: false,
+            }, // bit 7
+            Flag {
+                name: "SQL_CA2_MAX_ROWS_INSERT",
+                enabled: false,
+            }, // bit 8
+            Flag {
+                name: "SQL_CA2_MAX_ROWS_DELETE",
+                enabled: false,
+            }, // bit 9
+            Flag {
+                name: "SQL_CA2_MAX_ROWS_UPDATE",
+                enabled: false,
+            }, // bit 10
+            Flag {
+                name: "SQL_CA2_MAX_ROWS_CATALOG",
+                enabled: false,
+            }, // bit 11
+            Flag {
+                name: "SQL_CA2_MAX_ROWS_AFFECTS_ALL",
+                enabled: false,
+            }, // bit 12
+            Flag {
+                name: "SQL_CA2_CRC_EXACT",
+                enabled: false,
+            }, // bit 13
+            Flag {
+                name: "SQL_CA2_CRC_APPROXIMATE",
+                enabled: false,
+            }, // bit 14
+            Flag {
+                name: "SQL_CA2_SIMULATE_NON_UNIQUE",
+                enabled: false,
+            }, // bit 15
+            Flag {
+                name: "SQL_CA2_SIMULATE_TRY_UNIQUE",
+                enabled: false,
+            }, // bit 16
+            Flag {
+                name: "SQL_CA2_SIMULATE_UNIQUE",
+                enabled: false,
+            }, // bit 17
+        ]
+    };
+}
+
+/// `SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES2` (147).
+pub const FORWARD_ONLY_CURSOR_ATTRIBUTES2: &[Flag] = ca2_cursor_attributes!();
+
+/// `SQL_KEYSET_CURSOR_ATTRIBUTES2` (151).
+pub const KEYSET_CURSOR_ATTRIBUTES2: &[Flag] = ca2_cursor_attributes!();
+
+/// `SQL_STATIC_CURSOR_ATTRIBUTES2` (168).
+pub const STATIC_CURSOR_ATTRIBUTES2: &[Flag] = ca2_cursor_attributes!();
+
 // ----- `SQL_CONVERT_<source>` families -------------------------------------
 //
 // Each `SQL_CONVERT_<source>` InfoType returns a bitmask over the possible
@@ -3057,6 +3399,21 @@ mod tests {
         assert_eq!(synthesize(SQL92_PREDICATES), 0x3F05);
         assert_eq!(synthesize(SQL92_RELATIONAL_JOIN_OPERATORS), 0x15A);
         assert_eq!(synthesize(SQL92_VALUE_EXPRESSIONS), 0xF);
+
+        assert_eq!(synthesize(SCROLL_CONCURRENCY), 0x1);
+        assert_eq!(synthesize(SCROLL_OPTIONS), 0x1);
+        assert_eq!(synthesize(TXN_ISOLATION_OPTION), 0x2);
+        assert_eq!(synthesize(LOCK_TYPES), 0x2);
+        assert_eq!(synthesize(STATIC_SENSITIVITY), 0x3);
+        assert_eq!(synthesize(FORWARD_ONLY_CURSOR_ATTRIBUTES1), 0x1);
+        assert_eq!(synthesize(POS_OPERATIONS), 0x0);
+        assert_eq!(synthesize(BOOKMARK_PERSISTENCE), 0x0);
+        assert_eq!(synthesize(FORWARD_ONLY_CURSOR_ATTRIBUTES2), 0x0);
+        assert_eq!(synthesize(KEYSET_CURSOR_ATTRIBUTES1), 0x0);
+        assert_eq!(synthesize(KEYSET_CURSOR_ATTRIBUTES2), 0x0);
+        assert_eq!(synthesize(STATIC_CURSOR_ATTRIBUTES1), 0x0);
+        assert_eq!(synthesize(STATIC_CURSOR_ATTRIBUTES2), 0x0);
+        assert_eq!(synthesize(DYNAMIC_CURSOR_ATTRIBUTES1), 0x0);
 
         // ---- SQL_CONVERT_<source> families ----------------------------------
         // Each must include the source type itself as a target plus the
