@@ -480,6 +480,43 @@ rules:
               return tmp.name
       ```
 
+  - id: ud-py-sql-identifier-parameterization
+    rule: |
+      **OBJECTIVE**: Prevent SQL injection in identifier positions and ensure correct quoting by using Snowflake's `IDENTIFIER(?)` pseudo-function with server-side binding instead of f-string interpolation for SQL object names.
+
+      **REQUIREMENT**: When a `cursor.execute(...)` call places a database object name — table, schema, stage, file format, view, or column — into a SQL statement by interpolating a variable, use `IDENTIFIER(?)` with `params=` and `_force_qmark_paramstyle=True` instead of an f-string. `_force_qmark_paramstyle=True` is required because the connector's default paramstyle may be `pyformat` (`%s`); `IDENTIFIER()` only works with the `?`/qmark form that routes through server-side binding.
+
+      Apply this rule when:
+      - The identifier comes from user input, configuration, or an earlier query result.
+      - The SQL statement operates on a named database object (`TABLE`, `SCHEMA`, `STAGE`, `FILE FORMAT`, `VIEW`, etc.).
+
+      Exemptions (raw interpolation remains acceptable):
+      - The value is a **hard-coded literal constant** in the same file (e.g. `"PARQUET"`, `"AUTO_DETECT"`).
+      - The position is a **SQL keyword or clause option**, not an identifier (e.g. `AUTO_COMPRESS=FALSE`, or an `on_error` value validated against an allowlist before reaching the query).
+      - DDL clauses whose syntax does not support `IDENTIFIER(?)` (e.g. `PUT`/`COPY INTO @stage` path arguments — use manual escaping there instead).
+
+      Smell to search for: `f"…{` inside a `cursor.execute(` argument where the interpolated token is a table, schema, stage, or column name.
+
+      ❌ **BAD:**
+      ```python
+      cursor.execute(f"ALTER TABLE {target_location} RENAME TO {original}")
+      cursor.execute(f"TRUNCATE TABLE IF EXISTS {target_location}")
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      cursor.execute(
+          "ALTER TABLE IDENTIFIER(?) RENAME TO IDENTIFIER(?)",
+          params=(target_location, original),
+          _force_qmark_paramstyle=True,
+      )
+      cursor.execute(
+          "TRUNCATE TABLE IF EXISTS IDENTIFIER(?)",
+          params=(target_location,),
+          _force_qmark_paramstyle=True,
+      )
+      ```
+
   - id: ud-py-statement-parameter-name-registry
     rule: |
       **OBJECTIVE**: Keep statement-level parameter names centralized and in sync with sf_core's `param_registry`. Ad-hoc string literals for statement parameters drift from the canonical registry, hide new parameters from reviewers, and make it easy to typo a name that the server will reject at runtime.

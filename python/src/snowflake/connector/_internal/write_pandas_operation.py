@@ -461,7 +461,11 @@ class WritePandasOperation:
         cfg = self._cfg
         original = cfg.qualify(cfg.table_name)
         _drop_object(cursor, original, "TABLE")
-        cursor.execute(f"ALTER TABLE {target_location} RENAME TO {original}")
+        cursor.execute(
+            "ALTER TABLE IDENTIFIER(?) RENAME TO IDENTIFIER(?)",
+            params=(target_location, original),
+            _force_qmark_paramstyle=True,
+        )
 
     # -- COPY INTO -------------------------------------------------------
 
