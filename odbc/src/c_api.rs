@@ -191,6 +191,44 @@ pub unsafe extern "system" fn SQLTablesW(
     result.to_sql_code()
 }
 
+/// ODBC catalog function: return information about supported SQL data types.
+///
+/// Both the ANSI and Unicode variants delegate to the same
+/// `api::catalog::get_type_info` implementation; the DataType argument is an
+/// integer and requires no string encoding.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetTypeInfo(
+    statement_handle: sql::Handle,
+    data_type: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetTypeInfo");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::get_type_info(statement_handle, data_type);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetTypeInfoW(
+    statement_handle: sql::Handle,
+    data_type: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetTypeInfo");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::get_type_info(statement_handle, data_type);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
