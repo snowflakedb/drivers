@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::api::CDataType;
 use crate::api::ConnectionState;
 use crate::api::error::DisconnectedSnafu;
@@ -92,9 +94,13 @@ impl FetchConverterCache {
 
         let schema = record_batch.schema();
         self.entries.clear();
-        self.entries.reserve(inner.ard.bindings.len());
 
-        for (&column_number, binding) in &inner.ard.bindings {
+        // Resolve active ARD bindings (they may be from an explicit descriptor).
+        let bindings_snapshot: HashMap<u16, Binding> =
+            inner.with_active_ard(|ard| ard.bindings.clone());
+        self.entries.reserve(bindings_snapshot.len());
+
+        for (&column_number, binding) in &bindings_snapshot {
             // ODBC reserves column 0 for bookmarks; `checked_sub` also guards
             // debug-mode panics if `SQLBindCol` accepted a 0.
             let arrow_col = (column_number as usize).checked_sub(1);
@@ -298,9 +304,8 @@ fn fetch_impl(
     let mut inner = guard.inner.lock();
     inner.get_data_state = None;
 
-    let array_size = inner.ard.array_size.max(1);
-    let bind_type = inner.ard.bind_type;
-    let bind_offset_ptr = inner.ard.bind_offset_ptr;
+    let (array_size, bind_type, bind_offset_ptr) =
+        inner.with_active_ard(|ard| (ard.array_size.max(1), ard.bind_type, ard.bind_offset_ptr));
     let row_status_ptr = inner.ird.array_status_ptr;
     let rows_fetched_ptr = inner.ird.rows_processed_ptr;
     let bind_offset = if !bind_offset_ptr.is_null() {
@@ -716,7 +721,8 @@ pub fn get_data(
         .fail();
     }
 
-    if inner.ard.array_size > 1 {
+    let ard_array_size = inner.with_active_ard(|ard| ard.array_size);
+    if ard_array_size > 1 {
         tracing::warn!("get_data: cannot use SQLGetData with row_array_size > 1");
         return InvalidCursorPositionSnafu.fail();
     }
@@ -728,8 +734,10 @@ pub fn get_data(
 
     // SQL_ARD_TYPE: resolve from the ARD descriptor's concise type for the column
     let target_type = if target_type == CDataType::Ard {
-        match inner.ard.bindings.get(&col_or_param_num) {
-            Some(b) => b.target_type,
+        let resolved =
+            inner.with_active_ard(|ard| ard.bindings.get(&col_or_param_num).map(|b| b.target_type));
+        match resolved {
+            Some(t) => t,
             None => {
                 return InvalidDescriptorIndexSnafu {
                     number: col_or_param_num as sql::SmallInt,
@@ -779,7 +787,9 @@ pub fn get_data(
             let schema = record_batch.schema();
             let field = schema.field(col_idx);
 
-            let ard_binding = inner.ard.bindings.get(&col_or_param_num);
+            let ard_binding = inner.with_active_ard(|ard| {
+                ard.bindings.get(&col_or_param_num).copied()
+            });
             let binding = Binding {
                 target_type,
                 target_value_ptr,

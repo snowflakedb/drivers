@@ -13,7 +13,7 @@ use crate::{
             NoMoreDataSnafu,
         },
         stmt_from_handle,
-        types::DescriptorKind,
+        types::{DescriptorAccess, DescriptorKind},
     },
     conversion::warning::{Warning, Warnings},
 };
@@ -262,15 +262,22 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
         return;
     }
     if handle_type == sql::HandleType::Desc {
-        let Ok((guard, kind)) = desc_from_handle(handle) else {
+        let Ok(access) = desc_from_handle(handle) else {
             return;
         };
-        let mut inner = guard.inner.lock();
-        match kind {
-            DescriptorKind::Ard => inner.ard.get_diag_info_mut().clear(),
-            DescriptorKind::Ird => inner.ird.get_diag_info_mut().clear(),
-            DescriptorKind::Apd => inner.apd.get_diag_info_mut().clear(),
-            DescriptorKind::Ipd => inner.ipd.get_diag_info_mut().clear(),
+        match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let mut inner = guard.inner.lock();
+                match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info_mut().clear(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info_mut().clear(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info_mut().clear(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info_mut().clear(),
+                }
+            }
+            DescriptorAccess::Explicit { desc } => {
+                desc.lock().get_diag_info_mut().clear();
+            }
         }
     }
 }
@@ -340,18 +347,28 @@ pub fn set_diag_info_from_warnings(
         return;
     }
     if handle_type == sql::HandleType::Desc {
-        let Ok((guard, kind)) = desc_from_handle(handle) else {
+        let Ok(access) = desc_from_handle(handle) else {
             return;
         };
-        let mut inner = guard.inner.lock();
-        let diagnostic_info = match kind {
-            DescriptorKind::Ard => inner.ard.get_diag_info_mut(),
-            DescriptorKind::Ird => inner.ird.get_diag_info_mut(),
-            DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
-            DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
-        };
-        for warning in warnings {
-            diagnostic_info.add_record(from_warning(warning));
+        match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let mut inner = guard.inner.lock();
+                let diagnostic_info = match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info_mut(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info_mut(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
+                };
+                for warning in warnings {
+                    diagnostic_info.add_record(from_warning(warning));
+                }
+            }
+            DescriptorAccess::Explicit { desc } => {
+                let mut desc = desc.lock();
+                for warning in warnings {
+                    desc.get_diag_info_mut().add_record(from_warning(warning));
+                }
+            }
         }
     }
 }
@@ -395,17 +412,24 @@ pub fn set_diag_info_from_result(
         return;
     }
     if handle_type == sql::HandleType::Desc {
-        let Ok((guard, kind)) = desc_from_handle(handle) else {
+        let Ok(access) = desc_from_handle(handle) else {
             return;
         };
-        let mut inner = guard.inner.lock();
-        let diagnostic_info = match kind {
-            DescriptorKind::Ard => inner.ard.get_diag_info_mut(),
-            DescriptorKind::Ird => inner.ird.get_diag_info_mut(),
-            DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
-            DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
-        };
-        add_from_result(diagnostic_info);
+        match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let mut inner = guard.inner.lock();
+                let diagnostic_info = match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info_mut(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info_mut(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
+                };
+                add_from_result(diagnostic_info);
+            }
+            DescriptorAccess::Explicit { desc } => {
+                add_from_result(desc.lock().get_diag_info_mut());
+            }
+        }
     }
 }
 
@@ -427,15 +451,20 @@ pub fn get_diag_info(
         return Ok(guard.inner.lock().get_diag_info().clone());
     }
     if handle_type == sql::HandleType::Desc {
-        let (guard, kind) = desc_from_handle(handle)?;
-        let inner = guard.inner.lock();
-        let diag = match kind {
-            DescriptorKind::Ard => inner.ard.get_diag_info(),
-            DescriptorKind::Ird => inner.ird.get_diag_info(),
-            DescriptorKind::Apd => inner.apd.get_diag_info(),
-            DescriptorKind::Ipd => inner.ipd.get_diag_info(),
+        let access = desc_from_handle(handle)?;
+        return match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let inner = guard.inner.lock();
+                let diag = match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info(),
+                };
+                Ok(diag.clone())
+            }
+            DescriptorAccess::Explicit { desc } => Ok(desc.lock().get_diag_info().clone()),
         };
-        return Ok(diag.clone());
     }
     InvalidHandleSnafu.fail()
 }

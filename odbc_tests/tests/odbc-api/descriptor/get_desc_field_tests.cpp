@@ -21,8 +21,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: Implicit descriptor has ALLOC_AUTO",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLSMALLINT alloc_type = -1;
@@ -33,8 +31,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: Implicit descriptor ha
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: Explicit descriptor has ALLOC_USER",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
   REQUIRE(ret == SQL_SUCCESS);
@@ -49,8 +45,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: Explicit descriptor ha
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: DESC_COUNT reflects bound columns",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLSMALLINT count = -1;
@@ -94,8 +88,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD fields available a
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: ARD record fields after binding",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER col_val = 0;
   SQLLEN ind = 0;
   SQLRETURN ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col_val, 0, &ind);
@@ -156,8 +148,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD fields after execu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: APD fields after parameter binding",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -238,8 +228,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 01004 - String truncat
 // ============================================================================
 
 TEST_CASE("SQLGetDescField: SQL_INVALID_HANDLE for null descriptor", "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLSMALLINT val = -1;
   const SQLRETURN ret = SQLGetDescField(SQL_NULL_HDESC, 0, SQL_DESC_COUNT, &val, 0, nullptr);
   REQUIRE(ret == SQL_INVALID_HANDLE);
@@ -247,8 +235,6 @@ TEST_CASE("SQLGetDescField: SQL_INVALID_HANDLE for null descriptor", "[odbc-api]
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Invalid field identifier",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLSMALLINT val = -1;
@@ -258,8 +244,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Invalid field 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 07009 - Negative RecNumber",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLSMALLINT val = -1;

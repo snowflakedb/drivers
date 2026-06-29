@@ -1,6 +1,6 @@
 use crate::api::bitmask::Bitmask;
 use crate::api::error::OdbcRuntimeSnafu;
-use crate::api::handle_registry::{HandleGuard, HandleId};
+use crate::api::handle_registry::{DescLookup, HandleGuard, HandleId};
 use crate::api::runtime::global;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
@@ -755,6 +755,8 @@ pub enum DescField {
     Unnamed = 1012,
     /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
+    /// `SQL_DESC_ALLOC_TYPE` (1099) — allocation type (AUTO=1, USER=2). Read-only.
+    AllocType = 1099,
 
     // ODBC 2.x SQL_COLUMN_* identifiers (used by SQLColAttributes)
     /// `SQL_COLUMN_COUNT` (0) — number of columns.
@@ -820,6 +822,7 @@ impl TryFrom<i16> for DescField {
             1011 => Ok(DescField::Name),
             1012 => Ok(DescField::Unnamed),
             1013 => Ok(DescField::OctetLength),
+            1099 => Ok(DescField::AllocType),
             _ => {
                 tracing::warn!("Unknown descriptor field identifier: {}", value);
                 Err(OdbcError::InvalidDescriptorFieldId {
@@ -1094,6 +1097,8 @@ impl TimestampSubtype {
 /// Application Row Descriptor (ARD).
 ///
 /// Stores column binding information and block-cursor header fields.
+/// Also used as the backing store for explicit descriptors (which can serve
+/// as either ARD or APD when assigned via `SQLSetStmtAttr`).
 pub struct ArdDescriptor {
     pub diagnostic_info: DiagnosticInfo,
     pub bindings: HashMap<u16, Binding>,
@@ -1104,6 +1109,19 @@ pub struct ArdDescriptor {
     /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
 }
+
+// Safety: ArdDescriptor contains raw pointers (bind_offset_ptr, indicator/data ptrs
+// in Bindings) that are application-owned and only dereferenced on the calling
+// thread during SQLFetch/SQLGetData. Access is serialized through the Mutex in
+// ExplicitDesc or StatementInner. This temporary unsafe impl will be removed when
+// proper interior mutability (Pin + cell-based fields) is introduced.
+unsafe impl Send for ArdDescriptor {}
+unsafe impl Sync for ArdDescriptor {}
+
+/// Shared handle to an explicitly-allocated application descriptor.
+/// Owned by the Connection and shared (via Arc clone) with any statements
+/// that have it assigned as their active ARD or APD.
+pub type ExplicitDesc = std::sync::Arc<Mutex<ArdDescriptor>>;
 
 impl Default for ArdDescriptor {
     fn default() -> Self {
@@ -1329,6 +1347,13 @@ pub struct Connection {
     /// HandleIds of all child statements allocated on this connection.
     /// Used by `free_connection` to release orphaned statements.
     pub(crate) child_statements: Vec<HandleId>,
+    /// Explicitly-allocated descriptors on this connection.
+    /// Each entry pairs the descriptor's HandleId (from `desc_manager`) with the
+    /// shared descriptor data. Statements clone the Arc when swapped in.
+    /// Vec<(K, V)> rather than HashMap: typical count is 0–2, so linear scan
+    /// beats hashing overhead and preserves allocation order for deterministic
+    /// free_connection cleanup.
+    pub(crate) child_descriptors: Vec<(HandleId, ExplicitDesc)>,
     /// Cached local autocommit state. Defaults to `AutocommitValue::On`.
     /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
     /// when the server session parameter is unavailable.
@@ -1722,9 +1747,12 @@ pub struct ExecuteOutcome {
 /// `fetch`, and `extended_fetch` follow this rule.
 ///
 /// Functions that only mutate `inner` (`SQLBindCol`, `SQLBindParameter`,
-/// `SQLPutData`, `SQLSetStmtAttr`, `SQLFreeStmt`, `SQLNumParams`,
-/// `SQLDescribeParam`, the diagnostic helpers) do not lock `Connection`
-/// at all. `SQLCancel` operates only on `Statement::cancel_token` and
+/// `SQLPutData`, `SQLSetStmtAttr` (except `AppRowDesc`/`AppParamDesc`),
+/// `SQLFreeStmt`, `SQLNumParams`, `SQLDescribeParam`, the diagnostic helpers)
+/// do not lock `Connection` at all. `SQLSetStmtAttr` for `AppRowDesc`/
+/// `AppParamDesc` drops `inner`, acquires `Connection` to clone the descriptor
+/// Arc, then re-acquires `inner` — preserving the ordering invariant.
+/// `SQLCancel` operates only on `Statement::cancel_token` and
 /// never touches either mutex.
 pub struct StatementInner {
     pub state: State<StatementState>,
@@ -1736,6 +1764,12 @@ pub struct StatementInner {
     pub ird_handle: HandleId,
     pub apd_handle: HandleId,
     pub ipd_handle: HandleId,
+    /// Explicit ARD assigned via `SQLSetStmtAttr(SQL_ATTR_APP_ROW_DESC)`.
+    /// `None` means the implicit `self.ard` is active.
+    pub active_ard: Option<(HandleId, ExplicitDesc)>,
+    /// Explicit APD assigned via `SQLSetStmtAttr(SQL_ATTR_APP_PARAM_DESC)`.
+    /// `None` means the implicit `self.apd` is active.
+    pub active_apd: Option<(HandleId, ExplicitDesc)>,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
     /// `SQL_ATTR_CURSOR_TYPE` — default `ForwardOnly`.
@@ -1802,6 +1836,36 @@ pub struct StatementInner {
 unsafe impl Send for StatementInner {}
 unsafe impl Sync for StatementInner {}
 
+impl StatementInner {
+    pub fn with_active_ard<R>(&self, f: impl FnOnce(&ArdDescriptor) -> R) -> R {
+        match &self.active_ard {
+            None => f(&self.ard),
+            Some((_, arc)) => f(&arc.lock()),
+        }
+    }
+
+    pub fn with_active_ard_mut<R>(&mut self, f: impl FnOnce(&mut ArdDescriptor) -> R) -> R {
+        match &self.active_ard {
+            None => f(&mut self.ard),
+            Some((_, arc)) => f(&mut arc.lock()),
+        }
+    }
+
+    pub fn active_ard_handle(&self) -> HandleId {
+        match &self.active_ard {
+            None => self.ard_handle,
+            Some((id, _)) => *id,
+        }
+    }
+
+    pub fn active_apd_handle(&self) -> HandleId {
+        match &self.active_apd {
+            None => self.apd_handle,
+            Some((id, _)) => *id,
+        }
+    }
+}
+
 impl Statement {
     /// Construct a new Statement for the given connection.
     pub fn new(conn_id: HandleId, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
@@ -1818,6 +1882,8 @@ impl Statement {
                 ird_handle: HandleId::default(),
                 apd_handle: HandleId::default(),
                 ipd_handle: HandleId::default(),
+                active_ard: None,
+                active_apd: None,
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
                 cursor_type: CursorType::ForwardOnly,
@@ -1889,9 +1955,19 @@ pub fn stmt_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Statement
         .get(handle_id)
 }
 
-pub fn desc_from_handle(
-    desc_handle: sql::Handle,
-) -> OdbcResult<(HandleGuard<Statement>, DescriptorKind)> {
+/// Resolved descriptor access — either an implicit descriptor embedded in a statement,
+/// or an explicit descriptor allocated on a connection.
+pub enum DescriptorAccess {
+    Implicit {
+        guard: HandleGuard<Statement>,
+        kind: DescriptorKind,
+    },
+    Explicit {
+        desc: ExplicitDesc,
+    },
+}
+
+pub fn desc_from_handle(desc_handle: sql::Handle) -> OdbcResult<DescriptorAccess> {
     if desc_handle.is_null() {
         return Err(OdbcError::InvalidHandle {
             location: snafu::location!(),
@@ -1900,11 +1976,30 @@ pub fn desc_from_handle(
     let desc_id = HandleId::from(desc_handle);
     let g = global().context(OdbcRuntimeSnafu)?;
     let desc_guard = g.desc_manager.get(desc_id)?;
-    let stmt_id = desc_guard.stmt_id;
-    let kind = desc_guard.kind;
-    drop(desc_guard);
-    let stmt_guard = g.stmt_registry.get(stmt_id)?;
-    Ok((stmt_guard, kind))
+    match *desc_guard {
+        DescLookup::Implicit { stmt_id, kind } => {
+            drop(desc_guard);
+            let stmt_guard = g.stmt_registry.get(stmt_id)?;
+            Ok(DescriptorAccess::Implicit {
+                guard: stmt_guard,
+                kind,
+            })
+        }
+        DescLookup::Explicit { conn_id } => {
+            drop(desc_guard);
+            let dbc = g.dbc_registry.get(conn_id)?;
+            let conn = dbc.connection.lock();
+            let arc = conn
+                .child_descriptors
+                .iter()
+                .find(|(id, _)| *id == desc_id)
+                .map(|(_, arc)| arc.clone())
+                .ok_or_else(|| OdbcError::InvalidHandle {
+                    location: snafu::location!(),
+                })?;
+            Ok(DescriptorAccess::Explicit { desc: arc })
+        }
+    }
 }
 
 #[cfg(test)]

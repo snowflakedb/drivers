@@ -22,11 +22,11 @@ fn register_desc_handles(
     g: &GlobalsGuard,
     stmt_id: HandleId,
 ) -> OdbcResult<(HandleId, HandleId, HandleId, HandleId)> {
-    let ard = g.desc_manager.add(DescLookup {
+    let ard = g.desc_manager.add(DescLookup::Implicit {
         stmt_id,
         kind: DescriptorKind::Ard,
     })?;
-    let ird = match g.desc_manager.add(DescLookup {
+    let ird = match g.desc_manager.add(DescLookup::Implicit {
         stmt_id,
         kind: DescriptorKind::Ird,
     }) {
@@ -36,7 +36,7 @@ fn register_desc_handles(
             return Err(e);
         }
     };
-    let apd = match g.desc_manager.add(DescLookup {
+    let apd = match g.desc_manager.add(DescLookup::Implicit {
         stmt_id,
         kind: DescriptorKind::Apd,
     }) {
@@ -47,7 +47,7 @@ fn register_desc_handles(
             return Err(e);
         }
     };
-    let ipd = match g.desc_manager.add(DescLookup {
+    let ipd = match g.desc_manager.add(DescLookup::Implicit {
         stmt_id,
         kind: DescriptorKind::Ipd,
     }) {
@@ -97,6 +97,7 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
             quiet_mode: std::ptr::null_mut(),
             packet_size: 0,
             child_statements: vec![],
+            child_descriptors: vec![],
             cached_autocommit: crate::api::types::AutocommitValue::On,
             current_catalog: None,
             metadata_id: false,
@@ -175,8 +176,12 @@ pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
 }
 
 fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
+    let mut conn = dbc.connection.lock();
     // Release any outstanding statements whose ODBC handles were never freed.
-    let child_ids: Vec<_> = dbc.connection.lock().child_statements.drain(..).collect();
+    let child_ids: Vec<_> = conn.child_statements.drain(..).collect();
+    let desc_ids: Vec<_> = conn.child_descriptors.drain(..).collect();
+    drop(conn);
+
     let g = global().context(OdbcRuntimeSnafu)?;
     for child_id in child_ids {
         let delete_guard = match g.stmt_registry.get_for_delete(child_id) {
@@ -212,6 +217,15 @@ fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
             }
         }
         delete_guard.delete();
+    }
+
+    // Free explicit descriptors allocated on this connection.
+    // The Arc<Mutex<ArdDescriptor>> is dropped here (last owner), and the
+    // desc_manager entry is removed so the HandleId can be recycled.
+    for (desc_id, _arc) in desc_ids {
+        if let Ok(dg) = g.desc_manager.get_for_delete(desc_id) {
+            dg.delete();
+        }
     }
     Ok(())
 }
@@ -310,6 +324,74 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     release_result
 }
 
+/// Allocate an explicit application descriptor on a connection.
+pub fn alloc_descriptor(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
+    tracing::info!("Allocating explicit descriptor handle");
+    let conn_id = HandleId::from(input_handle);
+    let dbc = conn_from_handle(input_handle)?;
+    let mut conn = dbc.connection.lock();
+
+    let g = global().context(OdbcRuntimeSnafu)?;
+    let desc_handle_id = g.desc_manager.add(DescLookup::Explicit { conn_id })?;
+    let arc = std::sync::Arc::new(parking_lot::Mutex::new(crate::api::ArdDescriptor::new()));
+    conn.child_descriptors.push((desc_handle_id, arc));
+    Ok(desc_handle_id.into())
+}
+
+/// Free an explicitly-allocated descriptor handle.
+pub fn free_descriptor(handle: sql::Handle) -> OdbcResult<()> {
+    if handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+    tracing::info!("Freeing explicit descriptor handle");
+    let desc_id = HandleId::from(handle);
+    let g = global().context(OdbcRuntimeSnafu)?;
+
+    // Validate this is an explicit descriptor
+    let desc_guard = g.desc_manager.get(desc_id)?;
+    let conn_id = match *desc_guard {
+        DescLookup::Explicit { conn_id } => conn_id,
+        DescLookup::Implicit { .. } => {
+            return InvalidHandleSnafu.fail();
+        }
+    };
+    drop(desc_guard);
+
+    // Revert any statements using this descriptor, and remove from connection's list
+    let dbc = g.dbc_registry.get(conn_id)?;
+    let child_stmts: Vec<HandleId> = {
+        let mut conn = dbc.connection.lock();
+        conn.child_descriptors.retain(|(id, _)| *id != desc_id);
+        conn.child_statements.clone()
+    };
+    drop(dbc);
+    for stmt_id in child_stmts {
+        if let Ok(stmt_guard) = g.stmt_registry.get(stmt_id) {
+            let mut inner = stmt_guard.inner.lock();
+            if inner
+                .active_ard
+                .as_ref()
+                .is_some_and(|(id, _)| *id == desc_id)
+            {
+                inner.active_ard = None;
+            }
+            if inner
+                .active_apd
+                .as_ref()
+                .is_some_and(|(id, _)| *id == desc_id)
+            {
+                inner.active_apd = None;
+            }
+        }
+    }
+
+    // Delete from desc_manager
+    if let Ok(dg) = g.desc_manager.get_for_delete(desc_id) {
+        dg.delete();
+    }
+    Ok(())
+}
+
 /// Allocate handle implementation (moved from api.rs)
 pub fn sql_alloc_handle(
     handle_type: sql::HandleType,
@@ -348,11 +430,13 @@ pub fn sql_alloc_handle(
             Ok(())
         }
         sql::HandleType::Desc => {
-            tracing::warn!(
-                "SQLAllocHandle: Desc handle type not implemented: {:?}",
+            tracing::info!(
+                "Allocating new desc: SQLAllocHandle: handle_type={:?}",
                 handle_type
             );
-            InvalidHandleSnafu.fail()
+            let handle = alloc_descriptor(input_handle)?;
+            unsafe { std::ptr::write(output_handle, handle) };
+            Ok(())
         }
         _ => {
             tracing::error!("SQLAllocHandle: unknown handle type: {:?}", handle_type);
@@ -405,7 +489,7 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
             drop(guard);
             free_statement(handle)
         }
-        sql::HandleType::Desc => InvalidHandleSnafu.fail(),
+        sql::HandleType::Desc => free_descriptor(handle),
         _ => InvalidHandleSnafu.fail(),
     }
 }
