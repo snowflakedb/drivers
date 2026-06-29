@@ -148,6 +148,16 @@ pub mod param_names {
     /// proxy and overrides config/env settings, mirroring legacy ODBC
     /// `AllowEmptyProxy=true`. When `false`, an empty value is ignored.
     pub const ALLOW_EMPTY_PROXY: ParamKey = ParamKey("allow_empty_proxy");
+
+    /// When `true`, run connectivity diagnostics during connect.
+    /// Default `false`.
+    pub const ENABLE_CONNECTION_DIAG: ParamKey = ParamKey("enable_connection_diag");
+    /// Directory path where the diagnostic report file is written.
+    /// Only used when `ENABLE_CONNECTION_DIAG` is `true`.
+    pub const CONNECTION_DIAG_LOG_PATH: ParamKey = ParamKey("connection_diag_log_path");
+    /// Path to a pre-fetched `allowlist.json` file used during diagnostics.
+    /// When absent, the driver fetches the allowlist live via `system$allowlist()`.
+    pub const CONNECTION_DIAG_ALLOWLIST_PATH: ParamKey = ParamKey("connection_diag_allowlist_path");
 }
 
 /// Default `put_get_max_attempts` (mirrors the `ParamDef`).
@@ -1345,6 +1355,48 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Bool(true)),
         sensitive: false,
         description: "Empty PROXY value explicitly disables proxy (overrides env)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ENABLE_CONNECTION_DIAG.as_str(),
+        aliases: &["ENABLE_CONNECTION_DIAG"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Run connectivity diagnostics during connect and write a report",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CONNECTION_DIAG_LOG_PATH.as_str(),
+        aliases: &["CONNECTION_DIAG_LOG_PATH"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Directory where the diagnostic report file is written (defaults to system tmpdir)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str(),
+        aliases: &["CONNECTION_DIAG_ALLOWLIST_PATH"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,

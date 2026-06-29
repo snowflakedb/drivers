@@ -37,6 +37,21 @@ pub struct ConnectionConfig {
     pub tls: TlsConfig,
     pub proxy: ProxyConfig,
     pub disable_parallel_user_prompt: bool,
+    pub diagnostic: DiagnosticConfig,
+}
+
+/// Configuration for SnowCD-style connectivity diagnostics.
+#[derive(Debug, Clone, Default)]
+pub enum DiagnosticConfig {
+    #[default]
+    Disabled,
+    Enabled {
+        /// Directory where the diagnostic report file is written.
+        log_path: Option<PathBuf>,
+        /// Path to a pre-fetched `allowlist.json`; if absent the driver fetches
+        /// the allowlist live via `system$allowlist()`.
+        allowlist_path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug)]
@@ -537,6 +552,18 @@ impl ConnectionConfig {
             tls,
             proxy,
             disable_parallel_user_prompt,
+            diagnostic: if settings.get_bool(ENABLE_CONNECTION_DIAG).unwrap_or(false) {
+                DiagnosticConfig::Enabled {
+                    log_path: settings
+                        .get_string(CONNECTION_DIAG_LOG_PATH)
+                        .map(PathBuf::from),
+                    allowlist_path: settings
+                        .get_string(CONNECTION_DIAG_ALLOWLIST_PATH)
+                        .map(PathBuf::from),
+                }
+            } else {
+                DiagnosticConfig::Disabled
+            },
         })
     }
 }

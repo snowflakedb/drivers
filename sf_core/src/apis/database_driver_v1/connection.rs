@@ -23,7 +23,7 @@ use super::validation::{
     validate_session_override_write,
 };
 use crate::config::ParamStore;
-use crate::config::connection_config::ConnectionConfig;
+use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
 use crate::config::logout::LogoutConfig;
 use crate::config::param_registry::{
     DEFAULT_PUT_GET_MAX_ATTEMPTS, ParamKey, ParamScope, param_names,
@@ -34,6 +34,7 @@ use crate::config::rest_parameters::{
     resolve_log_query_parameters, resolve_log_query_text,
 };
 use crate::config::retry::RetryPolicy;
+use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
     self, QueryExecutionMode, QueryInput, RestError, SessionTokens, SnowflakeResponseError,
@@ -265,6 +266,24 @@ impl DatabaseDriverV1 {
                     read_spcs_token(self.fs_adapter().as_ref()),
                 );
 
+                // ---- Diagnostics: pre-connect -----------------------------------
+                let mut diag_runner = if let DiagnosticConfig::Enabled { .. } = config.diagnostic {
+                    let account = config.server.account.clone();
+                    // resolve_options() already ran derive_host_from_account, so host
+                    // is Some whenever account is set; the empty-string fallback is unreachable.
+                    let host_str = host.clone().unwrap_or_default();
+                    let diag_cfg = config.diagnostic.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let mut runner = DiagnosticRunner::new(&account, &host_str, diag_cfg);
+                        runner.run_pre_connect();
+                        runner
+                    })
+                    .await
+                    .ok()
+                } else {
+                    None
+                };
+
                 let token_caching_requested = matches!(
                     &login_parameters.login_method,
                     LoginMethod::UserPasswordMfa {
@@ -304,8 +323,19 @@ impl DatabaseDriverV1 {
                     token_cache.map(|c| c as &dyn TokenCache),
                     Some(&self.prompt_locks),
                 )
-                .await
-                .context(LoginSnafu)?;
+                .await;
+
+                // ---- Diagnostics: post-connect ----------------------------------
+                if let Some(mut runner) = diag_runner.take() {
+                    tokio::task::spawn_blocking(move || {
+                        runner.run_post_connect(None);
+                        runner.write_report();
+                    })
+                    .await
+                    .ok();
+                }
+
+                let login_result = login_result.context(LoginSnafu)?;
 
                 // Initialize connection with session parameters from login response.
                 // The server returns system-level parameters but may not echo back

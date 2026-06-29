@@ -60,6 +60,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     client_store_temporary_credential: bool | None = False
     """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""
 
+    connection_diag_allowlist_path: str | None = None
+    """Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()"""
+
+    connection_diag_log_path: str | None = None
+    """Directory where the diagnostic report file is written (defaults to system tmpdir)"""
+
     connection_name: str | None = None
     """Named connection to load from TOML configuration files"""
 
@@ -100,6 +106,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     disable_saml_url_check: bool | None = False
     """Skip the Okta SAML URL host-match safety check. Default: False"""
+
+    enable_connection_diag: bool | None = False
+    """Run connectivity diagnostics during connect and write a report. Default: False"""
 
     enable_server_session_keep_alive_auto_detection: bool | None = None
     """Enable auto-detection of async queries before logout (SNOW-2314152)"""

@@ -2,6 +2,7 @@ extern crate tracing;
 extern crate tracing_subscriber;
 
 pub mod apis;
+pub mod diagnostic;
 
 pub mod arrow_utils;
 mod auth;

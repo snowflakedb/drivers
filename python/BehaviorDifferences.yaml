@@ -497,3 +497,19 @@ behavior_differences:
       failure message, for example `Identity Provider responded with error:
       invalid_client: ... OAuth flow failed`. The OAuth error slug is visible to
       callers parsing the exception text.
+
+  36:
+    name: "connection_diag_whitelist_path deprecated alias removed"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `connection_diag_whitelist_path` is a deprecated alias for
+      `connection_diag_allowlist_path` that emits a `DeprecationWarning`. It is
+      functionally identical to the canonical name.
+    new_driver_behavior: |
+      The `connection_diag_whitelist_path` alias is not accepted. Only the
+      canonical `connection_diag_allowlist_path` parameter is supported. Callers
+      using the old alias must rename it to `connection_diag_allowlist_path`.
