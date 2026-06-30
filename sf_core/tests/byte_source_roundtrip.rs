@@ -1,6 +1,7 @@
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::retry::RetryPolicy;
+use sf_core::file_manager::MultipartParams;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, EncryptionMaterial, LocationType,
     SingleDownloadData, StageInfo,
@@ -224,6 +225,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
         // GCS-only; ignored by the S3 download branch exercised here.
         presigned_url: None,
         flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
     };
 
     let result = sf_core::file_manager::download_single_file(

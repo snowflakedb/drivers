@@ -10,6 +10,7 @@ use std::sync::{Arc, RwLock};
 use tempfile::TempPath;
 
 use super::encryption::Encryptor;
+use super::multipart::MultipartParams;
 
 /// Result of an upload-or-skip operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +104,11 @@ pub struct UploadData {
     /// also passes `overwrite=true`; the existence-only branch
     /// (`!overwrite && exists`) short-circuits before this flag.
     pub skip_upload_on_content_match: bool,
+    /// Server-resolved multipart knobs (`data.threshold` / `data.parallel`):
+    /// the size at/above which the upload switches to multipart and the
+    /// concurrent-part count. Defaults (200 MiB / 1) apply when the server
+    /// omits them.
+    pub multipart: MultipartParams,
 }
 
 // TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
@@ -117,6 +123,7 @@ pub struct SingleUploadData {
     pub flavor: PutGetResultsetFlavor,
     pub legacy_odbc_compression_autodetect: bool,
     pub skip_upload_on_content_match: bool,
+    pub multipart: MultipartParams,
 }
 
 #[derive(Debug)]
@@ -143,6 +150,11 @@ pub struct DownloadData {
     /// pre-decryption byte count for ODBC vs. post-decryption length for
     /// Python).
     pub flavor: PutGetResultsetFlavor,
+    /// Server-resolved multipart knobs (`data.threshold` / `data.parallel`):
+    /// the size above which the download switches to parallel ranged GETs and
+    /// the concurrent-part count. Defaults (200 MiB / 1) apply when the server
+    /// omits them.
+    pub multipart: MultipartParams,
 }
 
 #[derive(Debug)]
@@ -158,6 +170,7 @@ pub struct SingleDownloadData {
     /// this field — neither cloud uses a per-file URL list on GET.
     pub presigned_url: Option<String>,
     pub flavor: PutGetResultsetFlavor,
+    pub multipart: MultipartParams,
 }
 
 /// Bytes plus metadata returned by the cloud transfer layer for a single

@@ -8,9 +8,9 @@ use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::file_manager::internal::gcs_test_retry_policy as test_policy;
 use sf_core::file_manager::types::ByteSource;
 use sf_core::file_manager::{
-    CloudCredentials, DownloadData, GcsDownloadError, GcsUploadError, LocationType, PreparedUpload,
-    RefreshFuture, StageInfo, StageInfoCache, StageInfoRefresher, StageInfoSnapshot,
-    download_files,
+    CloudCredentials, DownloadData, GcsDownloadError, GcsUploadError, LocationType,
+    MultipartParams, PreparedUpload, RefreshFuture, StageInfo, StageInfoCache, StageInfoRefresher,
+    StageInfoSnapshot, download_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::io::Write;
@@ -814,6 +814,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         encryption_materials: vec![None, None],
         presigned_urls: vec![Some(url_a.clone()), Some(url_b.clone())],
         flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
     };
 
     let results = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
@@ -848,6 +849,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         encryption_materials: vec![None],
         presigned_urls: vec![None],
         flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
     };
 
     let err = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
@@ -1777,6 +1779,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         encryption_materials: vec![None, None],
         presigned_urls: vec![Some(stale_a.clone()), Some(stale_b.clone())],
         flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
     };
 
     let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
