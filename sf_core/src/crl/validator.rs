@@ -126,7 +126,7 @@ impl CrlValidator {
                 } else {
                     Some(&issuer_candidates)
                 },
-                self.root_store.as_deref(),
+                self.root_store.clone(),
             )
             .await
         {
@@ -146,7 +146,7 @@ impl CrlValidator {
                             cert_der,
                             issuer_der,
                             Some(&issuer_candidates),
-                            self.root_store.as_deref(),
+                            self.root_store.clone(),
                         )
                         .await
                 } else {

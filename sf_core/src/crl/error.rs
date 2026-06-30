@@ -93,6 +93,12 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("CRL verification task did not complete"))]
+    VerificationTaskFailed {
+        source: tokio::task::JoinError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to build HTTP client for CRL requests"))]
     HttpClientBuild {
         source: reqwest::Error,
