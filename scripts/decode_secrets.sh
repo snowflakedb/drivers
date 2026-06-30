@@ -21,31 +21,43 @@ fi
 
 echo "Decoding secrets with GPG..."
 
-# Decode main parameters file (required)
-printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "./.github/secrets/parameters_${CLOUD}.json.gpg" > "${OUTPUT_FILE}"
-echo "  ✓ ${OUTPUT_FILE}"
+# Auto-detect CI vs local execution.
+# CI: GitHub Actions sets GITHUB_ACTIONS=true; Jenkins sets BUILD_NUMBER.
+# Local: use parameters_<cloud>_local.json.gpg (preserves sfctest0 access for dev).
+# CI:    use parameters_<cloud>.json.gpg (dedicated prod accounts).
+if [[ "${GITHUB_ACTIONS:-}" == "true" || -n "${BUILD_NUMBER:-}" ]]; then
+    GPG_SUFFIX=""
+    echo "  CI environment detected — using dedicated prod account credentials"
+else
+    GPG_SUFFIX="_local"
+    echo "  Local environment detected — using local/sfctest0 credentials"
+fi
 
-# Decode performance test parameters if they exist (optional)
+GPG_FILE="./.github/secrets/parameters_${CLOUD}${GPG_SUFFIX}.json.gpg"
+
+# Decode main parameters file to repo root (required — callers expect parameters.json)
+printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "${GPG_FILE}" > "${OUTPUT_FILE}"
+echo "  ✓ ${OUTPUT_FILE} (from ${GPG_FILE})"
+
+# Decode every other GPG file found in the same directory and in tests/performance/parameters/,
+# placing the plaintext next to the encrypted file (same directory).
+decode_dir() {
+    local dir="$1"
+    for gpg_file in "${dir}"/*.json.gpg; do
+        [ -f "${gpg_file}" ] || continue
+        local out="${gpg_file%.gpg}"
+        printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "${gpg_file}" > "${out}"
+        echo "  ✓ ${out}"
+    done
+}
+
+decode_dir "./.github/secrets"
+
 perf_dir="tests/performance/parameters"
-if [ -f "$perf_dir/parameters_perf_aws.json.gpg" ]; then
-    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_aws.json.gpg" > "$perf_dir/parameters_perf_aws.json"
-    echo "  ✓ parameters_perf_aws.json"
+if [ -d "${perf_dir}" ]; then
+    decode_dir "${perf_dir}"
 else
-    echo "  ⊘ parameters_perf_aws.json.gpg not found, skipping"
-fi
-
-if [ -f "$perf_dir/parameters_perf_azure.json.gpg" ]; then
-    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_azure.json.gpg" > "$perf_dir/parameters_perf_azure.json"
-    echo "  ✓ parameters_perf_azure.json"
-else
-    echo "  ⊘ parameters_perf_azure.json.gpg not found, skipping"
-fi
-
-if [ -f "$perf_dir/parameters_perf_gcp.json.gpg" ]; then
-    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_gcp.json.gpg" > "$perf_dir/parameters_perf_gcp.json"
-    echo "  ✓ parameters_perf_gcp.json"
-else
-    echo "  ⊘ parameters_perf_gcp.json.gpg not found, skipping"
+    echo "  ⊘ ${perf_dir} not found, skipping"
 fi
 
 echo "Successfully decoded all secret files"

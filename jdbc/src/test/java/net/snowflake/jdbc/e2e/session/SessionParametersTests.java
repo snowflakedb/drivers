@@ -2,7 +2,7 @@ package net.snowflake.jdbc.e2e.session;
 
 import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
-import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
+import static net.snowflake.jdbc.utils.TestParameters.withDefaultAuth;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,7 +19,7 @@ class SessionParametersTests {
   void shouldForwardUnrecognizedConnectionOptionAsSessionParameter() throws Exception {
     // Given Snowflake client is logged in with connection option QUERY_TAG set to
     // "session_param_e2e_test"
-    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
+    Properties props = withDefaultAuth(loadDefaultConnectionProperties());
     props.setProperty("QUERY_TAG", "session_param_e2e_test");
     String url = buildJdbcUrl(props);
     try (Connection conn = DriverManager.getConnection(url, props);
@@ -36,7 +36,7 @@ class SessionParametersTests {
   void shouldEnableSessionKeepAliveViaConnectionString() throws Exception {
     // Given Snowflake client is logged in with connection option CLIENT_SESSION_KEEP_ALIVE set to
     // "true"
-    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
+    Properties props = withDefaultAuth(loadDefaultConnectionProperties());
     props.setProperty("CLIENT_SESSION_KEEP_ALIVE", "true");
     String url = buildJdbcUrl(props);
     try (Connection conn = DriverManager.getConnection(url, props);
@@ -53,7 +53,7 @@ class SessionParametersTests {
   void shouldSetHeartbeatFrequencyViaConnectionString() throws Exception {
     // Given Snowflake client is logged in with CLIENT_SESSION_KEEP_ALIVE=true and
     // CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY=1800
-    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
+    Properties props = withDefaultAuth(loadDefaultConnectionProperties());
     props.setProperty("CLIENT_SESSION_KEEP_ALIVE", "true");
     props.setProperty("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY", "1800");
     String url = buildJdbcUrl(props);

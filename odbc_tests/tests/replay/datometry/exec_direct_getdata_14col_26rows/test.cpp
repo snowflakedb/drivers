@@ -80,7 +80,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLSMALLINT numCols = 0;
     SQLRETURN ret = SQLNumResultCols(stmt0, &numCols);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numCols == 26);
+    CHECK(numCols == 24);
   }
 
   // SQLDescribeCol col 1
@@ -248,7 +248,8 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     CHECK(nullable == 1);
   }
 
-  // Adapted: removed automatic_clustering column (not in current Snowflake)
+  // Adapted: sfengineering accounts include automatic_clustering (absent on sfctest0)
+  //          and lack search_optimization* (Enterprise-only feature not enabled here).
   // SQLDescribeCol col 12
   {
     char colName[256] = {};
@@ -257,7 +258,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 12, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "change_tracking");
+    CHECK(std::string(colName) == "automatic_clustering");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -272,7 +273,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 13, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "search_optimization");
+    CHECK(std::string(colName) == "change_tracking");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -287,9 +288,9 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 14, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "search_optimization_progress");
-    CHECK(dataType == 3);
-    CHECK(colSize == 38);
+    CHECK(std::string(colName) == "is_external");
+    CHECK(dataType == 12);
+    CHECK(colSize == 16777216);
     CHECK(scale == 0);
     CHECK(nullable == 1);
   }
@@ -302,9 +303,9 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 15, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "search_optimization_bytes");
-    CHECK(dataType == 3);
-    CHECK(colSize == 38);
+    CHECK(std::string(colName) == "enable_schema_evolution");
+    CHECK(dataType == 12);
+    CHECK(colSize == 16777216);
     CHECK(scale == 0);
     CHECK(nullable == 1);
   }
@@ -317,7 +318,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 16, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_external");
+    CHECK(std::string(colName) == "owner_role_type");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -332,7 +333,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 17, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "enable_schema_evolution");
+    CHECK(std::string(colName) == "is_event");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -347,7 +348,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 18, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "owner_role_type");
+    CHECK(std::string(colName) == "is_hybrid");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -362,7 +363,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 19, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_event");
+    CHECK(std::string(colName) == "is_iceberg");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -377,7 +378,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 20, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_hybrid");
+    CHECK(std::string(colName) == "is_dynamic");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -392,7 +393,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 21, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_iceberg");
+    CHECK(std::string(colName) == "is_immutable");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -407,7 +408,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 22, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_dynamic");
+    CHECK(std::string(colName) == "is_interactive");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -422,7 +423,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 23, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_immutable");
+    CHECK(std::string(colName) == "row_timestamp");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -437,7 +438,7 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLRETURN ret = SQLDescribeCol(stmt0, 24, reinterpret_cast<SQLCHAR*>(colName), 255, nullptr, &dataType, &colSize,
                                    &scale, &nullable);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(colName) == "is_interactive");
+    CHECK(std::string(colName) == "error_logging");
     CHECK(dataType == 12);
     CHECK(colSize == 16777216);
     CHECK(scale == 0);
@@ -560,53 +561,57 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     CHECK(ind == 1);
   }
 
-  // SQLGetData col 12 — change_tracking
+  // SQLGetData col 12 — automatic_clustering
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 12, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    // Adapted: change_tracking default varies by table creation
+    // Adapted: automatic_clustering default varies by table creation
     CHECK(ind > 0);
   }
 
-  // SQLGetData col 13 — search_optimization
+  // SQLGetData col 13 — change_tracking
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 13, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf.data()) == "OFF");
-    CHECK(ind == 3);
+    // Adapted: change_tracking default varies by table creation
+    CHECK(ind > 0);
   }
 
-  // SQLGetData col 14 — search_optimization_progress
+  // SQLGetData col 14 — is_external
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 14, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
+    CHECK(std::string(buf.data()) == "N");
+    CHECK(ind == 1);
   }
 
-  // SQLGetData col 15 — search_optimization_bytes
+  // SQLGetData col 15 — enable_schema_evolution
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 15, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
+    CHECK(std::string(buf.data()) == "N");
+    CHECK(ind == 1);
   }
 
-  // SQLGetData col 16
+  // SQLGetData col 16 — owner_role_type
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 16, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf.data()) == "N");
-    CHECK(ind == 1);
+    CHECK(std::string(buf.data()) == "ROLE");
+    CHECK(ind == 4);
   }
 
-  // SQLGetData col 17
+  // SQLGetData col 17 — is_event
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
@@ -616,27 +621,27 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     CHECK(ind == 1);
   }
 
-  // SQLGetData col 18
+  // SQLGetData col 18 — is_hybrid
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 18, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf.data()) == "ROLE");
-    CHECK(ind == 4);
+    CHECK(std::string(buf.data()) == "N");
+    CHECK(ind == 1);
   }
 
-  // SQLGetData col 19
+  // SQLGetData col 19 — is_iceberg
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 19, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf.data()) == "N");
+    // Adapted: is_iceberg depends on how table was created
     CHECK(ind == 1);
   }
 
-  // SQLGetData col 20
+  // SQLGetData col 20 — is_dynamic
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
@@ -646,17 +651,17 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     CHECK(ind == 1);
   }
 
-  // SQLGetData col 21 — is_iceberg
+  // SQLGetData col 21 — is_immutable
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 21, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    // Adapted: is_iceberg depends on how table was created
+    CHECK(std::string(buf.data()) == "N");
     CHECK(ind == 1);
   }
 
-  // SQLGetData col 22
+  // SQLGetData col 22 — is_interactive
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
@@ -666,24 +671,25 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     CHECK(ind == 1);
   }
 
-  // SQLGetData col 23
+  // SQLGetData col 23 — row_timestamp
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 23, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf.data()) == "N");
-    CHECK(ind == 1);
+    CHECK(std::string(buf.data()) == "OFF");
+    CHECK(ind == 3);
   }
 
-  // SQLGetData col 24
+  // SQLGetData col 24 — error_logging
   {
     std::vector<char> buf(4097, 0);
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 24, SQL_CHAR, buf.data(), 4096, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf.data()) == "N");
-    CHECK(ind == 1);
+    // Adapted: error_logging is a new column not present in the original trace;
+    // exact value not asserted but must not be SQL_NULL_DATA or SQL_NO_TOTAL.
+    CHECK(ind >= 0);
   }
 
   // SQLFetch

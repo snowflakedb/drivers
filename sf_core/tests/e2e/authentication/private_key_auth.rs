@@ -121,20 +121,18 @@ fn should_authenticate_using_unencrypted_private_key_file() {
     let temp_key_file = private_key_helper::get_private_key_from_parameters(&client.parameters)
         .expect("Failed to create private key file");
 
-    // Read encrypted PEM and decrypt it to produce an unencrypted key
+    // Produce an unencrypted PEM: decrypt if the key is encrypted, use as-is if not.
     let pem_contents = fs::read(temp_key_file.path()).expect("Failed to read private key file");
-    let password = client
-        .parameters
-        .private_key_password
-        .as_ref()
-        .expect("No private key password configured; cannot create unencrypted key for test");
-
-    let rsa = Rsa::private_key_from_pem_passphrase(&pem_contents, password.as_bytes())
-        .expect("Failed to decrypt private key");
-    let pkey = PKey::from_rsa(rsa).expect("Failed to create PKey from RSA");
-    let unencrypted_pem = pkey
-        .private_key_to_pem_pkcs8()
-        .expect("Failed to convert to unencrypted PEM");
+    let unencrypted_pem = if let Some(password) = client.parameters.private_key_password.as_ref() {
+        let rsa = Rsa::private_key_from_pem_passphrase(&pem_contents, password.as_bytes())
+            .expect("Failed to decrypt private key");
+        let pkey = PKey::from_rsa(rsa).expect("Failed to create PKey from RSA");
+        pkey.private_key_to_pem_pkcs8()
+            .expect("Failed to convert to unencrypted PEM")
+    } else {
+        // Key is already unencrypted — use as-is
+        pem_contents
+    };
 
     // Write unencrypted PEM to a temp file
     let temp_dir = TempDir::new().expect("Failed to create temp dir");

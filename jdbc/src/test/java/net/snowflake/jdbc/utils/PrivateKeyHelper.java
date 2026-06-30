@@ -30,7 +30,12 @@ public class PrivateKeyHelper {
   private final String password;
 
   public static PrivateKeyHelper fromParameters(Path keyFile) throws Exception {
-    String password = TestParameters.get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
+    // SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD is absent when the key is unencrypted (e.g. new
+    // dedicated production accounts where the key was generated without a passphrase).
+    String password =
+        TestParameters.has("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")
+            ? TestParameters.get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")
+            : "";
     String keyContent =
         String.join("\n", TestParameters.getList("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS"));
     Files.write(keyFile, keyContent.getBytes(StandardCharsets.UTF_8));

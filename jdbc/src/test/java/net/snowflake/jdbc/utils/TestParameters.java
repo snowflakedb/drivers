@@ -2,9 +2,11 @@ package net.snowflake.jdbc.utils;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Properties;
 import lombok.AccessLevel;
@@ -106,6 +108,35 @@ public class TestParameters {
     props.setProperty("user", get("SNOWFLAKE_TEST_USER"));
     props.setProperty("password", get("SNOWFLAKE_TEST_PASSWORD"));
     return props;
+  }
+
+  /**
+   * Configures key pair (SNOWFLAKE_JWT) auth using SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS. Preferred
+   * over password auth on accounts that enforce MFA for password logins.
+   */
+  public static Properties withPrivateKeyAuth(Properties props) {
+    props.setProperty("user", get("SNOWFLAKE_TEST_USER"));
+    String pemContent = String.join("\n", getList("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS"));
+    props.setProperty(
+        "private_key_base64",
+        Base64.getEncoder().encodeToString(pemContent.getBytes(StandardCharsets.UTF_8)));
+    if (has("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")
+        && !get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD").isEmpty()) {
+      props.setProperty("private_key_pwd", get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD"));
+    }
+    props.setProperty("authenticator", "SNOWFLAKE_JWT");
+    return props;
+  }
+
+  /**
+   * Returns props configured with the best available auth: key pair when
+   * SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS is present (avoids MFA errors on strict accounts), password
+   * otherwise.
+   */
+  public static Properties withDefaultAuth(Properties props) {
+    return has("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")
+        ? withPrivateKeyAuth(props)
+        : withSnowflakeAuth(props);
   }
 
   public static String buildJdbcUrl() {

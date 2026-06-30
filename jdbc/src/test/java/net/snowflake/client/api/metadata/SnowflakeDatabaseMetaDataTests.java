@@ -1,7 +1,6 @@
 package net.snowflake.client.api.metadata;
 
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
-import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -23,6 +22,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.TestParameters;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -892,17 +892,20 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
     // Both drivers should expose the connecting host in the URL. The legacy driver
     // derives it from SERVER_URL; universal-driver returns the URL the caller passed.
+    // Snowflake normalizes underscores to hyphens in DNS hostnames (e.g.
+    // sfengineering-drivers_aws_us_east_2 → sfengineering-drivers-aws-us-east-2), so
+    // normalize both sides before comparing.
     Properties props = loadDefaultConnectionProperties();
     String host =
         props.getProperty("host", props.getProperty("account") + ".snowflakecomputing.com");
     assertTrue(
-        url.toLowerCase().contains(host.toLowerCase()),
+        url.toLowerCase().replace('_', '-').contains(host.toLowerCase().replace('_', '-')),
         () -> "getURL must contain the connecting host '" + host + "', got: " + url);
   }
 
   @Test
   void getUserNameReturnsConnectedUser() throws Exception {
-    String expected = withSnowflakeAuth(loadDefaultConnectionProperties()).getProperty("user");
+    String expected = TestParameters.get("SNOWFLAKE_TEST_USER");
     assertEquals(expected, metaData().getUserName(), "getUserName must match the 'user' property");
   }
 

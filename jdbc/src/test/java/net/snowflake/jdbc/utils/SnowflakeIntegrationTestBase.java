@@ -1,7 +1,7 @@
 package net.snowflake.jdbc.utils;
 
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
-import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
+import static net.snowflake.jdbc.utils.TestParameters.withDefaultAuth;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -47,7 +47,7 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
   }
 
   protected Connection openConnection(Properties overrides) throws SQLException {
-    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
+    Properties props = withDefaultAuth(loadDefaultConnectionProperties());
 
     // Read QUERY_RESULT_FORMAT from environment
     String resultFormat = System.getenv("QUERY_RESULT_FORMAT");
