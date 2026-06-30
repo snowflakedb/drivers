@@ -1,21 +1,52 @@
 package net.snowflake.client.api.datasource;
 
 import static net.snowflake.jdbc.utils.TestParameters.buildJdbcUrl;
+import static net.snowflake.jdbc.utils.TestParameters.has;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static net.snowflake.jdbc.utils.TestParameters.withSnowflakeAuth;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 public class DataSourceConnectionTests {
+
+  /**
+   * All tests in this class exercise password-based DataSource auth. Skip the class when
+   * SNOWFLAKE_TEST_PASSWORD is absent (JWT-only environment, e.g. dedicated SERVICE-user accounts)
+   * or when the account enforces MFA for password logins (error 390197) — those accounts should use
+   * key pair auth instead (see PrivateKeyTests). Tests still run on accounts without mandatory MFA.
+   */
+  @BeforeAll
+  static void requirePasswordAuth() {
+    assumeTrue(
+        has("SNOWFLAKE_TEST_PASSWORD"),
+        "Skipping DataSourceConnectionTests: SNOWFLAKE_TEST_PASSWORD not configured"
+            + " (JWT-only environment)");
+    Properties props = withSnowflakeAuth(loadDefaultConnectionProperties());
+    SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
+    ds.setUrl(buildJdbcUrl(props));
+    ds.setUser(props.getProperty("user"));
+    ds.setPassword(props.getProperty("password"));
+    ds.setAccount(props.getProperty("account"));
+    try (Connection ignored = ds.getConnection()) {
+      // probe only — connection closed by try-with-resources
+    } catch (SQLException e) {
+      String msg = e.getMessage() != null ? e.getMessage() : "";
+      assumeTrue(
+          !msg.contains("390197"),
+          "Skipping DataSourceConnectionTests: account requires MFA for password auth");
+    }
+  }
 
   @Test
   public void testConnectUsingDataSourceWithExplicitUrl() throws Exception {

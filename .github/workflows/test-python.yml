@@ -214,6 +214,7 @@ jobs:
     timeout-minutes: ${{ contains(matrix.os, 'windows') && 60 || 30 }}
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
+      CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
     steps:
       - name: Set UV cache dir
         shell: bash

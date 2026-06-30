@@ -106,6 +106,22 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  /**
+   * Drop databases created by quoted-identifier tests so they don't pollute the account and
+   * interfere with reference-driver tests (e.g. DatabaseMetaDataIT.testGetCatalogs). All statements
+   * use IF EXISTS so the cleanup is idempotent even when a test was skipped.
+   */
+  @AfterAll
+  public void cleanUpQuotedDatabases() {
+    try (Statement stmt = connection.createStatement()) {
+      stmt.execute("DROP DATABASE IF EXISTS \"\"\"quoteddb\"\"\"");
+      stmt.execute("DROP DATABASE IF EXISTS \"unquoteddb\"");
+      stmt.execute("DROP DATABASE IF EXISTS \"dbwith\"\"quotes\"");
+    } catch (SQLException e) {
+      // Best-effort cleanup — ignore failures, don't fail the test suite
+    }
+  }
+
   /** Create catalog and schema for tests with double quotes */
   public void createDoubleQuotedSchemaAndCatalog(Statement statement) throws SQLException {
     statement.execute("create or replace database \"dbwith\"\"quotes\"");
@@ -542,7 +558,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
   @Test
   public void testGetStringValueFromColumnDef() throws SQLException {
     Properties properties =
-        TestParameters.withSnowflakeAuth(TestParameters.loadDefaultConnectionProperties());
+        TestParameters.withDefaultAuth(TestParameters.loadDefaultConnectionProperties());
     // test out connection parameter stringsQuoted to remove strings from quotes
     properties.put("stringsQuotedForColumnDef", "true");
     try (Connection connection =
