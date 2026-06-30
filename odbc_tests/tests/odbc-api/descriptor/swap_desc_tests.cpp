@@ -237,6 +237,75 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "Descriptor swap: Cannot set IPD via SQL
   SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
 }
 
+TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "Descriptor swap: HY017 when setting foreign implicit ARD as APP_ROW_DESC",
+                 "[odbc-api][descriptor][swap][error]") {
+  SQLHDESC foreign_ard = get_descriptor(stmt2_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, foreign_ard, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY017", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "Descriptor swap: HY017 when setting foreign implicit APD as APP_PARAM_DESC",
+                 "[odbc-api][descriptor][swap][error]") {
+  SQLHDESC foreign_apd = get_descriptor(stmt2_handle(), SQL_ATTR_APP_PARAM_DESC);
+
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_APP_PARAM_DESC, foreign_apd, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY017", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "Descriptor swap: HY017 when setting foreign implicit ARD as APP_PARAM_DESC",
+                 "[odbc-api][descriptor][swap][error]") {
+  SQLHDESC foreign_ard = get_descriptor(stmt2_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_APP_PARAM_DESC, foreign_ard, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY017", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "Descriptor swap: HY017 when setting foreign implicit APD as APP_ROW_DESC",
+                 "[odbc-api][descriptor][swap][error]") {
+  SQLHDESC foreign_apd = get_descriptor(stmt2_handle(), SQL_ATTR_APP_PARAM_DESC);
+
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, foreign_apd, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY017", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "Descriptor swap: Cannot use explicit descriptor from different connection",
+                 "[odbc-api][descriptor][swap][error]") {
+  // Allocate a second connection and connect
+  SQLHDBC dbc2 = SQL_NULL_HDBC;
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env_handle(), &dbc2);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  struct Cleanup {
+    SQLHDBC dbc{SQL_NULL_HDBC};
+    SQLHDESC desc{SQL_NULL_HDESC};
+    ~Cleanup() {
+      if (desc != SQL_NULL_HDESC) (void)SQLFreeHandle(SQL_HANDLE_DESC, desc);
+      if (dbc != SQL_NULL_HDBC) {
+        (void)SQLDisconnect(dbc);
+        (void)SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+      }
+    }
+  } cleanup{dbc2, SQL_NULL_HDESC};
+
+  ret = SQLConnect(dbc2, sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(SQL_SUCCEEDED(ret));
+
+  // Allocate an explicit descriptor on the second connection
+  SQLHDESC foreign_explicit = SQL_NULL_HDESC;
+  ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc2, &foreign_explicit);
+  REQUIRE(ret == SQL_SUCCESS);
+  cleanup.desc = foreign_explicit;
+
+  // Attempt to set it on stmt from the first connection — must fail.
+  // iODBC's DM intercepts this and returns HY017 (it treats the foreign handle
+  // as automatically allocated); unixODBC/Windows DM pass through to the driver
+  // which returns HY024.
+  ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, foreign_explicit, 0);
+  IODBC_ONLY { REQUIRE_EXPECTED_ERROR(ret, "HY017", stmt_handle(), SQL_HANDLE_STMT); }
+  NON_IODBC { REQUIRE_EXPECTED_ERROR(ret, "HY024", stmt_handle(), SQL_HANDLE_STMT); }
+}
+
 // ============================================================================
 // Descriptor Swap — End-to-End: Fetch through explicit ARD
 // ============================================================================

@@ -98,6 +98,12 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid use of an automatically allocated descriptor handle"))]
+    InvalidUseOfImplicitDescriptor {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid handle type for this operation: {handle_type}"))]
     InvalidHandleType {
         handle_type: i16,
@@ -635,6 +641,7 @@ impl OdbcError {
             OdbcError::EnvironmentLockPoisoned { .. } => ErrorSource::InternalError,
             OdbcError::Disconnected { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidHandle { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidUseOfImplicitDescriptor { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidHandleType { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDescriptorKind { .. } => ErrorSource::ApiMisuse,
             OdbcError::NullPointer { .. } => ErrorSource::ApiMisuse,
@@ -783,6 +790,9 @@ impl OdbcError {
             OdbcError::EnvironmentLockPoisoned { .. } => SqlState::GeneralError,
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::InvalidUseOfImplicitDescriptor { .. } => {
+                SqlState::InvalidUseOfAutomaticallyAllocatedDescriptorHandle
+            }
             OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidDescriptorKind { .. } => SqlState::GeneralError,

@@ -6,10 +6,10 @@ use crate::api::error::{
     CsvBindingSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu,
     InvalidDuringDaeSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
-    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
-    NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
-    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, StillExecutingSnafu,
-    UnsupportedFeatureSnafu,
+    InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu, JsonBindingSnafu,
+    NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
+    StillExecutingSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::handle_registry::HandleId;
 use crate::api::query_type::{QueryType, ResultKind};
@@ -1820,13 +1820,23 @@ pub fn bind_col(
 }
 
 /// Look up the `ExplicitDesc` Arc for `desc_handle` on connection `conn_id`.
+/// Returns HY017 if the handle is an implicitly-allocated descriptor (foreign,
+/// since the caller already handled the statement's own implicit handles).
+/// Returns HY024 if the handle belongs to a different connection.
 /// Does NOT hold the statement `inner` lock — call this after dropping it to
 /// preserve the Connection-before-inner lock ordering.
-fn lookup_explicit_desc(desc_handle: sql::Handle, conn_id: HandleId) -> OdbcResult<ExplicitDesc> {
+fn lookup_explicit_desc(
+    desc_handle: sql::Handle,
+    conn_id: HandleId,
+    attribute: i32,
+) -> OdbcResult<ExplicitDesc> {
     let desc_id = HandleId::from(desc_handle);
     let g = global().context(OdbcRuntimeSnafu)?;
     let desc_guard = g.desc_manager.get(desc_id)?;
     match *desc_guard {
+        crate::api::handle_registry::DescLookup::Implicit { .. } => {
+            InvalidUseOfImplicitDescriptorSnafu.fail()
+        }
         crate::api::handle_registry::DescLookup::Explicit { conn_id: owner }
             if owner == conn_id =>
         {
@@ -1839,7 +1849,11 @@ fn lookup_explicit_desc(desc_handle: sql::Handle, conn_id: HandleId) -> OdbcResu
                 .map(|(_, a)| a.clone())
                 .ok_or_else(|| InvalidHandleSnafu.build())
         }
-        _ => InvalidHandleSnafu.fail(),
+        _ => InvalidAttributeValueSnafu {
+            attribute,
+            value: desc_handle as i64,
+        }
+        .fail(),
     }
 }
 
@@ -1983,7 +1997,7 @@ pub fn set_stmt_attr(
             } else {
                 let conn_id = guard.conn_id;
                 drop(inner);
-                let arc = lookup_explicit_desc(handle, conn_id)?;
+                let arc = lookup_explicit_desc(handle, conn_id, attribute)?;
                 let mut inner = guard.inner.lock();
                 inner.active_ard = Some((HandleId::from(handle), arc));
             }
@@ -1996,7 +2010,7 @@ pub fn set_stmt_attr(
             } else {
                 let conn_id = guard.conn_id;
                 drop(inner);
-                let arc = lookup_explicit_desc(handle, conn_id)?;
+                let arc = lookup_explicit_desc(handle, conn_id, attribute)?;
                 let mut inner = guard.inner.lock();
                 inner.active_apd = Some((HandleId::from(handle), arc));
             }
