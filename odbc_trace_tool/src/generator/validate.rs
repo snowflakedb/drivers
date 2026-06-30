@@ -79,6 +79,17 @@ pub fn validate_call(call: &OdbcCall, line: Option<usize>) -> Result<(), Missing
             require_some(d.column_number, "SQLDescribeCol", "column_number", line)?;
             require_some(d.buffer_length, "SQLDescribeCol", "buffer_length", line)?;
         }
+        OdbcCall::BindCol(b) => {
+            require_some(b.column_number, "SQLBindCol", "column_number", line)?;
+        }
+        OdbcCall::BindParameter(b) => {
+            require_some(
+                b.parameter_number,
+                "SQLBindParameter",
+                "parameter_number",
+                line,
+            )?;
+        }
         OdbcCall::FetchScroll(f) => {
             require_some(
                 f.orientation_name.as_ref(),

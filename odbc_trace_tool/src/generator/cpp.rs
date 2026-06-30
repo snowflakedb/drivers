@@ -90,6 +90,53 @@ fn escape_cpp_string_literal(s: &str) -> String {
     out
 }
 
+/// Render an ODBC enum-style argument. Prefer the captured symbolic name when
+/// it's a header-defined `SQL_`-prefixed constant (compiles directly); else
+/// fall back to the captured integer; else the supplied default constant.
+fn symbolic_or_int(name: Option<&str>, value: Option<i64>, default: &str) -> String {
+    match name {
+        Some(n) if n.starts_with("SQL_") => n.to_string(),
+        _ => value
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| default.to_string()),
+    }
+}
+
+/// True when a captured pointer address is null (all-zero), which for a
+/// `SQLBindCol` `TargetValuePtr` means "unbind this column".
+/// Extract the leading hex-digit run from a trace pointer, dropping the `0x`
+/// prefix and any trailing annotation the trace facility appends. The Windows
+/// ODBC trace tags pointers it cannot dereference with ` (BADMEM)` — common for
+/// row-wise binding, where the captured "address" is really a small offset into
+/// a row struct and so points at unmapped memory. We still need the numeric
+/// offset, so keep only the hex digits.
+fn addr_hex_digits(addr: &str) -> &str {
+    let hex = addr
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    let end = hex
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(hex.len());
+    &hex[..end]
+}
+
+fn is_null_addr(addr: &str) -> bool {
+    let hex = addr_hex_digits(addr);
+    !hex.is_empty() && hex.chars().all(|c| c == '0')
+}
+
+/// Parse a trace pointer like `0x0000000000000098` into its integer value.
+/// Under row-wise binding these "addresses" are really offsets into a row
+/// struct, so the generator adds them to a shared buffer base.
+fn parse_hex_addr(addr: &str) -> Option<i64> {
+    let hex = addr_hex_digits(addr);
+    if hex.is_empty() {
+        return None;
+    }
+    i64::from_str_radix(hex, 16).ok()
+}
+
 /// `SQLGetInfo` info types whose returned strings vary by driver/DBMS build,
 /// platform, or DM. The exact bytes are environment-specific (e.g.
 /// `SQL_DBMS_VER` shifts each Snowflake release; `SQL_DRIVER_NAME` carries an
@@ -109,6 +156,10 @@ const INFO_TYPES_WITH_UNSTABLE_VALUES: &[&str] = &[
     "SQL_DRIVER_NAME",
     "SQL_DRIVER_ODBC_VER",
     "SQL_DM_VER",
+    // The ODBC version the active Driver Manager conforms to. The Windows DM
+    // that captured the trace reports e.g. "03.80.0000"; the unixODBC DM used
+    // for replay reports its own build's value, so the string is DM-specific.
+    "SQL_ODBC_VER",
     "SQL_DBMS_VER",
     "SQL_DBMS_NAME",
 ];
@@ -140,6 +191,21 @@ struct GenContext<'a> {
     /// process-exit luxury, so we emit explicit `SQLFreeHandle` calls in a
     /// closing epilogue. Order preserved so the emitted output is stable.
     unfreed_envs: Vec<String>,
+    /// Monotonic counter giving each `SQLBindCol` / `SQLBindParameter` /
+    /// `SQLExtendedFetch` its own function-scope buffer variable. Bound
+    /// buffers must outlive the `{ }` block of the bind call (the driver
+    /// writes into them at fetch time), so they're declared at the test-body
+    /// scope; a unique suffix avoids C++ redeclaration on rebind.
+    bind_buf_counter: usize,
+    /// Current `SQL_ATTR_ROW_BIND_TYPE` per statement variable. A non-zero
+    /// value is the byte size of a row structure (row-wise binding); columns
+    /// are then bound at fixed offsets within one shared buffer rather than
+    /// to independent column arrays. Absent / 0 means column-wise binding.
+    row_bind_type: HashMap<String, i64>,
+    /// Statement variables for which the shared row-wise buffer has already
+    /// been declared, so we declare it exactly once per (re)entry into
+    /// row-wise mode.
+    row_buf_declared: HashSet<String>,
 }
 
 impl<'a> GenContext<'a> {
@@ -163,6 +229,9 @@ impl<'a> GenContext<'a> {
             unsupported: BTreeMap::new(),
             skipped_col_attr_undocumented: 0,
             unfreed_envs: Vec::new(),
+            bind_buf_counter: 0,
+            row_bind_type: HashMap::new(),
+            row_buf_declared: HashSet::new(),
         }
     }
 
@@ -327,20 +396,7 @@ impl<'a> GenContext<'a> {
             self.writeln("");
             self.handle_vars.insert(env_addr.clone(), var.clone());
 
-            self.writeln("// SQLSetEnvAttr - SQL_ATTR_ODBC_VERSION (implicit)");
-            self.writeln("{");
-            self.indent += 1;
-            self.writeln(&format!(
-                "SQLRETURN ret = SQLSetEnvAttr({var}, SQL_ATTR_ODBC_VERSION,"
-            ));
-            self.writeln("    (SQLPOINTER)SQL_OV_ODBC3, 0);");
-            self.writeln(&format!(
-                "REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_ENV, {var}),"
-            ));
-            self.writeln("           OdbcMatchers::IsSuccess());");
-            self.indent -= 1;
-            self.writeln("}");
-            self.writeln("");
+            self.emit_synthetic_odbc_version(&var);
         }
 
         let env_var_for_implicit_dbc = if !implicit_envs.is_empty() {
@@ -489,12 +545,18 @@ impl<'a> GenContext<'a> {
             OdbcCall::FetchScroll(c) => self.emit_fetch_scroll(c),
             OdbcCall::Fetch(c) => self.emit_fetch(c),
             OdbcCall::GetData(c) => self.emit_get_data(c),
+            OdbcCall::BindCol(c) => self.emit_bind_col(c),
+            OdbcCall::BindParameter(c) => self.emit_bind_parameter(c),
+            OdbcCall::ExtendedFetch(c) => self.emit_extended_fetch(c),
+            OdbcCall::FreeStmt(c) => self.emit_free_stmt(c),
             OdbcCall::RowCount(c) => self.emit_row_count(c),
             OdbcCall::MoreResults(c) => self.emit_more_results(c),
             OdbcCall::CloseCursor(c) => self.emit_close_cursor(c),
+            OdbcCall::GetTypeInfo(c) => self.emit_get_type_info(c),
             OdbcCall::GetInfo(c) => self.emit_get_info(c),
             OdbcCall::FreeHandle(c) => self.emit_free_handle(c),
             OdbcCall::Disconnect(c) => self.emit_disconnect(c),
+            OdbcCall::Transact(c) => self.emit_transact(c),
             OdbcCall::Unsupported(c) => {
                 *self.unsupported.entry(c.function_name.clone()).or_insert(0) += 1;
                 if self.config.allow_unsupported {
@@ -504,8 +566,47 @@ impl<'a> GenContext<'a> {
                     ));
                 }
             }
-            _ => {}
+            // Intentionally not replayed (recognised, so no `--allow-unsupported`
+            // is needed, but the emitter produces nothing). These are read-only
+            // probes whose return values feed the captured app's internal
+            // bookkeeping rather than any assertion the replay makes
+            // (`SQLGetEnvAttr`, `SQLGetConnectAttr`, `SQLGetStmtAttr`,
+            // `SQLNumParams`, `SQLGetDiagField`, plus the pre-existing
+            // `SQLGetDiagRec` / `SQLGetFunctions`), or descriptor pokes that
+            // duplicate binding the generator already reproduces through
+            // `SQLBindCol` / `SQLBindParameter` (`SQLSetDescField`). See the
+            // doc-comments on the corresponding `model` structs for the
+            // rationale.
+            OdbcCall::GetEnvAttr(_)
+            | OdbcCall::GetConnectAttr(_)
+            | OdbcCall::GetStmtAttr(_)
+            | OdbcCall::NumParams(_)
+            | OdbcCall::GetDiagField(_)
+            | OdbcCall::SetDescField(_)
+            | OdbcCall::GetDiagRec(_)
+            | OdbcCall::GetFunctions(_) => {}
         }
+    }
+
+    /// `SQLTransact(henv, hdbc, fType)` is the ODBC 2.x transaction terminator;
+    /// emit its modern equivalent `SQLEndTran(SQL_HANDLE_DBC, dbc, fType)`.
+    fn emit_transact(&mut self, call: &crate::model::Transact) {
+        let dbc_var = self.dbc_var_for(&call.handle);
+        let completion = symbolic_or_int(
+            call.completion_type_name.as_deref(),
+            call.completion_type,
+            "SQL_COMMIT",
+        );
+        self.writeln("// SQLTransact -> SQLEndTran");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLEndTran(SQL_HANDLE_DBC, {dbc_var}, {completion});"
+        ));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_DBC", &dbc_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
     }
 
     fn emit_driver_connect(&mut self, call: &crate::model::DriverConnect) {
@@ -585,6 +686,14 @@ impl<'a> GenContext<'a> {
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
+
+        // ODBC requires SQL_ATTR_ODBC_VERSION before allocating a DBC on this
+        // env. If the trace never set it (e.g. Excel ADO sets only
+        // SQL_ATTR_CONNECTION_POOLING), inject it now so UnixODBC/iODBC don't
+        // reject the first SQLAllocHandle(SQL_HANDLE_DBC) with HY010.
+        if ht == HandleType::Env && !self.trace_sets_odbc_version(child) {
+            self.emit_synthetic_odbc_version(&var_name);
+        }
     }
 
     fn emit_prepare(&mut self, call: &crate::model::Prepare) {
@@ -684,24 +793,39 @@ impl<'a> GenContext<'a> {
             .buffer_length
             .expect("validate_call enforces SQLDescribeCol.buffer_length");
 
+        // A zero-length buffer means the trace passed a null ColumnName
+        // pointer (the app didn't request the name). Reproduce that with
+        // `nullptr, 0`: handing the driver a real buffer with length 0 instead
+        // provokes a spurious 01004 truncation (SUCCESS_WITH_INFO) that never
+        // happened in the capture.
+        let requests_name = buf_len > 0;
+
         self.writeln(&format!("// SQLDescribeCol col {col_num}"));
         self.writeln("{");
         self.indent += 1;
-        self.writeln(&format!("char colName[{}] = {{}};", buf_len + 1));
+        if requests_name {
+            self.writeln(&format!("char colName[{}] = {{}};", buf_len + 1));
+        }
         self.writeln("SQLSMALLINT dataType = 0, scale = 0, nullable = 0;");
         self.writeln("SQLULEN colSize = 0;");
         self.writeln(&format!(
             "SQLRETURN ret = SQLDescribeCol({stmt_var}, {col_num},"
         ));
-        self.writeln(&format!(
-            "    reinterpret_cast<SQLCHAR*>(colName), {buf_len}, nullptr,"
-        ));
+        if requests_name {
+            self.writeln(&format!(
+                "    reinterpret_cast<SQLCHAR*>(colName), {buf_len}, nullptr,"
+            ));
+        } else {
+            self.writeln("    nullptr, 0, nullptr,");
+        }
         self.writeln("    &dataType, &colSize, &scale, &nullable);");
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
 
-        if let Some(name) = &call.column_name {
-            let escaped = escape_cpp_string_literal(name);
-            self.writeln(&format!("CHECK(std::string(colName) == \"{escaped}\");"));
+        if requests_name {
+            if let Some(name) = &call.column_name {
+                let escaped = escape_cpp_string_literal(name);
+                self.writeln(&format!("CHECK(std::string(colName) == \"{escaped}\");"));
+            }
         }
         if let Some(dt) = &call.data_type {
             self.writeln(&format!("CHECK(dataType == {dt});"));
@@ -754,6 +878,248 @@ impl<'a> GenContext<'a> {
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
+    }
+
+    /// Allocate a unique function-scope buffer suffix for a bound buffer.
+    fn next_bind_buf(&mut self) -> usize {
+        let n = self.bind_buf_counter;
+        self.bind_buf_counter += 1;
+        n
+    }
+
+    /// Largest `SQL_ROWSET_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` ever set on this
+    /// statement in the trace. Bound-column buffers and row-status arrays are
+    /// sized for this so a block-cursor `SQLExtendedFetch` can never write past
+    /// the end of our buffers (a too-small buffer would corrupt memory / crash).
+    fn max_rowset_for_handle(&self, handle: &Option<String>) -> i64 {
+        let Some(h) = handle.as_deref() else {
+            return 1;
+        };
+        let mut max = 1;
+        for c in self.calls {
+            if let OdbcCall::SetStmtAttr(s) = c {
+                if s.handle.as_deref() == Some(h)
+                    && matches!(
+                        s.attribute.as_deref(),
+                        Some("SQL_ROWSET_SIZE") | Some("SQL_ATTR_ROW_ARRAY_SIZE")
+                    )
+                {
+                    if let Some(v) = s.value {
+                        if v > max {
+                            max = v;
+                        }
+                    }
+                }
+            }
+        }
+        max
+    }
+
+    fn emit_bind_col(&mut self, call: &crate::model::BindCol) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        let col = call
+            .column_number
+            .expect("validate_call enforces SQLBindCol.column_number");
+        let ttype = symbolic_or_int(
+            call.target_type_name.as_deref(),
+            call.target_type,
+            "SQL_C_DEFAULT",
+        );
+        let is_unbind = call
+            .target_value_ptr
+            .as_deref()
+            .map(is_null_addr)
+            .unwrap_or(false);
+
+        self.writeln(&format!("// SQLBindCol col {col}"));
+        if is_unbind {
+            // Null TargetValuePtr unbinds the column.
+            self.writeln("{");
+            self.indent += 1;
+            self.writeln(&format!(
+                "SQLRETURN ret = SQLBindCol({stmt_var}, {col}, {ttype}, nullptr, 0, nullptr);"
+            ));
+            self.emit_return_assertion(
+                call.return_code,
+                "SQL_HANDLE_STMT",
+                &stmt_var,
+                false,
+                false,
+            );
+            self.indent -= 1;
+            self.writeln("}");
+            self.writeln("");
+            return;
+        }
+
+        let rowset = self.max_rowset_for_handle(&call.handle).max(1);
+        let elem = call.buffer_length.unwrap_or(0).max(1);
+
+        // Row-wise binding: SQL_ATTR_ROW_BIND_TYPE holds a row-struct size, and
+        // every column's TargetValue / StrLen_or_Ind pointer is an offset into
+        // that struct. The driver writes row r of every column at
+        // base + r*stride + offset, so all columns must share ONE buffer of
+        // rowset*stride bytes. Binding them to independent column arrays (the
+        // column-wise path below) makes the driver stride past each small
+        // array and segfault.
+        if let Some(&stride) = self.row_bind_type.get(&stmt_var).filter(|&&s| s > 0) {
+            let buf = format!("row_buf_{stmt_var}");
+            if !self.row_buf_declared.contains(&stmt_var) {
+                self.writeln(&format!("std::vector<char> {buf}({rowset} * {stride}, 0);"));
+                self.row_buf_declared.insert(stmt_var.clone());
+            }
+            let data_off = call
+                .target_value_ptr
+                .as_deref()
+                .and_then(parse_hex_addr)
+                .unwrap_or(0);
+            // A null StrLen_or_Ind means the app bound no indicator for this
+            // column; only a non-null capture is a real offset into the row.
+            let ind_expr = match call
+                .indicator_ptr
+                .as_deref()
+                .filter(|a| !is_null_addr(a))
+                .and_then(parse_hex_addr)
+            {
+                Some(off) => {
+                    format!("reinterpret_cast<SQLLEN*>({buf}.data() + {off})")
+                }
+                None => "nullptr".to_string(),
+            };
+            self.writeln("{");
+            self.indent += 1;
+            self.writeln(&format!(
+                "SQLRETURN ret = SQLBindCol({stmt_var}, {col}, {ttype}, {buf}.data() + {data_off}, {elem}, {ind_expr});"
+            ));
+            self.emit_return_assertion(
+                call.return_code,
+                "SQL_HANDLE_STMT",
+                &stmt_var,
+                false,
+                false,
+            );
+            self.indent -= 1;
+            self.writeln("}");
+            self.writeln("");
+            return;
+        }
+
+        let n = self.next_bind_buf();
+        // Function-scope buffers so they outlive this block and survive every
+        // subsequent fetch that writes into them.
+        self.writeln(&format!(
+            "std::vector<char> bind_buf_{n}({rowset} * {elem}, 0);"
+        ));
+        self.writeln(&format!("std::vector<SQLLEN> bind_ind_{n}({rowset}, 0);"));
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLBindCol({stmt_var}, {col}, {ttype}, bind_buf_{n}.data(), {elem}, bind_ind_{n}.data());"
+        ));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_bind_parameter(&mut self, call: &crate::model::BindParameter) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        let pnum = call
+            .parameter_number
+            .expect("validate_call enforces SQLBindParameter.parameter_number");
+        let io = symbolic_or_int(
+            call.input_output_type_name.as_deref(),
+            call.input_output_type,
+            "SQL_PARAM_INPUT",
+        );
+        let vtype = symbolic_or_int(
+            call.value_type_name.as_deref(),
+            call.value_type,
+            "SQL_C_DEFAULT",
+        );
+        let ptype = symbolic_or_int(
+            call.parameter_type_name.as_deref(),
+            call.parameter_type,
+            "SQL_VARCHAR",
+        );
+        let colsize = call.column_size.unwrap_or(0).max(0);
+        let digits = call.decimal_digits.unwrap_or(0).max(0);
+        let elem = call.buffer_length.unwrap_or(0).max(1);
+        let n = self.next_bind_buf();
+
+        self.writeln(&format!("// SQLBindParameter {pnum}"));
+        // Function-scope param buffer (read by the subsequent SQLExecute). We
+        // don't reconstruct the captured value; the buffer is zero-initialized,
+        // which is sufficient to faithfully replay the bind/execute sequence.
+        self.writeln(&format!("std::vector<char> param_buf_{n}({elem}, 0);"));
+        self.writeln(&format!("SQLLEN param_ind_{n} = {elem};"));
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLBindParameter({stmt_var}, {pnum}, {io}, {vtype}, {ptype}, {colsize}, {digits}, param_buf_{n}.data(), {elem}, &param_ind_{n});"
+        ));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_extended_fetch(&mut self, call: &crate::model::ExtendedFetch) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        let orient = symbolic_or_int(
+            call.orientation_name.as_deref(),
+            call.orientation,
+            "SQL_FETCH_NEXT",
+        );
+        let offset = call.offset.unwrap_or(0);
+        let rowset = self.max_rowset_for_handle(&call.handle).max(1);
+        let n = self.next_bind_buf();
+
+        self.writeln("// SQLExtendedFetch");
+        // Row-count out-var and row-status array (one entry per rowset row).
+        self.writeln(&format!("SQLULEN extfetch_rows_{n} = 0;"));
+        self.writeln(&format!(
+            "std::vector<SQLUSMALLINT> extfetch_status_{n}({rowset}, 0);"
+        ));
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLExtendedFetch({stmt_var}, {orient}, {offset}, &extfetch_rows_{n}, extfetch_status_{n}.data());"
+        ));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_free_stmt(&mut self, call: &crate::model::FreeStmt) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        let option = symbolic_or_int(call.option_name.as_deref(), call.option, "SQL_CLOSE");
+
+        self.writeln("// SQLFreeStmt");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLFreeStmt({stmt_var}, {option});"
+        ));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+
+        // SQL_DROP (the ODBC 2.x way to free a statement handle) destroys the
+        // handle. Applications routinely allocate a fresh statement afterward
+        // that the driver hands back at the SAME address. Drop the address ->
+        // variable mapping so the next SQLAllocHandle creates a new variable
+        // instead of collapsing onto the freed one (which would replay as
+        // SQL_INVALID_HANDLE). SQL_CLOSE/SQL_UNBIND/SQL_RESET_PARAMS keep the
+        // handle alive, so leave the mapping intact for those.
+        let is_drop = call.option == Some(1) || call.option_name.as_deref() == Some("SQL_DROP");
+        if is_drop {
+            if let Some(addr) = &call.handle {
+                self.handle_vars.remove(addr);
+            }
+        }
     }
 
     fn emit_get_data(&mut self, call: &crate::model::GetData) {
@@ -831,8 +1197,15 @@ impl<'a> GenContext<'a> {
             }
         } else {
             self.writeln("SQLLEN ind = 0;");
+            // Allocate at least one byte even for a zero-length probe call:
+            // an empty std::vector yields a null data() pointer, which the
+            // unixODBC DM rejects with S1009 ("Invalid use of null pointer")
+            // before the driver ever sees it. We still pass the captured
+            // BufferLength (possibly 0) so the length-probe semantics — and the
+            // resulting SUCCESS_WITH_INFO + indicator — are reproduced exactly.
+            let alloc = buf_len.max(1);
             self.writeln(&format!(
-                "std::vector<char> buf({buf_len}, static_cast<char>(0xFF));"
+                "std::vector<char> buf({alloc}, static_cast<char>(0xFF));"
             ));
             self.writeln(&format!(
                 "SQLRETURN ret = SQLGetData({stmt_var}, {col_num}, {target_type}, buf.data(), {buf_len}, &ind);"
@@ -962,6 +1335,31 @@ impl<'a> GenContext<'a> {
         self.writeln("{");
         self.indent += 1;
         self.writeln(&format!("SQLRETURN ret = SQLCloseCursor({stmt_var});"));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_get_type_info(&mut self, call: &crate::model::GetTypeInfo) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        // Prefer the symbolic DataType (e.g. SQL_ALL_TYPES) for readability;
+        // fall back to the captured integer otherwise. SQL_ALL_TYPES (0) is the
+        // common ADO case.
+        let data_type = call
+            .data_type_name
+            .as_deref()
+            .filter(|n| n.starts_with("SQL_"))
+            .map(str::to_string)
+            .or_else(|| call.data_type.map(|v| v.to_string()))
+            .unwrap_or_else(|| "SQL_ALL_TYPES".to_string());
+
+        self.writeln("// SQLGetTypeInfo");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLGetTypeInfo({stmt_var}, {data_type});"
+        ));
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
         self.indent -= 1;
         self.writeln("}");
@@ -1176,10 +1574,70 @@ impl<'a> GenContext<'a> {
         let value = call
             .value
             .expect("validate_call enforces SQLSetStmtAttr.value");
-        let value_expr = attr_value_cpp_expr(attr_name, value);
         let str_len = call.str_len.unwrap_or(0);
         let stmt_var = self.stmt_var_for(&call.handle);
 
+        // Track row-wise binding mode. A non-zero SQL_ATTR_ROW_BIND_TYPE (its
+        // ODBC 2.x alias is SQL_BIND_TYPE) is the byte size of a row struct;
+        // SQL_BIND_BY_COLUMN (0) restores column-wise binding. emit_bind_col
+        // reads this to decide its buffer layout.
+        if attr_name == "SQL_ATTR_ROW_BIND_TYPE" || attr_name == "SQL_BIND_TYPE" {
+            self.row_bind_type.insert(stmt_var.clone(), value);
+            if value == 0 {
+                self.row_buf_declared.remove(&stmt_var);
+            }
+        }
+
+        // Pointer-valued statement attributes (the *_PTR family) capture a raw
+        // process address from the original trace. Emitting that integer
+        // verbatim makes the driver dereference a stale Windows pointer during
+        // the next fetch/execute, which segfaults the replay. When the trace
+        // installed a real pointer (value != 0) we instead allocate
+        // function-scope backing storage that preserves the attribute's
+        // semantics (offset 0, driver-written status/count) and pass its
+        // address. A captured value of 0 means the app cleared the attribute,
+        // so nullptr is the faithful reproduction and needs no backing store.
+        if let Some(kind) = pointer_attr_kind(attr_name) {
+            if value != 0 {
+                let n = self.next_bind_buf();
+                let var = format!("attr_ptr_{n}");
+                let value_expr = match kind {
+                    PointerAttrKind::ScalarUlen => {
+                        self.writeln(&format!("SQLULEN {var} = 0;"));
+                        format!("&{var}")
+                    }
+                    PointerAttrKind::ScalarLen => {
+                        self.writeln(&format!("SQLLEN {var} = 0;"));
+                        format!("&{var}")
+                    }
+                    PointerAttrKind::UsmallintArray => {
+                        let rowset = self.max_rowset_for_handle(&call.handle).max(1);
+                        self.writeln(&format!("std::vector<SQLUSMALLINT> {var}({rowset}, 0);"));
+                        format!("{var}.data()")
+                    }
+                };
+                self.writeln(&format!("// SQLSetStmtAttr - {attr_name}"));
+                self.writeln("{");
+                self.indent += 1;
+                self.writeln(&format!(
+                    "SQLRETURN ret = SQLSetStmtAttr({stmt_var}, {attr_name},"
+                ));
+                self.writeln(&format!("    (SQLPOINTER){value_expr}, {str_len});"));
+                self.emit_return_assertion(
+                    call.return_code,
+                    "SQL_HANDLE_STMT",
+                    &stmt_var,
+                    false,
+                    false,
+                );
+                self.indent -= 1;
+                self.writeln("}");
+                self.writeln("");
+                return;
+            }
+        }
+
+        let value_expr = attr_value_cpp_expr(attr_name, value);
         self.writeln(&format!("// SQLSetStmtAttr - {attr_name}"));
         self.writeln("{");
         self.indent += 1;
@@ -1407,6 +1865,47 @@ impl<'a> GenContext<'a> {
         ))
     }
 
+    /// Returns true if the captured trace sets `SQL_ATTR_ODBC_VERSION` on the
+    /// given env handle address. Some applications (notably Excel ADO via
+    /// MSDASQL) only set `SQL_ATTR_CONNECTION_POOLING` and rely on the Windows
+    /// DM's implicit version handling, so the trace carries no version set.
+    fn trace_sets_odbc_version(&self, env_addr: &str) -> bool {
+        self.calls.iter().any(|c| {
+            matches!(c, OdbcCall::SetEnvAttr(s)
+                if s.handle.as_deref() == Some(env_addr)
+                    && s.attribute.as_deref() == Some("SQL_ATTR_ODBC_VERSION"))
+        })
+    }
+
+    /// Emit a `SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC2)` block.
+    /// ODBC requires the version be set before any DBC is allocated on the env;
+    /// UnixODBC/iODBC reject `SQLAllocHandle(SQL_HANDLE_DBC)` with HY010
+    /// otherwise. Used both for synthetic (implicit) envs and for explicit envs
+    /// whose trace never set the version. `was_synthetically_set` keys off the
+    /// exact `SQLRETURN ret = SQLSetEnvAttr(...)` line emitted here.
+    fn emit_synthetic_odbc_version(&mut self, env_var: &str) {
+        // ADO drives the driver through MSDASQL, an ODBC 2.x consumer: the
+        // captured metadata uses ODBC 2 date/time type codes (SQL_DATE=9,
+        // SQL_TIME=10, SQL_TIMESTAMP=11) rather than their ODBC 3 successors
+        // (91/92/93). Declaring SQL_OV_ODBC2 makes the reference driver report
+        // those same codes, so the replay matches the capture instead of
+        // diverging on every temporal column.
+        self.writeln("// SQLSetEnvAttr - SQL_ATTR_ODBC_VERSION (synthetic; not in trace)");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLSetEnvAttr({env_var}, SQL_ATTR_ODBC_VERSION,"
+        ));
+        self.writeln("    (SQLPOINTER)SQL_OV_ODBC2, 0);");
+        self.writeln(&format!(
+            "REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_ENV, {env_var}),"
+        ));
+        self.writeln("           OdbcMatchers::IsSuccess());");
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
     fn writeln(&mut self, line: &str) {
         if line.is_empty() {
             let _ = writeln!(self.output);
@@ -1414,6 +1913,36 @@ impl<'a> GenContext<'a> {
             let indent_str = "  ".repeat(self.indent);
             let _ = writeln!(self.output, "{indent_str}{line}");
         }
+    }
+}
+
+/// Backing-storage shape for a pointer-valued statement attribute. The driver
+/// retains the pointer and dereferences it on later fetch/execute calls, so the
+/// replay must supply real storage of the right type rather than a raw address.
+#[derive(Clone, Copy)]
+enum PointerAttrKind {
+    /// Single `SQLULEN` the driver reads (bind offset) or writes (counts).
+    ScalarUlen,
+    /// Single `SQLLEN` (fetch bookmark).
+    ScalarLen,
+    /// One `SQLUSMALLINT` per row in the rowset (status / operation arrays).
+    UsmallintArray,
+}
+
+/// Classify a statement attribute as pointer-valued, returning the shape of the
+/// storage it points at. Returns `None` for ordinary integer/enum attributes.
+fn pointer_attr_kind(attr_name: &str) -> Option<PointerAttrKind> {
+    match attr_name {
+        "SQL_ATTR_ROW_BIND_OFFSET_PTR"
+        | "SQL_ATTR_PARAM_BIND_OFFSET_PTR"
+        | "SQL_ATTR_ROWS_FETCHED_PTR"
+        | "SQL_ATTR_PARAMS_PROCESSED_PTR" => Some(PointerAttrKind::ScalarUlen),
+        "SQL_ATTR_FETCH_BOOKMARK_PTR" => Some(PointerAttrKind::ScalarLen),
+        "SQL_ATTR_ROW_STATUS_PTR"
+        | "SQL_ATTR_ROW_OPERATION_PTR"
+        | "SQL_ATTR_PARAM_STATUS_PTR"
+        | "SQL_ATTR_PARAM_OPERATION_PTR" => Some(PointerAttrKind::UsmallintArray),
+        _ => None,
     }
 }
 
@@ -1537,6 +2066,394 @@ mod tests {
         assert!(
             output.contains("SQLRETURN ret = SQLFreeHandle(SQL_HANDLE_ENV, env0)"),
             "env freed"
+        );
+    }
+
+    #[test]
+    fn test_explicit_env_without_version_gets_synthetic_injection() {
+        use crate::model::{AllocHandle, HandleType, OdbcCall, ReturnCode};
+
+        // Mirrors the Excel ADO pattern: an explicit env the trace never sets
+        // SQL_ATTR_ODBC_VERSION on, then a DBC allocated on it. ODBC requires
+        // the version before the DBC alloc or UnixODBC/iODBC return HY010, so
+        // the generator must inject it.
+        let calls = vec![
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Env),
+                parent_handle: None,
+                child_handle: Some("0xenvA".to_string()),
+            }),
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Dbc),
+                parent_handle: Some("0xenvA".to_string()),
+                child_handle: Some("0xdbcA".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "ado".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        let version_line = "SQLRETURN ret = SQLSetEnvAttr(env0, SQL_ATTR_ODBC_VERSION,";
+        assert_eq!(
+            output.matches(version_line).count(),
+            1,
+            "exactly one synthetic version set; output:\n{output}"
+        );
+        let v = output.find(version_line).expect("version set present");
+        let dbc = output
+            .find("SQLAllocHandle(SQL_HANDLE_DBC, env0, &dbc0)")
+            .expect("dbc alloc present");
+        assert!(
+            v < dbc,
+            "version set must precede DBC alloc; output:\n{output}"
+        );
+        // ADO is an ODBC 2.x consumer; the synthetic version must declare
+        // SQL_OV_ODBC2 so temporal columns report ODBC 2 type codes.
+        assert!(
+            output.contains("(SQLPOINTER)SQL_OV_ODBC2, 0);"),
+            "synthetic version is ODBC2; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_env_with_version_no_synthetic_duplicate() {
+        use crate::model::{AllocHandle, HandleType, OdbcCall, ReturnCode, SetEnvAttr};
+
+        let calls = vec![
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Env),
+                parent_handle: None,
+                child_handle: Some("0xenvA".to_string()),
+            }),
+            OdbcCall::SetEnvAttr(SetEnvAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xenvA".to_string()),
+                attribute: Some("SQL_ATTR_ODBC_VERSION".to_string()),
+                value: Some(3),
+                str_len: Some(0),
+            }),
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Dbc),
+                parent_handle: Some("0xenvA".to_string()),
+                child_handle: Some("0xdbcA".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "pq".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert_eq!(
+            output
+                .matches("SQLRETURN ret = SQLSetEnvAttr(env0, SQL_ATTR_ODBC_VERSION,")
+                .count(),
+            1,
+            "trace's own version set, no synthetic duplicate; output:\n{output}"
+        );
+        assert!(
+            !output.contains("(synthetic; not in trace)"),
+            "no synthetic injection when trace already sets version; output:\n{output}"
+        );
+    }
+
+    fn gen_ado(calls: Vec<OdbcCall>) -> String {
+        let config = GeneratorConfig {
+            test_name: "ado".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        generate(&calls, &config).expect("generate")
+    }
+
+    #[test]
+    fn test_bind_col_function_scope_buffer_sized_by_rowset() {
+        use crate::model::{BindCol, OdbcCall, ReturnCode, SetStmtAttr};
+
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_ARRAY_SIZE".to_string()),
+                value: Some(10),
+                str_len: Some(0),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(8),
+                target_value_ptr: Some("0x00000000000000A0".to_string()),
+                indicator_ptr: Some("0x0000000000000090".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        // Bound buffer sized rowset * element and declared at function scope.
+        assert!(
+            output.contains("std::vector<char> bind_buf_0(10 * 8, 0);"),
+            "rowset-sized buffer; output:\n{output}"
+        );
+        assert!(
+            output.contains("std::vector<SQLLEN> bind_ind_0(10, 0);"),
+            "rowset-sized indicator array; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 1, SQL_C_CHAR, bind_buf_0.data(), 8, bind_ind_0.data());"
+            ),
+            "bind call; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_row_wise_bind_shares_one_buffer_with_offsets() {
+        use crate::model::{BindCol, OdbcCall, ReturnCode, SetStmtAttr};
+
+        // Row-wise binding: SQL_ATTR_ROW_BIND_TYPE is a row-struct size, so the
+        // TargetValue/StrLen_or_Ind "pointers" are offsets into one shared row
+        // buffer. Two columns must bind into the SAME buffer at their offsets,
+        // never to independent per-column arrays (which would segfault).
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_ARRAY_SIZE".to_string()),
+                value: Some(4),
+                str_len: Some(0),
+            }),
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_BIND_TYPE".to_string()),
+                value: Some(40),
+                str_len: Some(0),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(16),
+                target_value_ptr: Some("0x0000000000000008".to_string()),
+                indicator_ptr: Some("0x0000000000000000".to_string()),
+            }),
+            OdbcCall::BindCol(BindCol {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(2),
+                target_type: Some(1),
+                target_type_name: Some("SQL_C_CHAR".to_string()),
+                buffer_length: Some(16),
+                target_value_ptr: Some("0x0000000000000020".to_string()),
+                // BADMEM annotation: the trace can't deref an offset-as-address,
+                // but we still need the numeric offset.
+                indicator_ptr: Some("0x0000000000000028 (BADMEM)".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        // One shared buffer sized rowset * stride, declared exactly once.
+        assert!(
+            output.contains("std::vector<char> row_buf_stmt0(4 * 40, 0);"),
+            "single rowset*stride buffer; output:\n{output}"
+        );
+        assert_eq!(
+            output.matches("std::vector<char> row_buf_stmt0").count(),
+            1,
+            "row buffer declared exactly once; output:\n{output}"
+        );
+        // Both columns bind into that buffer at their captured offsets; the
+        // null indicator offset collapses to nullptr.
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 1, SQL_C_CHAR, row_buf_stmt0.data() + 8, 16, nullptr);"
+            ),
+            "col1 at offset 8 with null indicator; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "SQLBindCol(stmt0, 2, SQL_C_CHAR, row_buf_stmt0.data() + 32, 16, reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 40));"
+            ),
+            "col2 data/indicator offsets into shared buffer; output:\n{output}"
+        );
+        // No per-column column-wise buffers leaked in.
+        assert!(
+            !output.contains("bind_buf_"),
+            "row-wise path must not emit column-wise buffers; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_get_type_info_emits_symbolic_data_type() {
+        use crate::model::{GetTypeInfo, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::GetTypeInfo(GetTypeInfo {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            data_type: Some(0),
+            data_type_name: Some("SQL_ALL_TYPES".to_string()),
+        })];
+        let output = gen_ado(calls);
+        assert!(
+            output.contains("SQLGetTypeInfo(stmt0, SQL_ALL_TYPES);"),
+            "GetTypeInfo replayed with symbolic type; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_pointer_attr_gets_backing_storage_not_raw_address() {
+        use crate::model::{OdbcCall, ReturnCode, SetStmtAttr};
+
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_ARRAY_SIZE".to_string()),
+                value: Some(4),
+                str_len: Some(0),
+            }),
+            // Trace captured a raw Windows address for the bind-offset pointer.
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_BIND_OFFSET_PTR".to_string()),
+                value: Some(384469751288),
+                str_len: Some(-4),
+            }),
+            // Driver-written row-status array (one slot per row in the rowset).
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROW_STATUS_PTR".to_string()),
+                value: Some(2558291707184),
+                str_len: Some(-4),
+            }),
+        ];
+        let output = gen_ado(calls);
+        assert!(
+            !output.contains("384469751288") && !output.contains("2558291707184"),
+            "raw captured addresses must never be emitted; output:\n{output}"
+        );
+        assert!(
+            output.contains("SQLULEN attr_ptr_0 = 0;")
+                && output.contains("(SQLPOINTER)&attr_ptr_0, -4"),
+            "offset pointer backed by a real SQLULEN; output:\n{output}"
+        );
+        assert!(
+            output.contains("std::vector<SQLUSMALLINT> attr_ptr_1(4, 0);")
+                && output.contains("(SQLPOINTER)attr_ptr_1.data(), -4"),
+            "status pointer backed by a rowset-sized array; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_pointer_attr_zero_value_stays_nullptr() {
+        use crate::model::{OdbcCall, ReturnCode, SetStmtAttr};
+
+        // A cleared attribute (value 0) is faithfully reproduced as nullptr with
+        // no backing storage.
+        let calls = vec![OdbcCall::SetStmtAttr(SetStmtAttr {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            attribute: Some("SQL_ATTR_ROWS_FETCHED_PTR".to_string()),
+            value: Some(0),
+            str_len: Some(-4),
+        })];
+        let output = gen_ado(calls);
+        assert!(
+            output.contains("SQL_ATTR_ROWS_FETCHED_PTR,") && output.contains("nullptr, -4);"),
+            "cleared pointer attr is nullptr; output:\n{output}"
+        );
+        assert!(
+            !output.contains("attr_ptr_0"),
+            "no backing storage for a cleared pointer attr; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_bind_col_null_ptr_emits_unbind() {
+        use crate::model::{BindCol, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::BindCol(BindCol {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(2),
+            target_type: Some(1),
+            target_type_name: Some("SQL_C_CHAR".to_string()),
+            buffer_length: Some(0),
+            target_value_ptr: Some("0x0000000000000000".to_string()),
+            indicator_ptr: None,
+        })];
+        let output = gen_ado(calls);
+        assert!(
+            output.contains("SQLBindCol(stmt0, 2, SQL_C_CHAR, nullptr, 0, nullptr);"),
+            "null TargetValuePtr unbinds; output:\n{output}"
+        );
+        assert!(
+            !output.contains("bind_buf_0"),
+            "unbind declares no buffer; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_extended_fetch_and_free_stmt() {
+        use crate::model::{ExtendedFetch, FreeStmt, OdbcCall, ReturnCode, SetStmtAttr};
+
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ROWSET_SIZE".to_string()),
+                value: Some(6),
+                str_len: Some(0),
+            }),
+            OdbcCall::ExtendedFetch(ExtendedFetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                orientation: Some(1),
+                orientation_name: Some("SQL_FETCH_NEXT".to_string()),
+                offset: Some(0),
+                row_count: Some(6),
+            }),
+            OdbcCall::FreeStmt(FreeStmt {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                option: Some(0),
+                option_name: Some("SQL_CLOSE".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        assert!(
+            output.contains("std::vector<SQLUSMALLINT> extfetch_status_0(6, 0);"),
+            "row-status array sized by rowset; output:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "SQLExtendedFetch(stmt0, SQL_FETCH_NEXT, 0, &extfetch_rows_0, extfetch_status_0.data());"
+            ),
+            "extended fetch call; output:\n{output}"
+        );
+        assert!(
+            output.contains("SQLFreeStmt(stmt0, SQL_CLOSE);"),
+            "free stmt option; output:\n{output}"
         );
     }
 
@@ -2215,6 +3132,87 @@ mod tests {
                 .count(),
             1,
             "trace's explicit env free must not be duplicated; output:\n{output}",
+        );
+    }
+
+    #[test]
+    fn free_stmt_drop_lets_reused_address_become_a_fresh_statement() {
+        use crate::model::{AllocHandle, FreeStmt, OdbcCall};
+
+        // ADO drops a statement with SQLFreeStmt(SQL_DROP) and then allocates a
+        // new one that the driver hands back at the SAME address. The two are
+        // distinct logical handles; the generator must give them distinct
+        // variables and emit BOTH allocations, or the second statement's calls
+        // would target the freed handle (SQL_INVALID_HANDLE on replay).
+        let calls = vec![
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                parent_handle: Some("0xdbc".to_string()),
+                child_handle: Some("0xSTMT".to_string()),
+            }),
+            OdbcCall::FreeStmt(FreeStmt {
+                return_code: ReturnCode::Success,
+                handle: Some("0xSTMT".to_string()),
+                option: Some(1),
+                option_name: Some("SQL_DROP".to_string()),
+            }),
+            // Re-allocated at the very same address.
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                parent_handle: Some("0xdbc".to_string()),
+                child_handle: Some("0xSTMT".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        assert_eq!(
+            output.matches("SQLAllocHandle(SQL_HANDLE_STMT,").count(),
+            2,
+            "both allocations must be emitted; output:\n{output}"
+        );
+        assert!(
+            output.contains("&stmt0)") && output.contains("&stmt1)"),
+            "reused address gets a fresh variable after SQL_DROP; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn free_stmt_close_keeps_the_statement_variable() {
+        use crate::model::{AllocHandle, FreeStmt, OdbcCall};
+
+        // SQL_CLOSE only closes the cursor; the handle stays valid, so a later
+        // reference to the same address must keep using the same variable and
+        // must NOT trigger a second allocation.
+        let calls = vec![
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                parent_handle: Some("0xdbc".to_string()),
+                child_handle: Some("0xSTMT".to_string()),
+            }),
+            OdbcCall::FreeStmt(FreeStmt {
+                return_code: ReturnCode::Success,
+                handle: Some("0xSTMT".to_string()),
+                option: Some(0),
+                option_name: Some("SQL_CLOSE".to_string()),
+            }),
+            OdbcCall::AllocHandle(AllocHandle {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                parent_handle: Some("0xdbc".to_string()),
+                child_handle: Some("0xSTMT".to_string()),
+            }),
+        ];
+        let output = gen_ado(calls);
+        assert_eq!(
+            output.matches("SQLAllocHandle(SQL_HANDLE_STMT,").count(),
+            1,
+            "SQL_CLOSE must not invalidate the handle mapping; output:\n{output}"
+        );
+        assert!(
+            !output.contains("&stmt1)"),
+            "no fresh variable after SQL_CLOSE; output:\n{output}"
         );
     }
 
