@@ -156,4 +156,22 @@ behavior_differences:
       getBoolean on INT-backed TIME throws INVALID_VALUE_CONVERT with "type:boolean" where legacy
       renders "type:Boolean"; the universal driver normalizes legacy's Int/BigIntToTimeConverter
       casing inconsistency, so the lowercase token is accepted.
-
+  10:
+    name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      The old JDBC driver passes `oauthTokenRequestUrl` / `oauthAuthorizationUrl` into the Nimbus
+      OAuth SDK without scheme validation; an `http://` endpoint only logs a warning
+      (`logIfHttpInUse`) and the request proceeds. The universal driver routes these URLs through
+      sf_core, which requires the `https` scheme and rejects a non-loopback `http://` value at
+      connect time, permitting `http://` only for loopback hosts (127.0.0.0/8, ::1, localhost) for
+      local testing. This is a deliberate, accepted divergence: HTTPS on these endpoints is already
+      required by RFC 6749 §3.1.2.1 and the OAuth 2.0 Security BCP, and the old driver merely warns.
+      The loopback redirect URI used by the authorization-code flow is unaffected. Callers that
+      configured a plaintext `http://` IdP token endpoint must switch to `https://`. Security
+      hardening tracked under SNOW-3663588; mirrors BD#38 in python/ and BD#81 in odbc_tests/
+      BehaviorDifferences.yaml.

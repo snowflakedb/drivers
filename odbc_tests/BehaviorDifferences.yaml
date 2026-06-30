@@ -1312,3 +1312,27 @@ behavior_differences:
     description: |
       Applications using ODBC 2.x field identifiers with the 3.x function will now
       receive correct values.
+  81:
+    name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      Deliberate security hardening (SNOW-3663588). Accepted as a divergence from the old driver
+      because HTTPS on the OAuth authorization/token endpoints is already required by RFC 6749
+      §3.1.2.1 and the OAuth 2.0 Security BCP; the old driver only warns on an insecure scheme.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The shared C/C++ core parses OAUTH_TOKEN_REQUEST_URL / OAUTH_AUTHORIZATION_URL with no
+      scheme validation. An `http://` value logs a warning ("OAuth token endpoint uses insecure
+      HTTP protocol") and the request proceeds. There is no loopback carve-out for these endpoints
+      (the only 127.0.0.1 handling is for the local redirect callback).
+    new_driver_behavior: |
+      The universal driver requires OAUTH_TOKEN_REQUEST_URL / OAUTH_AUTHORIZATION_URL to use the
+      `https` scheme and rejects a non-loopback `http://` value at connect time. `http://` remains
+      accepted for loopback hosts (127.0.0.0/8, ::1, localhost) for local testing.
+    description: |
+      Security hardening tracked under SNOW-3663588; the same difference is documented as BD#38 in
+      python/ and BD#10 in jdbc/ BehaviorDifferences.yaml. DSNs that configured a plaintext
+      `http://` IdP token endpoint must switch to `https://`.
