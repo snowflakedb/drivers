@@ -66,6 +66,10 @@ pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
         return;
     };
 
+    // SECURITY (SNOW-3663586, CWE-918): `account` is interpolated into the host
+    // verbatim, so its character set is restricted to a safe allow-list in
+    // `connection_config::validate_settings`, which runs in
+    // `ConnectionConfig::build` before any network I/O.
     let host = format!("{account}.snowflakecomputing.com");
     tracing::debug!(derived_host = %host, account = %account, "Derived host from account");
     store.insert(param_names::HOST.into(), Setting::String(host));
