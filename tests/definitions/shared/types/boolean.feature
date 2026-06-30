@@ -79,7 +79,7 @@ Feature: BOOLEAN type support
     When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should insert boolean using parameter binding
     Given Snowflake client is logged in
     And Table with BOOLEAN column exists

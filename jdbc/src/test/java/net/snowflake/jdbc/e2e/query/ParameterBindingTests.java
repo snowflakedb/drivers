@@ -13,8 +13,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.StringJoiner;
+import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -156,6 +158,138 @@ public class ParameterBindingTests extends SnowflakeIntegrationTestBase {
       assertEquals("Charlie", resultSet.getString(2), "Unexpected third row name");
 
       assertFalse(resultSet.next(), "Expected exactly three rows");
+    }
+  }
+
+  @Test
+  public void shouldInsertMultipleRowsUsingMultirowBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And A temporary table with columns (id NUMBER, name VARCHAR) exists
+    String tableName =
+        createTempTable(connection, "ud_parameter_binding_", "id NUMBER, name VARCHAR");
+
+    // When Rows [[1, "Alice"], [2, "Bob"], [3, "Charlie"]] are inserted using multirow binding
+    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
+    Object[][] rows = {{1, "Alice"}, {2, "Bob"}, {3, "Charlie"}};
+    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+      for (Object[] row : rows) {
+        preparedStatement.setInt(1, (Integer) row[0]);
+        preparedStatement.setString(2, (String) row[1]);
+        preparedStatement.addBatch();
+      }
+      int[] counts = preparedStatement.executeBatch();
+      assertEquals(rows.length, counts.length, "Expected one count per batched row");
+    }
+
+    // And Query "SELECT * FROM table ORDER BY id" is executed
+    String selectSql = "SELECT * FROM " + tableName + " ORDER BY id";
+    try (Statement statement = connection.createStatement();
+        ResultSet resultSet = statement.executeQuery(selectSql)) {
+      // Then Result should contain 3 rows with correct values
+      for (Object[] expected : rows) {
+        assertTrue(resultSet.next(), "Expected batched row " + expected[0]);
+        assertEquals(expected[0], resultSet.getInt(1), "Unexpected batched row id");
+        assertEquals(expected[1], resultSet.getString(2), "Unexpected batched row name");
+      }
+      assertFalse(resultSet.next(), "Expected exactly " + rows.length + " batched rows");
+    }
+  }
+
+  @Test
+  public void shouldHandleEmptySequenceInMultirowBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Multirow binding is called with empty sequence
+    String tableName =
+        createTempTable(connection, "ud_parameter_binding_empty_", "id NUMBER, name VARCHAR");
+    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
+    int[] counts;
+    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+      counts = preparedStatement.executeBatch();
+    }
+
+    // Then No error should be raised
+    assertEquals(0, counts.length, "Expected zero counts for empty batch");
+  }
+
+  @Test
+  @SkipOldDriver("BD#11")
+  public void shouldValidateParameterLengthInMultirowBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b",
+    // "extra")]
+    String tableName =
+        createTempTable(connection, "ud_parameter_binding_mismatch_", "id NUMBER, name VARCHAR");
+    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
+    SQLException mismatchException;
+    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+      preparedStatement.setInt(1, 1);
+      preparedStatement.setString(2, "a");
+      preparedStatement.addBatch();
+
+      preparedStatement.clearParameters();
+      preparedStatement.setInt(1, 2);
+      mismatchException = assertThrows(SQLException.class, preparedStatement::addBatch);
+    }
+
+    // Then Error should be raised indicating parameter sequence length mismatch
+    assertTrue(
+        mismatchException.getMessage() != null && !mismatchException.getMessage().isEmpty(),
+        "Expected message for parameter length mismatch");
+  }
+
+  @Test
+  public void shouldHandleNullValuesInMultirowBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And A temporary table with columns (id NUMBER, value VARCHAR) exists
+    String tableName =
+        createTempTable(connection, "ud_parameter_binding_nulls_", "id NUMBER, value VARCHAR");
+
+    // When Rows [[1, NULL], [2, "value"], [3, NULL]] are inserted using multirow binding
+    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
+    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+      preparedStatement.setInt(1, 1);
+      preparedStatement.setNull(2, Types.VARCHAR);
+      preparedStatement.addBatch();
+
+      preparedStatement.setInt(1, 2);
+      preparedStatement.setString(2, "value");
+      preparedStatement.addBatch();
+
+      preparedStatement.setInt(1, 3);
+      preparedStatement.setNull(2, Types.VARCHAR);
+      preparedStatement.addBatch();
+
+      preparedStatement.executeBatch();
+    }
+
+    // And Query "SELECT * FROM table ORDER BY id" is executed
+    String selectSql = "SELECT * FROM " + tableName + " ORDER BY id";
+    try (Statement statement = connection.createStatement();
+        ResultSet resultSet = statement.executeQuery(selectSql)) {
+      // Then Result should contain [[1, NULL], [2, "value"], [3, NULL]]
+      List<Object[]> expectedRows =
+          Arrays.asList(new Object[] {1, null}, new Object[] {2, "value"}, new Object[] {3, null});
+      for (Object[] expected : expectedRows) {
+        assertTrue(resultSet.next(), "Expected row with id " + expected[0]);
+        assertEquals(expected[0], resultSet.getInt(1), "Unexpected id at row " + expected[0]);
+        String name = resultSet.getString(2);
+        if (expected[1] == null) {
+          assertNull(name, "Expected NULL value at row " + expected[0]);
+          assertTrue(resultSet.wasNull(), "Expected wasNull() at row " + expected[0]);
+        } else {
+          assertEquals(expected[1], name, "Unexpected value at row " + expected[0]);
+          assertFalse(resultSet.wasNull(), "Did not expect wasNull() at row " + expected[0]);
+        }
+      }
+      assertFalse(resultSet.next(), "Expected exactly " + expectedRows.size() + " rows");
     }
   }
 

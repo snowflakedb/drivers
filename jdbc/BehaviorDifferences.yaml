@@ -175,3 +175,18 @@ behavior_differences:
       configured a plaintext `http://` IdP token endpoint must switch to `https://`. Security
       hardening tracked under SNOW-3663588; mirrors BD#38 in python/ and BD#81 in odbc_tests/
       BehaviorDifferences.yaml.
+  11:
+    name: "addBatch rejects rows with missing placeholder values"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      The old driver's PreparedStatement.addBatch() iterates only the parameters that have been
+      set on the current row and merges them column-wise into the batch, with no check that every
+      placeholder has a value. A row that is missing one or more placeholder bindings is silently
+      added, producing an inconsistent batch (columns with different row counts) which then
+      either fails at the server or applies stale per-column state. The new driver validates at
+      addBatch() time via BatchColumnValidator and throws SnowflakeSQLException("Missing value
+      for parameter index: N") so the offending row is rejected at the call site.
