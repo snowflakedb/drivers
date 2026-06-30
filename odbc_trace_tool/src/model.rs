@@ -343,6 +343,18 @@ pub struct CloseCursor {
     pub handle: Option<String>,
 }
 
+/// `SQLGetTypeInfo(stmt, DataType)` — a catalog function that opens a result
+/// set describing the driver's SQL types. ADO binds columns and fetches from
+/// that result set, so the call must be replayed (not dropped) or the
+/// subsequent SQLFetch hits a function-sequence error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetTypeInfo {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub data_type: Option<i64>,
+    pub data_type_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfo {
     pub return_code: ReturnCode,
@@ -378,11 +390,136 @@ pub struct GetFunctions {
     pub function_id: Option<i64>,
 }
 
+/// `SQLBindCol` — binds an application buffer to a result column. Excel ADO
+/// (via MSDASQL) binds columns and then fetches into the bound buffers. The
+/// generator declares its own statement-scoped buffer, so the captured
+/// `target_value_ptr` is only used to detect an unbind (a null pointer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindCol {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub column_number: Option<i64>,
+    pub target_type: Option<i64>,
+    pub target_type_name: Option<String>,
+    pub buffer_length: Option<i64>,
+    /// Trace address of the application's bound buffer. A null pointer means
+    /// "unbind this column"; otherwise the generator substitutes its own
+    /// buffer address. Never dereferenced.
+    pub target_value_ptr: Option<String>,
+    /// Trace address of the StrLen_or_Ind pointer. Under row-wise binding
+    /// (SQL_ATTR_ROW_BIND_TYPE = a struct size) this and `target_value_ptr`
+    /// are offsets into a single row structure, so the generator must place
+    /// the data and indicator at those offsets within one shared buffer.
+    pub indicator_ptr: Option<String>,
+}
+
+/// `SQLBindParameter` — binds an application buffer to a statement parameter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindParameter {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub parameter_number: Option<i64>,
+    pub input_output_type: Option<i64>,
+    pub input_output_type_name: Option<String>,
+    pub value_type: Option<i64>,
+    pub value_type_name: Option<String>,
+    pub parameter_type: Option<i64>,
+    pub parameter_type_name: Option<String>,
+    pub column_size: Option<i64>,
+    pub decimal_digits: Option<i64>,
+    pub buffer_length: Option<i64>,
+}
+
+/// `SQLExtendedFetch` — ODBC 2.x block-cursor fetch. MSDASQL drives result
+/// retrieval through this entry point with a rowset size set via
+/// `SQL_ROWSET_SIZE`. The generator sizes its bound buffers for the rowset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtendedFetch {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub orientation: Option<i64>,
+    pub orientation_name: Option<String>,
+    pub offset: Option<i64>,
+    /// Rows reported on EXIT (deref of `RowCountPtr`). Asserted post-fetch.
+    pub row_count: Option<i64>,
+}
+
+/// `SQLFreeStmt` — closes a cursor, unbinds columns/params, or drops a
+/// statement depending on `option` (`SQL_CLOSE` / `SQL_UNBIND` /
+/// `SQL_RESET_PARAMS` / `SQL_DROP`). Drives statement-state transitions in
+/// the generator's per-statement binding model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreeStmt {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub option: Option<i64>,
+    pub option_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unsupported {
     pub return_code: ReturnCode,
     pub function_name: String,
     pub handle: Option<String>,
+}
+
+/// `SQLGetEnvAttr` / `SQLGetConnectAttr` / `SQLGetStmtAttr` — read-only
+/// attribute getters. Excel ADO (via MSDASQL) probes these for connection
+/// pooling, current catalog, transaction isolation, cursor type/concurrency,
+/// and the implicit row/param descriptor handles. The returned values feed
+/// ADO's internal bookkeeping, not the observable replay (every assertion the
+/// test makes comes from SQLGetData / SQLColAttribute / fetch return codes).
+/// We recognise them as typed calls so generation needs no
+/// `--allow-unsupported`, and the C++ emitter drops them — consistent with the
+/// existing drop policy for `SQLGetDiagRec` / `SQLGetFunctions`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAttr {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub attribute: Option<String>,
+}
+
+/// `SQLNumParams` — reports the parameter count of a prepared statement.
+/// Read-only; the emitter drops it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NumParams {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLGetDiagField` — reads one field of a diagnostic record. Diagnostic
+/// content is environment-specific, so (like `SQLGetDiagRec`) the emitter
+/// drops it rather than asserting a value that wouldn't reproduce.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetDiagField {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLSetDescField` — pokes an explicit descriptor field. ADO uses it to
+/// mirror the binding it *also* performs through `SQLBindCol` /
+/// `SQLBindParameter`: re-setting `SQL_DESC_DATA_PTR` to the same buffer the
+/// bind call used, plus `SQL_DESC_PRECISION` / `SQL_DESC_SCALE` for
+/// `SQL_C_NUMERIC` columns. The generator already reproduces that binding via
+/// the public bind calls (with correctly-sized buffers), so the raw descriptor
+/// poke — whose captured `DATA_PTR` is a Windows-side offset into ADO's private
+/// row struct — is both redundant and unsafe to replay verbatim. The emitter
+/// drops it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetDescField {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+}
+
+/// `SQLTransact` — ODBC 2.x transaction terminator. The modern equivalent is
+/// `SQLEndTran(SQL_HANDLE_DBC, dbc, completion_type)`, which the emitter
+/// produces (commit / rollback is the whole point of the transactions trace).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transact {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub completion_type: Option<i64>,
+    pub completion_type_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -424,18 +561,42 @@ pub enum OdbcCall {
     FetchScroll(FetchScroll),
     #[serde(rename = "SQLGetData")]
     GetData(GetData),
+    #[serde(rename = "SQLBindCol")]
+    BindCol(BindCol),
+    #[serde(rename = "SQLBindParameter")]
+    BindParameter(BindParameter),
+    #[serde(rename = "SQLExtendedFetch")]
+    ExtendedFetch(ExtendedFetch),
+    #[serde(rename = "SQLFreeStmt")]
+    FreeStmt(FreeStmt),
     #[serde(rename = "SQLRowCount")]
     RowCount(RowCount),
     #[serde(rename = "SQLMoreResults")]
     MoreResults(MoreResults),
     #[serde(rename = "SQLCloseCursor")]
     CloseCursor(CloseCursor),
+    #[serde(rename = "SQLGetTypeInfo")]
+    GetTypeInfo(GetTypeInfo),
     #[serde(rename = "SQLGetInfo")]
     GetInfo(GetInfo),
     #[serde(rename = "SQLGetDiagRec")]
     GetDiagRec(GetDiagRec),
     #[serde(rename = "SQLGetFunctions")]
     GetFunctions(GetFunctions),
+    #[serde(rename = "SQLGetEnvAttr")]
+    GetEnvAttr(GetAttr),
+    #[serde(rename = "SQLGetConnectAttr")]
+    GetConnectAttr(GetAttr),
+    #[serde(rename = "SQLGetStmtAttr")]
+    GetStmtAttr(GetAttr),
+    #[serde(rename = "SQLNumParams")]
+    NumParams(NumParams),
+    #[serde(rename = "SQLGetDiagField")]
+    GetDiagField(GetDiagField),
+    #[serde(rename = "SQLSetDescField")]
+    SetDescField(SetDescField),
+    #[serde(rename = "SQLTransact")]
+    Transact(Transact),
     #[serde(rename = "Unsupported")]
     Unsupported(Unsupported),
 }
@@ -459,12 +620,24 @@ impl OdbcCall {
             Self::Fetch(c) => c.return_code,
             Self::FetchScroll(c) => c.return_code,
             Self::GetData(c) => c.return_code,
+            Self::BindCol(c) => c.return_code,
+            Self::BindParameter(c) => c.return_code,
+            Self::ExtendedFetch(c) => c.return_code,
+            Self::FreeStmt(c) => c.return_code,
             Self::RowCount(c) => c.return_code,
             Self::MoreResults(c) => c.return_code,
             Self::CloseCursor(c) => c.return_code,
+            Self::GetTypeInfo(c) => c.return_code,
             Self::GetInfo(c) => c.return_code,
             Self::GetDiagRec(c) => c.return_code,
             Self::GetFunctions(c) => c.return_code,
+            Self::GetEnvAttr(c) => c.return_code,
+            Self::GetConnectAttr(c) => c.return_code,
+            Self::GetStmtAttr(c) => c.return_code,
+            Self::NumParams(c) => c.return_code,
+            Self::GetDiagField(c) => c.return_code,
+            Self::SetDescField(c) => c.return_code,
+            Self::Transact(c) => c.return_code,
             Self::Unsupported(c) => c.return_code,
         }
     }
@@ -487,12 +660,24 @@ impl OdbcCall {
             Self::Fetch(_) => "SQLFetch",
             Self::FetchScroll(_) => "SQLFetchScroll",
             Self::GetData(_) => "SQLGetData",
+            Self::BindCol(_) => "SQLBindCol",
+            Self::BindParameter(_) => "SQLBindParameter",
+            Self::ExtendedFetch(_) => "SQLExtendedFetch",
+            Self::FreeStmt(_) => "SQLFreeStmt",
             Self::RowCount(_) => "SQLRowCount",
             Self::MoreResults(_) => "SQLMoreResults",
             Self::CloseCursor(_) => "SQLCloseCursor",
+            Self::GetTypeInfo(_) => "SQLGetTypeInfo",
             Self::GetInfo(_) => "SQLGetInfo",
             Self::GetDiagRec(_) => "SQLGetDiagRec",
             Self::GetFunctions(_) => "SQLGetFunctions",
+            Self::GetEnvAttr(_) => "SQLGetEnvAttr",
+            Self::GetConnectAttr(_) => "SQLGetConnectAttr",
+            Self::GetStmtAttr(_) => "SQLGetStmtAttr",
+            Self::NumParams(_) => "SQLNumParams",
+            Self::GetDiagField(_) => "SQLGetDiagField",
+            Self::SetDescField(_) => "SQLSetDescField",
+            Self::Transact(_) => "SQLTransact",
             Self::Unsupported(c) => &c.function_name,
         }
     }
@@ -524,12 +709,24 @@ impl OdbcCall {
             Self::Fetch(c) => c.handle.as_deref(),
             Self::FetchScroll(c) => c.handle.as_deref(),
             Self::GetData(c) => c.handle.as_deref(),
+            Self::BindCol(c) => c.handle.as_deref(),
+            Self::BindParameter(c) => c.handle.as_deref(),
+            Self::ExtendedFetch(c) => c.handle.as_deref(),
+            Self::FreeStmt(c) => c.handle.as_deref(),
             Self::RowCount(c) => c.handle.as_deref(),
             Self::MoreResults(c) => c.handle.as_deref(),
             Self::CloseCursor(c) => c.handle.as_deref(),
+            Self::GetTypeInfo(c) => c.handle.as_deref(),
             Self::GetInfo(c) => c.handle.as_deref(),
             Self::GetDiagRec(c) => c.handle.as_deref(),
             Self::GetFunctions(c) => c.handle.as_deref(),
+            Self::GetEnvAttr(c) => c.handle.as_deref(),
+            Self::GetConnectAttr(c) => c.handle.as_deref(),
+            Self::GetStmtAttr(c) => c.handle.as_deref(),
+            Self::NumParams(c) => c.handle.as_deref(),
+            Self::GetDiagField(c) => c.handle.as_deref(),
+            Self::SetDescField(c) => c.handle.as_deref(),
+            Self::Transact(c) => c.handle.as_deref(),
             Self::Unsupported(c) => c.handle.as_deref(),
         }
     }
@@ -563,12 +760,24 @@ impl OdbcCall {
             Self::Fetch(c) => resolve(&mut c.handle, map),
             Self::FetchScroll(c) => resolve(&mut c.handle, map),
             Self::GetData(c) => resolve(&mut c.handle, map),
+            Self::BindCol(c) => resolve(&mut c.handle, map),
+            Self::BindParameter(c) => resolve(&mut c.handle, map),
+            Self::ExtendedFetch(c) => resolve(&mut c.handle, map),
+            Self::FreeStmt(c) => resolve(&mut c.handle, map),
             Self::RowCount(c) => resolve(&mut c.handle, map),
             Self::MoreResults(c) => resolve(&mut c.handle, map),
             Self::CloseCursor(c) => resolve(&mut c.handle, map),
+            Self::GetTypeInfo(c) => resolve(&mut c.handle, map),
             Self::GetInfo(c) => resolve(&mut c.handle, map),
             Self::GetDiagRec(c) => resolve(&mut c.handle, map),
             Self::GetFunctions(c) => resolve(&mut c.handle, map),
+            Self::GetEnvAttr(c) => resolve(&mut c.handle, map),
+            Self::GetConnectAttr(c) => resolve(&mut c.handle, map),
+            Self::GetStmtAttr(c) => resolve(&mut c.handle, map),
+            Self::NumParams(c) => resolve(&mut c.handle, map),
+            Self::GetDiagField(c) => resolve(&mut c.handle, map),
+            Self::SetDescField(c) => resolve(&mut c.handle, map),
+            Self::Transact(c) => resolve(&mut c.handle, map),
             Self::Unsupported(c) => resolve(&mut c.handle, map),
         }
     }
@@ -583,6 +792,41 @@ impl OdbcCall {
         match normalized {
             "SQLAllocHandle" => raw::build_alloc_handle(input_params, output_params, return_code),
             "SQLFreeHandle" => raw::build_free_handle(input_params, output_params, return_code),
+            // ODBC 2.x deprecated allocation entry points — MSDASQL (used by
+            // Excel ADO) still emits them. Each implies a single fixed handle
+            // type, so we recover the type from the function name itself
+            // rather than relying on a "Handle Type" parameter (the 2.x calls
+            // never carried one).
+            "SQLAllocEnv" => raw::build_alloc_handle_2x(
+                input_params,
+                output_params,
+                return_code,
+                HandleType::Env,
+            ),
+            "SQLAllocConnect" => raw::build_alloc_handle_2x(
+                input_params,
+                output_params,
+                return_code,
+                HandleType::Dbc,
+            ),
+            "SQLAllocStmt" => raw::build_alloc_handle_2x(
+                input_params,
+                output_params,
+                return_code,
+                HandleType::Stmt,
+            ),
+            "SQLFreeEnv" => {
+                raw::build_free_handle_2x(input_params, output_params, return_code, HandleType::Env)
+            }
+            "SQLFreeConnect" => {
+                raw::build_free_handle_2x(input_params, output_params, return_code, HandleType::Dbc)
+            }
+            // ODBC 2.x deprecated name for SQLColAttribute — exact same
+            // semantics with a trailing 's'. MSDASQL emits this form when
+            // probing IRD descriptor fields.
+            "SQLColAttributes" => {
+                raw::build_col_attribute(input_params, output_params, return_code)
+            }
             "SQLSetEnvAttr" => raw::build_set_env_attr(input_params, output_params, return_code),
             "SQLSetConnectAttr" => {
                 raw::build_set_connect_attr(input_params, output_params, return_code)
@@ -653,6 +897,14 @@ impl OdbcCall {
             }
             "SQLFetchScroll" => raw::build_fetch_scroll(input_params, output_params, return_code),
             "SQLGetData" => raw::build_get_data(input_params, output_params, return_code),
+            "SQLBindCol" => raw::build_bind_col(input_params, output_params, return_code),
+            "SQLBindParameter" => {
+                raw::build_bind_parameter(input_params, output_params, return_code)
+            }
+            "SQLExtendedFetch" => {
+                raw::build_extended_fetch(input_params, output_params, return_code)
+            }
+            "SQLFreeStmt" => raw::build_free_stmt(input_params, output_params, return_code),
             "SQLRowCount" => raw::build_row_count(input_params, output_params, return_code),
             "SQLMoreResults" => {
                 raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
@@ -670,9 +922,54 @@ impl OdbcCall {
                     })
                 })
             }
+            "SQLGetTypeInfo" => raw::build_get_type_info(input_params, output_params, return_code),
             "SQLGetInfo" => raw::build_get_info(input_params, output_params, return_code),
             "SQLGetDiagRec" => raw::build_get_diag_rec(input_params, output_params, return_code),
             "SQLGetFunctions" => raw::build_get_functions(input_params, output_params, return_code),
+            // Read-only attribute getters. The handle slot is named per the
+            // function ("Environment" / "Connection" / "Statement"); the
+            // shared builder falls back to the first address either way.
+            "SQLGetEnvAttr" => raw::build_get_attr(input_params, output_params, return_code, |c| {
+                Self::GetEnvAttr(c)
+            }),
+            "SQLGetConnectAttr" => {
+                raw::build_get_attr(input_params, output_params, return_code, |c| {
+                    Self::GetConnectAttr(c)
+                })
+            }
+            "SQLGetStmtAttr" => {
+                raw::build_get_attr(input_params, output_params, return_code, |c| {
+                    Self::GetStmtAttr(c)
+                })
+            }
+            "SQLNumParams" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::NumParams(NumParams {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
+            "SQLGetDiagField" => {
+                raw::build_get_diag_field(input_params, output_params, return_code)
+            }
+            "SQLSetDescField" => {
+                raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
+                    Self::SetDescField(SetDescField {
+                        return_code: rc,
+                        handle: h,
+                    })
+                })
+            }
+            // ODBC 2.x parameter-set entry point. `SQLParamOptions(stmt, crow,
+            // pirow)` is exactly the deprecated form of setting
+            // `SQL_ATTR_PARAMSET_SIZE` (= crow) and `SQL_ATTR_PARAMS_PROCESSED_PTR`
+            // (= pirow). We route it onto the existing `SQLSetStmtAttr` handler
+            // so it reuses that emitter rather than adding a parallel pipeline.
+            "SQLParamOptions" => raw::build_param_options(input_params, output_params, return_code),
+            // ODBC 2.x transaction terminator — routed onto SQLEndTran at emit
+            // time.
+            "SQLTransact" => raw::build_transact(input_params, output_params, return_code),
             _ => {
                 let handle =
                     raw::first_addr(&input_params).or_else(|| raw::first_addr(&output_params));
@@ -739,6 +1036,69 @@ mod raw {
         OdbcCall::FreeHandle(FreeHandle {
             return_code: rc,
             handle_type,
+            handle,
+        })
+    }
+
+    /// Routes the ODBC 2.x deprecated allocation entry points
+    /// (`SQLAllocEnv` / `SQLAllocConnect` / `SQLAllocStmt`) onto the same
+    /// `OdbcCall::AllocHandle` variant we emit for `SQLAllocHandle`. The
+    /// 2.x calls never carried a `Handle Type` parameter, so the caller
+    /// passes the type implied by the function name.
+    ///
+    /// The layouts are:
+    /// * `SQLAllocEnv(HENV *)` — one out-pointer; child at index 0, no parent.
+    /// * `SQLAllocConnect(HENV, HDBC *)` — parent at 0, child out-pointer at 1.
+    /// * `SQLAllocStmt(HDBC, HSTMT *)` — same shape as `SQLAllocConnect`.
+    pub fn build_alloc_handle_2x(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+        handle_type: HandleType,
+    ) -> OdbcCall {
+        let parent = match handle_type {
+            HandleType::Env => None,
+            HandleType::Dbc => addr_by_name(&input, "Environment")
+                .or_else(|| first_handle_addr(&input))
+                .or_else(|| first_handle_addr(&output)),
+            HandleType::Stmt => addr_by_name(&input, "Connection")
+                .or_else(|| first_handle_addr(&input))
+                .or_else(|| first_handle_addr(&output)),
+            HandleType::Desc => unreachable!("no ODBC 2.x SQLAllocDesc"),
+        };
+        // For SQLAllocEnv the child out-pointer is the only parameter
+        // (index 0). For SQLAllocConnect / SQLAllocStmt the child is at
+        // index 1 (after the input parent handle).
+        let child_idx = match handle_type {
+            HandleType::Env => 0,
+            _ => 1,
+        };
+        let child = output_addr_at(&output, child_idx);
+        OdbcCall::AllocHandle(AllocHandle {
+            return_code: rc,
+            handle_type: Some(handle_type),
+            parent_handle: parent,
+            child_handle: child,
+        })
+    }
+
+    /// Routes the ODBC 2.x deprecated free entry points (`SQLFreeEnv` /
+    /// `SQLFreeConnect`) onto the same `OdbcCall::FreeHandle` variant. The
+    /// 2.x calls had a single handle parameter and an implicit handle type
+    /// (encoded in the function name).
+    pub fn build_free_handle_2x(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+        handle_type: HandleType,
+    ) -> OdbcCall {
+        let handle = first_handle_addr(&input)
+            .or_else(|| first_handle_addr(&output))
+            .or_else(|| first_addr(&input))
+            .or_else(|| first_addr(&output));
+        OdbcCall::FreeHandle(FreeHandle {
+            return_code: rc,
+            handle_type: Some(handle_type),
             handle,
         })
     }
@@ -948,6 +1308,23 @@ mod raw {
         })
     }
 
+    pub fn build_get_type_info(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&output))
+            .or_else(|| first_addr(&input));
+        OdbcCall::GetTypeInfo(GetTypeInfo {
+            return_code: rc,
+            handle,
+            data_type: int_or_named(&output, 1).or_else(|| int_by_name(&input, "Data Type")),
+            data_type_name: named_const_at(&output, 1)
+                .or_else(|| named_const_by_name(&input, "Data Type")),
+        })
+    }
+
     pub fn build_get_data(
         input: Vec<Parameter>,
         output: Vec<Parameter>,
@@ -971,6 +1348,100 @@ mod raw {
                 .or_else(|| output_int_by_name(&output, "Strlen Or Ind")),
             captured: None,
             seq: None,
+        })
+    }
+
+    pub fn build_bind_col(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&output))
+            .or_else(|| first_addr(&input));
+        OdbcCall::BindCol(BindCol {
+            return_code: rc,
+            handle,
+            column_number: int_or_named(&output, 1)
+                .or_else(|| int_by_name(&input, "Column Number")),
+            target_type: int_or_named(&output, 2).or_else(|| int_by_name(&input, "Target Type")),
+            target_type_name: named_const_at(&output, 2)
+                .or_else(|| named_const_by_name(&input, "Target Type")),
+            buffer_length: int_or_named(&output, 4)
+                .or_else(|| int_by_name(&input, "Buffer Length")),
+            target_value_ptr: addr_at(&output, 3).or_else(|| addr_by_name(&input, "TargetValue")),
+            indicator_ptr: addr_at(&output, 5).or_else(|| addr_by_name(&input, "Strlen Or Ind")),
+        })
+    }
+
+    pub fn build_bind_parameter(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&output))
+            .or_else(|| first_addr(&input));
+        OdbcCall::BindParameter(BindParameter {
+            return_code: rc,
+            handle,
+            parameter_number: int_or_named(&output, 1)
+                .or_else(|| int_by_name(&input, "Parameter Number")),
+            input_output_type: int_or_named(&output, 2)
+                .or_else(|| int_by_name(&input, "Input Output Type")),
+            input_output_type_name: named_const_at(&output, 2)
+                .or_else(|| named_const_by_name(&input, "Input Output Type")),
+            value_type: int_or_named(&output, 3).or_else(|| int_by_name(&input, "Value Type")),
+            value_type_name: named_const_at(&output, 3)
+                .or_else(|| named_const_by_name(&input, "Value Type")),
+            parameter_type: int_or_named(&output, 4)
+                .or_else(|| int_by_name(&input, "Parameter Type")),
+            parameter_type_name: named_const_at(&output, 4)
+                .or_else(|| named_const_by_name(&input, "Parameter Type")),
+            column_size: int_or_named(&output, 5).or_else(|| int_by_name(&input, "Column Size")),
+            decimal_digits: int_or_named(&output, 6)
+                .or_else(|| int_by_name(&input, "Decimal Digits")),
+            buffer_length: int_or_named(&output, 8)
+                .or_else(|| int_by_name(&input, "Buffer Length")),
+        })
+    }
+
+    pub fn build_extended_fetch(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&output))
+            .or_else(|| first_addr(&input));
+        OdbcCall::ExtendedFetch(ExtendedFetch {
+            return_code: rc,
+            handle,
+            orientation: int_or_named(&output, 1)
+                .or_else(|| int_by_name(&input, "Fetch Orientation")),
+            orientation_name: named_const_at(&output, 1)
+                .or_else(|| named_const_by_name(&input, "Fetch Orientation")),
+            offset: int_or_named(&output, 2).or_else(|| int_by_name(&input, "Fetch Offset")),
+            // `RowCountPtr` (index 3) is an out-pointer the DM renders as
+            // `0xADDR (VALUE)` on EXIT — extract the dereferenced count.
+            row_count: output_int_or_deref_addr_at(&output, 3),
+        })
+    }
+
+    pub fn build_free_stmt(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&output))
+            .or_else(|| first_addr(&input));
+        OdbcCall::FreeStmt(FreeStmt {
+            return_code: rc,
+            handle,
+            option: int_or_named(&output, 1).or_else(|| int_by_name(&input, "Option")),
+            option_name: named_const_at(&output, 1)
+                .or_else(|| named_const_by_name(&input, "Option")),
         })
     }
 
@@ -1031,6 +1502,94 @@ mod raw {
             return_code: rc,
             handle,
             function_id,
+        })
+    }
+
+    /// Shared builder for the read-only attribute getters
+    /// (`SQLGetEnvAttr` / `SQLGetConnectAttr` / `SQLGetStmtAttr`). The first
+    /// address parameter is always the handle; `Attribute` names the probed
+    /// attribute. The caller wraps the common [`GetAttr`] payload in the
+    /// right `OdbcCall` variant.
+    pub fn build_get_attr(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+        make: impl FnOnce(GetAttr) -> OdbcCall,
+    ) -> OdbcCall {
+        let handle = first_addr(&input).or_else(|| first_addr(&output));
+        let attribute = attr_name(&input).or_else(|| attr_name(&output));
+        make(GetAttr {
+            return_code: rc,
+            handle,
+            attribute,
+        })
+    }
+
+    /// `SQLGetDiagField(HandleType, Handle, RecNumber, ...)`. The handle is the
+    /// second parameter (after the handle-type discriminant), so `first_addr`
+    /// (which finds the first `Address`) lands on it.
+    pub fn build_get_diag_field(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Handle")
+            .or_else(|| first_addr(&input))
+            .or_else(|| first_addr(&output));
+        OdbcCall::GetDiagField(GetDiagField {
+            return_code: rc,
+            handle,
+        })
+    }
+
+    /// `SQLParamOptions(stmt, crow, pirow)` → `SQLSetStmtAttr(stmt,
+    /// SQL_ATTR_PARAMSET_SIZE, crow, 0)`. The deprecated 2.x entry point sets
+    /// the parameter-set size; routing it onto the existing `SetStmtAttr`
+    /// variant reuses that emitter. `pirow` (params-processed pointer) is a
+    /// driver-written out-pointer ADO ignores here, so we don't reproduce it.
+    pub fn build_param_options(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&input))
+            .or_else(|| first_addr(&output));
+        let value = int_by_name(&input, "Row Count")
+            .or_else(|| int_or_named(&input, 1))
+            .or_else(|| int_by_name(&output, "Row Count"));
+        OdbcCall::SetStmtAttr(SetStmtAttr {
+            return_code: rc,
+            handle,
+            attribute: Some("SQL_ATTR_PARAMSET_SIZE".to_string()),
+            value,
+            str_len: Some(0),
+        })
+    }
+
+    /// `SQLTransact(henv, hdbc, fType)`. The connection handle drives the
+    /// emitted `SQLEndTran`; the completion type (`SQL_COMMIT` / `SQL_ROLLBACK`)
+    /// is carried symbolically when the trace named it, else as the raw int.
+    pub fn build_transact(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Connection")
+            .or_else(|| first_handle_addr(&input))
+            .or_else(|| first_addr(&input))
+            .or_else(|| first_addr(&output));
+        let completion_type = int_by_name(&input, "Completion Type")
+            .or_else(|| int_or_named(&input, 2))
+            .or_else(|| int_by_name(&output, "Completion Type"));
+        let completion_type_name = named_const_by_name(&input, "Completion Type")
+            .or_else(|| named_const_at(&input, 2))
+            .or_else(|| named_const_by_name(&output, "Completion Type"));
+        OdbcCall::Transact(Transact {
+            return_code: rc,
+            handle,
+            completion_type,
+            completion_type_name,
         })
     }
 

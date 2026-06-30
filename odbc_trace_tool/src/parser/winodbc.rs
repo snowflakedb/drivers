@@ -382,9 +382,81 @@ fn synthetic_names(func: &str) -> &'static [&'static str] {
     match normalized {
         "SQLAllocHandle" => &["Handle Type", "Input Handle", "Output Handle"],
         "SQLFreeHandle" => &["Handle Type", "Input Handle"],
+        // ODBC 2.x deprecated allocation entry points — MSDASQL (used by
+        // Excel ADO) still emits them. Naming the slots makes the
+        // downstream `addr_by_name` lookups in
+        // `OdbcCall::from_raw → raw::build_alloc_handle_2x` /
+        // `build_free_handle_2x` resolve cleanly.
+        "SQLAllocEnv" => &["Environment"],
+        "SQLAllocConnect" => &["Environment", "Connection"],
+        "SQLAllocStmt" => &["Connection", "Statement"],
+        "SQLFreeConnect" => &["Connection"],
+        "SQLFreeEnv" => &["Environment"],
+        // ODBC 2.x deprecated alias for SQLColAttribute — same slot
+        // layout. Routed to the same typed handler by
+        // `OdbcCall::from_raw`.
+        "SQLColAttributes" => &[
+            "Statement",
+            "Column Number",
+            "Field Identifier",
+            "CharacterAttributePtr",
+            "Buffer Length",
+            "String Length",
+            "Numeric Attribute",
+        ],
         "SQLSetEnvAttr" => &["Environment", "Attribute", "Value", "StrLen"],
         "SQLSetConnectAttr" => &["Connection", "Attribute", "Value", "StrLen"],
         "SQLSetStmtAttr" => &["Statement", "Attribute", "Value", "StrLen"],
+        // Read-only attribute getters. The trailing `String Length` slot is an
+        // out-pointer that's often null but still occupies a trace line —
+        // omitting it would shift later name lookups.
+        "SQLGetEnvAttr" => &[
+            "Environment",
+            "Attribute",
+            "Value",
+            "Buffer Length",
+            "String Length",
+        ],
+        "SQLGetConnectAttr" => &[
+            "Connection",
+            "Attribute",
+            "Value",
+            "Buffer Length",
+            "String Length",
+        ],
+        "SQLGetStmtAttr" => &[
+            "Statement",
+            "Attribute",
+            "Value",
+            "Buffer Length",
+            "String Length",
+        ],
+        "SQLNumParams" => &["Statement", "Parameter Count"],
+        // SQLGetDiagField(HandleType, Handle, RecNumber, DiagIdentifier,
+        // DiagInfoPtr, BufferLength, StringLengthPtr).
+        "SQLGetDiagField" => &[
+            "Handle Type",
+            "Handle",
+            "RecNumber",
+            "DiagIdentifier",
+            "DiagInfo",
+            "Buffer Length",
+            "String Length",
+        ],
+        // SQLSetDescField(DescriptorHandle, RecNumber, FieldIdentifier,
+        // ValuePtr, BufferLength).
+        "SQLSetDescField" => &[
+            "Descriptor",
+            "RecNumber",
+            "Field Identifier",
+            "Value",
+            "Buffer Length",
+        ],
+        // ODBC 2.x deprecated entry points (MSDASQL emits these).
+        // SQLParamOptions(stmt, crow, pirow) — crow is the parameter-set size.
+        "SQLParamOptions" => &["Statement", "Row Count", "Row Number Ptr"],
+        // SQLTransact(henv, hdbc, fType) — fType is SQL_COMMIT / SQL_ROLLBACK.
+        "SQLTransact" => &["Environment", "Connection", "Completion Type"],
         "SQLDriverConnect" => &[
             "Connection",
             "WindowHandle",
@@ -416,11 +488,18 @@ fn synthetic_names(func: &str) -> &'static [&'static str] {
             "String Length",
             "Numeric Attribute",
         ],
+        // Full ODBC prototype: SQLDescribeCol(stmt, col, ColumnName,
+        // BufferLength, NameLengthPtr, DataTypePtr, ColumnSizePtr,
+        // DecimalDigitsPtr, NullablePtr). The `Name Length` slot is easy to
+        // forget because callers often pass it null, but it still occupies a
+        // trace line — omitting it shifts every later name by one and silently
+        // mis-captures DataType and Nullable.
         "SQLDescribeCol" => &[
             "Statement",
             "Column Number",
             "Column Name",
             "Buffer Length",
+            "Name Length",
             "Data Type",
             "Column Size",
             "Decimal Digits",
@@ -472,6 +551,30 @@ fn synthetic_names(func: &str) -> &'static [&'static str] {
             "Buffer Length",
             "Strlen Or Ind",
         ],
+        "SQLBindParameter" => &[
+            "Statement",
+            "Parameter Number",
+            "Input Output Type",
+            "Value Type",
+            "Parameter Type",
+            "Column Size",
+            "Decimal Digits",
+            "ParameterValue",
+            "Buffer Length",
+            "Strlen Or Ind",
+        ],
+        // ODBC 2.x block-cursor fetch. Slots mirror the prototype
+        // `SQLExtendedFetch(stmt, orientation, offset, rowCountPtr,
+        // rowStatusArray)`.
+        "SQLExtendedFetch" => &[
+            "Statement",
+            "Fetch Orientation",
+            "Fetch Offset",
+            "RowCountPtr",
+            "RowStatusArray",
+        ],
+        "SQLFreeStmt" => &["Statement", "Option"],
+        "SQLGetTypeInfo" => &["Statement", "Data Type"],
         _ => &[],
     }
 }
@@ -565,8 +668,40 @@ fn pair_entries(entries: Vec<TraceEntry>) -> Result<(Vec<TracedCall>, HandleGrap
                     .function_name
                     .strip_suffix('W')
                     .unwrap_or(&entry.function_name);
-                if normalized == "SQLAllocHandle" && return_code.is_success() {
-                    register_alloc(&input_params, &output_params, &mut handle_graph);
+                if return_code.is_success() {
+                    match normalized {
+                        "SQLAllocHandle" => {
+                            register_alloc(&input_params, &output_params, &mut handle_graph);
+                        }
+                        // ODBC 2.x deprecated forms — encode the handle type
+                        // from the function name and route to the same
+                        // parent→child registration logic.
+                        "SQLAllocEnv" => {
+                            register_alloc_2x(
+                                HandleType::Env,
+                                &input_params,
+                                &output_params,
+                                &mut handle_graph,
+                            );
+                        }
+                        "SQLAllocConnect" => {
+                            register_alloc_2x(
+                                HandleType::Dbc,
+                                &input_params,
+                                &output_params,
+                                &mut handle_graph,
+                            );
+                        }
+                        "SQLAllocStmt" => {
+                            register_alloc_2x(
+                                HandleType::Stmt,
+                                &input_params,
+                                &output_params,
+                                &mut handle_graph,
+                            );
+                        }
+                        _ => {}
+                    }
                 }
 
                 calls.push(TracedCall {
@@ -604,6 +739,53 @@ fn register_alloc(
         return;
     };
 
+    graph.register_alloc(handle_type, &parent_addr, &child_addr);
+}
+
+/// Handle-graph registration for the ODBC 2.x deprecated allocation
+/// entry points (`SQLAllocEnv` / `SQLAllocConnect` / `SQLAllocStmt`).
+/// They never carried a "Handle Type" parameter — the caller passes the
+/// type implied by the function name. The parent (where applicable) is
+/// the first input handle; the child is the out-pointer in the EXIT body.
+fn register_alloc_2x(
+    handle_type: HandleType,
+    input_params: &[Parameter],
+    output_params: &[Parameter],
+    graph: &mut HandleGraph,
+) {
+    let parent_name = match handle_type {
+        HandleType::Env => None,
+        HandleType::Dbc => Some("Environment"),
+        HandleType::Stmt => Some("Connection"),
+        HandleType::Desc => unreachable!("no ODBC 2.x SQLAllocDesc"),
+    };
+    // For SQLAllocEnv the child out-pointer is the only parameter. For
+    // SQLAllocConnect / SQLAllocStmt it's the second parameter (after
+    // the input parent handle).
+    let child_slot = match handle_type {
+        HandleType::Env => "Environment",
+        HandleType::Dbc => "Connection",
+        HandleType::Stmt => "Statement",
+        HandleType::Desc => unreachable!("no ODBC 2.x SQLAllocDesc"),
+    };
+    let Some(child_addr) = find_param_addr(output_params, child_slot) else {
+        return;
+    };
+
+    // For SQLAllocEnv there is no parent; use the null-handle sentinel that
+    // SQLAllocHandle records for SQL_HANDLE_ENV. For SQLAllocConnect /
+    // SQLAllocStmt the parent handle must be present in the trace — if it
+    // is missing the record is malformed and we skip registration to avoid
+    // creating a dangling graph entry.
+    let parent_addr = match parent_name {
+        None => "0x0000000000000000".to_string(),
+        Some(name) => {
+            let Some(addr) = find_param_addr(input_params, name) else {
+                return;
+            };
+            addr
+        }
+    };
     graph.register_alloc(handle_type, &parent_addr, &child_addr);
 }
 
@@ -939,6 +1121,78 @@ proc-1 1234-5678\tEXIT  SQLGetInfoW  with return code 0 (SQL_SUCCESS)\n\
     }
 
     #[test]
+    fn describe_col_with_null_name_length_ptr_maps_data_type_and_nullable() {
+        // Regression guard for the missing `Name Length` synthetic slot.
+        // Excel/ADO calls SQLDescribeColW with a null NameLengthPtr; that slot
+        // still occupies a trace line, so omitting it from `synthetic_names`
+        // shifted DataType into the ColumnSize slot and duplicated
+        // DecimalDigits into Nullable. Mirror the real ado-1 trace layout.
+        let trace = "proc-1 1234-5678\tENTER SQLDescribeColW \n\
+\t\tHSTMT               0x0000000000000080\n\
+\t\tUWORD                       18 \n\
+\t\tWCHAR *             0x0000000000000000 \n\
+\t\tSWORD                        0 \n\
+\t\tSWORD *             0x0000000000000000\n\
+\t\tSWORD *             0x0000000000000100\n\
+\t\tSQLULEN *           0x0000000000000110\n\
+\t\tSWORD *             0x0000000000000120\n\
+\t\tSWORD *             0x0000000000000130\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLDescribeColW  with return code 0 (SQL_SUCCESS)\n\
+\t\tHSTMT               0x0000000000000080\n\
+\t\tUWORD                       18 \n\
+\t\tWCHAR *             0x0000000000000000 <null pointer>\n\
+\t\tSWORD                        0 \n\
+\t\tSWORD *             0x0000000000000000\n\
+\t\tSWORD *             0x0000000000000100 (10)\n\
+\t\tSQLULEN *           0x0000000000000110 (18)\n\
+\t\tSWORD *             0x0000000000000120 (9)\n\
+\t\tSWORD *             0x0000000000000130 (1)\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let dc = parsed
+            .calls
+            .iter()
+            .find_map(|c| match &c.call {
+                OdbcCall::DescribeCol(d) => Some(d),
+                _ => None,
+            })
+            .expect("one SQLDescribeCol");
+        assert_eq!(dc.column_number, Some(18));
+        assert_eq!(dc.data_type.as_deref(), Some("10"), "DataType slot");
+        assert_eq!(dc.column_size, Some(18), "ColumnSize slot");
+        assert_eq!(dc.decimal_digits, Some(9), "DecimalDigits slot");
+        assert_eq!(dc.nullable.as_deref(), Some("1"), "Nullable slot");
+    }
+
+    #[test]
+    fn parses_get_type_info_as_typed_call_with_data_type() {
+        // SQLGetTypeInfo opens a result set ADO then binds and fetches from.
+        // It must parse to a typed GetTypeInfo (not Unsupported) so the
+        // generator can replay it; dropping it leaves the later SQLFetch with
+        // no result set and a function-sequence error.
+        let trace = "proc-1 1234-5678\tENTER SQLGetTypeInfo \n\
+\t\tHSTMT               0x0000000000000080\n\
+\t\tSWORD                        0 <SQL_ALL_TYPES>\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLGetTypeInfo  with return code 0 (SQL_SUCCESS)\n\
+\t\tHSTMT               0x0000000000000080\n\
+\t\tSWORD                        0 <SQL_ALL_TYPES>\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let gti = parsed
+            .calls
+            .iter()
+            .find_map(|c| match &c.call {
+                OdbcCall::GetTypeInfo(g) => Some(g),
+                _ => None,
+            })
+            .expect("typed GetTypeInfo, not Unsupported");
+        assert_eq!(gti.data_type, Some(0));
+        assert_eq!(gti.data_type_name.as_deref(), Some("SQL_ALL_TYPES"));
+    }
+
+    #[test]
     fn parses_unknown_bracketed_tag_as_integer() {
         // Windows DM emits `<unknown>` (lowercase) for InfoTypes /
         // FieldIdentifiers that its symbol table doesn't recognize. The
@@ -1062,5 +1316,257 @@ proc-1 1234-5678\tEXIT  SQLAllocHandle\n\
             }
             other => panic!("expected MissingReturnCode, got {other:?}"),
         }
+    }
+
+    /// MSDASQL (used by Excel ADO) still emits the ODBC 2.x deprecated
+    /// allocation/free entry points. The parser must route them onto the
+    /// same typed `AllocHandle` / `FreeHandle` variants we emit for
+    /// `SQLAllocHandle` / `SQLFreeHandle`, recovering the handle type
+    /// from the function name (the 2.x calls never carried it as a
+    /// parameter).
+    #[test]
+    fn alloc_2x_aliases_route_to_alloc_handle() {
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocEnv\n\
+\t\tHENV *              0x0000000000000010\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocEnv  with return code 0 (SQL_SUCCESS)\n\
+\t\tHENV *              0x0000000000000010 ( 0x0000000000000020)\n\
+\n\
+proc-1 1234-5678\tENTER SQLAllocConnect\n\
+\t\tHENV                0x0000000000000020\n\
+\t\tHDBC *              0x0000000000000030\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocConnect  with return code 0 (SQL_SUCCESS)\n\
+\t\tHENV                0x0000000000000020\n\
+\t\tHDBC *              0x0000000000000030 ( 0x0000000000000040)\n\
+\n\
+proc-1 1234-5678\tENTER SQLAllocStmt\n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tHSTMT *             0x0000000000000050\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocStmt  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tHSTMT *             0x0000000000000050 ( 0x0000000000000060)\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let allocs: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter_map(|c| match &c.call {
+                OdbcCall::AllocHandle(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(allocs.len(), 3, "all three 2.x allocs route to AllocHandle");
+
+        assert_eq!(allocs[0].handle_type, Some(HandleType::Env));
+        assert_eq!(allocs[0].parent_handle, None);
+        assert_eq!(
+            allocs[0].child_handle.as_deref(),
+            Some("0x0000000000000020")
+        );
+
+        assert_eq!(allocs[1].handle_type, Some(HandleType::Dbc));
+        assert_eq!(
+            allocs[1].parent_handle.as_deref(),
+            Some("0x0000000000000020")
+        );
+        assert_eq!(
+            allocs[1].child_handle.as_deref(),
+            Some("0x0000000000000040")
+        );
+
+        assert_eq!(allocs[2].handle_type, Some(HandleType::Stmt));
+        assert_eq!(
+            allocs[2].parent_handle.as_deref(),
+            Some("0x0000000000000040")
+        );
+        assert_eq!(
+            allocs[2].child_handle.as_deref(),
+            Some("0x0000000000000060")
+        );
+
+        // No silent `Unsupported` fallthroughs for the 2.x names.
+        assert!(
+            !parsed
+                .calls
+                .iter()
+                .any(|c| matches!(c.call, OdbcCall::Unsupported(_))),
+            "2.x aliases must not fall through to Unsupported"
+        );
+
+        // Handle graph must thread the parent→child relationships so
+        // downstream `resolve_handles` renames them to env0 / dbc0 /
+        // stmt0 instead of leaking raw addresses into the generated
+        // C++ test.
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000020"),
+            Some("env0"),
+        );
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000040"),
+            Some("dbc0"),
+        );
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000060"),
+            Some("stmt0"),
+        );
+    }
+
+    /// A malformed 2.x trace where SQLAllocConnect / SQLAllocStmt are
+    /// missing their input parent handle should not create a dangling node
+    /// in the handle graph (regression for the null-sentinel fallback bug).
+    /// The OdbcCall is still emitted, but `parent_handle` is `None` and the
+    /// logical name for the child address is the raw address (no rename).
+    #[test]
+    fn alloc_2x_missing_parent_skips_graph_registration() {
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocConnect\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocConnect  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC *              0x0000000000000030 ( 0x0000000000000040)\n\
+\n\
+proc-1 1234-5678\tENTER SQLAllocStmt\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocStmt  with return code 0 (SQL_SUCCESS)\n\
+\t\tHSTMT *             0x0000000000000050 ( 0x0000000000000060)\n";
+
+        let parsed = parse_str(trace).expect("parse");
+
+        let allocs: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter_map(|c| match &c.call {
+                OdbcCall::AllocHandle(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(allocs.len(), 2, "both malformed allocs still emit OdbcCall");
+
+        // parent_handle must be None, not a bogus null-sentinel address
+        assert_eq!(allocs[0].parent_handle, None, "Dbc: missing parent → None");
+        assert_eq!(allocs[1].parent_handle, None, "Stmt: missing parent → None");
+
+        // The graph must not contain dangling entries under 0x0000000000000000
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000040"),
+            None,
+            "child dbc must not be named via a phantom null-sentinel parent"
+        );
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000060"),
+            None,
+            "child stmt must not be named via a phantom null-sentinel parent"
+        );
+    }
+
+    /// The 2.x deprecated free entry points carry only the handle to be
+    /// freed (no `Handle Type` parameter); the parser must encode the
+    /// type from the function name itself.
+    #[test]
+    fn free_2x_aliases_route_to_free_handle() {
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocEnv\n\
+\t\tHENV *              0x0000000000000010\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocEnv  with return code 0 (SQL_SUCCESS)\n\
+\t\tHENV *              0x0000000000000010 ( 0x0000000000000020)\n\
+\n\
+proc-1 1234-5678\tENTER SQLAllocConnect\n\
+\t\tHENV                0x0000000000000020\n\
+\t\tHDBC *              0x0000000000000030\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocConnect  with return code 0 (SQL_SUCCESS)\n\
+\t\tHENV                0x0000000000000020\n\
+\t\tHDBC *              0x0000000000000030 ( 0x0000000000000040)\n\
+\n\
+proc-1 1234-5678\tENTER SQLFreeConnect\n\
+\t\tHDBC                0x0000000000000040\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLFreeConnect  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC                0x0000000000000040\n\
+\n\
+proc-1 1234-5678\tENTER SQLFreeEnv\n\
+\t\tHENV                0x0000000000000020\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLFreeEnv  with return code 0 (SQL_SUCCESS)\n\
+\t\tHENV                0x0000000000000020\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let frees: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter_map(|c| match &c.call {
+                OdbcCall::FreeHandle(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frees.len(), 2, "both 2.x frees route to FreeHandle");
+
+        // `parse_str` returns raw addresses; the address→logical-name
+        // rewrite is applied later by the handle-tree IR builder
+        // (`ir::HandleTree::resolve_handles`). We assert the raw address
+        // here, and separately verify the handle-graph lookup yields
+        // the logical name so the downstream rewrite has everything it
+        // needs.
+        assert_eq!(frees[0].handle_type, Some(HandleType::Dbc));
+        assert_eq!(frees[0].handle.as_deref(), Some("0x0000000000000040"));
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000040"),
+            Some("dbc0"),
+        );
+
+        assert_eq!(frees[1].handle_type, Some(HandleType::Env));
+        assert_eq!(frees[1].handle.as_deref(), Some("0x0000000000000020"));
+        assert_eq!(
+            parsed.handle_graph.logical_name("0x0000000000000020"),
+            Some("env0"),
+        );
+    }
+
+    /// `SQLColAttributes` is the ODBC 2.x deprecated alias for
+    /// `SQLColAttribute` (same slot layout, trailing 's'). It must
+    /// route to the same typed `ColAttribute` variant.
+    #[test]
+    fn col_attributes_alias_routes_to_col_attribute() {
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010 ( 0x0000000000000020)\n\
+\n\
+proc-1 1234-5678\tENTER SQLColAttributes\n\
+\t\tSQLHSTMT            0x0000000000000020\n\
+\t\tSQLSMALLINT                  1\n\
+\t\tSQLSMALLINT                  2 <SQL_DESC_CONCISE_TYPE>\n\
+\t\tSQLPOINTER         0x0000000000000000\n\
+\t\tSQLSMALLINT                  0\n\
+\t\tSQLSMALLINT *       0x00000001669FE580\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLColAttributes  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLHSTMT            0x0000000000000020\n\
+\t\tSQLSMALLINT                  1\n\
+\t\tSQLSMALLINT                  2 <SQL_DESC_CONCISE_TYPE>\n\
+\t\tSQLPOINTER         0x0000000000000000\n\
+\t\tSQLSMALLINT                  0\n\
+\t\tSQLSMALLINT *       0x00000001669FE580 (8)\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let col_attrs: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter(|c| matches!(c.call, OdbcCall::ColAttribute(_)))
+            .collect();
+        assert_eq!(
+            col_attrs.len(),
+            1,
+            "SQLColAttributes must route to OdbcCall::ColAttribute, not Unsupported",
+        );
     }
 }
