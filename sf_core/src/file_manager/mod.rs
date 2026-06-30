@@ -2,6 +2,7 @@ mod azure_transfer;
 mod cloud_http;
 mod encryption;
 mod gcs_transfer;
+mod multipart;
 mod s3_transfer;
 
 mod path_expansion;
@@ -68,6 +69,7 @@ pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::{
     GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
 };
+pub use multipart::{MultipartParams, MultipartThreshold};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
@@ -144,6 +146,7 @@ pub async fn upload_files(
             flavor: data.flavor.clone(),
             legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
             skip_upload_on_content_match: data.skip_upload_on_content_match,
+            multipart: data.multipart,
         };
 
         let result =
@@ -556,6 +559,7 @@ pub async fn download_files(
             encryption_material,
             presigned_url,
             flavor: data.flavor.clone(),
+            multipart: data.multipart,
         };
 
         let result = download_single_file(
@@ -1959,6 +1963,7 @@ mod tests {
             flavor,
             legacy_odbc_compression_autodetect,
             skip_upload_on_content_match: false,
+            multipart: MultipartParams::default(),
         }
     }
 
@@ -2065,6 +2070,7 @@ mod tests {
             flavor,
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: true,
+            multipart: MultipartParams::default(),
         };
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
@@ -2151,6 +2157,7 @@ mod tests {
             flavor: PutGetResultsetFlavor::Python,
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: true,
+            multipart: MultipartParams::default(),
         }
     }
 

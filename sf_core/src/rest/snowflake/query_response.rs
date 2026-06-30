@@ -122,9 +122,9 @@ pub struct Data {
     #[serde(rename = "uploadInfo")]
     _upload_info: Option<StageInfo>,
     #[serde(rename = "parallel")]
-    _parallel: Option<i64>,
+    parallel: Option<i64>,
     #[serde(rename = "threshold")]
-    _threshold: Option<i64>,
+    threshold: Option<i64>,
     #[serde(rename = "clientShowEncryptionParameter")]
     _show_encryption_parameter: Option<bool>,
     /// Per-file pre-signed URLs returned by GS for GCS GET in
@@ -454,6 +454,7 @@ impl Data {
             flavor,
             legacy_odbc_compression_autodetect,
             skip_upload_on_content_match,
+            multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
         })
     }
 
@@ -515,6 +516,7 @@ impl Data {
             flavor: PutGetResultsetFlavor::default(),
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: false,
+            multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
         })
     }
 
@@ -601,6 +603,7 @@ impl Data {
             encryption_materials,
             presigned_urls,
             flavor: flavor.clone(),
+            multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
         })
     }
 
