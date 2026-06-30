@@ -9,3 +9,4 @@ cmake_minimum_required(VERSION 4.0)
 #       navigator/     - Navigator-driven catalog/schema/table browsing
 #     ado/             - Excel's older ADO/MSQuery path
 add_subdirectory(powerquery)
+add_subdirectory(ado)
