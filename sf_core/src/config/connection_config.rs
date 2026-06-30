@@ -261,6 +261,15 @@ fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Opti
     settings.get_string(key).filter(|value| !value.is_empty())
 }
 
+/// Characters permitted in a Snowflake account identifier: ASCII alphanumerics
+/// plus `.`, `-`, and `_` (underscores are normalized to hyphens in the derived
+/// host). Used by `validate_settings` to reject account values carrying
+/// URL-significant characters before any host is derived (SNOW-3663586,
+/// CWE-918).
+fn is_allowed_account_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')
+}
+
 // ---------------------------------------------------------------------------
 // Server URL derivation (mirrored from rest_parameters::get_server_url)
 // ---------------------------------------------------------------------------
@@ -766,6 +775,27 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             parameter: ACCOUNT.into(),
             message: "Missing required parameter 'account'".into(),
             code: ValidationCode::MissingRequired,
+        });
+    }
+
+    // --- InvalidValue: account identifier characters (SNOW-3663586, CWE-918) ---
+    // `account` is interpolated into the derived host, so restrict it to the
+    // characters a Snowflake account identifier actually uses — ASCII
+    // alphanumerics plus `.`, `-`, and `_` (underscores are normalized to
+    // hyphens in the host). Reject anything else before a host is derived or
+    // contacted. An explicitly supplied `host`/`server_url` is the caller's own
+    // endpoint choice and is validated as a URL elsewhere.
+    if let Some(account) = settings.get_string(ACCOUNT)
+        && let Some(invalid_character) = account.chars().find(|c| !is_allowed_account_char(*c))
+    {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: ACCOUNT.into(),
+            message: format!(
+                "Invalid character {invalid_character:?} in account identifier '{account}'. \
+                 Account identifiers may only contain letters, digits, '.', '-', and '_'."
+            ),
+            code: ValidationCode::InvalidValue,
         });
     }
 
@@ -1742,6 +1772,58 @@ mod tests {
             .filter(|i| i.parameter == "account" && i.code == ValidationCode::MissingRequired)
             .collect();
         assert!(!account_issues.is_empty());
+    }
+
+    // SNOW-3663586 (CWE-918): account identifiers carrying characters outside
+    // the allow-list must be rejected before the host is derived.
+    #[test]
+    fn validate_account_with_url_metacharacters_reports_issue() {
+        let invalid_account_names = [
+            "acct/x", "acct?x", "acct#x", r"acct\x", "acct@x", "acct:x", "acct x", "acct%x",
+        ];
+        for account in invalid_account_names {
+            let settings = settings_from(&[
+                ("account", Setting::String(account.into())),
+                ("user", Setting::String("u".into())),
+                ("password", Setting::String("p".into())),
+            ]);
+            let issues = validate_settings(&settings);
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.parameter == "account" && i.code == ValidationCode::InvalidValue),
+                "Expected InvalidValue for account {account:?}, got: {issues:?}"
+            );
+        }
+    }
+
+    // Legitimate account identifier shapes must not be flagged: bare locators,
+    // region/cloud-qualified, org-account (hyphen), and underscore-bearing
+    // accounts (underscores are later normalized to hyphens in the host).
+    #[test]
+    fn validate_legitimate_account_identifiers_pass() {
+        let valid = [
+            "myaccount",
+            "myaccount.us-east-1",
+            "driverspreprod6.preprod6.us-west-2.aws",
+            "myorg-myaccount",
+            "my_account",
+        ];
+        for account in valid {
+            let settings = settings_from(&[
+                ("account", Setting::String(account.into())),
+                ("user", Setting::String("u".into())),
+                ("password", Setting::String("p".into())),
+                ("host", Setting::String("h.com".into())),
+            ]);
+            let issues = validate_settings(&settings);
+            assert!(
+                !issues
+                    .iter()
+                    .any(|i| i.parameter == "account" && i.code == ValidationCode::InvalidValue),
+                "Account {account:?} should be valid, got: {issues:?}"
+            );
+        }
     }
 
     #[test]
