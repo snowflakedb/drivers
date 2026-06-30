@@ -21,10 +21,25 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/opt/unixodbc/lib");
-        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/opt/unixodbc/lib");
-        println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/lib");
-        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib");
+        // Drop the vestigial driver-manager dependency.
+        //
+        // `odbc-sys` attaches `#[link(name = "odbc")]` to its `extern`
+        // block, so depending on it for ODBC *type* definitions injects
+        // `-lodbc` into our link line even though this driver calls no
+        // driver-manager function (the installer API we do use is loaded
+        // at runtime via `dlopen` in `api::odbc_installer`). Linux's
+        // `--as-needed` drops the unused dependency, but `ld64` records
+        // it, leaving an unresolvable `libodbc.dylib` load command that
+        // dyld refuses to satisfy under hardened runtime (Tableau's
+        // `tabquerytool`, notarized Excel/Power BI, etc.).
+        //
+        // `-dead_strip_dylibs` removes any `LC_LOAD_DYLIB` whose symbols
+        // are unreferenced, so the unused driver-manager load command is
+        // stripped entirely - mirroring the legacy snowflake-odbc driver,
+        // which links no driver manager at all. The shipped dylib then
+        // loads regardless of the host driver manager (iODBC or unixODBC)
+        // and needs no RPATH for it.
+        println!("cargo:rustc-link-arg=-Wl,-dead_strip_dylibs");
     }
 
     // On Windows, use a .def file to limit DLL exports to only ODBC API functions.

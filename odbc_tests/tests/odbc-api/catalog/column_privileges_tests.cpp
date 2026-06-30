@@ -182,19 +182,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY009 - NULL Table
     //   (invalid use of null pointer)
     REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
   }
-  IODBC_ONLY {
-    OLD_IODBC_ONLY("BD#62") {
-      // The old driver forwards the NULL TableName to the server and the
-      //   resulting backend error is surfaced as SQL_ERROR; iODBC's DM does
-      //   not intercept NULL pointers the way it does for the new driver.
-      REQUIRE(ret == SQL_ERROR);
-    }
-    NEW_IODBC_ONLY("BD#62") {
-      // For the new driver iODBC's DM null-checks TableName and rejects the
-      //   call with SQL_INVALID_HANDLE before it reaches the driver.
-      REQUIRE(ret == SQL_INVALID_HANDLE);
-    }
-  }
+  IODBC_ONLY { REQUIRE(ret == SQL_ERROR); }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative CatalogName length",

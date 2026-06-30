@@ -256,17 +256,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: HY095 - Invalid Functio
     REQUIRE(std::string(records[0].sqlState) == "HY095");
   }
   IODBC_ONLY {
-    OLD_IODBC_ONLY("BD#62") {
-      // The old driver answers from its static function table without
-      //   range-checking and reports SQL_SUCCESS + supported=SQL_FALSE for
-      //   any unknown FunctionId; the new driver maps the error to
-      //   SQL_INVALID_HANDLE inside iODBC's dispatch.
-      REQUIRE(ret == SQL_SUCCESS);
-      REQUIRE(supported == SQL_FALSE);
-    }
-    else {
-      REQUIRE(ret == SQL_INVALID_HANDLE);
-    }
+    // iODBC dispatches SQLGetFunctions to the driver without range-checking
+    // the FunctionId; the driver answers from its static table and reports
+    // SQL_SUCCESS + supported=SQL_FALSE for any unknown FunctionId.
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(supported == SQL_FALSE);
   }
 
   SQLDisconnect(dbc_handle());

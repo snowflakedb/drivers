@@ -996,9 +996,7 @@ behavior_differences:
         - SQLGetData on a cursor positioned past the end of the result set surfaces SQL_ERROR with SQLSTATE 24000 (matching the unixODBC contract) because the old driver bypasses the iODBC DM's cursor-past-end short-circuit.
     new_driver_behavior: |
       Under iODBC the DM takes the following paths for the new driver:
-        - SQLColumnPrivileges with a NULL TableName is rejected up-front by the DM with SQL_INVALID_HANDLE (NULL-pointer check fires before the driver is reached).
         - SQLGetInfo(SQL_DATA_SOURCE_NAME) is rejected by the DM with SQL_ERROR (the InfoType is on the DM's blocklist).
-        - SQLGetFunctions(FunctionId=<out-of-range>) is rejected by the DM with SQL_INVALID_HANDLE (FunctionId is range-checked at dispatch).
         - SQLGetInfo with an invalid InfoType returns HY000 (the new driver follows the unixODBC reference-driver convention of mapping the invalid InfoType to the generic SQLSTATE rather than HY096).
         - SQLGetData on a cursor positioned past the end of the result set returns SQL_NO_DATA without consulting the driver layer (iODBC DM short-circuits the post-end fetch per its own convention).
     description: |
