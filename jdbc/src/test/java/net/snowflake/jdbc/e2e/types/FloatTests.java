@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Types;
 import java.util.Arrays;
@@ -503,6 +504,39 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
               resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
           assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
+  }
+
+  @Test
+  public void shouldInsertFloatUsingParameterBindingForFloatAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists
+    String tableName = createTempTable(connection, "ud_float_bind_", "col " + FLOAT_TYPE);
+
+    // When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
+    Double[] testValues = {0.0, 123.456, -789.012, null};
+    // Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+      for (Double value : testValues) {
+        if (value == null) {
+          preparedStatement.setNull(1, Types.DOUBLE);
+        } else {
+          preparedStatement.setDouble(1, value);
+        }
+        preparedStatement.addBatch();
+      }
+      int[] counts = preparedStatement.executeBatch();
+      assertEquals(testValues.length, counts.length, "Expected one count per batched row");
+    }
+
+    // Then Result should contain the same values including NULL
+    withQueryResult(
+        connection,
+        "SELECT * FROM " + tableName + " ORDER BY col NULLS LAST",
+        resultSet ->
+            assertSingleColumnRows(resultSet, Arrays.asList(-789.012, 0.0, 123.456, null)));
   }
 
   private static void assertSingleRow(ResultSet resultSet, List<Double> expected) throws Exception {
