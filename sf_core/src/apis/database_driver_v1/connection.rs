@@ -43,6 +43,18 @@ use crate::rest::snowflake::{
 use crate::sensitive::SensitiveString;
 use crate::token_cache::TokenCache;
 
+/// Whether `execute_session_sql` should refresh the connection's local
+/// session-state cache (`session_parameters`, `final_session_names`) from
+/// the response after a successful query.
+#[derive(Copy, Clone, Debug)]
+enum SessionStateRefresh {
+    /// SQL may change session state (e.g. `ALTER SESSION SET`, `USE DATABASE`).
+    Apply,
+    /// SQL is non-stateful from the session's perspective (e.g. `COMMIT`,
+    /// `ROLLBACK`).
+    Skip,
+}
+
 impl DatabaseDriverV1 {
     /// Set autocommit on the given connection.
     ///
@@ -63,7 +75,8 @@ impl DatabaseDriverV1 {
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(&conn, sql).await
+                    self.execute_session_sql(&conn, sql, SessionStateRefresh::Apply)
+                        .await
                 } else {
                     conn.init_session_parameters
                         .get_or_insert_with(HashMap::new)
@@ -106,7 +119,51 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                self.execute_session_sql(&conn, &sql).await
+                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply)
+                    .await
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Commit the open transaction on the given connection by executing `COMMIT`.
+    /// Must only be called after the connection is initialised (`is_post_connect()`).
+    pub async fn connection_commit(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        self.execute_transaction_control(conn_handle, "COMMIT")
+            .await
+    }
+
+    /// Roll back the open transaction on the given connection by executing `ROLLBACK`.
+    /// Must only be called after the connection is initialised (`is_post_connect()`).
+    pub async fn connection_rollback(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        self.execute_transaction_control(conn_handle, "ROLLBACK")
+            .await
+    }
+
+    /// Shared implementation for `connection_commit` / `connection_rollback`:
+    /// run the transaction-control statement on the connection's session.
+    async fn execute_transaction_control(
+        &self,
+        conn_handle: Handle,
+        sql: &str,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                if !conn.is_post_connect() {
+                    return InvalidArgumentSnafu {
+                        argument: format!("{sql} called before connection is open"),
+                    }
+                    .fail();
+                }
+                // COMMIT/ROLLBACK do not change session parameters or
+                // current database/schema/warehouse/role, so skip the
+                // session-state cache refresh.
+                self.execute_session_sql(&conn, sql, SessionStateRefresh::Skip)
+                    .await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -143,7 +200,8 @@ impl DatabaseDriverV1 {
                 }
                 let database = resolve_session_database(&conn)?;
                 let sql = build_use_schema_sql(database.as_deref(), schema);
-                self.execute_session_sql(&conn, &sql).await
+                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply)
+                    .await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -153,7 +211,20 @@ impl DatabaseDriverV1 {
     }
 
     /// Execute a session-scoped SQL command without creating a statement.
-    async fn execute_session_sql(&self, conn: &Connection, sql: &str) -> Result<(), ApiError> {
+    ///
+    /// `refresh` controls whether the local session-state cache
+    /// (`session_parameters`, `final_session_names`) is refreshed from the
+    /// response after a successful query. Pass `Apply` for SQL that may
+    /// change session state (e.g. `ALTER SESSION SET`, `USE DATABASE`); pass
+    /// `Skip` for SQL that is non-stateful from the session's perspective
+    /// (e.g. `COMMIT`, `ROLLBACK`) to avoid taking the cache write locks
+    /// for a no-op merge.
+    async fn execute_session_sql(
+        &self,
+        conn: &Connection,
+        sql: &str,
+        refresh: SessionStateRefresh,
+    ) -> Result<(), ApiError> {
         let query_input = QueryInput {
             sql: sql.to_string(),
             bindings: None,
@@ -187,7 +258,7 @@ impl DatabaseDriverV1 {
             }
         }?;
 
-        if response.success {
+        if response.success && matches!(refresh, SessionStateRefresh::Apply) {
             conn.update_session_params_cache(
                 sql,
                 response.data.parameters.as_ref(),
