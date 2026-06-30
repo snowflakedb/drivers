@@ -526,3 +526,28 @@ behavior_differences:
       than discovering failures at first use. The `master_token` requirement is a
       direct consequence of the RENEW call — without it there is no way to authorize
       the refresh request.
+
+  38:
+    name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `oauth_token_request_url` (and the authorization-code `external_authorization_url`)
+      accept any URL scheme. For the token endpoint an `http://` value produces only a log
+      warning ("OAuth URL uses insecure HTTP protocol") and the request proceeds. The
+      authorization-code flow does require `https://` for the *authorization* URL, but not
+      for the *token* URL, and there is no loopback carve-out.
+    new_driver_behavior: |
+      The universal driver requires `oauth_token_request_url` / `oauth_authorization_url` to
+      use the `https` scheme and rejects a non-loopback `http://` value at connect time
+      (InvalidParameterValue). `http://` remains accepted for loopback hosts (127.0.0.0/8,
+      ::1, localhost) so local IdP mocks keep working. RFC 6749 §3.1.2.1 and the OAuth 2.0
+      Security BCP require TLS on these endpoints. The loopback redirect URI is unaffected.
+    description: |
+      Security hardening tracked under SNOW-3663588; the same difference is documented as
+      BD#10 in jdbc/ and BD#81 in odbc_tests/ BehaviorDifferences.yaml. Callers that configured
+      a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
+      to `https://`.

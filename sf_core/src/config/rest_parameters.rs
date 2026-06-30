@@ -488,6 +488,45 @@ fn invalid_url_param(
     .build()
 }
 
+/// True when `url`'s host is an IPv4/IPv6 loopback address or the
+/// literal `localhost`. Used to scope the `http://` exception in
+/// [`require_secure_oauth_endpoint`] so local IdP mocks and the
+/// wiremock-backed test suite (which bind `127.0.0.1`) keep working.
+fn is_loopback_host(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        None => false,
+    }
+}
+
+/// Require an OAuth endpoint URL to use a secure (TLS) transport.
+///
+/// RFC 6749 §3.1.2.1 and the OAuth 2.0 Security BCP require the
+/// authorization and token endpoints to use TLS, so any non-`https`
+/// URL is rejected with [`InvalidParameterValue`]. `http://` is
+/// permitted ONLY for loopback hosts (see [`is_loopback_host`]) so
+/// local IdP mocks and the wiremock-backed test suite keep working.
+/// See SNOW-3663588.
+///
+/// Note: this is a transport requirement, not an allow-list — it
+/// deliberately does NOT bound *which* `https` host is contacted. The
+/// token endpoint is a trusted configuration input, and an exhaustive
+/// IdP host allow-list is impractical for arbitrary external IdPs.
+fn require_secure_oauth_endpoint(url: &Url, key: &'static str) -> Result<(), ConfigError> {
+    if url.scheme() == "https" || (url.scheme() == "http" && is_loopback_host(url)) {
+        return Ok(());
+    }
+    InvalidParameterValueSnafu {
+        parameter: key,
+        value: url.as_str().to_string(),
+        explanation: "OAuth endpoint must use https (http is permitted only for loopback hosts)"
+            .to_string(),
+    }
+    .fail()
+}
+
 /// Parse an optional `oauth_redirect_uri` parameter as a
 /// [`ConfiguredRedirectUri`], preserving the verbatim user string for
 /// IdPs that perform RFC 6749 §3.1.2.3 exact-string `redirect_uri`
@@ -508,6 +547,10 @@ fn parse_optional_redirect_uri(
 /// when the user supplied a value that cannot be parsed by the `url`
 /// crate. Empty/missing values resolve to `None` so callers can fall
 /// back to flow-time defaults (e.g. `https://{host}/oauth/authorize`).
+///
+/// Used exclusively for OAuth endpoint URLs (token / authorization), so
+/// a successfully parsed value is additionally required to use a secure
+/// transport via [`require_secure_oauth_endpoint`].
 pub(crate) fn parse_optional_url(
     settings: &dyn Settings,
     key: &'static str,
@@ -516,16 +559,22 @@ pub(crate) fn parse_optional_url(
         return Ok(None);
     };
     let url = Url::parse(&raw).map_err(|e| invalid_url_param(key, raw, e))?;
+    require_secure_oauth_endpoint(&url, key)?;
     Ok(Some(url))
 }
 
 /// Parse a required URL parameter (e.g. CC `oauth_token_request_url`).
+///
+/// As with [`parse_optional_url`], the parsed value must use a secure
+/// transport (see [`require_secure_oauth_endpoint`]).
 pub(crate) fn parse_required_url(
     settings: &dyn Settings,
     key: &'static str,
 ) -> Result<Url, ConfigError> {
     let raw = non_empty_string(settings, key).context(MissingParameterSnafu { parameter: key })?;
-    Url::parse(&raw).map_err(|e| invalid_url_param(key, raw, e))
+    let url = Url::parse(&raw).map_err(|e| invalid_url_param(key, raw, e))?;
+    require_secure_oauth_endpoint(&url, key)?;
+    Ok(url)
 }
 
 impl OAuthAuthorizationCodeConfig {
@@ -1796,6 +1845,95 @@ mod tests {
         assert!(params.log_query_parameters);
     }
 
+    // -------------------------------------------------------------------------
+    // OAuth endpoint transport requirement (SNOW-3663588)
+    //
+    // `oauth_token_request_url` and the AC `oauth_authorization_url` must use the
+    // `https` scheme; a non-loopback `http://` value is rejected. `http://` is
+    // tolerated only for loopback so local IdP mocks and tests keep working.
+    // -------------------------------------------------------------------------
+
+    fn cc_settings(token_url: &str) -> HashMap<String, Setting> {
+        create_test_settings(vec![
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            ("oauth_client_secret", Setting::String("shh".to_string())),
+            (
+                "oauth_token_request_url",
+                Setting::String(token_url.to_string()),
+            ),
+        ])
+    }
+
+    #[test]
+    fn cc_rejects_plaintext_http_token_url() {
+        let settings = cc_settings("http://idp.example.com/token");
+        let err = OAuthClientCredentialsConfig::from_settings(&settings)
+            .expect_err("plaintext http token endpoint must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("oauth_token_request_url") && msg.contains("https"),
+            "error should name the parameter and require https: {msg}"
+        );
+    }
+
+    #[test]
+    fn cc_rejects_non_http_scheme_token_url() {
+        // `file://` (and any other non-http(s) scheme) parses fine syntactically
+        // but must never be accepted as a token endpoint.
+        let settings = cc_settings("file:///etc/passwd");
+        let err = OAuthClientCredentialsConfig::from_settings(&settings)
+            .expect_err("file:// token endpoint must be rejected");
+        assert!(
+            err.to_string().contains("oauth_token_request_url"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn cc_accepts_https_token_url() {
+        let settings = cc_settings("https://idp.example.com/oauth/token");
+        let cfg = OAuthClientCredentialsConfig::from_settings(&settings)
+            .expect("https token endpoint must be accepted");
+        assert_eq!(
+            cfg.token_url.as_str(),
+            "https://idp.example.com/oauth/token"
+        );
+    }
+
+    #[test]
+    fn cc_accepts_loopback_http_token_url() {
+        // wiremock-backed integration/e2e tests bind 127.0.0.1 and configure an
+        // `http://127.0.0.1:<port>` token URL; the loopback exception keeps them
+        // working without weakening the production posture.
+        for url in [
+            "http://127.0.0.1:8080/token",
+            "http://localhost:8080/token",
+            "http://[::1]:8080/token",
+        ] {
+            let settings = cc_settings(url);
+            OAuthClientCredentialsConfig::from_settings(&settings)
+                .unwrap_or_else(|e| panic!("loopback url {url} must be accepted: {e}"));
+        }
+    }
+
+    #[test]
+    fn ac_rejects_plaintext_http_authorization_url() {
+        // AC endpoints are optional, but when supplied they are validated too.
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "oauth_authorization_url",
+                Setting::String("http://idp.example.com/authorize".to_string()),
+            ),
+        ]);
+        let err = OAuthAuthorizationCodeConfig::from_settings(&settings)
+            .expect_err("plaintext http authorization endpoint must be rejected");
+        assert!(
+            err.to_string().contains("oauth_authorization_url"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn test_session_token_auth_detected_before_authenticator_dispatch() {
         let settings = create_test_settings(vec![
@@ -1807,6 +1945,17 @@ mod tests {
             matches!(method, LoginMethod::SessionToken { .. }),
             "expected SessionToken, got {method:?}"
         );
+    }
+
+    #[test]
+    fn ac_omitted_endpoints_remain_valid() {
+        // Empty/missing AC endpoints fall back to flow-time https defaults, so
+        // the validator must not turn the absence of a value into an error.
+        let settings = create_test_settings(vec![("user", Setting::String("alice".to_string()))]);
+        let cfg = OAuthAuthorizationCodeConfig::from_settings(&settings)
+            .expect("omitted optional endpoints must be allowed");
+        assert!(cfg.authorization_url.is_none());
+        assert!(cfg.token_url.is_none());
     }
 
     #[test]
