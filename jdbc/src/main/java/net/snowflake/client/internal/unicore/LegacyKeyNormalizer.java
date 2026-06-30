@@ -21,6 +21,7 @@ public final class LegacyKeyNormalizer {
 
   static {
     LEGACY_KEY_ALIASES = new HashMap<>();
+    LEGACY_KEY_ALIASES.put("db", "database");
     LEGACY_KEY_ALIASES.put("privatekey", "private_key");
     LEGACY_KEY_ALIASES.put("oktausername", "okta_username");
     LEGACY_KEY_ALIASES.put("logintimeout", "authentication_timeout");

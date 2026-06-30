@@ -7,6 +7,11 @@ import org.junit.jupiter.api.Test;
 class LegacyKeyNormalizerTest {
 
   @Test
+  void shouldMapLegacyDatabase() {
+    assertEquals("database", LegacyKeyNormalizer.normalize("db"));
+  }
+
+  @Test
   void shouldMapLegacyPrivateKey() {
     assertEquals("private_key", LegacyKeyNormalizer.normalize("privateKey"));
   }
