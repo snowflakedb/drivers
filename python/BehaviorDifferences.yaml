@@ -498,18 +498,31 @@ behavior_differences:
       invalid_client: ... OAuth flow failed`. The OAuth error slug is visible to
       callers parsing the exception text.
 
-  36:
-    name: "connection_diag_whitelist_path deprecated alias removed"
-    status: allowed
-    type: api_incompatibility
-    reviewed: true
+  37:
+    name: "Session token authentication: eager validation and master_token requirement"
+    status: todo
+    type: enhancement
+    reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      `connection_diag_whitelist_path` is a deprecated alias for
-      `connection_diag_allowlist_path` that emits a `DeprecationWarning`. It is
-      functionally identical to the canonical name.
+      When `session_token` is passed as a connection parameter, the old driver uses it
+      directly as the bearer token without any upfront validation. The session is
+      considered established immediately; if the token is invalid, the failure surfaces
+      later as an `HttpError` (errno 290401) during the post-login heartbeat call.
+      `master_token` is not required and may be omitted.
     new_driver_behavior: |
-      The `connection_diag_whitelist_path` alias is not accepted. Only the
-      canonical `connection_diag_allowlist_path` parameter is supported. Callers
-      using the old alias must rename it to `connection_diag_allowlist_path`.
+      When `session_token` is passed, the universal driver calls `/session/token-request`
+      (RENEW) before considering the connection open. This validates the tokens eagerly
+      and returns the real server-assigned `session_id` so telemetry is attributed
+      correctly. If the tokens are invalid, a `DatabaseError` is raised from
+      `connect()` before the connection object is returned to the caller.
+      `master_token` is required alongside `session_token` because the RENEW endpoint
+      uses it as the Authorization bearer; omitting it raises a `ProgrammingError`
+      at configuration time.
+    description: |
+      The eager-validation design aligns session token auth with every other auth
+      method in UD: callers can rely on `connect()` raising on bad credentials rather
+      than discovering failures at first use. The `master_token` requirement is a
+      direct consequence of the RENEW call — without it there is no way to authorize
+      the refresh request.

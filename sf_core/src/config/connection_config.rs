@@ -15,7 +15,7 @@ use crate::config::rest_parameters::{
     ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
 };
-use crate::config::settings::Setting;
+use crate::config::settings::{Setting, Settings};
 use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
     ValidationFailedSnafu,
@@ -101,6 +101,12 @@ pub enum AuthConfig {
     OAuthAuthorizationCode(Box<OAuthAuthorizationCodeConfig>),
     /// OAuth 2.0 Client Credentials flow, external IdP only.
     OAuthClientCredentials(OAuthClientCredentialsConfig),
+    /// Pre-acquired session token + master token pair, bypassing normal login.
+    SessionToken {
+        session_token: SensitiveString,
+        master_token: SensitiveString,
+        master_validity_in_seconds: Option<u64>,
+    },
 }
 
 #[derive(Debug)]
@@ -374,6 +380,19 @@ fn parse_authentication_timeout(settings: &ParamStore) -> u64 {
 }
 
 fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
+    // Session token auth takes precedence over all other authenticators.
+    if let Some(session_token) = non_empty_string(settings, SESSION_TOKEN) {
+        let master_token =
+            non_empty_string(settings, MASTER_TOKEN).context(MissingParameterSnafu {
+                parameter: String::from(MASTER_TOKEN),
+            })?;
+        return Ok(AuthConfig::SessionToken {
+            session_token: session_token.into(),
+            master_token: master_token.into(),
+            master_validity_in_seconds: settings.get_u64(MASTER_VALIDITY_IN_SECONDS.as_str()),
+        });
+    }
+
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
 
@@ -663,6 +682,15 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
                 },
             })
         }
+        AuthConfig::SessionToken {
+            session_token,
+            master_token,
+            master_validity_in_seconds,
+        } => LoginMethod::SessionToken {
+            session_token: session_token.clone(),
+            master_token: master_token.clone(),
+            master_validity_in_seconds: *master_validity_in_seconds,
+        },
     }
 }
 

@@ -439,6 +439,14 @@ pub enum LoginMethod {
     OAuthAuthorizationCode(Box<OAuthAuthorizationCodeConfig>),
     /// OAuth 2.0 Client Credentials. External IdP only.
     OAuthClientCredentials(OAuthClientCredentialsConfig),
+    /// Pre-acquired session token + master token pair.
+    /// Validated via `/session/token-request` (RENEW) which also returns
+    /// the server-assigned session ID needed for telemetry routing.
+    SessionToken {
+        session_token: SensitiveString,
+        master_token: SensitiveString,
+        master_validity_in_seconds: Option<u64>,
+    },
 }
 
 pub(crate) fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<String> {
@@ -723,6 +731,20 @@ impl LoginMethod {
     }
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
+        // Auto-detect session token auth: both session_token and master_token must be present.
+        // Checked before authenticator dispatch so it works regardless of the authenticator value.
+        if let Some(session_token) = non_empty_string(settings, "session_token") {
+            let master_token =
+                non_empty_string(settings, "master_token").context(MissingParameterSnafu {
+                    parameter: "master_token",
+                })?;
+            return Ok(Self::SessionToken {
+                session_token: session_token.into(),
+                master_token: master_token.into(),
+                master_validity_in_seconds: settings.get_u64("master_validity_in_seconds"),
+            });
+        }
+
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
         let auth_upper = authenticator.to_ascii_uppercase();
 
@@ -1772,5 +1794,56 @@ mod tests {
         let params = QueryParameters::from_settings(&settings).unwrap();
         assert!(params.log_query_text);
         assert!(params.log_query_parameters);
+    }
+
+    #[test]
+    fn test_session_token_auth_detected_before_authenticator_dispatch() {
+        let settings = create_test_settings(vec![
+            ("session_token", Setting::String("sess_tok".to_string())),
+            ("master_token", Setting::String("mast_tok".to_string())),
+        ]);
+        let method = LoginMethod::from_settings(&settings).unwrap();
+        assert!(
+            matches!(method, LoginMethod::SessionToken { .. }),
+            "expected SessionToken, got {method:?}"
+        );
+    }
+
+    #[test]
+    fn test_session_token_auth_with_validity() {
+        let settings = create_test_settings(vec![
+            ("session_token", Setting::String("sess".to_string())),
+            ("master_token", Setting::String("mast".to_string())),
+            ("master_validity_in_seconds", Setting::Int(3600)),
+        ]);
+        let method = LoginMethod::from_settings(&settings).unwrap();
+        let LoginMethod::SessionToken {
+            master_validity_in_seconds,
+            ..
+        } = method
+        else {
+            panic!("expected SessionToken")
+        };
+        assert_eq!(master_validity_in_seconds, Some(3600));
+    }
+
+    #[test]
+    fn test_session_token_requires_master_token() {
+        let settings =
+            create_test_settings(vec![("session_token", Setting::String("sess".to_string()))]);
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_err(), "expected error when master_token absent");
+    }
+
+    #[test]
+    fn test_session_token_takes_precedence_over_authenticator() {
+        // Even when authenticator is set to something else, session_token wins.
+        let settings = create_test_settings(vec![
+            ("session_token", Setting::String("sess".to_string())),
+            ("master_token", Setting::String("mast".to_string())),
+            ("authenticator", Setting::String("snowflake".to_string())),
+        ]);
+        let method = LoginMethod::from_settings(&settings).unwrap();
+        assert!(matches!(method, LoginMethod::SessionToken { .. }));
     }
 }
