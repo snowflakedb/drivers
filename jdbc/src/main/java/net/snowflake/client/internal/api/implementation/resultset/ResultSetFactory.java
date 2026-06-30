@@ -89,6 +89,18 @@ public class ResultSetFactory {
     return new SnowflakeResultSetImpl(statement, queryID, convertingReader, metaData, true);
   }
 
+  /** Creates a result set with the given metadata and no rows. */
+  public static InternalResultSet createEmpty(
+      SnowflakeStatementImpl statement,
+      SnowflakeResultSetMetaDataImpl metaData,
+      boolean ownsStatement)
+      throws SQLException {
+    String queryId = metaData.getQueryID();
+    String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
+    EmptyRowReader rowReader = new EmptyRowReader(names);
+    return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, ownsStatement);
+  }
+
   private static InternalResultSet resultSetFromResponse(
       SnowflakeStatementImpl statement,
       String queryId,

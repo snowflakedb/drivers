@@ -190,3 +190,15 @@ behavior_differences:
       either fails at the server or applies stale per-column state. The new driver validates at
       addBatch() time via BatchColumnValidator and throws SnowflakeSQLException("Missing value
       for parameter index: N") so the offending row is rejected at the call site.
+  12:
+    name: "JDBC wrapper interface is correctly implemented"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    impact: low
+    is_breaking_change: false
+    status_rationale: |
+      The old driver implements java.sql.Wrapper inconsistently - some classes support
+      isWrapperFor/unwrap while others throw SQLFeatureNotSupportedException.
+      The new driver applies DelegatingWrapper everywhere the interface is applicable,
+      so extension access works uniformly.
