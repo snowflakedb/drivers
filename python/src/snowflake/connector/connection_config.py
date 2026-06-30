@@ -137,6 +137,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     logout_total_timeout_seconds: int | None = None
     """Total timeout budget for logout operation including retries"""
 
+    master_token: str | None = None
+    """Pre-acquired master token for session token authentication"""
+
+    master_validity_in_seconds: int | None = None
+    """Remaining validity in seconds for the master token (session token auth)"""
+
     no_proxy: str | None = None
     """Comma-separated list of hosts to bypass the proxy for"""
 
@@ -226,6 +232,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     server_url: str | None = None
     """Full server URL (alternative to host/port/protocol)"""
+
+    session_token: str | None = None
+    """Pre-acquired session token for session token authentication"""
 
     ssl: bool | None = None
     """Enable or disable SSL/TLS (sets protocol to https or http). Deprecated: use protocol instead"""
@@ -321,6 +330,7 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset(
         {
+            "master_token",
             "oauth_client_secret",
             "passcode",
             "password",
@@ -328,6 +338,7 @@ class ConnectionConfig(ConnectionConfigMixin):
             "private_key_password",
             "proxy",
             "proxy_password",
+            "session_token",
             "token",
         }
     )

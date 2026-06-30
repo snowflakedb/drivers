@@ -158,6 +158,10 @@ pub mod param_names {
     /// Path to a pre-fetched `allowlist.json` file used during diagnostics.
     /// When absent, the driver fetches the allowlist live via `system$allowlist()`.
     pub const CONNECTION_DIAG_ALLOWLIST_PATH: ParamKey = ParamKey("connection_diag_allowlist_path");
+    // ── Session token authentication ────────────────────────────────────
+    pub const SESSION_TOKEN: ParamKey = ParamKey("session_token");
+    pub const MASTER_TOKEN: ParamKey = ParamKey("master_token");
+    pub const MASTER_VALIDITY_IN_SECONDS: ParamKey = ParamKey("master_validity_in_seconds");
 }
 
 /// Default `put_get_max_attempts` (mirrors the `ParamDef`).
@@ -435,6 +439,48 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: None,
         sensitive: true,
         description: "Pre-acquired bearer token (PAT or legacy OAUTH)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::SESSION_TOKEN.as_str(),
+        aliases: &["SESSION_TOKEN"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Pre-acquired session token for session token authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::MASTER_TOKEN.as_str(),
+        aliases: &["MASTER_TOKEN"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Pre-acquired master token for session token authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::MASTER_VALIDITY_IN_SECONDS.as_str(),
+        aliases: &["MASTER_VALIDITY_IN_SECONDS"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Remaining validity in seconds for the master token (session token auth)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,

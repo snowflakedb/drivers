@@ -203,6 +203,12 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             method: "OAuthClientCredentials",
         }
         .fail(),
+        // Session token auth bypasses create_credentials entirely — it validates
+        // via /session/token-request before this function is ever reached.
+        LoginMethod::SessionToken { .. } => UnsupportedLoginMethodSnafu {
+            method: "SessionToken",
+        }
+        .fail(),
     }
 }
 

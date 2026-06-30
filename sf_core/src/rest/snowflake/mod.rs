@@ -826,6 +826,46 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
+    // Session token bypass: validate the pre-acquired tokens via RENEW, which
+    // also returns the server-assigned session ID needed for telemetry routing.
+    if let LoginMethod::SessionToken {
+        session_token,
+        master_token,
+        master_validity_in_seconds,
+    } = &login_parameters.login_method
+    {
+        tracing::info!("Session token authentication: validating tokens via token-request RENEW");
+        let master_validity = master_validity_in_seconds.map(std::time::Duration::from_secs);
+        let temp_tokens = SessionTokens {
+            session_token: session_token.clone(),
+            master_token: master_token.clone(),
+            session_id: 0, // unknown until refresh_session returns the real id
+            session_expires_at: None,
+            master_expires_at: master_validity.map(|d| std::time::Instant::now() + d),
+            master_validity,
+        };
+        let tokens = refresh_session(
+            client,
+            &login_parameters.server_url,
+            &login_parameters.client_info,
+            &temp_tokens,
+        )
+        .await?;
+        tracing::info!(
+            session_id = tokens.session_id,
+            "Session token authentication succeeded"
+        );
+        return Ok(LoginResult {
+            tokens,
+            session_parameters: None,
+            database_name: None,
+            schema_name: None,
+            warehouse_name: None,
+            role_name: None,
+            server_version: None,
+        });
+    }
+
     // For interactive auth methods (external browser and MFA) that write a
     // token to the cache, acquire a per-<user, host> prompt-lock so that only
     // one connection in a pool drives the interactive step.  Waiters block
