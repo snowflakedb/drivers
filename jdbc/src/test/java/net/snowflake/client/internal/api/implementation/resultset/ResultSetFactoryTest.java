@@ -1,8 +1,11 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -10,6 +13,9 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.util.Arrays;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ArrowArrayStreamPtr;
@@ -132,5 +138,27 @@ class ResultSetFactoryTest {
 
     verify(mockCoreApi).resultSetGetStream(HANDLE);
     verify(mockCoreApi).resultSetRelease(HANDLE);
+  }
+
+  // =========================================================================
+  // createEmpty()
+  // =========================================================================
+
+  @Test
+  void shouldCreateEmptyResultSetWithMetadataColumnsAndNoRows() throws Exception {
+    SnowflakeResultSetMetaDataImpl metaData =
+        SnowflakeResultSetMetaDataImpl.fromColumnSpec(
+            null,
+            Arrays.asList("TABLE_SCHEM", "TABLE_CATALOG"),
+            Arrays.asList("TEXT", "TEXT"),
+            Arrays.asList(Types.VARCHAR, Types.VARCHAR));
+
+    InternalResultSet result = ResultSetFactory.createEmpty(mockStatement, metaData, false);
+
+    assertTrue(result.isBeforeFirst());
+    assertFalse(result.next());
+    assertTrue(result.isAfterLast());
+    assertEquals(2, result.getMetaData().getColumnCount());
+    assertEquals("TABLE_SCHEM", result.getMetaData().getColumnName(1));
   }
 }

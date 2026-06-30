@@ -24,7 +24,7 @@ public class SnowflakeDatabaseMetaDataImpl
   private final MetaDataIdentity identity;
   private final MetaDataCapabilities capabilities;
   private final MetaDataLimits limits;
-  private final MetaDataObjects queries;
+  private final MetaDataObjects objects;
 
   public SnowflakeDatabaseMetaDataImpl(
       SnowflakeConnectionImpl connection, Properties properties, CoreDriverApi coreDriverApi) {
@@ -32,7 +32,7 @@ public class SnowflakeDatabaseMetaDataImpl
     this.identity = new MetaDataIdentity(connection, properties);
     this.capabilities = new MetaDataCapabilities(connection);
     this.limits = new MetaDataLimits(connection, coreDriverApi);
-    this.queries = new MetaDataObjects(connection);
+    this.objects = new MetaDataObjects(connection, coreDriverApi);
   }
 
   @Override
@@ -657,7 +657,7 @@ public class SnowflakeDatabaseMetaDataImpl
   @Override
   public ResultSet getCatalogs() throws SQLException {
     connection.checkClosed();
-    return queries.getCatalogs();
+    return objects.getCatalogs();
   }
 
   @Override
@@ -908,7 +908,7 @@ public class SnowflakeDatabaseMetaDataImpl
   @Override
   public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getSchemas(catalog, schemaPattern);
   }
 
   @Override

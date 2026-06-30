@@ -15,7 +15,11 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
@@ -972,22 +976,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     try (ResultSet resultSet = metaData.getCatalogs()) {
       ResultSetMetaData rsMeta = resultSet.getMetaData();
       assertEquals(1, rsMeta.getColumnCount());
-      assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
-      assertEquals("TABLE_CAT", rsMeta.getColumnLabel(1));
-      assertEquals(Types.VARCHAR, rsMeta.getColumnType(1));
-      assertEquals("TEXT", rsMeta.getColumnTypeName(1));
-      assertEquals("", rsMeta.getCatalogName(1));
-      assertEquals("", rsMeta.getSchemaName(1));
-      assertEquals("T", rsMeta.getTableName(1));
-      assertEquals(25, rsMeta.getColumnDisplaySize(1));
-      assertEquals(9, rsMeta.getPrecision(1));
-      assertEquals(9, rsMeta.getScale(1));
-      assertEquals(ResultSetMetaData.columnNullableUnknown, rsMeta.isNullable(1));
-      assertFalse(rsMeta.isAutoIncrement(1));
-      assertFalse(rsMeta.isSigned(1));
-      assertTrue(rsMeta.isSearchable(1));
-      assertTrue(rsMeta.isReadOnly(1));
-      assertFalse(rsMeta.isWritable(1));
+      assertMetadataColumn(rsMeta, 1, "TABLE_CAT");
 
       Set<String> databases = new HashSet<>();
       while (resultSet.next()) {
@@ -999,12 +988,70 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void getSchemasReturnsAccessibleSchemas() {}
+  void getSchemasReturnsAccessibleSchemas() throws Exception {
+    Connection conn = getDefaultConnection();
+    DatabaseMetaData metaData = conn.getMetaData();
+    String currentDatabase;
+    String currentSchema;
+    try (Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+      assertTrue(rs.next());
+      currentDatabase = rs.getString(1);
+      currentSchema = rs.getString(2);
+    }
+
+    try (ResultSet resultSet = metaData.getSchemas()) {
+      ResultSetMetaData rsMeta = resultSet.getMetaData();
+      assertEquals(2, rsMeta.getColumnCount());
+      assertMetadataColumn(rsMeta, 1, "TABLE_SCHEM");
+      assertMetadataColumn(rsMeta, 2, "TABLE_CATALOG");
+
+      Map<String, List<String>> catalogToSchema = new HashMap<>();
+      while (resultSet.next()) {
+        String schema = resultSet.getString("TABLE_SCHEM");
+        String catalog = resultSet.getString("TABLE_CATALOG");
+        catalogToSchema.putIfAbsent(catalog, new ArrayList<>());
+        catalogToSchema.get(catalog).add(schema);
+      }
+      assertFalse(catalogToSchema.isEmpty());
+      assertTrue(catalogToSchema.containsKey(currentDatabase));
+      assertTrue(catalogToSchema.get(currentDatabase).contains(currentSchema));
+    }
+  }
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void getSchemasWithCatalogAndPatternReturnsMatchingSchemas() {}
+  void getSchemasWithCatalogAndPatternReturnsMatchingSchemas() throws Exception {
+    Connection conn = getDefaultConnection();
+    DatabaseMetaData metaData = conn.getMetaData();
+    String currentDatabase;
+    String currentSchema;
+    try (Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+      assertTrue(rs.next());
+      currentDatabase = rs.getString(1);
+      currentSchema = rs.getString(2);
+    }
+
+    try (ResultSet resultSet = metaData.getSchemas(currentDatabase, currentSchema)) {
+      assertTrue(resultSet.next());
+      assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+      assertEquals(currentDatabase, resultSet.getString("TABLE_CATALOG"));
+      assertFalse(resultSet.next());
+    }
+
+    try (ResultSet resultSet = metaData.getSchemas(currentDatabase, "%")) {
+      Set<String> schemas = new HashSet<>();
+      while (resultSet.next()) {
+        assertEquals(currentDatabase, resultSet.getString("TABLE_CATALOG"));
+        schemas.add(resultSet.getString("TABLE_SCHEM"));
+      }
+      assertTrue(schemas.contains(currentSchema));
+    }
+
+    try (ResultSet resultSet = metaData.getSchemas("NONEXISTENT_DB_XYZ", "%")) {
+      assertFalse(resultSet.next());
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
@@ -1069,4 +1116,24 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
   void getFunctionColumnsReturnsFunctionColumns() {}
+
+  private static void assertMetadataColumn(ResultSetMetaData rsMeta, int col, String name)
+      throws Exception {
+    assertEquals(name, rsMeta.getColumnName(col));
+    assertEquals(name, rsMeta.getColumnLabel(col));
+    assertEquals(Types.VARCHAR, rsMeta.getColumnType(col));
+    assertEquals("TEXT", rsMeta.getColumnTypeName(col));
+    assertEquals("", rsMeta.getCatalogName(col));
+    assertEquals("", rsMeta.getSchemaName(col));
+    assertEquals("T", rsMeta.getTableName(col));
+    assertEquals(25, rsMeta.getColumnDisplaySize(col));
+    assertEquals(9, rsMeta.getPrecision(col));
+    assertEquals(9, rsMeta.getScale(col));
+    assertEquals(ResultSetMetaData.columnNullableUnknown, rsMeta.isNullable(col));
+    assertFalse(rsMeta.isAutoIncrement(col));
+    assertFalse(rsMeta.isSigned(col));
+    assertTrue(rsMeta.isSearchable(col));
+    assertTrue(rsMeta.isReadOnly(col));
+    assertFalse(rsMeta.isWritable(col));
+  }
 }

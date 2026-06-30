@@ -54,8 +54,8 @@ import org.junit.jupiter.api.TestInstance;
  * tests still is not applicable. If it is applicable, move tests to DatabaseMetaDataIT so that both
  * the latest and oldest supported driver run the tests.
  */
-@SkipNewDriver("not yet implemented")
 public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
+
   protected Connection connection;
   private static final String TEST_PROC =
       "create or replace procedure testproc(param1 float, param2 string)\n"
@@ -95,8 +95,12 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
   public void prepare() {
     try {
       connection = getDefaultConnection();
-      startingSchema = connection.getSchema();
-      startingDatabase = connection.getCatalog();
+      try (Statement stmt = connection.createStatement();
+          ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+        assertTrue(rs.next());
+        startingDatabase = rs.getString(1);
+        startingSchema = rs.getString(2);
+      }
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -134,6 +138,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
   // SnowflakeType enum cannot parse ("No enum constant ... INTERVAL DAY TO HOUR"). It exercises
   // backend metadata enumeration over foreign objects rather than driver behavior. Revisit if/when
   // we have an isolated account.
+  @SkipNewDriver("not yet implemented")
   @Test
   @Disabled(
       "Super fragile/slow on a shared account — database-wide scan over foreign objects, not driver behavior")
@@ -248,6 +253,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    *
    * @throws Exception
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseAndSchema() throws Exception {
     try (Statement statement = connection.createStatement()) {
@@ -328,6 +334,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseInGetTables() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -343,6 +350,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseInGetColumns() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -358,6 +366,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseforGetPrimaryKeysAndForeignKeys() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -386,6 +395,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    * For driver versions higher than 3.14.5 we can disable the abilty to use pattern searches for
    * getPrimaryKeys and getImportedKeys functions by setting enablePatternSearch = false.
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseforGetPrimaryKeysAndForeignKeysWithPatternSearchDisabled()
       throws SQLException {
@@ -414,6 +424,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseInGetProcedures() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -430,6 +441,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testDoubleQuotedDatabaseInGetTablePrivileges() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -451,6 +463,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    *
    * @throws Throwable
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetFunctionSqlInjectionProtection() throws Throwable {
     try (Connection connection = openConnection();
@@ -492,6 +505,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    *
    * @throws SQLException
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetProcedureColumnsWildcards() throws Exception {
     try (Statement statement = connection.createStatement()) {
@@ -524,6 +538,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetStringValueFromColumnDef() throws SQLException {
     Properties properties =
@@ -569,6 +584,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetColumnsNullable() throws Throwable {
     try (Statement statement = connection.createStatement()) {
@@ -602,6 +618,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
   // session-parameter resolution rather than driver behavior, and is too slow to keep in the suite.
   // Revisit if/when we want dedicated coverage for these session parameters against an isolated
   // account.
+  @SkipNewDriver("not yet implemented")
   @Test
   @Disabled(
       "Too slow (~12m) — account-wide metadata scan; exercises backend session params, not the driver")
@@ -770,6 +787,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    * name, and optional UDF parameter names. It returns rows of information about the UDF, and
    * returns 1 row per return value and 1 row per input parameter.
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetFunctionColumns() throws Exception {
     try (Statement statement = connection.createStatement()) {
@@ -1045,6 +1063,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testHandlingSpecialChars() throws Exception {
     try (Statement statement = connection.createStatement()) {
@@ -1155,6 +1174,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testUnderscoreInSchemaNamePatternForPrimaryAndForeignKeys() throws Exception {
     try (Statement statement = connection.createStatement()) {
@@ -1183,6 +1203,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    * For driver versions higher than 3.14.5 we can disable the abilty to use pattern searches for
    * getPrimaryKeys and getImportedKeys functions by setting enablePatternSearch = false.
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testUnderscoreInSchemaNamePatternForPrimaryAndForeignKeysWithPatternSearchDisabled()
       throws Exception {
@@ -1220,6 +1241,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testTimestampWithTimezoneDataType() throws Exception {
     String database = connection.getCatalog();
@@ -1245,6 +1267,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     // a supported way to toggle this behavior.
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetColumns() throws Throwable {
     try (Statement statement = connection.createStatement()) {
@@ -1634,6 +1657,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetStreams() throws SQLException {
     final String targetStream = "S0";
@@ -1688,6 +1712,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetProcedureColumns() throws Exception {
     try (Statement statement = connection.createStatement()) {
@@ -1735,6 +1760,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetProcedureColumnsReturnsResultSet() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -1786,6 +1812,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetProcedureColumnsReturnsValue() throws SQLException {
     try (Statement statement = connection.createStatement(); ) {
@@ -1828,6 +1855,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetProcedureColumnsReturnsNull() throws SQLException {
     try (Statement statement = connection.createStatement(); ) {
@@ -1874,6 +1902,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    * sets that value to false meaning pattern searches are not allowed for getPrimaryKeys,
    * getImportedKeys, getExportedKeys, and getCrossReference.
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testNoPatternSearchAllowedForPrimaryAndForeignKeys() throws Exception {
     Properties properties = new Properties();
@@ -1992,6 +2021,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    * which sets whether pattern searches are allowed for certain DatabaseMetaData queries. This test
    * uses the default setting for this property which is true.
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testPatternSearchAllowedForPrimaryAndForeignKeys() throws Exception {
     final String table1 = "PATTERN_SEARCH_TABLE1";
@@ -2125,6 +2155,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
   }
 
   /** Added in > 3.16.1 */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testVectorDimension() throws SQLException {
     try (Statement statement = connection.createStatement()) {
@@ -2164,6 +2195,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
    * Added in > 3.21.0 for SNOW-1619625 - we need to use exact schema when
    * CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX = true
    */
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testExactSchemaSearching() throws SQLException {
     Random random = new Random();
@@ -2438,6 +2470,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetColumnsWithCommonTypes() throws Throwable {
     try (Statement statement = connection.createStatement()) {
@@ -2555,6 +2588,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @SkipNewDriver("not yet implemented")
   @Test
   public void testGetColumnsWithUnrecognisedType() throws Throwable {
     try (Statement statement = connection.createStatement()) {
@@ -2606,6 +2640,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
 
   @Nested
   @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  @SkipNewDriver("not yet implemented")
   class WildcardsInShowMetadataQueries {
     private String schemaWithUnderscore;
     private String tableWithUnderscore;
@@ -2702,6 +2737,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetColumns() throws Exception {
         try (ResultSet rs =
@@ -2723,6 +2759,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetSchemas() throws Exception {
         try (ResultSet rs = metaData.getSchemas(database, schemaWithUnderscore)) {
@@ -2735,6 +2772,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetTables() throws Exception {
         try (ResultSet rs =
@@ -2771,6 +2809,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetColumns() throws Exception {
         try (ResultSet rs =
@@ -2799,6 +2838,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetSchemas() throws Exception {
         try (ResultSet rs = metaData.getSchemas(database, schemaWithUnderscore)) {
@@ -2811,6 +2851,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetTables() throws Exception {
         try (ResultSet rs =
@@ -2831,6 +2872,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetProcedures() throws Exception {
         try (ResultSet rs =
@@ -2854,6 +2896,7 @@ public class DatabaseMetaDataLatestIT extends SnowflakeIntegrationTestBase {
         }
       }
 
+      @SkipNewDriver("not yet implemented")
       @Test
       void testGetFunctions() throws Exception {
         try (ResultSet rs =
