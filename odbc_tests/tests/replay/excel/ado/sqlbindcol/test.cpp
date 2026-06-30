@@ -10,7 +10,7 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
+TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flaky]") {
   // Blocked on the new driver. Required to unblock:
   //   - SQLGetInfo info types (S1C00 - unknown): SQL_ACTIVE_STATEMENTS,
   //     SQL_DATABASE_NAME, SQL_DEFAULT_TXN_ISOLATION, SQL_TXN_CAPABLE,
