@@ -508,8 +508,11 @@ fn binding_for_row(
     use std::mem::size_of;
 
     let (data_ptr, str_len_or_ind_ptr) = if bind_type == 0 {
-        // Column-wise: each column is a flat array; stride == buffer_length.
-        let stride = apd_rec.buffer_length as usize;
+        // Fixed-size types are bound with BufferLength=0; stride by the C type's octet length.
+        let stride = apd_rec
+            .value_type
+            .fixed_size()
+            .unwrap_or(apd_rec.buffer_length as usize);
         let data_ptr = if apd_rec.data_ptr.is_null() {
             apd_rec.data_ptr
         } else {
@@ -2606,6 +2609,65 @@ mod tests {
             parsed["1"]["value"],
             serde_json::json!(["1", serde_json::Value::Null, "3"])
         );
+        Ok(())
+    }
+
+    #[test]
+    fn json_column_wise_fixed_types_with_zero_buffer_length_stride_by_type_size() -> TestResult {
+        // SNOW-3720841: fixed-size types bound with BufferLength=0 must stride by the C type size.
+        let ids: [i32; 3] = [10, 20, 30];
+        let bigs: [i64; 3] = [100, 200, 300];
+
+        let (mut apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::SLong,
+                sql::SqlDataType::INTEGER,
+                ids.as_ptr() as sql::Pointer,
+                0,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::SBigInt,
+                sql::SqlDataType::EXT_BIG_INT,
+                bigs.as_ptr() as sql::Pointer,
+                0,
+                std::ptr::null_mut(),
+            ),
+        ]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 2)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "FIXED");
+        assert_eq!(parsed["1"]["value"], serde_json::json!(["10", "20", "30"]));
+        assert_eq!(parsed["2"]["type"], "FIXED");
+        assert_eq!(
+            parsed["2"]["value"],
+            serde_json::json!(["100", "200", "300"])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn csv_column_wise_fixed_type_with_zero_buffer_length_strides_by_type_size() -> TestResult {
+        // SNOW-3720841: same BufferLength=0 stride fix on the CSV (stage) bind path.
+        let ids: [i32; 3] = [10, 20, 30];
+
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::SLong,
+            sql::SqlDataType::INTEGER,
+            ids.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 1)?;
+        // One row per line; before the fix every line was "10".
+        assert_eq!(csv, "\"10\"\n\"20\"\n\"30\"\n");
         Ok(())
     }
 

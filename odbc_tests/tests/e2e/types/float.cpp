@@ -453,7 +453,6 @@ TEST_CASE("should select float using parameter binding for float and synonyms", 
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should insert float using parameter binding for float and synonyms", "[float]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists
