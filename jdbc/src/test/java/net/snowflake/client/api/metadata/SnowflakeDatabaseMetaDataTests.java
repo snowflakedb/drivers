@@ -45,12 +45,12 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   // ---------- Identity ----------
 
   @Test
-  void getDatabaseProductNameReturnsSnowflake() throws Exception {
+  void shouldReturnSnowflakeForDatabaseProductName() throws Exception {
     assertEquals("Snowflake", metaData().getDatabaseProductName());
   }
 
   @Test
-  void getDriverNameContainsSnowflake() throws Exception {
+  void shouldContainSnowflakeInDriverName() throws Exception {
     // Both drivers identify as a Snowflake driver: legacy returns "Snowflake",
     // universal-driver returns "Snowflake JDBC Driver". Substring is the
     // strictest assertion that still holds across both.
@@ -58,7 +58,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void versionMetadataIsConsistent() throws Exception {
+  void shouldReportConsistentVersionMetadata() throws Exception {
     DatabaseMetaData md = metaData();
 
     String version = md.getDriverVersion();
@@ -78,739 +78,739 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getIdentifierQuoteStringIsDoubleQuote() throws Exception {
+  void shouldReturnDoubleQuoteForIdentifierQuoteString() throws Exception {
     assertEquals("\"", metaData().getIdentifierQuoteString());
   }
 
   @Test
-  void getSearchStringEscapeIsBackslash() throws Exception {
+  void shouldReturnBackslashForSearchStringEscape() throws Exception {
     assertEquals("\\", metaData().getSearchStringEscape());
   }
 
   @Test
-  void getExtraNameCharactersIsDollar() throws Exception {
+  void shouldReturnDollarForExtraNameCharacters() throws Exception {
     assertEquals("$", metaData().getExtraNameCharacters());
   }
 
   @Test
-  void getSchemaTermIsSchema() throws Exception {
+  void shouldReturnSchemaForSchemaTerm() throws Exception {
     assertEquals("schema", metaData().getSchemaTerm());
   }
 
   @Test
-  void getProcedureTermIsProcedure() throws Exception {
+  void shouldReturnProcedureForProcedureTerm() throws Exception {
     assertEquals("procedure", metaData().getProcedureTerm());
   }
 
   @Test
-  void getCatalogTermIsDatabase() throws Exception {
+  void shouldReturnDatabaseForCatalogTerm() throws Exception {
     assertEquals("database", metaData().getCatalogTerm());
   }
 
   @Test
-  void getCatalogSeparatorIsDot() throws Exception {
+  void shouldReturnDotForCatalogSeparator() throws Exception {
     assertEquals(".", metaData().getCatalogSeparator());
   }
 
   @Test
-  void getSQLStateTypeIsSqlStateSQL() throws Exception {
+  void shouldReturnSqlStateSqlForSqlStateType() throws Exception {
     assertEquals(DatabaseMetaData.sqlStateSQL, metaData().getSQLStateType());
   }
 
   // ---------- Capabilities: procedures, tables, read-only ----------
 
   @Test
-  void allProceduresAreCallableIsFalse() throws Exception {
+  void shouldReturnFalseForAllProceduresAreCallable() throws Exception {
     assertFalse(metaData().allProceduresAreCallable());
   }
 
   @Test
-  void allTablesAreSelectableIsTrue() throws Exception {
+  void shouldReturnTrueForAllTablesAreSelectable() throws Exception {
     assertTrue(metaData().allTablesAreSelectable());
   }
 
   @Test
-  void isReadOnlyIsFalse() throws Exception {
+  void shouldReturnFalseForIsReadOnly() throws Exception {
     assertFalse(metaData().isReadOnly());
   }
 
   // ---------- Capabilities: null ordering ----------
 
   @Test
-  void nullsAreSortedHighIsTrue() throws Exception {
+  void shouldReturnTrueForNullsAreSortedHigh() throws Exception {
     assertTrue(metaData().nullsAreSortedHigh());
   }
 
   @Test
-  void nullsAreSortedLowIsFalse() throws Exception {
+  void shouldReturnFalseForNullsAreSortedLow() throws Exception {
     assertFalse(metaData().nullsAreSortedLow());
   }
 
   @Test
-  void nullsAreSortedAtStartIsFalse() throws Exception {
+  void shouldReturnFalseForNullsAreSortedAtStart() throws Exception {
     assertFalse(metaData().nullsAreSortedAtStart());
   }
 
   @Test
-  void nullsAreSortedAtEndIsFalse() throws Exception {
+  void shouldReturnFalseForNullsAreSortedAtEnd() throws Exception {
     assertFalse(metaData().nullsAreSortedAtEnd());
   }
 
   // ---------- Capabilities: file storage ----------
 
   @Test
-  void usesLocalFilesIsFalse() throws Exception {
+  void shouldReturnFalseForUsesLocalFiles() throws Exception {
     assertFalse(metaData().usesLocalFiles());
   }
 
   @Test
-  void usesLocalFilePerTableIsFalse() throws Exception {
+  void shouldReturnFalseForUsesLocalFilePerTable() throws Exception {
     assertFalse(metaData().usesLocalFilePerTable());
   }
 
   // ---------- Capabilities: identifier case ----------
 
   @Test
-  void supportsMixedCaseIdentifiersIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsMixedCaseIdentifiers() throws Exception {
     assertFalse(metaData().supportsMixedCaseIdentifiers());
   }
 
   @Test
-  void storesUpperCaseIdentifiersIsTrue() throws Exception {
+  void shouldReturnTrueForStoresUpperCaseIdentifiers() throws Exception {
     assertTrue(metaData().storesUpperCaseIdentifiers());
   }
 
   @Test
-  void storesLowerCaseIdentifiersIsFalse() throws Exception {
+  void shouldReturnFalseForStoresLowerCaseIdentifiers() throws Exception {
     assertFalse(metaData().storesLowerCaseIdentifiers());
   }
 
   @Test
-  void storesMixedCaseIdentifiersIsFalse() throws Exception {
+  void shouldReturnFalseForStoresMixedCaseIdentifiers() throws Exception {
     assertFalse(metaData().storesMixedCaseIdentifiers());
   }
 
   @Test
-  void supportsMixedCaseQuotedIdentifiersIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsMixedCaseQuotedIdentifiers() throws Exception {
     assertTrue(metaData().supportsMixedCaseQuotedIdentifiers());
   }
 
   @Test
-  void storesUpperCaseQuotedIdentifiersIsFalse() throws Exception {
+  void shouldReturnFalseForStoresUpperCaseQuotedIdentifiers() throws Exception {
     assertFalse(metaData().storesUpperCaseQuotedIdentifiers());
   }
 
   @Test
-  void storesLowerCaseQuotedIdentifiersIsFalse() throws Exception {
+  void shouldReturnFalseForStoresLowerCaseQuotedIdentifiers() throws Exception {
     assertFalse(metaData().storesLowerCaseQuotedIdentifiers());
   }
 
   @Test
-  void storesMixedCaseQuotedIdentifiersIsTrue() throws Exception {
+  void shouldReturnTrueForStoresMixedCaseQuotedIdentifiers() throws Exception {
     assertTrue(metaData().storesMixedCaseQuotedIdentifiers());
   }
 
   // ---------- Capabilities: DDL/DML ----------
 
   @Test
-  void supportsAlterTableWithAddColumnIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsAlterTableWithAddColumn() throws Exception {
     assertTrue(metaData().supportsAlterTableWithAddColumn());
   }
 
   @Test
-  void supportsAlterTableWithDropColumnIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsAlterTableWithDropColumn() throws Exception {
     assertTrue(metaData().supportsAlterTableWithDropColumn());
   }
 
   @Test
-  void supportsColumnAliasingIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsColumnAliasing() throws Exception {
     assertTrue(metaData().supportsColumnAliasing());
   }
 
   @Test
-  void nullPlusNonNullIsNullIsTrue() throws Exception {
+  void shouldReturnTrueForNullPlusNonNullIsNull() throws Exception {
     assertTrue(metaData().nullPlusNonNullIsNull());
   }
 
   @Test
-  void supportsConvertIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsConvert() throws Exception {
     assertFalse(metaData().supportsConvert());
   }
 
   @Test
-  void supportsConvertWithTypesIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsConvertWithTypes() throws Exception {
     assertFalse(metaData().supportsConvert(Types.INTEGER, Types.VARCHAR));
   }
 
   // ---------- Capabilities: correlation, ordering, grouping ----------
 
   @Test
-  void supportsTableCorrelationNamesIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsTableCorrelationNames() throws Exception {
     assertTrue(metaData().supportsTableCorrelationNames());
   }
 
   @Test
-  void supportsDifferentTableCorrelationNamesIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsDifferentTableCorrelationNames() throws Exception {
     assertFalse(metaData().supportsDifferentTableCorrelationNames());
   }
 
   @Test
-  void supportsExpressionsInOrderByIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsExpressionsInOrderBy() throws Exception {
     assertTrue(metaData().supportsExpressionsInOrderBy());
   }
 
   @Test
-  void supportsOrderByUnrelatedIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsOrderByUnrelated() throws Exception {
     assertTrue(metaData().supportsOrderByUnrelated());
   }
 
   @Test
-  void supportsGroupByIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsGroupBy() throws Exception {
     assertTrue(metaData().supportsGroupBy());
   }
 
   @Test
-  void supportsGroupByUnrelatedIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsGroupByUnrelated() throws Exception {
     assertFalse(metaData().supportsGroupByUnrelated());
   }
 
   @Test
-  void supportsGroupByBeyondSelectIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsGroupByBeyondSelect() throws Exception {
     assertTrue(metaData().supportsGroupByBeyondSelect());
   }
 
   @Test
-  void supportsLikeEscapeClauseIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsLikeEscapeClause() throws Exception {
     assertFalse(metaData().supportsLikeEscapeClause());
   }
 
   // ---------- Capabilities: results, transactions, columns ----------
 
   @Test
-  void supportsMultipleResultSetsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsMultipleResultSets() throws Exception {
     assertFalse(metaData().supportsMultipleResultSets());
   }
 
   @Test
-  void supportsMultipleTransactionsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsMultipleTransactions() throws Exception {
     assertTrue(metaData().supportsMultipleTransactions());
   }
 
   @Test
-  void supportsNonNullableColumnsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsNonNullableColumns() throws Exception {
     assertTrue(metaData().supportsNonNullableColumns());
   }
 
   // ---------- Capabilities: SQL grammar ----------
 
   @Test
-  void supportsMinimumSQLGrammarIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsMinimumSQLGrammar() throws Exception {
     assertFalse(metaData().supportsMinimumSQLGrammar());
   }
 
   @Test
-  void supportsCoreSQLGrammarIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsCoreSQLGrammar() throws Exception {
     assertFalse(metaData().supportsCoreSQLGrammar());
   }
 
   @Test
-  void supportsExtendedSQLGrammarIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsExtendedSQLGrammar() throws Exception {
     assertFalse(metaData().supportsExtendedSQLGrammar());
   }
 
   @Test
-  void supportsANSI92EntryLevelSQLIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsANSI92EntryLevelSQL() throws Exception {
     assertTrue(metaData().supportsANSI92EntryLevelSQL());
   }
 
   @Test
-  void supportsANSI92IntermediateSQLIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsANSI92IntermediateSQL() throws Exception {
     assertFalse(metaData().supportsANSI92IntermediateSQL());
   }
 
   @Test
-  void supportsANSI92FullSQLIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsANSI92FullSQL() throws Exception {
     assertFalse(metaData().supportsANSI92FullSQL());
   }
 
   @Test
-  void supportsIntegrityEnhancementFacilityIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsIntegrityEnhancementFacility() throws Exception {
     assertFalse(metaData().supportsIntegrityEnhancementFacility());
   }
 
   // ---------- Capabilities: outer joins ----------
 
   @Test
-  void supportsOuterJoinsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsOuterJoins() throws Exception {
     assertTrue(metaData().supportsOuterJoins());
   }
 
   @Test
-  void supportsFullOuterJoinsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsFullOuterJoins() throws Exception {
     assertTrue(metaData().supportsFullOuterJoins());
   }
 
   @Test
-  void supportsLimitedOuterJoinsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsLimitedOuterJoins() throws Exception {
     assertTrue(metaData().supportsLimitedOuterJoins());
   }
 
   // ---------- Capabilities: catalog/schema placement ----------
 
   @Test
-  void isCatalogAtStartIsTrue() throws Exception {
+  void shouldReturnTrueForIsCatalogAtStart() throws Exception {
     assertTrue(metaData().isCatalogAtStart());
   }
 
   @Test
-  void supportsSchemasInDataManipulationIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsSchemasInDataManipulation() throws Exception {
     assertTrue(metaData().supportsSchemasInDataManipulation());
   }
 
   @Test
-  void supportsSchemasInProcedureCallsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsSchemasInProcedureCalls() throws Exception {
     assertFalse(metaData().supportsSchemasInProcedureCalls());
   }
 
   @Test
-  void supportsSchemasInTableDefinitionsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsSchemasInTableDefinitions() throws Exception {
     assertTrue(metaData().supportsSchemasInTableDefinitions());
   }
 
   @Test
-  void supportsSchemasInIndexDefinitionsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsSchemasInIndexDefinitions() throws Exception {
     assertFalse(metaData().supportsSchemasInIndexDefinitions());
   }
 
   @Test
-  void supportsSchemasInPrivilegeDefinitionsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsSchemasInPrivilegeDefinitions() throws Exception {
     assertFalse(metaData().supportsSchemasInPrivilegeDefinitions());
   }
 
   @Test
-  void supportsCatalogsInDataManipulationIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsCatalogsInDataManipulation() throws Exception {
     assertTrue(metaData().supportsCatalogsInDataManipulation());
   }
 
   @Test
-  void supportsCatalogsInProcedureCallsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsCatalogsInProcedureCalls() throws Exception {
     assertFalse(metaData().supportsCatalogsInProcedureCalls());
   }
 
   @Test
-  void supportsCatalogsInTableDefinitionsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsCatalogsInTableDefinitions() throws Exception {
     assertTrue(metaData().supportsCatalogsInTableDefinitions());
   }
 
   @Test
-  void supportsCatalogsInIndexDefinitionsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsCatalogsInIndexDefinitions() throws Exception {
     assertFalse(metaData().supportsCatalogsInIndexDefinitions());
   }
 
   @Test
-  void supportsCatalogsInPrivilegeDefinitionsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsCatalogsInPrivilegeDefinitions() throws Exception {
     assertFalse(metaData().supportsCatalogsInPrivilegeDefinitions());
   }
 
   // ---------- Capabilities: positioned/select-for-update/stored procedures ----------
 
   @Test
-  void supportsPositionedDeleteIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsPositionedDelete() throws Exception {
     assertFalse(metaData().supportsPositionedDelete());
   }
 
   @Test
-  void supportsPositionedUpdateIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsPositionedUpdate() throws Exception {
     assertFalse(metaData().supportsPositionedUpdate());
   }
 
   @Test
-  void supportsSelectForUpdateIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsSelectForUpdate() throws Exception {
     assertFalse(metaData().supportsSelectForUpdate());
   }
 
   @Test
-  void supportsStoredProceduresIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsStoredProcedures() throws Exception {
     assertTrue(metaData().supportsStoredProcedures());
   }
 
   // ---------- Capabilities: subqueries, set operations ----------
 
   @Test
-  void supportsSubqueriesInComparisonsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsSubqueriesInComparisons() throws Exception {
     assertTrue(metaData().supportsSubqueriesInComparisons());
   }
 
   @Test
-  void supportsSubqueriesInExistsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsSubqueriesInExists() throws Exception {
     assertTrue(metaData().supportsSubqueriesInExists());
   }
 
   @Test
-  void supportsSubqueriesInInsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsSubqueriesInIns() throws Exception {
     assertTrue(metaData().supportsSubqueriesInIns());
   }
 
   @Test
-  void supportsSubqueriesInQuantifiedsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsSubqueriesInQuantifieds() throws Exception {
     assertFalse(metaData().supportsSubqueriesInQuantifieds());
   }
 
   @Test
-  void supportsCorrelatedSubqueriesIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsCorrelatedSubqueries() throws Exception {
     assertTrue(metaData().supportsCorrelatedSubqueries());
   }
 
   @Test
-  void supportsUnionIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsUnion() throws Exception {
     assertTrue(metaData().supportsUnion());
   }
 
   @Test
-  void supportsUnionAllIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsUnionAll() throws Exception {
     assertTrue(metaData().supportsUnionAll());
   }
 
   // ---------- Capabilities: cursors, statements across commit/rollback ----------
 
   @Test
-  void supportsOpenCursorsAcrossCommitIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsOpenCursorsAcrossCommit() throws Exception {
     assertFalse(metaData().supportsOpenCursorsAcrossCommit());
   }
 
   @Test
-  void supportsOpenCursorsAcrossRollbackIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsOpenCursorsAcrossRollback() throws Exception {
     assertFalse(metaData().supportsOpenCursorsAcrossRollback());
   }
 
   @Test
-  void supportsOpenStatementsAcrossCommitIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsOpenStatementsAcrossCommit() throws Exception {
     assertFalse(metaData().supportsOpenStatementsAcrossCommit());
   }
 
   @Test
-  void supportsOpenStatementsAcrossRollbackIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsOpenStatementsAcrossRollback() throws Exception {
     assertFalse(metaData().supportsOpenStatementsAcrossRollback());
   }
 
   // ---------- Capabilities: transactions ----------
 
   @Test
-  void getDefaultTransactionIsolationIsReadCommitted() throws Exception {
+  void shouldReturnReadCommittedForDefaultTransactionIsolation() throws Exception {
     assertEquals(
         Connection.TRANSACTION_READ_COMMITTED, metaData().getDefaultTransactionIsolation());
   }
 
   @Test
-  void supportsTransactionsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsTransactions() throws Exception {
     assertTrue(metaData().supportsTransactions());
   }
 
   @Test
-  void supportsTransactionIsolationLevelNoneIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsTransactionIsolationLevelNone() throws Exception {
     assertTrue(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_NONE));
   }
 
   @Test
-  void supportsTransactionIsolationLevelReadCommittedIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsTransactionIsolationLevelReadCommitted() throws Exception {
     assertTrue(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_READ_COMMITTED));
   }
 
   @Test
-  void supportsTransactionIsolationLevelReadUncommittedIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsTransactionIsolationLevelReadUncommitted() throws Exception {
     assertFalse(
         metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_READ_UNCOMMITTED));
   }
 
   @Test
-  void supportsTransactionIsolationLevelRepeatableReadIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsTransactionIsolationLevelRepeatableRead() throws Exception {
     assertFalse(
         metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_REPEATABLE_READ));
   }
 
   @Test
-  void supportsTransactionIsolationLevelSerializableIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsTransactionIsolationLevelSerializable() throws Exception {
     assertFalse(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_SERIALIZABLE));
   }
 
   @Test
-  void supportsDataDefinitionAndDataManipulationTransactionsIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsDataDefinitionAndDataManipulationTransactions() throws Exception {
     assertTrue(metaData().supportsDataDefinitionAndDataManipulationTransactions());
   }
 
   @Test
-  void supportsDataManipulationTransactionsOnlyIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsDataManipulationTransactionsOnly() throws Exception {
     assertFalse(metaData().supportsDataManipulationTransactionsOnly());
   }
 
   @Test
-  void dataDefinitionCausesTransactionCommitIsTrue() throws Exception {
+  void shouldReturnTrueForDataDefinitionCausesTransactionCommit() throws Exception {
     assertTrue(metaData().dataDefinitionCausesTransactionCommit());
   }
 
   @Test
-  void dataDefinitionIgnoredInTransactionsIsFalse() throws Exception {
+  void shouldReturnFalseForDataDefinitionIgnoredInTransactions() throws Exception {
     assertFalse(metaData().dataDefinitionIgnoredInTransactions());
   }
 
   // ---------- Capabilities: result sets ----------
 
   @Test
-  void supportsResultSetTypeForwardOnlyIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsResultSetTypeForwardOnly() throws Exception {
     assertTrue(metaData().supportsResultSetType(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void supportsResultSetTypeScrollInsensitiveIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsResultSetTypeScrollInsensitive() throws Exception {
     assertFalse(metaData().supportsResultSetType(ResultSet.TYPE_SCROLL_INSENSITIVE));
   }
 
   @Test
-  void supportsResultSetTypeScrollSensitiveIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsResultSetTypeScrollSensitive() throws Exception {
     assertFalse(metaData().supportsResultSetType(ResultSet.TYPE_SCROLL_SENSITIVE));
   }
 
   @Test
-  void supportsResultSetConcurrencyForwardReadOnlyIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsResultSetConcurrencyForwardReadOnly() throws Exception {
     assertTrue(
         metaData()
             .supportsResultSetConcurrency(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY));
   }
 
   @Test
-  void supportsResultSetConcurrencyForwardUpdatableIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsResultSetConcurrencyForwardUpdatable() throws Exception {
     assertFalse(
         metaData()
             .supportsResultSetConcurrency(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE));
   }
 
   @Test
-  void ownUpdatesAreVisibleIsFalse() throws Exception {
+  void shouldReturnFalseForOwnUpdatesAreVisible() throws Exception {
     assertFalse(metaData().ownUpdatesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void ownDeletesAreVisibleIsFalse() throws Exception {
+  void shouldReturnFalseForOwnDeletesAreVisible() throws Exception {
     assertFalse(metaData().ownDeletesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void ownInsertsAreVisibleIsFalse() throws Exception {
+  void shouldReturnFalseForOwnInsertsAreVisible() throws Exception {
     assertFalse(metaData().ownInsertsAreVisible(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void othersUpdatesAreVisibleIsFalse() throws Exception {
+  void shouldReturnFalseForOthersUpdatesAreVisible() throws Exception {
     assertFalse(metaData().othersUpdatesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void othersDeletesAreVisibleIsFalse() throws Exception {
+  void shouldReturnFalseForOthersDeletesAreVisible() throws Exception {
     assertFalse(metaData().othersDeletesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void othersInsertsAreVisibleIsFalse() throws Exception {
+  void shouldReturnFalseForOthersInsertsAreVisible() throws Exception {
     assertFalse(metaData().othersInsertsAreVisible(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void updatesAreDetectedIsFalse() throws Exception {
+  void shouldReturnFalseForUpdatesAreDetected() throws Exception {
     assertFalse(metaData().updatesAreDetected(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void deletesAreDetectedIsFalse() throws Exception {
+  void shouldReturnFalseForDeletesAreDetected() throws Exception {
     assertFalse(metaData().deletesAreDetected(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void insertsAreDetectedIsFalse() throws Exception {
+  void shouldReturnFalseForInsertsAreDetected() throws Exception {
     assertFalse(metaData().insertsAreDetected(ResultSet.TYPE_FORWARD_ONLY));
   }
 
   @Test
-  void supportsBatchUpdatesIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsBatchUpdates() throws Exception {
     assertTrue(metaData().supportsBatchUpdates());
   }
 
   @Test
-  void supportsResultSetHoldabilityCloseAtCommitIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsResultSetHoldabilityCloseAtCommit() throws Exception {
     assertTrue(metaData().supportsResultSetHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT));
   }
 
   @Test
-  void supportsResultSetHoldabilityHoldOverCommitIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsResultSetHoldabilityHoldOverCommit() throws Exception {
     assertFalse(metaData().supportsResultSetHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT));
   }
 
   @Test
-  void getResultSetHoldabilityIsCloseCursorsAtCommit() throws Exception {
+  void shouldReturnCloseCursorsAtCommitForResultSetHoldability() throws Exception {
     assertEquals(ResultSet.CLOSE_CURSORS_AT_COMMIT, metaData().getResultSetHoldability());
   }
 
   // ---------- Capabilities: JDBC 3.0+ misc ----------
 
   @Test
-  void supportsSavepointsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsSavepoints() throws Exception {
     assertFalse(metaData().supportsSavepoints());
   }
 
   @Test
-  void supportsNamedParametersIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsNamedParameters() throws Exception {
     assertFalse(metaData().supportsNamedParameters());
   }
 
   @Test
-  void supportsMultipleOpenResultsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsMultipleOpenResults() throws Exception {
     assertFalse(metaData().supportsMultipleOpenResults());
   }
 
   @Test
-  void supportsGetGeneratedKeysIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsGetGeneratedKeys() throws Exception {
     assertFalse(metaData().supportsGetGeneratedKeys());
   }
 
   @Test
-  void locatorsUpdateCopyIsFalse() throws Exception {
+  void shouldReturnFalseForLocatorsUpdateCopy() throws Exception {
     assertFalse(metaData().locatorsUpdateCopy());
   }
 
   @Test
-  void supportsStatementPoolingIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsStatementPooling() throws Exception {
     assertFalse(metaData().supportsStatementPooling());
   }
 
   @Test
-  void supportsStoredFunctionsUsingCallSyntaxIsTrue() throws Exception {
+  void shouldReturnTrueForSupportsStoredFunctionsUsingCallSyntax() throws Exception {
     assertTrue(metaData().supportsStoredFunctionsUsingCallSyntax());
   }
 
   @Test
-  void supportsRefCursorsIsFalse() throws Exception {
+  void shouldReturnFalseForSupportsRefCursors() throws Exception {
     assertFalse(metaData().supportsRefCursors());
   }
 
   @Test
-  void getMaxLogicalLobSizeIsZero() throws Exception {
+  void shouldReturnZeroForMaxLogicalLobSize() throws Exception {
     assertEquals(0L, metaData().getMaxLogicalLobSize());
   }
 
   // ---------- Limits ----------
 
   @Test
-  void getMaxCharLiteralLengthReturnsLimit() throws Exception {
+  void shouldReturnLimitForMaxCharLiteralLength() throws Exception {
     // VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT defaults to 16 MB; some accounts raise it.
     int len = metaData().getMaxCharLiteralLength();
     assertTrue(len >= 16_777_216, () -> "expected >= 16 MB, got " + len);
   }
 
   @Test
-  void getMaxBinaryLiteralLengthReturnsLimit() throws Exception {
+  void shouldReturnLimitForMaxBinaryLiteralLength() throws Exception {
     // Hex-encoded binary literal: two chars per byte, so half the char limit.
     DatabaseMetaData md = metaData();
     assertEquals(md.getMaxCharLiteralLength() / 2, md.getMaxBinaryLiteralLength());
   }
 
   @Test
-  void getMaxColumnNameLengthIs255() throws Exception {
+  void shouldReturn255ForMaxColumnNameLength() throws Exception {
     assertEquals(255, metaData().getMaxColumnNameLength());
   }
 
   @Test
-  void getMaxColumnsInGroupByIsZero() throws Exception {
+  void shouldReturnZeroForMaxColumnsInGroupBy() throws Exception {
     assertEquals(0, metaData().getMaxColumnsInGroupBy());
   }
 
   @Test
-  void getMaxColumnsInIndexIsZero() throws Exception {
+  void shouldReturnZeroForMaxColumnsInIndex() throws Exception {
     assertEquals(0, metaData().getMaxColumnsInIndex());
   }
 
   @Test
-  void getMaxColumnsInOrderByIsZero() throws Exception {
+  void shouldReturnZeroForMaxColumnsInOrderBy() throws Exception {
     assertEquals(0, metaData().getMaxColumnsInOrderBy());
   }
 
   @Test
-  void getMaxColumnsInSelectIsZero() throws Exception {
+  void shouldReturnZeroForMaxColumnsInSelect() throws Exception {
     assertEquals(0, metaData().getMaxColumnsInSelect());
   }
 
   @Test
-  void getMaxColumnsInTableIsZero() throws Exception {
+  void shouldReturnZeroForMaxColumnsInTable() throws Exception {
     assertEquals(0, metaData().getMaxColumnsInTable());
   }
 
   @Test
-  void getMaxConnectionsIsZero() throws Exception {
+  void shouldReturnZeroForMaxConnections() throws Exception {
     assertEquals(0, metaData().getMaxConnections());
   }
 
   @Test
-  void getMaxCursorNameLengthIsZero() throws Exception {
+  void shouldReturnZeroForMaxCursorNameLength() throws Exception {
     assertEquals(0, metaData().getMaxCursorNameLength());
   }
 
   @Test
-  void getMaxIndexLengthIsZero() throws Exception {
+  void shouldReturnZeroForMaxIndexLength() throws Exception {
     assertEquals(0, metaData().getMaxIndexLength());
   }
 
   @Test
-  void getMaxSchemaNameLengthIs255() throws Exception {
+  void shouldReturn255ForMaxSchemaNameLength() throws Exception {
     assertEquals(255, metaData().getMaxSchemaNameLength());
   }
 
   @Test
-  void getMaxProcedureNameLengthIsZero() throws Exception {
+  void shouldReturnZeroForMaxProcedureNameLength() throws Exception {
     assertEquals(0, metaData().getMaxProcedureNameLength());
   }
 
   @Test
-  void getMaxCatalogNameLengthIs255() throws Exception {
+  void shouldReturn255ForMaxCatalogNameLength() throws Exception {
     assertEquals(255, metaData().getMaxCatalogNameLength());
   }
 
   @Test
-  void getMaxRowSizeIsZero() throws Exception {
+  void shouldReturnZeroForMaxRowSize() throws Exception {
     assertEquals(0, metaData().getMaxRowSize());
   }
 
   @Test
-  void doesMaxRowSizeIncludeBlobsIsTrue() throws Exception {
+  void shouldReturnTrueForDoesMaxRowSizeIncludeBlobs() throws Exception {
     assertTrue(metaData().doesMaxRowSizeIncludeBlobs());
   }
 
   @Test
-  void getMaxStatementLengthIsZero() throws Exception {
+  void shouldReturnZeroForMaxStatementLength() throws Exception {
     assertEquals(0, metaData().getMaxStatementLength());
   }
 
   @Test
-  void getMaxStatementsIsZero() throws Exception {
+  void shouldReturnZeroForMaxStatements() throws Exception {
     assertEquals(0, metaData().getMaxStatements());
   }
 
   @Test
-  void getMaxTableNameLengthIs255() throws Exception {
+  void shouldReturn255ForMaxTableNameLength() throws Exception {
     assertEquals(255, metaData().getMaxTableNameLength());
   }
 
   @Test
-  void getMaxTablesInSelectIsZero() throws Exception {
+  void shouldReturnZeroForMaxTablesInSelect() throws Exception {
     assertEquals(0, metaData().getMaxTablesInSelect());
   }
 
   @Test
-  void getMaxUserNameLengthIs255() throws Exception {
+  void shouldReturn255ForMaxUserNameLength() throws Exception {
     assertEquals(255, metaData().getMaxUserNameLength());
   }
 
   // ---------- Plumbing ----------
 
   @Test
-  void getConnectionReturnsUnderlyingConnection() throws Exception {
+  void shouldReturnUnderlyingConnectionForConnection() throws Exception {
     Connection conn = getDefaultConnection();
     assertSame(conn, conn.getMetaData().getConnection());
   }
@@ -818,25 +818,25 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   // ---------- Unsupported features (must throw SQLFeatureNotSupportedException) ----------
 
   @Test
-  void getRowIdLifetimeThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetRowIdLifetime() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(SQLFeatureNotSupportedException.class, md::getRowIdLifetime);
   }
 
   @Test
-  void generatedKeyAlwaysReturnedThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGeneratedKeyAlwaysReturned() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(SQLFeatureNotSupportedException.class, md::generatedKeyAlwaysReturned);
   }
 
   @Test
-  void autoCommitFailureClosesAllResultSetsThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForAutoCommitFailureClosesAllResultSets() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(SQLFeatureNotSupportedException.class, md::autoCommitFailureClosesAllResultSets);
   }
 
   @Test
-  void getBestRowIdentifierThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetBestRowIdentifier() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(
         SQLFeatureNotSupportedException.class,
@@ -844,40 +844,40 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getVersionColumnsThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetVersionColumns() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(
         SQLFeatureNotSupportedException.class, () -> md.getVersionColumns(null, null, "T"));
   }
 
   @Test
-  void getSuperTypesThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetSuperTypes() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(SQLFeatureNotSupportedException.class, () -> md.getSuperTypes(null, null, "%"));
   }
 
   @Test
-  void getSuperTablesThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetSuperTables() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(SQLFeatureNotSupportedException.class, () -> md.getSuperTables(null, null, "%"));
   }
 
   @Test
-  void getAttributesThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetAttributes() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(
         SQLFeatureNotSupportedException.class, () -> md.getAttributes(null, null, "%", "%"));
   }
 
   @Test
-  void getPseudoColumnsThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetPseudoColumns() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(
         SQLFeatureNotSupportedException.class, () -> md.getPseudoColumns(null, null, "%", "%"));
   }
 
   @Test
-  void getClientInfoPropertiesThrowsUnsupported() throws Exception {
+  void shouldThrowUnsupportedForGetClientInfoProperties() throws Exception {
     DatabaseMetaData md = metaData();
     assertThrows(SQLFeatureNotSupportedException.class, md::getClientInfoProperties);
   }
@@ -885,7 +885,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   // ---------- Identity values from the connection ----------
 
   @Test
-  void getURLReturnsJdbcUrl() throws Exception {
+  void shouldReturnJdbcUrlForURL() throws Exception {
     String url = metaData().getURL();
     assertTrue(
         url != null && url.startsWith("jdbc:snowflake://"),
@@ -905,13 +905,13 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getUserNameReturnsConnectedUser() throws Exception {
+  void shouldReturnConnectedUserForUserName() throws Exception {
     String expected = TestParameters.get("SNOWFLAKE_TEST_USER");
     assertEquals(expected, metaData().getUserName(), "getUserName must match the 'user' property");
   }
 
   @Test
-  void getSQLKeywordsReturnsSnowflakeKeywordList() throws Exception {
+  void shouldReturnSnowflakeKeywordListForSQLKeywords() throws Exception {
     assertEquals(
         "ACCOUNT,ASOF,BIT,BYTEINT,CONNECTION,DATABASE,DATETIME,DATE_PART,FIXED,FOLLOWING,"
             + "GSCLUSTER,GSPACKAGE,IDENTIFIER,ILIKE,INCREMENT,ISSUE,LONG,MAP,MATCH_CONDITION,"
@@ -922,7 +922,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getNumericFunctionsReturnsKnownList() throws Exception {
+  void shouldReturnKnownListForNumericFunctions() throws Exception {
     assertEquals(
         "ABS,ACOS,ASIN,ATAN,ATAN2,CBRT,CEILING,COS,COT,DEGREES,EXP,FACTORIAL,"
             + "FLOOR,HAVERSINE,LN,LOG,MOD,PI,POWER,RADIANS,RAND,"
@@ -931,7 +931,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getStringFunctionsReturnsKnownList() throws Exception {
+  void shouldReturnKnownListForStringFunctions() throws Exception {
     assertEquals(
         "ASCII,BIT_LENGTH,CHAR,CONCAT,INSERT,LCASE,LEFT,LENGTH,LPAD,"
             + "LOCATE,LTRIM,OCTET_LENGTH,PARSE_IP,PARSE_URL,REPEAT,REVERSE,"
@@ -952,12 +952,12 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getSystemFunctionsReturnsKnownList() throws Exception {
+  void shouldReturnKnownListForSystemFunctions() throws Exception {
     assertEquals("DATABASE,IFNULL,USER", metaData().getSystemFunctions());
   }
 
   @Test
-  void getTimeDateFunctionsReturnsKnownList() throws Exception {
+  void shouldReturnKnownListForTimeDateFunctions() throws Exception {
     assertEquals(
         "CURDATE,CURTIME,DAYNAME,DAYOFMONTH,DAYOFWEEK,DAYOFYEAR,HOUR,MINUTE,MONTH,"
             + "MONTHNAME,NOW,QUARTER,SECOND,TIMESTAMPADD,TIMESTAMPDIFF,WEEK,YEAR",
@@ -967,7 +967,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   // ---------- ResultSet-returning methods that issue Snowflake queries ----------
 
   @Test
-  void getCatalogsReturnsCurrentDatabases() throws Exception {
+  void shouldReturnCurrentDatabasesForCatalogs() throws Exception {
     Connection conn = getDefaultConnection();
     DatabaseMetaData metaData = conn.getMetaData();
     String currentDatabase;
@@ -992,7 +992,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getSchemasReturnsAccessibleSchemas() throws Exception {
+  void shouldReturnAccessibleSchemasForSchemas() throws Exception {
     Connection conn = getDefaultConnection();
     DatabaseMetaData metaData = conn.getMetaData();
     String currentDatabase;
@@ -1024,7 +1024,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void getSchemasWithCatalogAndPatternReturnsMatchingSchemas() throws Exception {
+  void shouldReturnMatchingSchemasForSchemasWithCatalogAndPattern() throws Exception {
     Connection conn = getDefaultConnection();
     DatabaseMetaData metaData = conn.getMetaData();
     String currentDatabase;
@@ -1071,8 +1071,8 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
       }
 
       String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-      final String targetTable = "T0_" + suffix;
-      final String targetView = "V0_" + suffix;
+      String targetTable = "T0_" + suffix;
+      String targetView = "V0_" + suffix;
       try (Statement stmt = conn.createStatement()) {
         stmt.execute("create or replace table " + targetTable + "(C1 int)");
         stmt.execute("create or replace view " + targetView + " as select 1 as C");
@@ -1146,63 +1146,146 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getTableTypesReturnsKnownTypes() {}
+  void shouldReturnKnownTypesForTableTypes() {}
+
+  @Test
+  void shouldReturnTableColumnsForColumns() throws Exception {
+    try (Connection conn = openConnection()) {
+      DatabaseMetaData metaData = conn.getMetaData();
+      String currentDatabase;
+      String currentSchema;
+      try (ResultSet rs =
+          conn.createStatement().executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+        assertTrue(rs.next());
+        currentDatabase = rs.getString(1);
+        currentSchema = rs.getString(2);
+      }
+
+      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+      String targetTable = "T0_" + suffix;
+      try (Statement stmt = conn.createStatement()) {
+        stmt.execute(
+            "create or replace table "
+                + targetTable
+                + "(C1 int, C2 varchar(100), C7 date not null)");
+        try {
+          try (ResultSet resultSet =
+              metaData.getColumns(currentDatabase, currentSchema, targetTable, "%")) {
+            ResultSetMetaData rsMeta = resultSet.getMetaData();
+            assertEquals(24, rsMeta.getColumnCount());
+            assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
+            assertEquals("TABLE_SCHEM", rsMeta.getColumnName(2));
+            assertEquals("TABLE_NAME", rsMeta.getColumnName(3));
+            assertEquals("COLUMN_NAME", rsMeta.getColumnName(4));
+            assertEquals("DATA_TYPE", rsMeta.getColumnName(5));
+            assertEquals("ORDINAL_POSITION", rsMeta.getColumnName(17));
+            assertEquals("IS_NULLABLE", rsMeta.getColumnName(18));
+
+            assertTrue(resultSet.next());
+            assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+            assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+            assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+            assertEquals("C1", resultSet.getString("COLUMN_NAME"));
+            assertEquals(Types.BIGINT, resultSet.getInt("DATA_TYPE"));
+            assertEquals("NUMBER", resultSet.getString("TYPE_NAME"));
+            assertEquals(38, resultSet.getInt("COLUMN_SIZE"));
+            assertEquals(ResultSetMetaData.columnNullable, resultSet.getInt("NULLABLE"));
+            assertEquals(1, resultSet.getInt("ORDINAL_POSITION"));
+            assertEquals("YES", resultSet.getString("IS_NULLABLE"));
+
+            assertTrue(resultSet.next());
+            assertEquals("C2", resultSet.getString("COLUMN_NAME"));
+            assertEquals(Types.VARCHAR, resultSet.getInt("DATA_TYPE"));
+            assertEquals(100, resultSet.getInt("COLUMN_SIZE"));
+            assertEquals(100, resultSet.getInt("CHAR_OCTET_LENGTH"));
+            assertEquals(2, resultSet.getInt("ORDINAL_POSITION"));
+
+            assertTrue(resultSet.next());
+            assertEquals("C7", resultSet.getString("COLUMN_NAME"));
+            assertEquals(Types.DATE, resultSet.getInt("DATA_TYPE"));
+            assertEquals(ResultSetMetaData.columnNoNulls, resultSet.getInt("NULLABLE"));
+            assertEquals("NO", resultSet.getString("IS_NULLABLE"));
+            assertEquals(3, resultSet.getInt("ORDINAL_POSITION"));
+            assertFalse(resultSet.next());
+          }
+
+          try (ResultSet resultSet =
+              metaData.getColumns(currentDatabase, currentSchema, targetTable, "C2")) {
+            assertTrue(resultSet.next());
+            assertEquals("C2", resultSet.getString("COLUMN_NAME"));
+            assertFalse(resultSet.next());
+          }
+
+          try (ResultSet resultSet =
+              metaData.getColumns("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
+            assertFalse(resultSet.next());
+          }
+          try (ResultSet resultSet =
+              metaData.getColumns(currentDatabase, "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
+            assertFalse(resultSet.next());
+          }
+          try (ResultSet resultSet =
+              metaData.getColumns(currentDatabase, currentSchema, "TBL\\_NOT\\_EXIST", "%")) {
+            assertFalse(resultSet.next());
+          }
+        } finally {
+          stmt.execute("drop table if exists " + targetTable);
+        }
+      }
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getColumnsReturnsTableColumns() {}
+  void shouldReturnPrivilegesForColumnPrivileges() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getColumnPrivilegesReturnsPrivileges() {}
+  void shouldReturnPrivilegesForTablePrivileges() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getTablePrivilegesReturnsPrivileges() {}
+  void shouldReturnKeyColumnsForPrimaryKeys() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getPrimaryKeysReturnsKeyColumns() {}
+  void shouldReturnForeignKeysForImportedKeys() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getImportedKeysReturnsForeignKeys() {}
+  void shouldReturnForeignKeysForExportedKeys() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getExportedKeysReturnsForeignKeys() {}
+  void shouldReturnRelationshipsForCrossReference() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getCrossReferenceReturnsRelationships() {}
+  void shouldReturnSupportedTypesForTypeInfo() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getTypeInfoReturnsSupportedTypes() {}
+  void shouldReturnIndexDescriptorsForIndexInfo() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getIndexInfoReturnsIndexDescriptors() {}
+  void shouldReturnUserDefinedTypesForUDTs() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getUDTsReturnsUserDefinedTypes() {}
+  void shouldReturnProceduresForProcedures() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getProceduresReturnsProcedures() {}
+  void shouldReturnProcedureColumnsForProcedureColumns() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getProcedureColumnsReturnsProcedureColumns() {}
+  void shouldReturnFunctionsForFunctions() {}
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
-  void getFunctionsReturnsFunctions() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void getFunctionColumnsReturnsFunctionColumns() {}
+  void shouldReturnFunctionColumnsForFunctionColumns() {}
 
   private static void assertMetadataColumn(ResultSetMetaData rsMeta, int col, String name)
       throws Exception {

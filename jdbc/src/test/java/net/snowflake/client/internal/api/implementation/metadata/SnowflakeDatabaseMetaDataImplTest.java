@@ -19,7 +19,7 @@ class SnowflakeDatabaseMetaDataImplTest {
   private SnowflakeDatabaseMetaDataImpl metadata;
 
   @BeforeEach
-  void setUp() {
+  void setUp() throws Exception {
     connection = mock(SnowflakeConnectionImpl.class);
     metadata =
         new SnowflakeDatabaseMetaDataImpl(connection, new Properties(), mock(CoreDriverApi.class));

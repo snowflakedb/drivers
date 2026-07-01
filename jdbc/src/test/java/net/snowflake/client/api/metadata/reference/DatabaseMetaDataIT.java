@@ -464,7 +464,6 @@ public class DatabaseMetaDataIT extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @Disabled("not yet implemented")
   public void testGetObjectsDoesNotExists() throws Throwable {
     try (Connection conn = getConnectionWithWildcardsDisabled();
         Statement statement = conn.createStatement()) {

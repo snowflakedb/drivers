@@ -1,7 +1,6 @@
 package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import java.sql.SQLException;
-import lombok.RequiredArgsConstructor;
 import lombok.Value;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
@@ -9,16 +8,15 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.util.NotImplementedException;
 
 /**
- * Session-derived parameters that drive {@link java.sql.DatabaseMetaData} command construction,
- * ported from the legacy snowflake-jdbc driver's {@code SFBaseSession} flags.
+ * Session- and connection-derived parameters that drive {@link java.sql.DatabaseMetaData} command
+ * construction and result shaping, ported from the legacy snowflake-jdbc driver's {@code
+ * SFBaseSession} flags.
  *
- * <p>The flags are read once from the session via {@link CoreDriverApi#connectionGetParameter}. The
- * core driver does not yet surface these parameters, so {@code connectionGetParameter} currently
- * returns no value and the legacy defaults apply &mdash; this class is effectively a stub until
- * core adds them, but it already uses the real RPC path so no call sites change when core catches
- * up.
+ * <p>Session flags are read via {@link CoreDriverApi#connectionGetParameter}. The core driver does
+ * not yet surface these parameters, so {@code connectionGetParameter} currently returns no value
+ * and the legacy defaults apply &mdash; this class is effectively a stub until core adds them, but
+ * it already uses the real RPC path so no call sites change when core catches up.
  */
-@RequiredArgsConstructor
 class MetaDataParams {
 
   @Value
@@ -44,15 +42,42 @@ class MetaDataParams {
   // SFSessionProperty.ENABLE_PATTERN_SEARCH property key.
   private static final String ENABLE_PATTERN_SEARCH = "enablePatternSearch";
 
+  // Session parameter (SFSessionProperty.STRINGS_QUOTED in snowflake-jdbc).
+  private static final String STRINGS_QUOTED_FOR_COLUMN_DEF = "STRINGS_QUOTED_FOR_COLUMN_DEF";
+
+  // Session parameter (see SFBaseSession#isJdbcTreatDecimalAsInt in snowflake-jdbc).
+  private static final String JDBC_TREAT_DECIMAL_AS_INT = "JDBC_TREAT_DECIMAL_AS_INT";
+
   // Legacy defaults from SFBaseSession.
   private static final boolean DEFAULT_METADATA_REQUEST_USE_CONNECTION_CTX = false;
   private static final boolean DEFAULT_METADATA_REQUEST_USE_SESSION_DATABASE = false;
   private static final boolean DEFAULT_ENABLE_EXACT_SCHEMA_SEARCH = false;
   private static final boolean DEFAULT_ENABLE_WILDCARDS_IN_SHOW_METADATA_COMMANDS = true;
   private static final boolean DEFAULT_ENABLE_PATTERN_SEARCH = true;
+  private static final boolean DEFAULT_STRINGS_QUOTED = false;
+  private static final boolean DEFAULT_JDBC_TREAT_DECIMAL_AS_INT = true;
+  private static final boolean DEFAULT_ENABLE_RETURN_TIMESTAMP_WITH_TIMEZONE = true;
 
   private final InternalSnowflakeConnection connection;
   private final CoreDriverApi coreDriverApi;
+
+  MetaDataParams(InternalSnowflakeConnection connection, CoreDriverApi coreDriverApi) {
+    this.connection = connection;
+    this.coreDriverApi = coreDriverApi;
+  }
+
+  boolean isStringsQuoted() throws SQLException {
+    return readBooleanParameter(STRINGS_QUOTED_FOR_COLUMN_DEF, DEFAULT_STRINGS_QUOTED);
+  }
+
+  boolean isJdbcTreatDecimalAsInt() throws SQLException {
+    return readBooleanParameter(JDBC_TREAT_DECIMAL_AS_INT, DEFAULT_JDBC_TREAT_DECIMAL_AS_INT);
+  }
+
+  boolean isEnableReturnTimestampWithTimeZone() throws SQLException {
+    return readBooleanParameter(
+        "ENABLE_RETURN_TIMESTAMP_WITH_TIMEZONE", DEFAULT_ENABLE_RETURN_TIMESTAMP_WITH_TIMEZONE);
+  }
 
   private boolean metadataRequestUseConnectionCtx() throws SQLException {
     return readBooleanParameter(
