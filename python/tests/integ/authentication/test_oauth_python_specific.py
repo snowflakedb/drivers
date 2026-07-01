@@ -16,9 +16,8 @@ Covered behaviours:
   universal driver always binds the loopback listener to
   ``oauth_redirect_uri`` directly.
 * Emitting a ``DeprecationWarning`` for Python-only OAuth switches
-  (``oauth_enable_refresh_tokens``, ``oauth_credentials_in_body``)
-  that the universal driver does not honour (Python column of the
-  cross-driver configuration matrix).
+  (``oauth_enable_refresh_tokens``) that the universal driver does not
+  honour (Python column of the cross-driver configuration matrix).
 * Redacting a legacy OAUTH ``token`` literal from the wrapper's
   exception chain.
 
@@ -31,6 +30,8 @@ Happy-path coverage for the OAuth flows lives in
 """
 
 from __future__ import annotations
+
+import warnings
 
 import pytest
 
@@ -104,7 +105,6 @@ class TestOAuthPythonOnlyKwargsDeprecation:
         "python_only_kwarg",
         [
             "oauth_enable_refresh_tokens",
-            "oauth_credentials_in_body",
         ],
     )
     def test_should_emit_deprecation_warning_for_python_only_kwarg(
@@ -127,6 +127,46 @@ class TestOAuthPythonOnlyKwargsDeprecation:
                     oauth_client_secret="test-client-secret",
                     **{python_only_kwarg: True},
                 )
+
+
+class TestOAuthCredentialsInBodyIsHonoured:
+    """``oauth_credentials_in_body`` is a real, honoured parameter.
+
+    The universal driver forwards it to sf_core, which switches the
+    ``OAUTH_CLIENT_CREDENTIALS`` token request to ``client_secret_post``
+    (client_id/client_secret in the body). Unlike the Python-only switches
+    above it must NOT emit a ``DeprecationWarning`` — that would signal the
+    parameter is a no-op, which it no longer is.
+    """
+
+    def test_should_not_emit_deprecation_warning_for_credentials_in_body(self, int_test_connection_factory):
+        # Same OAUTH_CLIENT_CREDENTIALS-without-token-URL shape as the
+        # deprecation test so sf_core fails fast on a missing parameter
+        # rather than reaching out to a real IdP.
+        #
+        # We record every warning and afterwards assert none names this
+        # kwarg. Recording (rather than escalating with
+        # simplefilter("error")) keeps the assertion independent of the
+        # expected connect failure: an escalated DeprecationWarning would
+        # surface as an exception that pytest.raises would happily swallow,
+        # masking the very regression this test guards against.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(Error):
+                int_test_connection_factory(
+                    authenticator="OAUTH_CLIENT_CREDENTIALS",
+                    private_key_file=None,
+                    oauth_client_id="test-client-id",
+                    oauth_client_secret="test-client-secret",
+                    oauth_credentials_in_body=True,
+                )
+
+        offending = [
+            str(w.message)
+            for w in caught
+            if issubclass(w.category, DeprecationWarning) and "oauth_credentials_in_body" in str(w.message)
+        ]
+        assert not offending, f"oauth_credentials_in_body is honoured and must not warn, got: {offending}"
 
 
 # ---------------------------------------------------------------------------

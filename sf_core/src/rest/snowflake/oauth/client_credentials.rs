@@ -5,16 +5,21 @@
 //! explicit `token_url`. Tokens obtained here are intentionally not
 //! persisted to the OS token cache (matches JDBC/.NET/Python/Node).
 //!
-//! HTTP authentication uses RFC 6749 §2.3.1 Basic auth, mirroring JDBC,
-//! ODBC, .NET, Python (default), and Go. Node's `ClientSecretPost` shape
-//! is intentionally not replicated. The token exchange is driven through
-//! the `oauth2` crate via [`OAuthHttpClient`], which also injects the
-//! optional DPoP proof header.
+//! HTTP authentication defaults to RFC 6749 §2.3.1 Basic auth, mirroring
+//! JDBC, ODBC, .NET, Python (default), and Go. When
+//! `credentials_in_body` is set (Python's `oauth_credentials_in_body`),
+//! the `client_id`/`client_secret` are sent in the request body instead
+//! (`client_secret_post`, matching Node's `ClientSecretPost` shape) for
+//! IdPs that require the body form. Unlike legacy `snowflake-connector-python`
+//! — which emits the Basic header *and* duplicates the credentials in the
+//! body — UD sends them in the body only. The token exchange is driven
+//! through the `oauth2` crate via [`OAuthHttpClient`], which also injects
+//! the optional DPoP proof header.
 
 use std::time::Duration;
 
 use oauth2::basic::BasicClient;
-use oauth2::{ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
+use oauth2::{AuthType, ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
 
 use super::authorization_code::{AcquiredOAuthToken, map_request_token_error};
 use super::dpop::DPoPKey;
@@ -52,6 +57,15 @@ pub(crate) async fn acquire_client_credentials(
     let oauth_client = BasicClient::new(ClientId::new(config.client_id.clone()))
         .set_client_secret(ClientSecret::new(config.client_secret.reveal().to_string()))
         .set_token_uri(TokenUrl::from_url(config.token_url.clone()));
+
+    // `credentials_in_body` selects RFC 6749 `client_secret_post` (client
+    // credentials in the form body) over the default `client_secret_basic`
+    // (Authorization: Basic header). Some IdPs require the body form.
+    let oauth_client = if config.credentials_in_body {
+        oauth_client.set_auth_type(AuthType::RequestBody)
+    } else {
+        oauth_client
+    };
 
     let mut request = oauth_client.exchange_client_credentials();
     if let Some(scope) = config.scope.as_deref() {
@@ -111,6 +125,7 @@ mod tests {
             client_secret: "shh".into(),
             token_url,
             scope: None,
+            credentials_in_body: false,
             flow_options: OAuthFlowOptions {
                 enable_dpop: false,
                 authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
@@ -141,6 +156,36 @@ mod tests {
         assert!(acquired.refresh_token.is_none());
         assert_eq!(acquired.expires_in, Some(Duration::from_secs(900)));
         assert!(acquired.dpop_jwk_json.is_none());
+    }
+
+    #[tokio::test]
+    async fn credentials_in_body_sends_client_secret_post() {
+        // With `credentials_in_body = true`, the client_id/client_secret
+        // are form-encoded into the body (`client_secret_post`) and the
+        // RFC 6749 §2.3.1 `Authorization: Basic` header is NOT sent —
+        // UD's body-only shape, unlike legacy Python which sends both.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(HeaderIsAbsent("authorization"))
+            .and(body_string_contains("client_id=cid"))
+            .and(body_string_contains("client_secret=shh"))
+            .and(body_string_contains("grant_type=client_credentials"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-POST","token_type":"Bearer","expires_in":900}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/token", server.uri())).unwrap();
+        let mut c = cfg(token_url);
+        c.credentials_in_body = true;
+        let client = reqwest::Client::new();
+        let acquired = acquire_client_credentials(&client, &c)
+            .await
+            .expect("CC flow succeeds");
+        assert_eq!(acquired.access_token.reveal(), "AT-POST");
     }
 
     #[tokio::test]
@@ -228,6 +273,15 @@ mod tests {
         fn matches(&self, request: &wiremock::Request) -> bool {
             let body = std::str::from_utf8(&request.body).unwrap_or("");
             !body.contains(self.0)
+        }
+    }
+
+    /// Wiremock matcher asserting a request header is absent. Used to lock
+    /// the `client_secret_post` shape: no `Authorization: Basic` header.
+    struct HeaderIsAbsent(&'static str);
+    impl wiremock::Match for HeaderIsAbsent {
+        fn matches(&self, request: &wiremock::Request) -> bool {
+            !request.headers.contains_key(self.0)
         }
     }
 
