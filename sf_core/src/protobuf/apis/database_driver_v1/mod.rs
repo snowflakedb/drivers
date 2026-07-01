@@ -305,6 +305,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             db_schema: input.db_schema,
             table_name: input.table_name,
             table_type: input.table_type,
+            column_name: input.column_name,
         };
 
         let info = self
