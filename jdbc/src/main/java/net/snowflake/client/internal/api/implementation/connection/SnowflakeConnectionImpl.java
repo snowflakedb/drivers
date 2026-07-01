@@ -431,7 +431,10 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public Clob createClob() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    // A growable Clob: callers build content via setString(1, ...). The JDK SerialClob cannot be
+    // used because it is fixed-length and rejects writes past its (zero) initial length.
+    return new SnowflakeClob();
   }
 
   @Override
