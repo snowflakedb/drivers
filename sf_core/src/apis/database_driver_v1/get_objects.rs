@@ -19,8 +19,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 use arrow::array::{
-    Array, ArrayRef, LargeListArray, LargeStringArray, RecordBatch, RecordBatchReader, StringArray,
-    StructArray, TimestampMicrosecondArray, TimestampNanosecondArray, new_empty_array,
+    Array, ArrayRef, BooleanArray, Int32Array, Int64Array, LargeListArray, LargeStringArray,
+    RecordBatch, RecordBatchReader, StringArray, StructArray, TimestampMicrosecondArray,
+    TimestampNanosecondArray, new_empty_array,
 };
 use arrow::buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
@@ -59,9 +60,36 @@ pub const FIELD_TABLE_TYPE: &str = "table_type";
 pub const FIELD_TABLE_COLUMNS: &str = "table_columns";
 pub const FIELD_TABLE_CONSTRAINTS: &str = "table_constraints";
 
+// Column struct sub-fields (within table_columns list items)
+pub const FIELD_COLUMN_NAME: &str = "column_name";
+pub const FIELD_COLUMN_ORDINAL_POSITION: &str = "ordinal_position";
+pub const FIELD_COLUMN_LOGICAL_TYPE: &str = "logical_type";
+pub const FIELD_COLUMN_PRECISION: &str = "precision";
+pub const FIELD_COLUMN_SCALE: &str = "scale";
+pub const FIELD_COLUMN_CHAR_LENGTH: &str = "char_length";
+pub const FIELD_COLUMN_BYTE_LENGTH: &str = "byte_length";
+pub const FIELD_COLUMN_NULLABLE: &str = "nullable";
+pub const FIELD_COLUMN_DEF: &str = "column_def";
+pub const FIELD_COLUMN_REMARKS: &str = "remarks";
+
 // ---------------------------------------------------------------------------
 // Nested ADBC Arrow schema (single source of truth, cached)
 // ---------------------------------------------------------------------------
+
+fn column_fields() -> Fields {
+    Fields::from(vec![
+        Field::new(FIELD_COLUMN_NAME, DataType::Utf8, true),
+        Field::new(FIELD_COLUMN_ORDINAL_POSITION, DataType::Int32, false),
+        Field::new(FIELD_COLUMN_LOGICAL_TYPE, DataType::Utf8, true),
+        Field::new(FIELD_COLUMN_PRECISION, DataType::Int32, true),
+        Field::new(FIELD_COLUMN_SCALE, DataType::Int32, true),
+        Field::new(FIELD_COLUMN_CHAR_LENGTH, DataType::Int64, true),
+        Field::new(FIELD_COLUMN_BYTE_LENGTH, DataType::Int64, true),
+        Field::new(FIELD_COLUMN_NULLABLE, DataType::Boolean, false),
+        Field::new(FIELD_COLUMN_DEF, DataType::Utf8, true),
+        Field::new(FIELD_COLUMN_REMARKS, DataType::Utf8, true),
+    ])
+}
 
 fn table_fields() -> Fields {
     Fields::from(vec![
@@ -69,7 +97,11 @@ fn table_fields() -> Fields {
         Field::new(FIELD_TABLE_TYPE, DataType::Utf8, true),
         Field::new(
             FIELD_TABLE_COLUMNS,
-            DataType::LargeList(Arc::new(Field::new("item", DataType::Utf8, true))),
+            DataType::LargeList(Arc::new(Field::new(
+                "item",
+                DataType::Struct(column_fields()),
+                true,
+            ))),
             true,
         ),
         Field::new(
@@ -127,6 +159,7 @@ pub struct GetObjectsRequest {
     pub db_schema: Option<String>,
     pub table_name: Option<String>,
     pub table_type: Vec<String>,
+    pub column_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -209,14 +242,18 @@ impl DatabaseDriverV1 {
                 .await?
             }
             DEPTH_COLUMNS => {
-                return InvalidArgumentSnafu {
-                    argument: "GetObjects depth COLUMNS (4) is not implemented".to_string(),
-                }
-                .fail();
+                fetch_columns(
+                    &conn_ptr,
+                    catalog_filter.as_deref(),
+                    schema_filter.as_deref(),
+                    req.table_name.as_deref(),
+                    req.column_name.as_deref(),
+                )
+                .await?
             }
             other => {
                 return InvalidArgumentSnafu {
-                    argument: format!("GetObjects depth {other} is invalid (expected 1..=3)"),
+                    argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
                 }
                 .fail();
             }
@@ -469,17 +506,16 @@ async fn fetch_tables(
     build_tables_batch(by_cat_sch)
 }
 
-fn build_like_clause(table_name_filter: Option<&str>) -> String {
-    match table_name_filter {
-        None => String::new(),
+/// Build a `LIKE '…'` clause for `SHOW` commands.
+///
+/// Returns an empty string for `None` or `Some("")` so callers can pass the
+/// pattern directly without pre-filtering. Snowflake SHOW LIKE does not honour
+/// `\` escapes, so they are stripped for coarse server-side narrowing;
+/// client-side `like_pattern::matches` re-applies the original pattern.
+fn build_like_clause(pattern: Option<&str>) -> String {
+    match pattern {
+        None | Some("") => String::new(),
         Some(p) => {
-            debug_assert!(
-                !p.is_empty(),
-                "empty table pattern is handled in fetch_tables before build_like_clause"
-            );
-            // Snowflake SHOW LIKE does not honor `\` escapes. Strip them for
-            // coarse server-side narrowing; client-side `like_pattern::matches`
-            // re-applies the original pattern (same strategy as the old ODBC driver).
             let coarse = like_pattern::strip_escapes_for_show_like(p);
             format!("LIKE '{}'", escape_show_like(&coarse))
         }
@@ -868,17 +904,50 @@ fn build_full_schema_list_array(
         cat_offsets.push(cat_offsets.last().copied().unwrap_or(0) + schemas.len() as i64);
     }
 
-    // Build empty columns/constraints lists for each table
-    let empty_str_child = Arc::new(StringArray::from(Vec::<&str>::new())) as ArrayRef;
+    // Build an empty columns list for each table.
+    // table_columns uses the canonical column Struct shape so the schema
+    // matches what DEPTH_COLUMNS returns.
+    let empty_col_child = new_empty_array(&DataType::Struct(column_fields()));
     let cols_offsets = vec![0i64; total_tables + 1];
-    let constraints_offsets = vec![0i64; total_tables + 1];
-
     let cols_list = LargeListArray::new(
-        Arc::new(Field::new("item", DataType::Utf8, true)),
+        Arc::new(Field::new("item", DataType::Struct(column_fields()), true)),
         OffsetBuffer::new(ScalarBuffer::from(cols_offsets)),
-        empty_str_child.clone(),
+        empty_col_child,
         None,
     );
+
+    Ok(assemble_schema_list_array(
+        all_schema_names,
+        all_table_names,
+        all_table_types,
+        cat_offsets,
+        sch_offsets,
+        cols_list,
+        total_tables,
+    ))
+}
+
+/// Assemble the catalog→schema→table nested `LargeList<Struct<…>>` from prebuilt
+/// per-level accumulators. Shared by [`build_full_schema_list_array`] (empty
+/// `table_columns`) and [`build_full_columns_schema_list_array`] (populated
+/// `table_columns`); `table_constraints` is always an empty Utf8 list.
+///
+/// Centralizing the struct assembly here means a new field on `table_fields()`
+/// or `schema_fields()` is a single-site change. The per-depth accumulation
+/// loops stay in their own builders because their inputs are different shapes
+/// (`Vec<(name, type)>` vs. `BTreeMap<table, Vec<ColumnDescriptor>>`).
+fn assemble_schema_list_array<'a>(
+    all_schema_names: Vec<&'a str>,
+    all_table_names: Vec<&'a str>,
+    all_table_types: Vec<&'a str>,
+    cat_offsets: Vec<i64>,
+    sch_offsets: Vec<i64>,
+    table_columns_list: LargeListArray,
+    total_tables: usize,
+) -> ArrayRef {
+    // table_constraints: empty Utf8 list per table.
+    let empty_str_child = Arc::new(StringArray::from(Vec::<&str>::new())) as ArrayRef;
+    let constraints_offsets = vec![0i64; total_tables + 1];
     let constraints_list = LargeListArray::new(
         Arc::new(Field::new("item", DataType::Utf8, true)),
         OffsetBuffer::new(ScalarBuffer::from(constraints_offsets)),
@@ -891,7 +960,7 @@ fn build_full_schema_list_array(
         vec![
             Arc::new(StringArray::from(all_table_names)) as ArrayRef,
             Arc::new(StringArray::from(all_table_types)) as ArrayRef,
-            Arc::new(cols_list) as ArrayRef,
+            Arc::new(table_columns_list) as ArrayRef,
             Arc::new(constraints_list) as ArrayRef,
         ],
         None,
@@ -918,7 +987,374 @@ fn build_full_schema_list_array(
         None,
     );
 
-    Ok(Arc::new(cat_list))
+    Arc::new(cat_list)
+}
+
+// ---------------------------------------------------------------------------
+// COLUMNS depth
+// ---------------------------------------------------------------------------
+
+/// Parsed representation of the `data_type` JSON blob from SHOW COLUMNS.
+/// Only the fields needed to reconstruct the canonical Arrow type-metadata are
+/// captured; unknown fields are ignored (serde default).
+#[derive(Debug, serde::Deserialize)]
+struct ShowColumnDataType {
+    #[serde(rename = "type")]
+    type_: String,
+    nullable: Option<bool>,
+    precision: Option<i64>,
+    scale: Option<i64>,
+    #[serde(rename = "byteLength")]
+    byte_length: Option<i64>,
+    /// charLength (TEXT) — present in newer Snowflake responses.
+    #[serde(rename = "charLength")]
+    char_length: Option<i64>,
+    /// length (TEXT) — legacy alias for charLength; used when charLength absent.
+    length: Option<i64>,
+}
+
+/// Decoded canonical column descriptor — the sf_core representation of a
+/// single SHOW COLUMNS row, with Snowflake-wire JSON fully parsed.
+/// No raw JSON crosses into the `odbc` crate.
+#[derive(Debug)]
+pub struct ColumnDescriptor {
+    pub column_name: String,
+    pub ordinal_position: i32,
+    pub logical_type: String,
+    pub precision: Option<i32>,
+    pub scale: Option<i32>,
+    pub char_length: Option<i64>,
+    pub byte_length: Option<i64>,
+    pub nullable: bool,
+    pub column_def: Option<String>,
+    pub remarks: Option<String>,
+}
+
+/// Decode the `data_type` JSON blob from SHOW COLUMNS into a `ColumnDescriptor`.
+///
+/// Three design points:
+///
+/// 1. **TEXT char length** — prefers `charLength` (present in modern Snowflake
+///    responses); falls back to `length`, which is a legacy alias for the same
+///    value used by older server versions. Non-TEXT types intentionally ignore
+///    `length` because it carries different semantics there (e.g. byte-length
+///    for BINARY vs. char-length for TEXT).
+///
+/// 2. **Parse failure** — on any JSON parse error (malformed blob, schema
+///    change, exotic type not yet in the struct) the function returns
+///    `logical_type = "UNKNOWN"` and `nullable = true` rather than propagating
+///    an error. This lets the wrapper fall back gracefully for exotic types
+///    (INTERVAL, VECTOR, GEOGRAPHY, GEOMETRY) whose `data_type` blobs may not
+///    match the fields captured here; `SnowflakeFieldType::from_field` will
+///    simply return an error for "UNKNOWN" and the column will map to NULL in
+///    the ODBC output rather than poisoning the whole result set.
+///
+/// 3. **Precision/scale narrowing** — the JSON blob carries i64 values; we
+///    narrow to i32 for the canonical struct. Snowflake's precision is at most
+///    38 (FIXED) and scale at most 37, both well within i32::MAX, so this is
+///    always in range in practice. A value that nonetheless overflows i32
+///    degrades to `None` (unknown) via a checked conversion rather than
+///    wrapping to a garbage number — handled in all builds, not just dev.
+fn decode_data_type_json(
+    json: &str,
+    column_name: String,
+    ordinal_position: i32,
+    column_def: Option<String>,
+    remarks: Option<String>,
+) -> ColumnDescriptor {
+    let dt: ShowColumnDataType = match serde_json::from_str(json) {
+        Ok(v) => v,
+        // See design point 2 above: preserve the column in an "unknown" state
+        // rather than dropping it or surfacing an error to the ODBC caller.
+        Err(_) => {
+            return ColumnDescriptor {
+                column_name,
+                ordinal_position,
+                logical_type: "UNKNOWN".to_string(),
+                precision: None,
+                scale: None,
+                char_length: None,
+                byte_length: None,
+                nullable: true,
+                column_def,
+                remarks,
+            };
+        }
+    };
+
+    // Design point 1: prefer charLength; fall back to length for TEXT only.
+    let char_length = dt.char_length.or_else(|| {
+        dt.type_
+            .eq_ignore_ascii_case("TEXT")
+            .then_some(dt.length)
+            .flatten()
+    });
+
+    ColumnDescriptor {
+        column_name,
+        ordinal_position,
+        logical_type: dt.type_,
+        // Design point 3: checked i64→i32 narrowing; overflow degrades to None
+        // (unknown) in every build rather than wrapping to garbage.
+        precision: dt.precision.and_then(|p| i32::try_from(p).ok()),
+        scale: dt.scale.and_then(|s| i32::try_from(s).ok()),
+        char_length,
+        byte_length: dt.byte_length,
+        nullable: dt.nullable.unwrap_or(true),
+        column_def,
+        remarks,
+    }
+}
+
+async fn fetch_columns(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    catalog_filter: Option<&str>,
+    schema_filter: Option<&str>,
+    table_name_filter: Option<&str>,
+    column_name_filter: Option<&str>,
+) -> Result<RecordBatch, ApiError> {
+    // Empty string means "match nothing".
+    if matches!(table_name_filter, Some("")) || matches!(column_name_filter, Some("")) {
+        return build_columns_batch(BTreeMap::new());
+    }
+
+    let exact_catalog = catalog_filter
+        .and_then(like_pattern::is_exact)
+        .filter(|s| !s.is_empty());
+    let exact_schema = schema_filter
+        .and_then(like_pattern::is_exact)
+        .filter(|s| !s.is_empty());
+    let exact_table = table_name_filter
+        .and_then(like_pattern::is_exact)
+        .filter(|s| !s.is_empty());
+
+    // Coarse column-name pushdown; build_like_clause handles None/"" → no LIKE.
+    let col_like_clause = build_like_clause(column_name_filter);
+
+    // Pick the tightest scope available.
+    let scope = match (&exact_catalog, &exact_schema, &exact_table) {
+        (Some(cat), Some(sch), Some(tbl)) => format!(
+            "IN TABLE \"{}\".\"{}\".\"{}\"",
+            escape_dq(cat),
+            escape_dq(sch),
+            escape_dq(tbl)
+        ),
+        (Some(cat), Some(sch), None) => {
+            format!("IN SCHEMA \"{}\".\"{}\"", escape_dq(cat), escape_dq(sch))
+        }
+        (Some(cat), None, _) => format!("IN DATABASE \"{}\"", escape_dq(cat)),
+        _ => "IN ACCOUNT".to_string(),
+    };
+
+    let sql = format_show_sql("SHOW COLUMNS", &col_like_clause, &scope);
+    let rows = execute_show(conn_ptr, &sql).await?;
+
+    // Group columns by (catalog, schema, table), preserving SHOW row order for
+    // ordinal_position assignment. BTreeMap gives deterministic lexicographic sort.
+    let mut by_cat_sch_tbl: BTreeMap<
+        String,
+        BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>,
+    > = BTreeMap::new();
+
+    for row in &rows {
+        let db_name = match get_column(row, "database_name") {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let sch_name = match get_column(row, "schema_name") {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let tbl_name = match get_column(row, "table_name") {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let col_name = match get_column(row, "column_name") {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let data_type_json = get_column(row, "data_type").unwrap_or("{}");
+        let column_def = get_column(row, "default")
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+        let remarks = get_column(row, "comment")
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+
+        // Client-side filters.
+        if let Some(pattern) = catalog_filter
+            && !like_pattern::matches(pattern, &db_name)
+        {
+            continue;
+        }
+        if let Some(pattern) = schema_filter
+            && !like_pattern::matches(pattern, &sch_name)
+        {
+            continue;
+        }
+        if let Some(pattern) = table_name_filter
+            && !like_pattern::matches(pattern, &tbl_name)
+        {
+            continue;
+        }
+        if let Some(pattern) = column_name_filter
+            && !like_pattern::matches(pattern, &col_name)
+        {
+            continue;
+        }
+
+        // Ordinal position = 1-based index within this (db, schema, table) group.
+        let table_cols = by_cat_sch_tbl
+            .entry(db_name)
+            .or_default()
+            .entry(sch_name)
+            .or_default()
+            .entry(tbl_name)
+            .or_default();
+        let ordinal_position = (table_cols.len() + 1) as i32;
+
+        let descriptor = decode_data_type_json(
+            data_type_json,
+            col_name,
+            ordinal_position,
+            column_def,
+            remarks,
+        );
+        table_cols.push(descriptor);
+    }
+
+    build_columns_batch(by_cat_sch_tbl)
+}
+
+fn build_columns_batch(
+    by_cat_sch_tbl: BTreeMap<String, BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>>,
+) -> Result<RecordBatch, ApiError> {
+    let schema = nested_get_objects_schema();
+
+    let mut catalog_names: Vec<String> = Vec::new();
+    let mut schema_maps: Vec<BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>> =
+        Vec::new();
+
+    for (cat, schemas) in by_cat_sch_tbl {
+        catalog_names.push(cat);
+        schema_maps.push(schemas);
+    }
+
+    let mut cat_builder = arrow::array::StringBuilder::new();
+    for name in &catalog_names {
+        cat_builder.append_value(name);
+    }
+    let cat_array: ArrayRef = Arc::new(cat_builder.finish());
+
+    let db_schemas_array = build_full_columns_schema_list_array(&schema_maps)?;
+
+    let batch = RecordBatch::try_new(schema, vec![cat_array, db_schemas_array])
+        .context(ArrowParsingSnafu)?;
+    Ok(batch)
+}
+
+/// Builds the full nested `LargeList<Struct<schema_fields>>` for COLUMNS depth,
+/// where `table_columns` is populated with real `ColumnDescriptor` data.
+fn build_full_columns_schema_list_array(
+    schema_maps: &[BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>],
+) -> Result<ArrayRef, ApiError> {
+    let total_schemas: usize = schema_maps.iter().map(|m| m.len()).sum();
+    let total_tables: usize = schema_maps
+        .iter()
+        .flat_map(|m| m.values())
+        .map(|t| t.len())
+        .sum();
+    let total_columns: usize = schema_maps
+        .iter()
+        .flat_map(|m| m.values())
+        .flat_map(|t| t.values())
+        .map(|c| c.len())
+        .sum();
+
+    let mut cat_offsets: Vec<i64> = Vec::with_capacity(schema_maps.len() + 1);
+    cat_offsets.push(0);
+    let mut sch_offsets: Vec<i64> = Vec::with_capacity(total_schemas + 1);
+    sch_offsets.push(0);
+    let mut tbl_offsets: Vec<i64> = Vec::with_capacity(total_tables + 1);
+    tbl_offsets.push(0);
+
+    let mut all_schema_names: Vec<&str> = Vec::with_capacity(total_schemas);
+    let mut all_table_names: Vec<&str> = Vec::with_capacity(total_tables);
+    let mut all_table_types: Vec<&str> = Vec::with_capacity(total_tables);
+
+    // Column-level accumulators (one entry per column across all tables).
+    let mut col_names: Vec<Option<&str>> = Vec::with_capacity(total_columns);
+    let mut col_ordinals: Vec<i32> = Vec::with_capacity(total_columns);
+    let mut col_logical_types: Vec<Option<&str>> = Vec::with_capacity(total_columns);
+    let mut col_precisions: Vec<Option<i32>> = Vec::with_capacity(total_columns);
+    let mut col_scales: Vec<Option<i32>> = Vec::with_capacity(total_columns);
+    let mut col_char_lengths: Vec<Option<i64>> = Vec::with_capacity(total_columns);
+    let mut col_byte_lengths: Vec<Option<i64>> = Vec::with_capacity(total_columns);
+    let mut col_nullables: Vec<bool> = Vec::with_capacity(total_columns);
+    let mut col_defs: Vec<Option<&str>> = Vec::with_capacity(total_columns);
+    let mut col_remarks_vec: Vec<Option<&str>> = Vec::with_capacity(total_columns);
+
+    // Iterate deterministically (BTreeMap is sorted).
+    for schema_map in schema_maps {
+        for (sch_name, table_map) in schema_map {
+            all_schema_names.push(sch_name.as_str());
+            for (tbl_name, columns) in table_map {
+                all_table_names.push(tbl_name.as_str());
+                all_table_types.push(""); // TABLE_TYPE not populated for DEPTH_COLUMNS
+                for col in columns {
+                    col_names.push(Some(col.column_name.as_str()));
+                    col_ordinals.push(col.ordinal_position);
+                    col_logical_types.push(Some(col.logical_type.as_str()));
+                    col_precisions.push(col.precision);
+                    col_scales.push(col.scale);
+                    col_char_lengths.push(col.char_length);
+                    col_byte_lengths.push(col.byte_length);
+                    col_nullables.push(col.nullable);
+                    col_defs.push(col.column_def.as_deref());
+                    col_remarks_vec.push(col.remarks.as_deref());
+                }
+                tbl_offsets.push(tbl_offsets.last().copied().unwrap_or(0) + columns.len() as i64);
+            }
+            sch_offsets.push(sch_offsets.last().copied().unwrap_or(0) + table_map.len() as i64);
+        }
+        cat_offsets.push(cat_offsets.last().copied().unwrap_or(0) + schema_map.len() as i64);
+    }
+
+    // Build the column struct array.
+    let cols_struct = StructArray::new(
+        column_fields(),
+        vec![
+            Arc::new(StringArray::from(col_names)) as ArrayRef,
+            Arc::new(Int32Array::from(col_ordinals)) as ArrayRef,
+            Arc::new(StringArray::from(col_logical_types)) as ArrayRef,
+            Arc::new(Int32Array::from(col_precisions)) as ArrayRef,
+            Arc::new(Int32Array::from(col_scales)) as ArrayRef,
+            Arc::new(Int64Array::from(col_char_lengths)) as ArrayRef,
+            Arc::new(Int64Array::from(col_byte_lengths)) as ArrayRef,
+            Arc::new(BooleanArray::from(col_nullables)) as ArrayRef,
+            Arc::new(StringArray::from(col_defs)) as ArrayRef,
+            Arc::new(StringArray::from(col_remarks_vec)) as ArrayRef,
+        ],
+        None,
+    );
+
+    // table_columns: LargeList over the populated column struct.
+    let cols_list = LargeListArray::new(
+        Arc::new(Field::new("item", DataType::Struct(column_fields()), true)),
+        OffsetBuffer::new(ScalarBuffer::from(tbl_offsets)),
+        Arc::new(cols_struct),
+        None,
+    );
+
+    Ok(assemble_schema_list_array(
+        all_schema_names,
+        all_table_names,
+        all_table_types,
+        cat_offsets,
+        sch_offsets,
+        cols_list,
+        total_tables,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,5 +1658,222 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].1, "MY_TABLE");
         assert_eq!(rows[0][1].1, "DB");
+    }
+
+    // --- decode_data_type_json ---
+
+    #[test]
+    fn decoder_fixed_type() {
+        let json = r#"{"type":"FIXED","nullable":true,"fixed":true,"precision":38,"scale":0}"#;
+        let d = decode_data_type_json(json, "ID".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "FIXED");
+        assert_eq!(d.precision, Some(38));
+        assert_eq!(d.scale, Some(0));
+        assert!(d.nullable);
+        assert_eq!(d.char_length, None);
+        assert_eq!(d.byte_length, None);
+    }
+
+    #[test]
+    fn decoder_text_type_char_length_preferred() {
+        let json = r#"{"type":"TEXT","nullable":false,"precision":16777216,"scale":0,"length":16777216,"byteLength":16777216,"charLength":16777216}"#;
+        let d = decode_data_type_json(json, "NAME".to_string(), 2, None, None);
+        assert_eq!(d.logical_type, "TEXT");
+        assert_eq!(d.char_length, Some(16777216));
+        assert_eq!(d.byte_length, Some(16777216));
+        assert!(!d.nullable);
+    }
+
+    #[test]
+    fn decoder_text_type_falls_back_to_length() {
+        let json = r#"{"type":"TEXT","nullable":true,"length":255}"#;
+        let d = decode_data_type_json(json, "C".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "TEXT");
+        assert_eq!(d.char_length, Some(255));
+    }
+
+    #[test]
+    fn decoder_boolean_type() {
+        let json = r#"{"type":"BOOLEAN","nullable":true}"#;
+        let d = decode_data_type_json(json, "FLAG".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "BOOLEAN");
+        assert_eq!(d.precision, None);
+        assert_eq!(d.scale, None);
+    }
+
+    #[test]
+    fn decoder_real_type() {
+        let json = r#"{"type":"REAL","nullable":false}"#;
+        let d = decode_data_type_json(json, "PRICE".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "REAL");
+        assert!(!d.nullable);
+    }
+
+    #[test]
+    fn decoder_timestamp_ntz() {
+        let json = r#"{"type":"TIMESTAMP_NTZ","nullable":true,"precision":0,"scale":9}"#;
+        let d = decode_data_type_json(json, "TS".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "TIMESTAMP_NTZ");
+        assert_eq!(d.scale, Some(9));
+    }
+
+    #[test]
+    fn decoder_unknown_json_produces_unknown_logical_type() {
+        let d = decode_data_type_json("not valid json{{", "X".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "UNKNOWN");
+        assert!(d.nullable);
+    }
+
+    #[test]
+    fn decoder_overflowing_precision_and_scale_degrade_to_none() {
+        // precision/scale beyond i32::MAX must not wrap to a garbage i32 in
+        // release builds — the checked narrowing yields None (unknown) instead.
+        let json = r#"{"type":"FIXED","nullable":true,"precision":9999999999,"scale":9999999999}"#;
+        let d = decode_data_type_json(json, "BIG".to_string(), 1, None, None);
+        assert_eq!(d.logical_type, "FIXED");
+        assert_eq!(d.precision, None);
+        assert_eq!(d.scale, None);
+    }
+
+    #[test]
+    fn decoder_preserves_ordinal_and_identity() {
+        let json = r#"{"type":"FIXED","nullable":true,"precision":10,"scale":2}"#;
+        let d = decode_data_type_json(
+            json,
+            "AMT".to_string(),
+            5,
+            Some("0".to_string()),
+            Some("doc".to_string()),
+        );
+        assert_eq!(d.column_name, "AMT");
+        assert_eq!(d.ordinal_position, 5);
+        assert_eq!(d.column_def, Some("0".to_string()));
+        assert_eq!(d.remarks, Some("doc".to_string()));
+    }
+
+    // --- columns schema shape ---
+
+    #[test]
+    fn table_columns_field_is_struct_list() {
+        let fields = table_fields();
+        let cols_field = fields
+            .iter()
+            .find(|f| f.name() == FIELD_TABLE_COLUMNS)
+            .expect("table_columns missing");
+        if let DataType::LargeList(item) = cols_field.data_type() {
+            assert!(
+                matches!(item.data_type(), DataType::Struct(_)),
+                "table_columns item should be Struct, got {:?}",
+                item.data_type()
+            );
+        } else {
+            panic!(
+                "table_columns should be LargeList, got {:?}",
+                cols_field.data_type()
+            );
+        }
+    }
+
+    #[test]
+    fn column_struct_has_expected_fields() {
+        let fields = column_fields();
+        let names: Vec<&str> = fields.iter().map(|f| f.name().as_str()).collect();
+        assert!(names.contains(&FIELD_COLUMN_NAME));
+        assert!(names.contains(&FIELD_COLUMN_ORDINAL_POSITION));
+        assert!(names.contains(&FIELD_COLUMN_LOGICAL_TYPE));
+        assert!(names.contains(&FIELD_COLUMN_PRECISION));
+        assert!(names.contains(&FIELD_COLUMN_SCALE));
+        assert!(names.contains(&FIELD_COLUMN_CHAR_LENGTH));
+        assert!(names.contains(&FIELD_COLUMN_BYTE_LENGTH));
+        assert!(names.contains(&FIELD_COLUMN_NULLABLE));
+        assert!(names.contains(&FIELD_COLUMN_DEF));
+        assert!(names.contains(&FIELD_COLUMN_REMARKS));
+    }
+
+    #[test]
+    fn build_columns_batch_empty_produces_valid_batch() {
+        let batch = build_columns_batch(BTreeMap::new()).unwrap();
+        assert_eq!(batch.num_rows(), 0);
+        assert_eq!(batch.schema().field(0).name(), FIELD_CATALOG_NAME);
+    }
+
+    #[test]
+    fn build_columns_batch_single_column() {
+        let json = r#"{"type":"FIXED","nullable":false,"precision":38,"scale":0}"#;
+        let col = decode_data_type_json(json, "ID".to_string(), 1, None, None);
+        let mut tbl_map: BTreeMap<String, Vec<ColumnDescriptor>> = BTreeMap::new();
+        tbl_map.insert("MYTABLE".to_string(), vec![col]);
+        let mut sch_map: BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>> =
+            BTreeMap::new();
+        sch_map.insert("PUBLIC".to_string(), tbl_map);
+        let mut by_cat: BTreeMap<
+            String,
+            BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>,
+        > = BTreeMap::new();
+        by_cat.insert("MYDB".to_string(), sch_map);
+
+        let batch = build_columns_batch(by_cat).unwrap();
+        // 1 catalog row
+        assert_eq!(batch.num_rows(), 1);
+
+        // Drill down to verify the column struct is present.
+        let schemas_list = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .expect("catalog_db_schemas should be LargeListArray");
+        let schemas_struct = schemas_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("schemas values should be StructArray");
+        let tables_list = schemas_struct
+            .column_by_name(FIELD_DB_SCHEMA_TABLES)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .expect("db_schema_tables should be LargeListArray");
+        let tables_struct = tables_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("table values should be StructArray");
+        let cols_list = tables_struct
+            .column_by_name(FIELD_TABLE_COLUMNS)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .expect("table_columns should be LargeListArray");
+        let cols_struct = cols_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("column values should be StructArray");
+
+        assert_eq!(cols_struct.len(), 1, "expected 1 column");
+
+        let col_name_arr = cols_struct
+            .column_by_name(FIELD_COLUMN_NAME)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(col_name_arr.value(0), "ID");
+
+        let ordinal_arr = cols_struct
+            .column_by_name(FIELD_COLUMN_ORDINAL_POSITION)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert_eq!(ordinal_arr.value(0), 1);
+
+        let logical_type_arr = cols_struct
+            .column_by_name(FIELD_COLUMN_LOGICAL_TYPE)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(logical_type_arr.value(0), "FIXED");
     }
 }
