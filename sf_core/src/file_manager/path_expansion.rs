@@ -1,9 +1,21 @@
+use crate::config::path_resolver::expand_tilde;
 use snafu::{Location, ResultExt, Snafu};
 
-/// Expands file names using glob patterns, returning a list of valid file paths
+/// Expands file names using glob patterns, returning a list of valid file paths.
+///
+/// A leading `~` or `~/` in the pattern is first expanded to the user's home
+/// directory (matching JDBC's `expandFileNames` and Python's
+/// `os.path.expanduser`); a `~` that is not the leading path segment is left
+/// literal. When the home directory cannot be determined the `~` is left
+/// untouched and globbed verbatim. See [`expand_tilde`] for the exact `~`
+/// semantics (and its unit tests for coverage of the expansion itself).
 pub fn expand_filenames(pattern: &str) -> Result<Vec<ValidatedFilePath>, PathExpansionError> {
+    let expanded = expand_tilde(pattern, dirs::home_dir().as_deref())
+        .to_string_lossy()
+        .into_owned();
+
     let mut expanded_file_paths = Vec::new();
-    let paths = glob::glob(pattern).context(InvalidPatternSnafu { pattern })?;
+    let paths = glob::glob(&expanded).context(InvalidPatternSnafu { pattern })?;
 
     for path in paths {
         if let Ok(p) = path {
