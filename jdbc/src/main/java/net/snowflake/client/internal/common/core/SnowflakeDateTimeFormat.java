@@ -635,9 +635,13 @@ public class SnowflakeDateTimeFormat {
 
     if (fractionsPos >= 0) { // Construct a special formatter, with nanos embedded
       assert fragments.size() <= 1;
-      if (fractionsLen >= 0) scale = fractionsLen;
+      if (fractionsLen >= 0) {
+        scale = fractionsLen;
+      }
       String nanoStr = String.format("%1$09d", nanos).substring(0, scale);
-      if (fractionsWithDot) nanoStr = "." + nanoStr;
+      if (fractionsWithDot) {
+        nanoStr = "." + nanoStr;
+      }
       String newDateFormat;
       if (fragments.size() > 0) {
         String oldFormat = this.fragments.get(0).javaFormat;
