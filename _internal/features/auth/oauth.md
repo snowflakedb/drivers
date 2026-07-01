@@ -229,12 +229,15 @@ conn = snowflake.connector.connect(
 Legacy `snowflake-connector-python` aliases handled by the wrapper:
 
 - `oauth_token_url` is rewritten to `oauth_token_request_url`.
-- `oauth_enable_refresh_tokens`, `oauth_credentials_in_body` and
-  `oauth_socket_uri` emit a `DeprecationWarning` and are silently dropped —
-  refresh-token reuse is always on (gated by
-  `client_store_temporary_credential`), the CC flow always uses HTTP Basic
-  for client credentials, and the loopback listener always binds to the
-  redirect URI host.
+- `oauth_enable_refresh_tokens` and `oauth_socket_uri` emit a
+  `DeprecationWarning` and are silently dropped — refresh-token reuse is
+  always on (gated by `client_store_temporary_credential`), and the loopback
+  listener always binds to the redirect URI host.
+- `oauth_credentials_in_body` is honored: it selects the RFC 6749
+  `client_secret_post` token request (credentials in the form body) over the
+  default `client_secret_basic` (HTTP Basic header) for the client-credentials
+  flow. See `BehaviorDifferences.yaml` #29 for the body-only vs. body+header
+  difference from legacy `snowflake-connector-python`.
 
 ### 5.2 ODBC
 

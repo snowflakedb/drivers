@@ -685,6 +685,7 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
                 client_secret: cfg.client_secret.clone(),
                 token_url: cfg.token_url.clone(),
                 scope: cfg.scope.clone(),
+                credentials_in_body: cfg.credentials_in_body,
                 flow_options: OAuthFlowOptions {
                     enable_dpop: cfg.flow_options.enable_dpop,
                     authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,

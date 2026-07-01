@@ -155,6 +155,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     oauth_client_secret: str | None = None
     """OAuth client secret (redacted from logs)"""
 
+    oauth_credentials_in_body: bool | None = False
+    """Send client_id/client_secret in the OAUTH_CLIENT_CREDENTIALS token request body (client_secret_post) instead of
+    the HTTP Basic header.
+
+    Default: False
+    """
+
     oauth_disable_console_login: bool | None = False
     """Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth). Default: False"""
 

@@ -171,12 +171,6 @@ class ConnectionConfigMixin:
             "not supported; the universal driver always uses the refresh token "
             "returned by the IdP. Use client_store_temporary_credential to gate caching"
         ),
-        "oauth_credentials_in_body": (
-            "not supported; the universal driver always sends client credentials "
-            "as HTTP Basic for OAUTH_CLIENT_CREDENTIALS. "
-            "IdPs that require client_id/client_secret in the request body are not yet supported; "
-            "follow-up tracked separately"
-        ),
     }
     """Legacy kwargs that are accepted for source compatibility but have no effect."""
 

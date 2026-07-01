@@ -105,6 +105,7 @@ pub mod param_names {
         ParamKey("oauth_enable_single_use_refresh_tokens");
     pub const OAUTH_DISABLE_PKCE: ParamKey = ParamKey("oauth_disable_pkce");
     pub const OAUTH_ENABLE_DPOP: ParamKey = ParamKey("oauth_enable_dpop");
+    pub const OAUTH_CREDENTIALS_IN_BODY: ParamKey = ParamKey("oauth_credentials_in_body");
     pub const OAUTH_DISABLE_CONSOLE_LOGIN: ParamKey = ParamKey("oauth_disable_console_login");
     // Logout configuration
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
@@ -719,6 +720,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
         description: "Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_CREDENTIALS_IN_BODY.as_str(),
+        aliases: &["OAUTH_CREDENTIALS_IN_BODY"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Send client_id/client_secret in the OAUTH_CLIENT_CREDENTIALS token request body (client_secret_post) instead of the HTTP Basic header",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,

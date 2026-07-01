@@ -394,6 +394,13 @@ pub struct OAuthClientCredentialsConfig {
     pub token_url: Url,
     /// OAuth scope string (space-separated). `None` ⇒ derived from role.
     pub scope: Option<String>,
+    /// Send `client_id`/`client_secret` in the token-request body
+    /// (`client_secret_post`) instead of the RFC 6749 §2.3.1 HTTP Basic
+    /// header. Mirrors `snowflake-connector-python`'s
+    /// `oauth_credentials_in_body` for IdPs that require the body form.
+    /// Unlike legacy Python (which sends both), UD sends the credentials
+    /// in the body only.
+    pub credentials_in_body: bool,
     /// Driver-local flow behavior (DPoP, timeout). Not sent to Snowflake.
     pub flow_options: OAuthFlowOptions,
 }
@@ -657,6 +664,7 @@ impl OAuthClientCredentialsConfig {
             })?;
         let token_url = parse_required_url(settings, "oauth_token_request_url")?;
         let scope = non_empty_string(settings, "oauth_scope");
+        let credentials_in_body = get_flexible_bool(settings, "oauth_credentials_in_body");
         let enable_dpop = get_flexible_bool(settings, "oauth_enable_dpop");
         let authentication_timeout_secs = settings
             .get_u64("authentication_timeout")
@@ -668,6 +676,7 @@ impl OAuthClientCredentialsConfig {
             client_secret: client_secret.into(),
             token_url,
             scope,
+            credentials_in_body,
             flow_options: OAuthFlowOptions {
                 enable_dpop,
                 authentication_timeout_secs,
