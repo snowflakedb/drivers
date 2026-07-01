@@ -22,7 +22,32 @@ enum MetaDataResultSetFormat {
   GET_SCHEMAS(
       Arrays.asList("TABLE_SCHEM", "TABLE_CATALOG"),
       Arrays.asList("TEXT", "TEXT"),
-      Arrays.asList(Types.VARCHAR, Types.VARCHAR));
+      Arrays.asList(Types.VARCHAR, Types.VARCHAR)),
+
+  GET_TABLES(
+      Arrays.asList(
+          "TABLE_CAT",
+          "TABLE_SCHEM",
+          "TABLE_NAME",
+          "TABLE_TYPE",
+          "REMARKS",
+          "TYPE_CAT",
+          "TYPE_SCHEM",
+          "TYPE_NAME",
+          "SELF_REFERENCING_COL_NAME",
+          "REF_GENERATION"),
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR));
 
   private final List<String> columnNames;
   private final List<String> columnTypeNames;

@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.UUID;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.TestParameters;
 import org.junit.jupiter.api.Disabled;
@@ -1057,8 +1058,91 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void getTablesReturnsMatchingTables() {}
+  void shouldReturnMatchingTablesFromGetTables() throws Exception {
+    try (Connection conn = openConnection()) {
+      DatabaseMetaData metaData = conn.getMetaData();
+      String currentDatabase;
+      String currentSchema;
+      try (Statement s = conn.createStatement();
+          ResultSet rs = s.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+        assertTrue(rs.next());
+        currentDatabase = rs.getString(1);
+        currentSchema = rs.getString(2);
+      }
+
+      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+      final String targetTable = "T0_" + suffix;
+      final String targetView = "V0_" + suffix;
+      try (Statement stmt = conn.createStatement()) {
+        stmt.execute("create or replace table " + targetTable + "(C1 int)");
+        stmt.execute("create or replace view " + targetView + " as select 1 as C");
+        try {
+          // column shape
+          try (ResultSet resultSet =
+              metaData.getTables(currentDatabase, currentSchema, "%", null)) {
+            ResultSetMetaData rsMeta = resultSet.getMetaData();
+            assertEquals(10, rsMeta.getColumnCount());
+            assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
+            assertEquals("TABLE_SCHEM", rsMeta.getColumnName(2));
+            assertEquals("TABLE_NAME", rsMeta.getColumnName(3));
+            assertEquals("TABLE_TYPE", rsMeta.getColumnName(4));
+            assertEquals("REMARKS", rsMeta.getColumnName(5));
+          }
+
+          // TABLE type filter
+          try (ResultSet resultSet =
+              metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"TABLE"})) {
+            Set<String> tables = new HashSet<>();
+            while (resultSet.next()) {
+              assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+              assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+              assertEquals("TABLE", resultSet.getString("TABLE_TYPE"));
+              tables.add(resultSet.getString("TABLE_NAME"));
+            }
+            assertTrue(tables.contains(targetTable));
+            assertFalse(tables.contains(targetView));
+          }
+
+          // VIEW type filter
+          try (ResultSet resultSet =
+              metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"VIEW"})) {
+            Set<String> views = new HashSet<>();
+            while (resultSet.next()) {
+              assertEquals("VIEW", resultSet.getString("TABLE_TYPE"));
+              views.add(resultSet.getString("TABLE_NAME"));
+            }
+            assertTrue(views.contains(targetView));
+            assertFalse(views.contains(targetTable));
+          }
+
+          // exact name match
+          try (ResultSet resultSet =
+              metaData.getTables(
+                  currentDatabase, currentSchema, targetTable, new String[] {"TABLE"})) {
+            assertTrue(resultSet.next());
+            assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+            assertFalse(resultSet.next());
+          }
+
+          // invalid type returns empty
+          try (ResultSet resultSet =
+              metaData.getTables(
+                  currentDatabase, currentSchema, "%", new String[] {"INVALID_TYPE"})) {
+            assertFalse(resultSet.next());
+          }
+
+          // non-existent db returns empty
+          try (ResultSet resultSet =
+              metaData.getTables("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", null)) {
+            assertFalse(resultSet.next());
+          }
+        } finally {
+          stmt.execute("drop table if exists " + targetTable);
+          stmt.execute("drop view if exists " + targetView);
+        }
+      }
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")

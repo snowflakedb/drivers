@@ -3,6 +3,7 @@ package net.snowflake.client.api.metadata.reference;
 import static java.sql.DatabaseMetaData.procedureReturnsResult;
 import static java.sql.ResultSetMetaData.columnNullableUnknown;
 import static net.snowflake.client.api.metadata.reference.TestUtil.expectFeatureNotSupportedException;
+import static net.snowflake.jdbc.utils.DriverCompatibility.isOldDriver;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -193,7 +194,6 @@ public class DatabaseMetaDataIT extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @SkipNewDriver("not yet implemented")
   public void testGetTables() throws Throwable {
     Set<String> tables = null;
     try (Statement statement = connection.createStatement()) {
@@ -464,7 +464,7 @@ public class DatabaseMetaDataIT extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @SkipNewDriver("not yet implemented")
+  @Disabled("not yet implemented")
   public void testGetObjectsDoesNotExists() throws Throwable {
     try (Connection conn = getConnectionWithWildcardsDisabled();
         Statement statement = conn.createStatement()) {
@@ -492,7 +492,11 @@ public class DatabaseMetaDataIT extends SnowflakeIntegrationTestBase {
         // rest of the cases should return empty results.
         try (ResultSet resultSet = metaData.getSchemas("DB_NOT_EXIST", "SCHEMA_NOT_EXIST")) {
           assertFalse(resultSet.next());
-          assertTrue(resultSet.isClosed());
+          if (isOldDriver()) {
+            // TODO(SNOW-3695645): snowflake-jdbc has strange behavior of closing ResultSet after
+            //  the last next(), only in anonymous implementations in SnowflakeDatabaseMetaDataImpl
+            assertTrue(resultSet.isClosed());
+          }
         }
 
         try (ResultSet resultSet =

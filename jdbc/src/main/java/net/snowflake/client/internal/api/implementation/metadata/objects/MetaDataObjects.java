@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -96,6 +97,80 @@ public class MetaDataObjects {
     return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_SCHEMAS);
   }
 
+  public ResultSet getTables(
+      String originalCatalog,
+      String originalSchemaPattern,
+      final String tableNamePattern,
+      final String[] types)
+      throws SQLException {
+    List<String> tableTypes = validateTableTypes(types);
+    if (tableTypes.isEmpty()) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_TABLES);
+    }
+
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    boolean viewOnly = tableTypes.size() == 1 && "VIEW".equalsIgnoreCase(tableTypes.get(0));
+    boolean tableOnly = tableTypes.size() == 1 && "TABLE".equalsIgnoreCase(tableTypes.get(0));
+    String showType;
+    if (viewOnly) {
+      showType = "views";
+    } else if (tableOnly) {
+      showType = "tables";
+    } else showType = "objects";
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show(showType)
+            .like(tableNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_TABLES);
+    }
+
+    logger.debug("SQL query in getTables: {}", sqlQuery);
+
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
+    Pattern compiledTablePattern = Wildcard.toRegexPattern(tableNamePattern, true);
+    RowConverter rowConverter =
+        row -> {
+          String tableName = row.getString(2);
+
+          String dbName;
+          String schemaName;
+          String kind;
+          String comment;
+
+          if (viewOnly) {
+            dbName = row.getString(4);
+            schemaName = row.getString(5);
+            kind = "VIEW";
+            comment = row.getString(7);
+          } else {
+            dbName = row.getString(3);
+            schemaName = row.getString(4);
+            kind = row.getString(5);
+            comment = row.getString(6);
+          }
+
+          if ((compiledTablePattern == null || compiledTablePattern.matcher(tableName).matches())
+              && (compiledSchemaPattern == null
+                  || compiledSchemaPattern.matcher(schemaName).matches())) {
+            return new Object[] {
+              dbName, schemaName, tableName, kind, comment, null, null, null, null, null
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_TABLES);
+  }
+
   private MetaDataQueryBuilder queryBuilder() throws SQLException {
     return new MetaDataQueryBuilder(false, false, params.isEnableWildcardsInShowMetadataCommands());
   }
@@ -159,5 +234,19 @@ public class MetaDataObjects {
       statement.close();
       throw e;
     }
+  }
+
+  private static List<String> validateTableTypes(String[] types) {
+    List<String> inputValidTableTypes = new ArrayList<>();
+    if (types != null) {
+      for (String t : types) {
+        if (SUPPORTED_TABLE_TYPES.contains(t)) {
+          inputValidTableTypes.add(t);
+        }
+      }
+    } else {
+      inputValidTableTypes = new ArrayList<>(SUPPORTED_TABLE_TYPES);
+    }
+    return inputValidTableTypes;
   }
 }

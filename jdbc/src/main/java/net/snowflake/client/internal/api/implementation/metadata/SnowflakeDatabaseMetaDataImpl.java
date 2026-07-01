@@ -645,7 +645,7 @@ public class SnowflakeDatabaseMetaDataImpl
       String catalog, String schemaPattern, String tableNamePattern, String[] types)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getTables(catalog, schemaPattern, tableNamePattern, types);
   }
 
   @Override
