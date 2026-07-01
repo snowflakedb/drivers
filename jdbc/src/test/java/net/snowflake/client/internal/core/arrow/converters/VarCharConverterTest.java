@@ -3,6 +3,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,6 +25,8 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class VarCharConverterTest extends BaseConverterTest {
   /** allocator for arrow */
@@ -127,5 +130,43 @@ public class VarCharConverterTest extends BaseConverterTest {
         invalidConversionErrorCode, () -> converter.toDate(2, TimeZone.getDefault(), false));
 
     vector.close();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"MAP", "ARRAY", "OBJECT"})
+  public void shouldDispatchStructuredTypeToVarCharConverterViaUtil(String logicalType)
+      throws Exception {
+    String json = "{\"k\":1}";
+    try (VarCharVector vector = structuredVector(logicalType, json)) {
+      ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
+
+      assertInstanceOf(VarCharConverter.class, converter);
+      // The fallback surfaces the server's raw JSON text unchanged.
+      assertEquals(json, converter.toString(0));
+      assertEquals(json, converter.toObject(0));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"MAP", "ARRAY", "OBJECT"})
+  public void shouldReturnNullForNullStructuredValue(String logicalType) throws Exception {
+    try (VarCharVector vector = structuredVector(logicalType, "{\"k\":1}")) {
+      ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
+
+      assertNull(converter.toString(1));
+      assertNull(converter.toObject(1));
+    }
+  }
+
+  private VarCharVector structuredVector(String logicalType, String json) {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", logicalType);
+    FieldType fieldType =
+        new FieldType(true, Types.MinorType.VARCHAR.getType(), null, customFieldMeta);
+    VarCharVector vector = new VarCharVector("col_structured", fieldType, allocator);
+    vector.setSafe(0, json.getBytes(StandardCharsets.UTF_8));
+    vector.setNull(1);
+    vector.setValueCount(2);
+    return vector;
   }
 }
