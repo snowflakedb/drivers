@@ -43,6 +43,7 @@ import net.snowflake.client.internal.unicore.LegacyKeyNormalizer;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
@@ -65,7 +66,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private final ConnectionHandle connectionHandle;
   private final Properties resolvedProperties;
 
-  private boolean autoCommit = true;
+  private boolean autoCommit;
   private String catalog;
   private String schema;
 
@@ -95,10 +96,24 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
+      this.autoCommit = fetchAutoCommit(coreDriverApi, connHandle);
     } catch (SQLException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
       throw e;
     }
+  }
+
+  private static boolean fetchAutoCommit(CoreDriverApi coreDriverApi, ConnectionHandle connHandle) {
+    try {
+      ConnectionGetParameterResponse response =
+          coreDriverApi.connectionGetParameter(connHandle, "AUTOCOMMIT");
+      if (response.hasValue()) {
+        return Boolean.parseBoolean(response.getValue());
+      }
+    } catch (SQLException e) {
+      logger.warn("Failed to read AUTOCOMMIT session parameter; defaulting to true", e);
+    }
+    return true;
   }
 
   private WrapperIdentity wrapperIdentity() {
@@ -193,23 +208,29 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void setAutoCommit(boolean autoCommit) throws SQLException {
-    checkClosed();
-    this.autoCommit = autoCommit;
+    boolean currentAutoCommit = getAutoCommit();
+    if (autoCommit != currentAutoCommit) {
+      this.autoCommit = autoCommit;
+      coreDriverApi.connectionSetAutocommit(connectionHandle, autoCommit);
+    }
   }
 
   @Override
   public boolean getAutoCommit() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return autoCommit;
   }
 
   @Override
   public void commit() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    coreDriverApi.connectionCommit(connectionHandle);
   }
 
   @Override
   public void rollback() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    coreDriverApi.connectionRollback(connectionHandle);
   }
 
   @Override
@@ -636,7 +657,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   private String fetchDatabaseVersion() throws SQLException {
     try (Statement stmt = createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT CURRENT_VERSION()")) {
+        ResultSet rs = stmt.executeQuery(ConnectionQueries.CURRENT_VERSION)) {
       if (!rs.next()) {
         throw new SQLException("SELECT CURRENT_VERSION() returned no rows");
       }
