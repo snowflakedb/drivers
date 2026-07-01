@@ -1,12 +1,9 @@
 package net.snowflake.jdbc.e2e.parity;
 
 import java.io.File;
-import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.SQLException;
@@ -17,8 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
-import org.json.JSONObject;
-import org.json.JSONTokener;
+import net.snowflake.jdbc.utils.TestParameters;
 
 /**
  * Loads two driver implementations into isolated URLClassLoaders rooted at the platform
@@ -81,7 +77,7 @@ public final class ParityHarness implements AutoCloseable {
     URLClassLoader oldCl = new URLClassLoader(oldUrls, parent);
 
     Properties props = loadConnectionProps();
-    String url = buildJdbcUrl(props);
+    String url = TestParameters.buildJdbcUrl(props);
 
     try {
       SessionPair defaultPair = openPair(newCl, oldCl, url, props);
@@ -228,53 +224,8 @@ public final class ParityHarness implements AutoCloseable {
     return urls.toArray(new URL[0]);
   }
 
-  private static Properties loadConnectionProps() throws Exception {
-    String paramPath = System.getenv("PARAMETER_PATH");
-    if (paramPath == null) {
-      paramPath = "/parameters.json";
-    }
-    JSONObject root;
-    try (InputStreamReader r = new InputStreamReader(Files.newInputStream(Paths.get(paramPath)))) {
-      root = new JSONObject(new JSONTokener(r));
-    }
-    JSONObject params = root.getJSONObject("testconnection");
-
-    Properties props = new Properties();
-    props.setProperty("user", params.getString("SNOWFLAKE_TEST_USER"));
-    props.setProperty("password", params.getString("SNOWFLAKE_TEST_PASSWORD"));
-    props.setProperty("db", params.getString("SNOWFLAKE_TEST_DATABASE"));
-    props.setProperty("schema", params.getString("SNOWFLAKE_TEST_SCHEMA"));
-    props.setProperty(
-        "warehouse",
-        params.has("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
-            ? params.getString("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
-            : params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
-    props.setProperty("account", params.getString("SNOWFLAKE_TEST_ACCOUNT"));
-    if (params.has("SNOWFLAKE_TEST_PORT")) {
-      props.setProperty("port", String.valueOf(params.getInt("SNOWFLAKE_TEST_PORT")));
-    }
-    if (params.has("SNOWFLAKE_TEST_ROLE")) {
-      props.setProperty("role", params.getString("SNOWFLAKE_TEST_ROLE"));
-    }
-    if (params.has("SNOWFLAKE_TEST_HOST")) {
-      props.setProperty("host", params.getString("SNOWFLAKE_TEST_HOST"));
-    }
-    if (params.has("SNOWFLAKE_TEST_PROTOCOL")) {
-      props.setProperty("protocol", params.getString("SNOWFLAKE_TEST_PROTOCOL"));
-    }
-    return props;
-  }
-
-  private static String buildJdbcUrl(Properties props) {
-    String url = props.getProperty("url");
-    if (url != null && !url.isEmpty()) {
-      return url;
-    }
-    String built = "jdbc:snowflake://" + props.getProperty("account") + ".snowflakecomputing.com";
-    if (props.getProperty("port") != null) {
-      built += ":" + props.getProperty("port");
-    }
-    return built;
+  private static Properties loadConnectionProps() {
+    return TestParameters.withDefaultAuth(TestParameters.loadDefaultConnectionProperties());
   }
 
   private static void ensureDatabaseAndSchema(Connection conn, Properties props)
