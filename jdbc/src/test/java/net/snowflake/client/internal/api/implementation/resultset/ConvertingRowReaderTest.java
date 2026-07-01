@@ -89,7 +89,9 @@ class ConvertingRowReaderTest {
             columnNames,
             row -> {
               callCount[0]++;
-              if (callCount[0] == 1) return null;
+              if (callCount[0] == 1) {
+                return null;
+              }
               return new Object[] {42, "kept", true};
             });
     when(delegate.next()).thenReturn(true, true, false);

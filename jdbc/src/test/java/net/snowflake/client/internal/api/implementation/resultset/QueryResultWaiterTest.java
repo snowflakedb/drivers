@@ -97,9 +97,15 @@ class QueryResultWaiterTest {
         new QueryResultWaiter(
             () -> {
               int n = calls.incrementAndGet();
-              if (n <= 2) return status("QUEUED");
-              if (n <= 4) return status("RESUMING_WAREHOUSE");
-              if (n <= 5) return status("RUNNING");
+              if (n <= 2) {
+                return status("QUEUED");
+              }
+              if (n <= 4) {
+                return status("RESUMING_WAREHOUSE");
+              }
+              if (n <= 5) {
+                return status("RUNNING");
+              }
               return status("SUCCESS");
             },
             queryId,

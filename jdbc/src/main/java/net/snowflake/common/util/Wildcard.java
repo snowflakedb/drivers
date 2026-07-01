@@ -86,7 +86,9 @@ public class Wildcard {
    * @return a regex pattern
    */
   public static Pattern toRegexPattern(String wildcardPattern, boolean isCaseSensitive) {
-    if (wildcardPattern == null) return null;
+    if (wildcardPattern == null) {
+      return null;
+    }
 
     return isCaseSensitive
         ? Pattern.compile(toRegexStr(wildcardPattern))
@@ -101,7 +103,9 @@ public class Wildcard {
    * @return true if the string includes a wild card pattern
    */
   public static boolean isWildcardPatternStr(String inputString) {
-    if (inputString == null) return false;
+    if (inputString == null) {
+      return false;
+    }
     return WILDCARD_STRING_PATTERN.matcher(inputString).matches();
   }
 

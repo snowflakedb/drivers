@@ -114,9 +114,15 @@ class ConvertingRowReader implements RowReader {
   @Override
   public boolean getBoolean(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return false;
-    if (obj instanceof Boolean) return (Boolean) obj;
-    if (obj instanceof Number) return ((Number) obj).intValue() != 0;
+    if (obj == null) {
+      return false;
+    }
+    if (obj instanceof Boolean) {
+      return (Boolean) obj;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).intValue() != 0;
+    }
     String s = obj.toString();
     return "1".equals(s) || Boolean.parseBoolean(s);
   }
@@ -124,56 +130,84 @@ class ConvertingRowReader implements RowReader {
   @Override
   public byte getByte(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return 0;
-    if (obj instanceof Number) return ((Number) obj).byteValue();
+    if (obj == null) {
+      return 0;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).byteValue();
+    }
     return Byte.parseByte(obj.toString());
   }
 
   @Override
   public short getShort(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return 0;
-    if (obj instanceof Number) return ((Number) obj).shortValue();
+    if (obj == null) {
+      return 0;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).shortValue();
+    }
     return Short.parseShort(obj.toString());
   }
 
   @Override
   public int getInt(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return 0;
-    if (obj instanceof Number) return ((Number) obj).intValue();
+    if (obj == null) {
+      return 0;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).intValue();
+    }
     return Integer.parseInt(obj.toString());
   }
 
   @Override
   public long getLong(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return 0;
-    if (obj instanceof Number) return ((Number) obj).longValue();
+    if (obj == null) {
+      return 0;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).longValue();
+    }
     return Long.parseLong(obj.toString());
   }
 
   @Override
   public float getFloat(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return 0;
-    if (obj instanceof Number) return ((Number) obj).floatValue();
+    if (obj == null) {
+      return 0;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).floatValue();
+    }
     return Float.parseFloat(obj.toString());
   }
 
   @Override
   public double getDouble(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return 0;
-    if (obj instanceof Number) return ((Number) obj).doubleValue();
+    if (obj == null) {
+      return 0;
+    }
+    if (obj instanceof Number) {
+      return ((Number) obj).doubleValue();
+    }
     return Double.parseDouble(obj.toString());
   }
 
   @Override
   public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return null;
-    if (obj instanceof BigDecimal) return (BigDecimal) obj;
+    if (obj == null) {
+      return null;
+    }
+    if (obj instanceof BigDecimal) {
+      return (BigDecimal) obj;
+    }
     return new BigDecimal(obj.toString());
   }
 
@@ -186,8 +220,12 @@ class ConvertingRowReader implements RowReader {
   @Override
   public Date getDate(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return null;
-    if (obj instanceof Date) return (Date) obj;
+    if (obj == null) {
+      return null;
+    }
+    if (obj instanceof Date) {
+      return (Date) obj;
+    }
     return Date.valueOf(obj.toString());
   }
 
@@ -206,16 +244,24 @@ class ConvertingRowReader implements RowReader {
   @Override
   public Time getTime(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return null;
-    if (obj instanceof Time) return (Time) obj;
+    if (obj == null) {
+      return null;
+    }
+    if (obj instanceof Time) {
+      return (Time) obj;
+    }
     return Time.valueOf(obj.toString());
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
     Object obj = getObjectInternal(columnIndex);
-    if (obj == null) return null;
-    if (obj instanceof Timestamp) return (Timestamp) obj;
+    if (obj == null) {
+      return null;
+    }
+    if (obj instanceof Timestamp) {
+      return (Timestamp) obj;
+    }
     return Timestamp.valueOf(obj.toString());
   }
 

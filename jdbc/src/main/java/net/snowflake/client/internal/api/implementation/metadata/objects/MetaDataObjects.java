@@ -136,7 +136,9 @@ public class MetaDataObjects {
       showType = "views";
     } else if (tableOnly) {
       showType = "tables";
-    } else showType = "objects";
+    } else {
+      showType = "objects";
+    }
 
     String sqlQuery =
         queryBuilder(contextAware)
