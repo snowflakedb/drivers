@@ -1532,4 +1532,36 @@ mod tests {
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::DatetimeFieldOverflow);
     }
+
+    /// SNOW-3235557: the attribute get paths classify unknown identifiers into
+    /// HYC00 (valid ODBC attribute, unsupported) vs HY092 (out-of-range id).
+    /// Pin the variant→SQLSTATE mapping the classifier depends on, plus the
+    /// read-only set rejection (also HY092).
+    #[test]
+    fn attribute_errors_map_to_expected_sql_states() {
+        assert_eq!(
+            OdbcError::UnsupportedAttribute {
+                attribute: 16,
+                location: loc(),
+            }
+            .to_sql_state(),
+            SqlState::OptionalFeatureNotImplemented, // HYC00
+        );
+        assert_eq!(
+            OdbcError::UnknownAttribute {
+                attribute: 99999,
+                location: loc(),
+            }
+            .to_sql_state(),
+            SqlState::InvalidAttributeOptionIdentifier, // HY092
+        );
+        assert_eq!(
+            OdbcError::ReadOnlyAttribute {
+                attribute: 1209,
+                location: loc(),
+            }
+            .to_sql_state(),
+            SqlState::InvalidAttributeOptionIdentifier, // HY092
+        );
+    }
 }

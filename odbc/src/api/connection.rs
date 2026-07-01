@@ -787,6 +787,11 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                         .insert(attr, val.as_raw().to_string());
                     Ok(())
                 }
+                // Per the ODBC spec, SQL_ATTR_AUTOCOMMIT may be set before
+                // connecting; cache it and let `apply_pre_connection_runtime_attrs_async`
+                // toggle the server on connect (SNOW-3235550 / SNOW-87908). Only the
+                // live server-toggle path requires an open connection, so we do NOT
+                // return 08003 here.
                 None => {
                     connection.cached_autocommit = val;
                     connection
@@ -950,6 +955,13 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
+        // Per ODBC, a get of a valid-but-unsupported attribute returns HYC00,
+        // while an identifier outside the ODBC-defined range returns HY092
+        // (SNOW-3235557).
+        None if ConnectionAttribute::is_known_odbc(attribute) => {
+            tracing::warn!("get_connect_attr: unsupported ODBC attribute {attribute}");
+            return UnsupportedAttributeSnafu { attribute }.fail();
+        }
         None => {
             tracing::warn!("get_connect_attr: unknown attribute {attribute}");
             return UnknownAttributeSnafu { attribute }.fail();
@@ -1066,6 +1078,12 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                     length: buffer_length as i64,
                 }
                 .fail();
+            }
+            // The current catalog is a server-side session property, so it is
+            // indeterminate without an open connection: return 08003 when
+            // disconnected (SNOW-3235557) rather than a stale/empty cached value.
+            if matches!(connection.state, ConnectionState::Disconnected) {
+                return DisconnectedSnafu.fail();
             }
             drop(connection);
             let database = current_database(&dbc)?;

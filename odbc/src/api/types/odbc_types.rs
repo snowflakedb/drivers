@@ -142,6 +142,21 @@ impl ConnectionAttribute {
         raw >= SQL_SF_CONN_ATTR_BASE
     }
 
+    /// Whether `id` is a standard ODBC connection-attribute identifier defined
+    /// by the ODBC specification (`SQL_ATTR_*` / ODBC 2.x `SQL_*` connection
+    /// options), regardless of whether this driver implements it.
+    ///
+    /// Used to distinguish HYC00 (a valid ODBC attribute the driver does not
+    /// support) from HY092 (an identifier outside the ODBC-defined range) on
+    /// the get path. Ranges follow the Microsoft ODBC reference (`sql.h` /
+    /// `sqlext.h`): 101–114 cover the 2.x connection options and 3.x base
+    /// connection attributes, 117 is `SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE`,
+    /// 1207–1209 are the DTC/XA/`CONNECTION_DEAD` attributes, and 10001 /
+    /// 10014 are `SQL_ATTR_AUTO_IPD` / `SQL_ATTR_METADATA_ID`.
+    pub fn is_known_odbc(id: i32) -> bool {
+        matches!(id, 101..=114 | 117 | 1207..=1209 | 10001 | 10014)
+    }
+
     /// Convert back to the raw ODBC attribute ID.
     pub fn as_raw(&self) -> i32 {
         match self {
@@ -672,6 +687,23 @@ impl TryFrom<i32> for StmtAttr {
                 })
             }
         }
+    }
+}
+
+impl StmtAttr {
+    /// Whether `id` is a standard ODBC statement-attribute identifier defined
+    /// by the ODBC specification (`SQL_ATTR_*` / ODBC 2.x `SQL_*` statement
+    /// options), regardless of whether this driver implements it.
+    ///
+    /// Used to distinguish HYC00 (a valid ODBC attribute the driver does not
+    /// support) from HY092 (an identifier outside the ODBC-defined range) on
+    /// the get path. Ranges follow the Microsoft ODBC reference (`sql.h` /
+    /// `sqlext.h`): the contiguous −2..=27 block covers the 2.x statement
+    /// options and 3.x attributes, 29 is `SQL_ATTR_ASYNC_STMT_EVENT`, 30..=33
+    /// are the ODBC 4.0 sampling/exception-behavior attributes, and
+    /// 10010..=10014 are the descriptor handles plus `SQL_ATTR_METADATA_ID`.
+    pub fn is_known_odbc(id: i32) -> bool {
+        matches!(id, -2..=27 | 29 | 30..=33 | 10010..=10014)
     }
 }
 
@@ -2153,6 +2185,74 @@ mod tests {
         match DescField::try_from(-1_i16) {
             Err(OdbcError::InvalidDescriptorFieldId { field_id, .. }) => assert_eq!(field_id, -1),
             other => panic!("expected InvalidDescriptorFieldId, got {other:?}"),
+        }
+    }
+
+    // ---- HYC00 vs HY092 attribute classification (SNOW-3235557) ----------
+    //
+    // The get paths use these classifiers to decide between HYC00 (a valid
+    // ODBC attribute the driver does not support) and HY092 (an identifier
+    // outside the ODBC-defined range). The conformance suite pins the junk id
+    // 99999 to HY092 (`attr_error_handling.cpp`, `env_attr_tests.cpp`).
+
+    #[test]
+    fn stmt_attr_is_known_odbc_accepts_supported_and_unsupported_spec_ids() {
+        // Identifiers this driver implements (a sample across the range).
+        for id in [-2, -1, 0, 6, 7, 27, 10010, 10014] {
+            assert!(StmtAttr::is_known_odbc(id), "{id} should be a known attr");
+        }
+        // Spec-defined identifiers the driver does NOT model — must still be
+        // "known" so the get path reports HYC00, not HY092.
+        for id in [
+            14, // SQL_ATTR_ROW_NUMBER (read-only)
+            16, // SQL_ATTR_FETCH_BOOKMARK_PTR
+            19, // SQL_ATTR_PARAM_OPERATION_PTR
+            24, // SQL_ATTR_ROW_OPERATION_PTR
+            29, // SQL_ATTR_ASYNC_STMT_EVENT
+        ] {
+            assert!(
+                StmtAttr::is_known_odbc(id),
+                "{id} is a valid ODBC stmt attr → HYC00"
+            );
+        }
+    }
+
+    #[test]
+    fn stmt_attr_is_known_odbc_rejects_out_of_range_ids() {
+        for id in [99999, 28, 34, 100, 1263, -3] {
+            assert!(
+                !StmtAttr::is_known_odbc(id),
+                "{id} is outside the ODBC range → HY092"
+            );
+        }
+    }
+
+    #[test]
+    fn connect_attr_is_known_odbc_accepts_spec_ids() {
+        for id in [
+            101,   // SQL_ATTR_ACCESS_MODE
+            102,   // SQL_ATTR_AUTOCOMMIT
+            109,   // SQL_ATTR_CURRENT_CATALOG
+            114,   // SQL_ATTR_DISCONNECT_BEHAVIOR (unsupported but valid)
+            117,   // SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE
+            1209,  // SQL_ATTR_CONNECTION_DEAD
+            10001, // SQL_ATTR_AUTO_IPD
+            10014, // SQL_ATTR_METADATA_ID
+        ] {
+            assert!(
+                ConnectionAttribute::is_known_odbc(id),
+                "{id} is a valid ODBC connection attr"
+            );
+        }
+    }
+
+    #[test]
+    fn connect_attr_is_known_odbc_rejects_out_of_range_ids() {
+        for id in [99999, 100, 115, 116, 1206, 1210, 200] {
+            assert!(
+                !ConnectionAttribute::is_known_odbc(id),
+                "{id} is outside the ODBC range → HY092"
+            );
         }
     }
 }
