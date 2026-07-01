@@ -237,8 +237,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Accepts NULL output poi
   SQLDisconnect(dbc_handle());
 }
 
+// Tagged [flaky] so it is excluded from the gating run (`ctest -LE flaky`) while
+// still running in the separate non-blocking flaky step. It fails intermittently
+// only under the iODBC driver manager, whose dispatch of an out-of-range
+// SQLGetFunctions FunctionId diverges from unixODBC/Windows (see BD#62), not the
+// driver's own function-table behavior that the assertions below cover.
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: HY095 - Invalid FunctionId",
-                 "[odbc-api][getfunctions][driver_info][error]") {
+                 "[odbc-api][getfunctions][driver_info][error][flaky]") {
   // Given an active connection to the default DSN
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);

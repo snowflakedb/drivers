@@ -1310,6 +1310,8 @@ behavior_differences:
     description: |
       Applications using ODBC 2.x field identifiers with the 3.x function will now
       receive correct values.
+      receive correct values.
+
   81:
     name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
     status: allowed
@@ -1334,3 +1336,20 @@ behavior_differences:
       Security hardening tracked under SNOW-3663588; the same difference is documented as BD#38 in
       python/ and BD#10 in jdbc/ BehaviorDifferences.yaml. DSNs that configured a plaintext
       `http://` IdP token endpoint must switch to `https://`.
+
+  82:
+    name: "PUT expands a leading ~ / ~/ in local source paths to the home directory"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      Aligns the universal driver with JDBC and the Python connector, both of which expand a leading `~` in PUT source paths. The legacy ODBC driver (libsnowflakeclient) never did client-side `~` expansion, so adding it only enables previously-failing commands to succeed; no existing caller that passed an absolute or relative path is affected.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy ODBC driver (libsnowflakeclient) does not expand a leading `~` client-side. A command such as `PUT file://~/data/*.csv @stage` is passed to the glob/file lookup verbatim; because no directory is literally named `~`, it matches no files and the PUT fails to upload anything.
+    new_driver_behavior: |
+      A leading `~` or `~/` in the local source path is expanded to the user's home directory before glob expansion, so `PUT file://~/data/*.csv @stage` resolves to `<home>/data/*.csv`. This matches JDBC's `expandFileNames` and Python's `os.path.expanduser`. A `~` that is not the leading path segment (e.g. `/data/~/file` or `file~name`) is preserved literally. When the home directory cannot be determined the `~` is left untouched.
+    description: |
+      Reference: JDBC `SnowflakeFileTransferAgent.expandFileNames` (leading-`~` replacement) and Python `file_transfer_agent.py` (`os.path.expanduser`). The `~user` (named-user) form is not expanded by the universal driver; only the bare `~` and `~/` leading forms are. This differs from Python's `os.path.expanduser`, which additionally resolves `~user` via the password database; it matches the leading-only intent of JDBC. Applications that relied on the legacy ODBC behavior of treating a leading `~` literally will now have it expanded.
+

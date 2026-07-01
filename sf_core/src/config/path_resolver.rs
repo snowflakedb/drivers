@@ -39,7 +39,12 @@ fn resolve_snowflake_home(env_value: Option<String>, home_dir: Option<PathBuf>) 
 
 /// Expand a leading `~` or `~/` to the user's home directory, mirroring
 /// Python's `Path.expanduser()`.
-fn expand_tilde(raw: &str, home_dir: Option<&std::path::Path>) -> PathBuf {
+///
+/// Only a leading `~` (bare) or `~/` is expanded; a `~` anywhere else in the
+/// string is left literal, and a `~user` form is left untouched. Shared with
+/// [`crate::file_manager`] PUT source-path expansion so both resolve `~`
+/// identically (and consistently with JDBC's `expandFileNames`).
+pub(crate) fn expand_tilde(raw: &str, home_dir: Option<&std::path::Path>) -> PathBuf {
     if raw == "~" {
         return home_dir
             .map(PathBuf::from)
@@ -214,6 +219,25 @@ mod tests {
         let home = PathBuf::from("/home/testuser");
         let result = expand_tilde("/opt/snowflake", Some(&home));
         assert_eq!(result, PathBuf::from("/opt/snowflake"));
+    }
+
+    #[test]
+    fn test_expand_tilde_preserves_non_leading_tilde() {
+        // A `~` that is not the leading path segment is left literal (matching
+        // JDBC's leading-only `expandFileNames`). This is the behavior the PUT
+        // path-expansion caller relies on for patterns like `/data/~/f*.csv`.
+        let home = PathBuf::from("/home/testuser");
+        let result = expand_tilde("/data/~/file*.csv", Some(&home));
+        assert_eq!(result, PathBuf::from("/data/~/file*.csv"));
+    }
+
+    #[test]
+    fn test_expand_tilde_keeps_glob_metacharacters() {
+        // The PUT path-expansion caller feeds glob patterns through this
+        // helper; metacharacters after the leading `~/` must survive verbatim.
+        let home = PathBuf::from("/home/testuser");
+        let result = expand_tilde("~/data/*.csv", Some(&home));
+        assert_eq!(result, PathBuf::from("/home/testuser/data/*.csv"));
     }
 
     #[test]
