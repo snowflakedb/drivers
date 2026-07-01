@@ -48,6 +48,10 @@ class MetaDataQueryBuilder {
   }
 
   MetaDataQueryBuilder in(String catalog, String schema) {
+    return in(catalog, schema, null);
+  }
+
+  MetaDataQueryBuilder in(String catalog, String schema, String table) {
     if (catalog == null) {
       builder.append(" in account");
     } else if (catalog.isEmpty()) {
@@ -60,12 +64,27 @@ class MetaDataQueryBuilder {
         earlyExit = true;
       } else {
         String schemaUnescaped = isExactSchema ? schema : unescapeChars(schema);
-        builder
-            .append(" in schema \"")
-            .append(catalogEscaped)
-            .append("\".\"")
-            .append(schemaUnescaped)
-            .append("\"");
+        if (table == null
+            || (Wildcard.isWildcardPatternStr(table) && enableWildcardsInShowMetadataCommands)) {
+          builder
+              .append(" in schema \"")
+              .append(catalogEscaped)
+              .append("\".\"")
+              .append(schemaUnescaped)
+              .append("\"");
+        } else if (table.isEmpty()) {
+          earlyExit = true;
+        } else {
+          String tableNameUnescaped = unescapeChars(table);
+          builder
+              .append(" in table \"")
+              .append(catalogEscaped)
+              .append("\".\"")
+              .append(schemaUnescaped)
+              .append("\".\"")
+              .append(tableNameUnescaped)
+              .append("\"");
+        }
       }
     }
     return this;

@@ -670,7 +670,8 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getColumns(
       String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getColumns(catalog, schemaPattern, tableNamePattern, columnNamePattern, false);
   }
 
   @Override
@@ -967,6 +968,8 @@ public class SnowflakeDatabaseMetaDataImpl
       String columnNamePattern,
       boolean extendedSet)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getColumns(
+        catalog, schemaPattern, tableNamePattern, columnNamePattern, extendedSet);
   }
 }
