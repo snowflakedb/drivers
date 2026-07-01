@@ -3,20 +3,29 @@ package net.snowflake.client.internal.api.implementation.statement;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.notNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.sql.BatchUpdateException;
+import java.sql.Clob;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
+import java.sql.Types;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -221,6 +230,77 @@ public class SnowflakePreparedStatementImplTest {
     when(mockCoreApi.statementPrepare(any())).thenThrow(driverExceptionWithVendorCode(1003));
 
     assertThrows(SnowflakeSQLException.class, ps::getParameterMetaData);
+  }
+
+  @Test
+  void shouldBindNullClobViaSetNull() throws Exception {
+    try (SnowflakePreparedStatementImpl ps =
+        spy(createPreparedStatement("INSERT INTO t VALUES (?)"))) {
+      ps.setClob(1, (Clob) null);
+
+      verify(ps).setNull(1, Types.CLOB);
+      verify(ps, never()).setString(anyInt(), anyString());
+    }
+  }
+
+  @Test
+  void shouldBindEmptyStringWhenClobLengthIsZeroWithoutCallingGetSubString() throws Exception {
+    try (SnowflakePreparedStatementImpl ps =
+        spy(createPreparedStatement("INSERT INTO t VALUES (?)"))) {
+      Clob emptyClob = mock(Clob.class);
+      when(emptyClob.length()).thenReturn(0L);
+
+      ps.setClob(1, emptyClob);
+
+      verify(emptyClob, never()).getSubString(anyLong(), anyInt());
+      verify(ps).setString(1, "");
+    }
+  }
+
+  @Test
+  void shouldRejectClobWhoseLengthExceedsMaxValue() throws Exception {
+    try (SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)")) {
+      Clob oversizedClob = mock(Clob.class);
+      when(oversizedClob.length()).thenReturn((long) Integer.MAX_VALUE + 1L);
+
+      SQLException ex = assertThrows(SQLException.class, () -> ps.setClob(1, oversizedClob));
+
+      assertTrue(
+          ex.getMessage().contains("exceeds the maximum supported size"),
+          "Expected oversize CLOB error message");
+      verify(oversizedClob, never()).getSubString(anyLong(), anyInt());
+    }
+  }
+
+  @Test
+  void shouldBindNonEmptyClobViaGetSubString() throws Exception {
+    try (SnowflakePreparedStatementImpl ps =
+        spy(createPreparedStatement("INSERT INTO t VALUES (?)"))) {
+      Clob clob = mock(Clob.class);
+      when(clob.length()).thenReturn(5L);
+      when(clob.getSubString(1, 5)).thenReturn("hello");
+
+      ps.setClob(1, clob);
+
+      verify(clob).getSubString(1, 5);
+      verify(ps).setString(1, "hello");
+    }
+  }
+
+  @Test
+  void shouldInvokeStatementExecuteQueryWhenClobIsBound() throws Exception {
+    try (SnowflakePreparedStatementImpl ps =
+        spy(createPreparedStatement("INSERT INTO t VALUES (?)"))) {
+      when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+          .thenReturn(insertResponse(1L));
+      Clob clob = new SnowflakeClob("pooling clob");
+
+      ps.setClob(1, clob);
+      ps.executeUpdate();
+
+      verify(ps).setString(1, "pooling clob");
+      verify(mockCoreApi, times(1)).statementExecuteQuery(any(), notNull(QueryBindings.class));
+    }
   }
 
   private static SnowflakeSQLException driverExceptionWithVendorCode(int vendorCode) {

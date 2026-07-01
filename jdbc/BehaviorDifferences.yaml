@@ -202,3 +202,77 @@ behavior_differences:
       isWrapperFor/unwrap while others throw SQLFeatureNotSupportedException.
       The new driver applies DelegatingWrapper everywhere the interface is applicable,
       so extension access works uniformly.
+  13:
+    name: "SnowflakeClob.setString overwrites in-place; legacy driver inserts at position"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    status_rationale: |
+      The legacy snowflake-jdbc SnowflakeClob implements setString via StringBuffer.insert at the
+      1-based position, shifting trailing content. The universal driver's SnowflakeClob replaces
+      the character range starting at that position (JDBC Clob contract: write starting at pos,
+      not insert). Example: starting from "hello world", setString(1, "HELLO") yields
+      "HELLO world" (new) vs "HELLOhello world" (old). Pooling/createClob paths only append from
+      an empty Clob today; middle overwrite is not required for #387 but the semantic gap is
+      documented for follow-up alignment review.
+  14:
+    name: "SnowflakeClob.setAsciiStream / setCharacterStream ported from legacy driver"
+    status: fixed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Legacy snowflake-jdbc SnowflakeClob exposes setAsciiStream and setCharacterStream via small
+      StringBuffer-backed stream helpers. The universal driver now ports a minimal subset for the
+      pooling phase: append/replace ASCII bytes and append-on-flush character writes. Full parity
+      review (position semantics, mid-buffer overwrite edge cases) is deferred; createClob +
+      setString/setClob remain the primary pooling path in #387.
+  15:
+    name: "SnowflakeClob.free invalidates handle; legacy driver clears buffer and keeps Clob usable"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      JDBC requires that after Clob.free() the object is invalid and subsequent method calls
+      throw SQLException. The universal driver nulls its buffer and rejects further access.
+      Legacy snowflake-jdbc assigns buffer = new StringBuffer(), leaving a usable (empty) Clob.
+      The universal behavior matches the spec; callers depending on post-free reuse on the old
+      driver must allocate a fresh Clob.
+  16:
+    name: "SnowflakeClob.position returns 1-based index; legacy driver returns 0-based index"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      JDBC specifies that position returns the position at which the search string appears,
+      using a 1-based index (or -1 if not found). The universal driver returns index + 1.
+      Legacy snowflake-jdbc returns StringBuffer.lastIndexOf directly (0-based). Example:
+      position("world", 1) on "hello world" returns 7 (new) vs 6 (old).
+  17:
+    name: "SnowflakeClob.setString(pos, str, offset, len) treats len as count; legacy uses len as end index"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      JDBC Clob.setString(pos, str, offset, len) defines len as the number of characters to copy
+      starting at offset inside str. The universal driver uses str.substring(offset, offset + len).
+      Legacy snowflake-jdbc uses str.substring(offset, len), treating len as the exclusive end
+      index in str — a Java substring(begin, end) misuse that only matches the spec when
+      offset == 0 (because substring(0, len) equals substring(0, 0 + len)).
+
+      When offset > 0 the drivers diverge. Examples writing at Clob position 1:
+        - setString(1, "XXhelloYY", 2, 5): new -> "hello" (5 chars from offset 2); old -> "hel"
+          (substring(2, 5), three characters ending before the second "l").
+        - setString(1, "abcdef", 1, 4): new -> "bcde"; old -> "bcd" (substring(1, 4)).
+
+      The universal driver fixes the legacy bug; callers that accidentally relied on the old
+      end-index semantics need to adjust len when offset > 0.

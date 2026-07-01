@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static java.lang.Integer.MAX_VALUE;
+import static java.sql.Types.CLOB;
 import static net.snowflake.client.internal.util.StringUtil.isNullOrEmpty;
 
 import java.io.InputStream;
@@ -435,7 +437,17 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public void setClob(int parameterIndex, Clob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setClob not supported");
+    if (x == null) {
+      setNull(parameterIndex, CLOB);
+    } else {
+      long length = x.length();
+      if (length > MAX_VALUE) {
+        throw new SQLException("CLOB length " + length + " exceeds the maximum supported size.");
+      }
+      // SerialClob (and most Clob impls) reject getSubString(1, 0) on an empty CLOB, so bind an
+      // empty string directly instead of calling getSubString for a zero-length value.
+      setString(parameterIndex, length == 0 ? "" : x.getSubString(1, (int) length));
+    }
   }
 
   @Override
