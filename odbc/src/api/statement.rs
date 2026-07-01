@@ -124,7 +124,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         inner.prepared_param_count = None;
         inner.prepared_array_bind_supported = None;
 
-        let dae_params = find_dae_params(&inner.apd, None);
+        let dae_params = inner.with_effective_apd(|apd| find_dae_params(apd, None));
         if !dae_params.is_empty() {
             let pushed_data = dae_params
                 .iter()
@@ -143,8 +143,13 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             return DaeRequiredSnafu.fail();
         }
 
-        let param_count = effective_param_count(&inner.apd, &inner.ipd, false, None);
-        let effective_cells = inner.apd.array_size as u64 * u64::from(param_count);
+        let (param_count, param_array_size) = inner.with_effective_apd(|apd| {
+            (
+                effective_param_count(apd, &inner.ipd, false, None),
+                apd.array_size,
+            )
+        });
+        let effective_cells = param_array_size as u64 * u64::from(param_count);
         let binding_mode = select_binding_mode(
             &conn_handle,
             effective_cells,
@@ -152,8 +157,9 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             // which falls through to the threshold check.
             None,
         )?;
-        let (bindings, bindings_owner) =
-            apply_parameter_bindings(&inner.apd, &inner.ipd, false, None, binding_mode)?;
+        let (bindings, bindings_owner) = inner.with_effective_apd(|apd| {
+            apply_parameter_bindings(apd, &inner.ipd, false, None, binding_mode)
+        })?;
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
         let effective_query = statement_text.to_string();
@@ -249,7 +255,7 @@ fn finalize_execute_response(
     update_numeric_settings(&conn_handle, &mut conn.numeric_settings, last_sql)?;
 
     // Snapshot output pointers before passing `inner` into apply_execute_response.
-    let param_set_size = inner.apd.array_size;
+    let param_set_size = inner.with_effective_apd(|apd| apd.array_size);
     let rows_processed_ptr = inner.ipd.rows_processed_ptr;
     let param_status_ptr = inner.ipd.array_status_ptr;
 
@@ -960,7 +966,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             return DisconnectedSnafu.fail();
         }
 
-        let dae_params = find_dae_params(&inner.apd, inner.prepared_param_count);
+        let dae_params =
+            inner.with_effective_apd(|apd| find_dae_params(apd, inner.prepared_param_count));
         if !dae_params.is_empty() {
             let pushed_data = dae_params
                 .iter()
@@ -986,25 +993,27 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 return DisconnectedSnafu.fail();
             }
         };
-        let param_count = effective_param_count(
-            &inner.apd,
-            &inner.ipd,
-            is_prepared,
-            inner.prepared_param_count,
-        );
-        let effective_cells = inner.apd.array_size as u64 * u64::from(param_count);
+        let (param_count, param_array_size) = inner.with_effective_apd(|apd| {
+            (
+                effective_param_count(apd, &inner.ipd, is_prepared, inner.prepared_param_count),
+                apd.array_size,
+            )
+        });
+        let effective_cells = param_array_size as u64 * u64::from(param_count);
         let binding_mode = select_binding_mode(
             &conn_handle,
             effective_cells,
             inner.prepared_array_bind_supported,
         )?;
-        let (bindings, bindings_owner) = apply_parameter_bindings(
-            &inner.apd,
-            &inner.ipd,
-            is_prepared,
-            inner.prepared_param_count,
-            binding_mode,
-        )?;
+        let (bindings, bindings_owner) = inner.with_effective_apd(|apd| {
+            apply_parameter_bindings(
+                apd,
+                &inner.ipd,
+                is_prepared,
+                inner.prepared_param_count,
+                binding_mode,
+            )
+        })?;
 
         let stmt_handle = guard.stmt_handle;
         let query_timeout = inner.query_timeout;
@@ -1543,7 +1552,7 @@ pub fn bind_parameter(
     drop(inner);
     let mut inner = guard.inner.lock();
 
-    inner.apd.records.insert(
+    inner.insert_active_apd_record(
         parameter_number,
         ApdRecord {
             value_type,
@@ -1620,7 +1629,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
         }
         FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameter bindings");
-            inner.apd.clear();
+            inner.clear_active_apd_records();
             if let Some(count) = inner.prepared_param_count {
                 inner.ipd.records.retain(|&k, _| k <= count);
             }
@@ -1951,13 +1960,13 @@ pub fn set_stmt_attr(
         StmtAttr::ParamBindType => {
             let raw = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: ParamBindType (raw) = {}", raw);
-            inner.apd.bind_type = raw;
+            inner.with_effective_apd_header_mut(|_, bind_type, _| *bind_type = raw);
             Ok(())
         }
         StmtAttr::ParamBindOffsetPtr => {
             let ptr = value_ptr as *mut sql::Len;
             tracing::debug!("set_stmt_attr: ParamBindOffsetPtr = {:?}", ptr);
-            inner.apd.bind_offset_ptr = ptr;
+            inner.with_effective_apd_header_mut(|_, _, bind_offset_ptr| *bind_offset_ptr = ptr);
             Ok(())
         }
         StmtAttr::ParamStatusPtr => {
@@ -1975,12 +1984,13 @@ pub fn set_stmt_attr(
         StmtAttr::ParamsetSize => {
             let size = value_ptr as usize;
             tracing::debug!("set_stmt_attr: ParamsetSize = {}", size);
-            inner.apd.array_size = if size == 0 {
+            let coerced = if size == 0 {
                 tracing::warn!("set_stmt_attr: ParamsetSize 0 is invalid, coercing to 1");
                 1
             } else {
                 size
             };
+            inner.with_effective_apd_header_mut(|array_size, _, _| *array_size = coerced);
             Ok(())
         }
         StmtAttr::MetadataId => {
@@ -2346,8 +2356,9 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::ParamBindType => {
+            let bind_type = inner.with_effective_apd(|apd| apd.bind_type);
             unsafe {
-                *(value_ptr as *mut sql::ULen) = inner.apd.bind_type;
+                *(value_ptr as *mut sql::ULen) = bind_type;
                 if !string_length_ptr.is_null() {
                     *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
@@ -2355,8 +2366,9 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::ParamBindOffsetPtr => {
+            let bind_offset_ptr = inner.with_effective_apd(|apd| apd.bind_offset_ptr);
             unsafe {
-                *(value_ptr as *mut *mut sql::Len) = inner.apd.bind_offset_ptr;
+                *(value_ptr as *mut *mut sql::Len) = bind_offset_ptr;
             }
             Ok(())
         }
@@ -2373,8 +2385,9 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::ParamsetSize => {
+            let array_size = inner.with_effective_apd(|apd| apd.array_size);
             unsafe {
-                *(value_ptr as *mut sql::ULen) = inner.apd.array_size as sql::ULen;
+                *(value_ptr as *mut sql::ULen) = array_size as sql::ULen;
                 if !string_length_ptr.is_null() {
                     *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
@@ -2569,7 +2582,7 @@ pub fn param_data(
         } => {
             let param_num = dae_context.dae_params[dae_context.current_index];
             if !value_ptr_ptr.is_null() {
-                let token = get_param_token(&inner.apd, param_num);
+                let token = inner.with_effective_apd(|apd| get_param_token(apd, param_num));
                 unsafe { *value_ptr_ptr = token };
             }
             inner.state.set(StatementState::AwaitingPutData {
@@ -2602,7 +2615,7 @@ pub fn param_data(
             if dae_context.current_index < dae_context.dae_params.len() {
                 let param_num = dae_context.dae_params[dae_context.current_index];
                 if !value_ptr_ptr.is_null() {
-                    let token = get_param_token(&inner.apd, param_num);
+                    let token = inner.with_effective_apd(|apd| get_param_token(apd, param_num));
                     unsafe { *value_ptr_ptr = token };
                 }
                 inner.state.set(StatementState::AwaitingPutData {
@@ -2667,7 +2680,9 @@ pub fn put_data(
             mut dae_context,
             origin,
         } => {
-            let result = put_data_inner(&inner.apd, &mut dae_context, data_ptr, str_len_or_ind);
+            let result = inner.with_effective_apd(|apd| {
+                put_data_inner(apd, &mut dae_context, data_ptr, str_len_or_ind)
+            });
             inner.state.set(if result.is_ok() {
                 StatementState::PutDataCalled {
                     dae_context,
@@ -2686,7 +2701,9 @@ pub fn put_data(
             mut dae_context,
             origin,
         } => {
-            let result = put_data_inner(&inner.apd, &mut dae_context, data_ptr, str_len_or_ind);
+            let result = inner.with_effective_apd(|apd| {
+                put_data_inner(apd, &mut dae_context, data_ptr, str_len_or_ind)
+            });
             inner.state.set(StatementState::PutDataCalled {
                 dae_context,
                 origin,
@@ -2963,19 +2980,25 @@ fn execute_dae(
     };
 
     // Build a temporary APD with DAE parameters replaced by their
-    // accumulated data, keeping non-DAE records as-is.
+    // accumulated data, keeping non-DAE records as-is. Seed from the *active*
+    // APD (implicit or explicit) including its header fields.
     let mut temp_apd = crate::api::ApdDescriptor::new();
-    for (&param_num, rec) in &inner.apd.records {
-        temp_apd.records.insert(
-            param_num,
-            ApdRecord {
-                value_type: rec.value_type,
-                data_ptr: rec.data_ptr,
-                buffer_length: rec.buffer_length,
-                str_len_or_ind_ptr: rec.str_len_or_ind_ptr,
-            },
-        );
-    }
+    inner.with_effective_apd(|apd| {
+        temp_apd.array_size = apd.array_size;
+        temp_apd.bind_type = apd.bind_type;
+        temp_apd.bind_offset_ptr = apd.bind_offset_ptr;
+        for (&param_num, rec) in &apd.records {
+            temp_apd.records.insert(
+                param_num,
+                ApdRecord {
+                    value_type: rec.value_type,
+                    data_ptr: rec.data_ptr,
+                    buffer_length: rec.buffer_length,
+                    str_len_or_ind_ptr: rec.str_len_or_ind_ptr,
+                },
+            );
+        }
+    });
 
     let mut dae_buffers: Vec<Vec<u8>> = Vec::new();
     let param_count = dae_context.pushed_data.len();
