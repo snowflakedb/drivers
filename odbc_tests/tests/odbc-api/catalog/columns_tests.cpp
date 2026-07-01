@@ -16,14 +16,35 @@
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
+// ---------------------------------------------------------------------------
+// Helper: read a CHAR column from a SQLColumns result set with proper hygiene:
+//   0xFF sentinel fill, named indicator, hard assertion on SQLGetData return.
+// ---------------------------------------------------------------------------
+struct ColumnValue {
+  std::string text;
+  SQLLEN indicator = 0;
+  bool is_null() const { return indicator == SQL_NULL_DATA; }
+  bool is_present() const { return indicator > 0 || indicator == SQL_NTS; }
+};
+
+static ColumnValue sqlcolumns_get_column(SQLHSTMT stmt, SQLUSMALLINT column) {
+  char buf[1024];
+  std::memset(buf, 0xFF, sizeof(buf));
+  SQLLEN indicator = 0;
+  const SQLRETURN ret = SQLGetData(stmt, column, SQL_C_CHAR, buf, sizeof(buf), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  if (indicator == SQL_NULL_DATA) {
+    return {std::string(), indicator};
+  }
+  return {std::string(buf), indicator};
+}
+
 // ============================================================================
 // SQLColumns - Result Set Structure
 // ============================================================================
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct number of columns",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -36,8 +57,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct numb
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -73,8 +92,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names mat
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct column metadata for known table",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -85,21 +102,16 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct column meta
     if (ret == SQL_NO_DATA) break;
     REQUIRE(ret == SQL_SUCCESS);
 
-    char tableCat[256] = {};
-    char tableSchem[256] = {};
-    char tableName[256] = {};
-    char columnName[256] = {};
+    const auto tableCat = sqlcolumns_get_column(stmt_handle(), 1);
+    const auto tableSchem = sqlcolumns_get_column(stmt_handle(), 2);
+    const auto tableName = sqlcolumns_get_column(stmt_handle(), 3);
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
 
-    SQLGetData(stmt_handle(), 1, SQL_C_CHAR, tableCat, sizeof(tableCat), nullptr);
-    SQLGetData(stmt_handle(), 2, SQL_C_CHAR, tableSchem, sizeof(tableSchem), nullptr);
-    SQLGetData(stmt_handle(), 3, SQL_C_CHAR, tableName, sizeof(tableName), nullptr);
-    SQLGetData(stmt_handle(), 4, SQL_C_CHAR, columnName, sizeof(columnName), nullptr);
+    REQUIRE(tableCat.text == database_name());
+    REQUIRE(tableSchem.text == schema_name());
+    REQUIRE(tableName.text == readonly_db::MULTI_TYPE_TABLE);
 
-    REQUIRE(std::string(tableCat) == database_name());
-    REQUIRE(std::string(tableSchem) == schema_name());
-    REQUIRE(std::string(tableName) == readonly_db::MULTI_TYPE_TABLE);
-
-    columnNames.emplace_back(columnName);
+    columnNames.emplace_back(columnName.text);
   }
 
   REQUIRE(columnNames.size() == 4);
@@ -111,8 +123,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct column meta
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct data types for known columns",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -123,23 +133,21 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct data types 
     if (ret == SQL_NO_DATA) break;
     REQUIRE(ret == SQL_SUCCESS);
 
-    char columnName[256] = {};
+    const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
     SQLSMALLINT dataType = 0;
-    char typeName[256] = {};
     SQLLEN dataTypeInd = 0;
-
-    SQLGetData(stmt_handle(), 4, SQL_C_CHAR, columnName, sizeof(columnName), nullptr);
-    SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &dataType, 0, &dataTypeInd);
-    SQLGetData(stmt_handle(), 6, SQL_C_CHAR, typeName, sizeof(typeName), nullptr);
+    REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &dataType, 0, &dataTypeInd) == SQL_SUCCESS);
+    REQUIRE(dataTypeInd == sizeof(SQLSMALLINT));
+    const auto typeName = sqlcolumns_get_column(stmt_handle(), 6);
 
     if (rowCount == 0) {
-      REQUIRE(std::string(columnName) == "ID");
-      REQUIRE(dataType == 3);
-      REQUIRE(std::string(typeName) == "DECIMAL");
+      REQUIRE(columnName.text == "ID");
+      REQUIRE(dataType == SQL_DECIMAL);
+      REQUIRE(typeName.text == "DECIMAL");
     } else if (rowCount == 1) {
-      REQUIRE(std::string(columnName) == "NAME");
-      REQUIRE(dataType == 12);
-      REQUIRE(std::string(typeName) == "VARCHAR");
+      REQUIRE(columnName.text == "NAME");
+      REQUIRE(dataType == SQL_VARCHAR);
+      REQUIRE(typeName.text == "VARCHAR");
     }
 
     rowCount++;
@@ -150,8 +158,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Returns correct data types 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ORDINAL_POSITION is sequential starting from 1",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::THREE_COL_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -160,8 +166,10 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ORDINAL_POSITION is sequent
     ret = SQLFetch(stmt_handle());
     REQUIRE(ret == SQL_SUCCESS);
 
-    SQLINTEGER ordinalPos = 0;
-    SQLGetData(stmt_handle(), 17, SQL_C_SLONG, &ordinalPos, 0, nullptr);
+    SQLINTEGER ordinalPos = -1;
+    SQLLEN ordInd = 0;
+    REQUIRE(SQLGetData(stmt_handle(), 17, SQL_C_SLONG, &ordinalPos, 0, &ordInd) == SQL_SUCCESS);
+    REQUIRE(ordInd == sizeof(SQLINTEGER));
     REQUIRE(ordinalPos == i);
   }
 
@@ -171,8 +179,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ORDINAL_POSITION is sequent
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NULLABLE column reports correct nullability",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::NULLABILITY_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -181,14 +187,18 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NULLABLE column reports cor
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
   SQLSMALLINT nullable1 = -1;
-  SQLGetData(stmt_handle(), 11, SQL_C_SSHORT, &nullable1, 0, nullptr);
+  SQLLEN nullable1Ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 11, SQL_C_SSHORT, &nullable1, 0, &nullable1Ind) == SQL_SUCCESS);
+  REQUIRE(nullable1Ind == sizeof(SQLSMALLINT));
   REQUIRE(nullable1 == SQL_NO_NULLS);
 
   // name VARCHAR(100) - nullable by default
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
   SQLSMALLINT nullable2 = -1;
-  SQLGetData(stmt_handle(), 11, SQL_C_SSHORT, &nullable2, 0, nullptr);
+  SQLLEN nullable2Ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 11, SQL_C_SSHORT, &nullable2, 0, &nullable2Ind) == SQL_SUCCESS);
+  REQUIRE(nullable2Ind == sizeof(SQLSMALLINT));
   REQUIRE(nullable2 == SQL_NULLABLE);
 
   ret = SQLFetch(stmt_handle());
@@ -201,8 +211,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NULLABLE column reports cor
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ColumnName wildcard % returns all columns",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::THREE_COL_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -216,8 +224,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: ColumnName wildcard % retur
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NULL ColumnName returns all columns",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -231,8 +237,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: NULL ColumnName returns all
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Specific ColumnName filters results",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::MULTI_TYPE_TABLE), SQL_NTS, sqlchar("NAME"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -240,9 +244,8 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Specific ColumnName filters
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  char columnName[256] = {};
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, columnName, sizeof(columnName), nullptr);
-  REQUIRE(std::string(columnName) == "NAME");
+  const auto columnName = sqlcolumns_get_column(stmt_handle(), 4);
+  REQUIRE(columnName.text == "NAME");
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -250,24 +253,18 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Specific ColumnName filters
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Underscore _ wildcard matches single character",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::WILDCARD_COL_TABLE), SQL_NTS, sqlchar("C_"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // C_ matches CA and CB but not DDD
-  char colName[256] = {};
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(sqlcolumns_get_column(stmt_handle(), 4).text == "CA");
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
-  REQUIRE(std::string(colName) == "CA");
-
-  ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
-  REQUIRE(std::string(colName) == "CB");
+  REQUIRE(sqlcolumns_get_column(stmt_handle(), 4).text == "CB");
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -275,8 +272,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Underscore _ wildcard match
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Non-existent table returns empty result set",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar("NONEXISTENTTABLEXYZ12345"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -291,8 +286,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Non-existent table returns 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Various parameter combinations are accepted",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const char* db = database_name();
   const char* schema = schema_name();
   const char* table = readonly_db::BASIC_TABLE;
@@ -325,8 +318,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Various parameter combinati
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Can call multiple times on same statement after close cursor",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                              sqlchar(readonly_db::NAMED_PK_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -351,8 +342,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Can call multiple times on 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog function call",
                  "[odbc-api][columns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -374,8 +363,6 @@ TEST_CASE("SQLColumns: SQL_INVALID_HANDLE for null statement handle", "[odbc-api
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative CatalogName length",
                  "[odbc-api][columns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret =
       SQLColumns(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   IODBC_ONLY {
@@ -394,8 +381,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative CatalogNam
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative SchemaName length",
                  "[odbc-api][columns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   IODBC_ONLY {
     // iODBC's DM-side length validator rejects the negative length with the
@@ -413,8 +398,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative SchemaName
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative TableName length",
                  "[odbc-api][columns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, nullptr, 0);
   IODBC_ONLY {
     // iODBC's DM-side length validator rejects the negative length with the
@@ -432,8 +415,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative TableName 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName length",
                  "[odbc-api][columns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("COLUMN"), -999);
   IODBC_ONLY {
     // iODBC's DM-side length validator rejects the negative length with the
@@ -451,8 +432,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open",
                  "[odbc-api][columns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -462,8 +441,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLColumns: Requires active connection", "[odbc-api][columns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
 
