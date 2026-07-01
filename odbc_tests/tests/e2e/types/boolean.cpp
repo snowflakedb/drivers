@@ -246,7 +246,6 @@ TEST_CASE("should select null boolean using parameter binding", "[boolean]") {
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should insert boolean using parameter binding", "[boolean]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
 
   // And Table with BOOLEAN column exists
