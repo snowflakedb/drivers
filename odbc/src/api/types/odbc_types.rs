@@ -1438,6 +1438,43 @@ impl Default for ApdRecord {
     }
 }
 
+/// Project an explicit descriptor's `Binding` onto the APD view used by the
+/// parameter-execution path. An explicit descriptor is physically an
+/// `ArdDescriptor` (so it stores `Binding`s); when it serves as the active APD
+/// the parameter path only needs the C type, data pointer, buffer length, and
+/// the length/indicator pointer. `SQLSetDescField` may set the length pointer
+/// via either `SQL_DESC_INDICATOR_PTR` or `SQL_DESC_OCTET_LENGTH_PTR`, so prefer
+/// the indicator pointer and fall back to the octet-length pointer.
+pub(crate) fn apd_record_from_binding(binding: &Binding) -> ApdRecord {
+    let str_len_or_ind_ptr = if binding.indicator_ptr.is_null() {
+        binding.octet_length_ptr
+    } else {
+        binding.indicator_ptr
+    };
+    ApdRecord {
+        value_type: binding.target_type,
+        data_ptr: binding.target_value_ptr,
+        buffer_length: binding.buffer_length,
+        str_len_or_ind_ptr,
+    }
+}
+
+/// Build a `Binding` from an APD record so a parameter bound via
+/// `SQLBindParameter` can be stored on an explicit descriptor (which is backed
+/// by `ArdDescriptor`). The single `str_len_or_ind_ptr` populates both the
+/// indicator and octet-length pointers, matching `SQLBindParameter`'s combined
+/// `StrLen_or_IndPtr`.
+pub(crate) fn binding_from_apd_record(record: &ApdRecord) -> Binding {
+    Binding {
+        target_type: record.value_type,
+        target_value_ptr: record.data_ptr,
+        buffer_length: record.buffer_length,
+        octet_length_ptr: record.str_len_or_ind_ptr,
+        indicator_ptr: record.str_len_or_ind_ptr,
+        ..Binding::default()
+    }
+}
+
 /// Implementation Parameter Descriptor (IPD) record.
 ///
 /// Stores the implementation-side view of a bound parameter: the SQL data type,
@@ -1894,6 +1931,85 @@ impl StatementInner {
         match &self.active_apd {
             None => self.apd_handle,
             Some((id, _)) => *id,
+        }
+    }
+
+    /// Run `f` against the *active* APD, presented as an `&ApdDescriptor`
+    /// regardless of whether the implicit APD or an explicit descriptor is
+    /// assigned. When an explicit descriptor is active it is physically an
+    /// `ArdDescriptor`; this builds a transient `ApdDescriptor` view from its
+    /// `Binding`s and header fields. Used by the parameter-binding/execution
+    /// path so a swapped-in APD is actually honoured. `f` must return an owned
+    /// value — no reference into the transient view may escape.
+    pub fn with_effective_apd<R>(&self, f: impl FnOnce(&ApdDescriptor) -> R) -> R {
+        match &self.active_apd {
+            None => f(&self.apd),
+            Some((_, arc)) => {
+                // Scope the descriptor lock to the copy; `apd` is owned and does
+                // not borrow from the guard, so release the mutex before running
+                // `f` (which may drive the full execute path) to avoid serializing
+                // statements that share an explicit APD.
+                let apd = {
+                    let ard = arc.lock();
+                    let mut apd = ApdDescriptor::new();
+                    apd.array_size = ard.array_size;
+                    apd.bind_type = ard.bind_type;
+                    apd.bind_offset_ptr = ard.bind_offset_ptr;
+                    for (&param, binding) in &ard.bindings {
+                        apd.records.insert(param, apd_record_from_binding(binding));
+                    }
+                    apd
+                };
+                f(&apd)
+            }
+        }
+    }
+
+    /// Insert a parameter record into the active APD. Routes to the explicit
+    /// descriptor's `Binding`s when one is assigned, else the implicit APD.
+    pub fn insert_active_apd_record(&mut self, param: u16, record: ApdRecord) {
+        match &self.active_apd {
+            None => {
+                self.apd.records.insert(param, record);
+            }
+            Some((_, arc)) => {
+                arc.lock()
+                    .bindings
+                    .insert(param, binding_from_apd_record(&record));
+            }
+        }
+    }
+
+    /// Clear all parameter records on the active APD (SQL_RESET_PARAMS).
+    pub fn clear_active_apd_records(&mut self) {
+        match &self.active_apd {
+            None => self.apd.clear(),
+            Some((_, arc)) => arc.lock().bindings.clear(),
+        }
+    }
+
+    /// Route an APD *header* write (`array_size`, `bind_type`, `bind_offset_ptr`)
+    /// to the active descriptor. The implicit `ApdDescriptor` and an explicit
+    /// `ArdDescriptor` share these three field names; `f` receives all three.
+    pub fn with_effective_apd_header_mut<R>(
+        &mut self,
+        f: impl FnOnce(&mut usize, &mut sql::ULen, &mut *mut sql::Len) -> R,
+    ) -> R {
+        match &self.active_apd {
+            None => f(
+                &mut self.apd.array_size,
+                &mut self.apd.bind_type,
+                &mut self.apd.bind_offset_ptr,
+            ),
+            Some((_, arc)) => {
+                let mut g = arc.lock();
+                let ard = &mut *g;
+                f(
+                    &mut ard.array_size,
+                    &mut ard.bind_type,
+                    &mut ard.bind_offset_ptr,
+                )
+            }
         }
     }
 }
