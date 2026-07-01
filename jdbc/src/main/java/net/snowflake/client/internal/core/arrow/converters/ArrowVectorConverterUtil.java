@@ -100,6 +100,21 @@ public final class ArrowVectorConverterUtil {
               throw new SnowflakeSQLException("Unsupported Arrow physical type for TIME: " + type);
           }
 
+          // Structured types (MAP/ARRAY/OBJECT) currently fall back to string rendering, matching
+          // legacy snowflake-jdbc's VarCharConverter fallback when the column is not materialized
+          // as
+          // a native complex Arrow vector. Once the universal driver materializes these as complex
+          // vectors, dispatch to a dedicated converter (guarded by the vector type, as legacy
+          // does):
+          //   MAP    -> MapConverter    for MapVector    (else VarCharConverter)
+          //   ARRAY  -> ArrayConverter  for ListVector   (else VarCharConverter)
+          //   OBJECT -> StructConverter for StructVector (else VarCharConverter)
+          // TODO(SNOW-2881790): implement the dedicated MAP/ARRAY/OBJECT converters above.
+        case MAP:
+        case ARRAY:
+        case OBJECT:
+          return new VarCharConverter(vector, idx, context);
+
         default:
           throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());
       }
