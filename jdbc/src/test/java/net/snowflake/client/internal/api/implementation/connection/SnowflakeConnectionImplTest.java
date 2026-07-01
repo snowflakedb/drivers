@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -23,11 +25,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHeartbeatResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetAutocommitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
@@ -43,6 +47,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 class SnowflakeConnectionImplTest {
+
+  private static final String MOCK_PASSWORD = "***";
 
   @Test
   void stripVersionSuffixReturnsInputWhenNoSpace() {
@@ -72,49 +78,19 @@ class SnowflakeConnectionImplTest {
   @Nested
   class Close {
 
-    private final DatabaseHandle dbHandle =
-        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
-    private final ConnectionHandle connHandle =
-        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
-
     private CoreDriverApi mockCoreApi;
 
     @BeforeEach
     void setUp() throws Exception {
-      mockCoreApi = mock(CoreDriverApi.class);
-      when(mockCoreApi.databaseNew())
-          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
-      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
-      when(mockCoreApi.connectionNew())
-          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
-      when(mockCoreApi.connectionSetOptions(any(), any()))
-          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
-      when(mockCoreApi.connectionInit(any(), any(), any()))
-          .thenReturn(ConnectionInitResponse.getDefaultInstance());
+      mockCoreApi = stubConnectionMock();
     }
 
-    private SnowflakeConnectionImpl createConnection() throws SQLException {
-      Properties props = new Properties();
-      props.setProperty("account", "test_account");
-      props.setProperty("user", "test_user");
-      props.setProperty("password", "test_password");
-      return new SnowflakeConnectionImpl(
-          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
-    }
-
-    private void stubSuccessfulClose() throws Exception {
-      when(mockCoreApi.connectionClose(any()))
-          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
-      when(mockCoreApi.connectionRelease(any()))
-          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
-      when(mockCoreApi.databaseRelease(any()))
-          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
     }
 
     @Test
     void sendsConnectionCloseAndReleasesHandles() throws Exception {
-      stubSuccessfulClose();
-
       Connection conn = createConnection();
       conn.close();
 
@@ -125,8 +101,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void isClosedReturnsTrueAfterClose() throws Exception {
-      stubSuccessfulClose();
-
       Connection conn = createConnection();
       assertFalse(conn.isClosed());
 
@@ -136,8 +110,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void isIdempotent() throws Exception {
-      stubSuccessfulClose();
-
       Connection conn = createConnection();
       conn.close();
       conn.close();
@@ -151,10 +123,6 @@ class SnowflakeConnectionImplTest {
     @Test
     void releasesHandlesEvenWhenConnectionCloseThrows() throws Exception {
       when(mockCoreApi.connectionClose(any())).thenThrow(new SQLException("server error"));
-      when(mockCoreApi.connectionRelease(any()))
-          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
-      when(mockCoreApi.databaseRelease(any()))
-          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
 
       Connection conn = createConnection();
       assertThrows(SQLException.class, conn::close);
@@ -166,8 +134,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void operationsThrowAfterClose() throws Exception {
-      stubSuccessfulClose();
-
       Connection conn = createConnection();
       conn.close();
 
@@ -177,8 +143,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void concurrentCallsResultInSingleLogout() throws Exception {
-      stubSuccessfulClose();
-
       Connection conn = createConnection();
       int threadCount = 5;
       CyclicBarrier barrier = new CyclicBarrier(threadCount);
@@ -210,8 +174,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void doesNotCallRpcsWhenAlreadyClosed() throws Exception {
-      stubSuccessfulClose();
-
       Connection conn = createConnection();
       conn.close();
 
@@ -225,7 +187,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void closesOpenStatementsBeforeConnectionClose() throws Exception {
-      stubSuccessfulClose();
       StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
       when(mockCoreApi.statementNew(any()))
           .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
@@ -244,7 +205,6 @@ class SnowflakeConnectionImplTest {
 
     @Test
     void manuallyClosedStatementIsNotDoubleClosedOnConnectionClose() throws Exception {
-      stubSuccessfulClose();
       StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
       when(mockCoreApi.statementNew(any()))
           .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
@@ -256,7 +216,6 @@ class SnowflakeConnectionImplTest {
       stmt.close();
 
       clearInvocations(mockCoreApi);
-      stubSuccessfulClose();
       conn.close();
 
       verify(mockCoreApi, never()).statementRelease(any());
@@ -266,41 +225,15 @@ class SnowflakeConnectionImplTest {
   @Nested
   class IsValid {
 
-    private final DatabaseHandle dbHandle =
-        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
-    private final ConnectionHandle connHandle =
-        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
-
     private CoreDriverApi mockCoreApi;
 
     @BeforeEach
     void setUp() throws Exception {
-      mockCoreApi = mock(CoreDriverApi.class);
-      when(mockCoreApi.databaseNew())
-          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
-      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
-      when(mockCoreApi.connectionNew())
-          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
-      when(mockCoreApi.connectionSetOptions(any(), any()))
-          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
-      when(mockCoreApi.connectionInit(any(), any(), any()))
-          .thenReturn(ConnectionInitResponse.getDefaultInstance());
+      mockCoreApi = stubConnectionMock();
     }
 
-    private SnowflakeConnectionImpl createConnection() throws SQLException {
-      when(mockCoreApi.connectionClose(any()))
-          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
-      when(mockCoreApi.connectionRelease(any()))
-          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
-      when(mockCoreApi.databaseRelease(any()))
-          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
-
-      Properties props = new Properties();
-      props.setProperty("account", "test_account");
-      props.setProperty("user", "test_user");
-      props.setProperty("password", "test_password");
-      return new SnowflakeConnectionImpl(
-          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
     }
 
     @Test
@@ -363,40 +296,15 @@ class SnowflakeConnectionImplTest {
   @Nested
   class Catalog {
 
-    private final DatabaseHandle dbHandle =
-        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
-    private final ConnectionHandle connHandle =
-        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
-
     private CoreDriverApi mockCoreApi;
 
     @BeforeEach
     void setUp() throws Exception {
-      mockCoreApi = mock(CoreDriverApi.class);
-      when(mockCoreApi.databaseNew())
-          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
-      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
-      when(mockCoreApi.connectionNew())
-          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
-      when(mockCoreApi.connectionSetOptions(any(), any()))
-          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
-      when(mockCoreApi.connectionInit(any(), any(), any()))
-          .thenReturn(ConnectionInitResponse.getDefaultInstance());
-      when(mockCoreApi.connectionClose(any()))
-          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
-      when(mockCoreApi.connectionRelease(any()))
-          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
-      when(mockCoreApi.databaseRelease(any()))
-          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+      mockCoreApi = stubConnectionMock();
     }
 
-    private SnowflakeConnectionImpl createConnection() throws SQLException {
-      Properties props = new Properties();
-      props.setProperty("account", "test_account");
-      props.setProperty("user", "test_user");
-      props.setProperty("password", "test_password");
-      return new SnowflakeConnectionImpl(
-          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
     }
 
     @Test
@@ -461,42 +369,119 @@ class SnowflakeConnectionImplTest {
   }
 
   @Nested
-  class Schema {
-
-    private final DatabaseHandle dbHandle =
-        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
-    private final ConnectionHandle connHandle =
-        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+  class AutoCommit {
 
     private CoreDriverApi mockCoreApi;
 
     @BeforeEach
     void setUp() throws Exception {
-      mockCoreApi = mock(CoreDriverApi.class);
-      when(mockCoreApi.databaseNew())
-          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
-      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
-      when(mockCoreApi.connectionNew())
-          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
-      when(mockCoreApi.connectionSetOptions(any(), any()))
-          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
-      when(mockCoreApi.connectionInit(any(), any(), any()))
-          .thenReturn(ConnectionInitResponse.getDefaultInstance());
-      when(mockCoreApi.connectionClose(any()))
-          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
-      when(mockCoreApi.connectionRelease(any()))
-          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
-      when(mockCoreApi.databaseRelease(any()))
-          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+      mockCoreApi = stubConnectionMock();
     }
 
-    private SnowflakeConnectionImpl createConnection() throws SQLException {
-      Properties props = new Properties();
-      props.setProperty("account", "test_account");
-      props.setProperty("user", "test_user");
-      props.setProperty("password", "test_password");
-      return new SnowflakeConnectionImpl(
-          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
+    }
+
+    @Test
+    void shouldDefaultToTrue() throws Exception {
+      try (Connection conn = createConnection()) {
+        assertTrue(conn.getAutoCommit());
+      }
+    }
+
+    @Test
+    void shouldInitializeFromServerParameterFalse() throws Exception {
+      when(mockCoreApi.connectionGetParameter(any(), eq("AUTOCOMMIT")))
+          .thenReturn(ConnectionGetParameterResponse.newBuilder().setValue("false").build());
+      try (Connection conn = createConnection()) {
+        assertFalse(conn.getAutoCommit());
+      }
+    }
+
+    @Test
+    void shouldInitializeFromServerParameterTrue() throws Exception {
+      when(mockCoreApi.connectionGetParameter(any(), eq("AUTOCOMMIT")))
+          .thenReturn(ConnectionGetParameterResponse.newBuilder().setValue("true").build());
+      try (Connection conn = createConnection()) {
+        assertTrue(conn.getAutoCommit());
+      }
+    }
+
+    @Test
+    void shouldFallBackToTrueWhenServerParameterLookupFails() throws Exception {
+      when(mockCoreApi.connectionGetParameter(any(), eq("AUTOCOMMIT")))
+          .thenThrow(new SQLException("parameter lookup failed"));
+      try (Connection conn = createConnection()) {
+        assertTrue(conn.getAutoCommit());
+      }
+    }
+
+    @Test
+    void shouldThrowOnGetAutoCommitAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertThrows(SQLException.class, conn::getAutoCommit);
+    }
+
+    @Test
+    void shouldInvokeSetAutocommitRpcWhenSetAutoCommitFalse() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.setAutoCommit(false);
+        assertFalse(conn.getAutoCommit());
+        verify(mockCoreApi).connectionSetAutocommit(any(), eq(false));
+      }
+    }
+
+    @Test
+    void shouldInvokeSetAutocommitRpcWhenSetAutoCommitTrueAfterFalse() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.setAutoCommit(false);
+        clearInvocations(mockCoreApi);
+        conn.setAutoCommit(true);
+        assertTrue(conn.getAutoCommit());
+        verify(mockCoreApi).connectionSetAutocommit(any(), eq(true));
+      }
+    }
+
+    @Test
+    void shouldNotInvokeSetAutocommitRpcWhenSetAutoCommitToCurrentValue() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.setAutoCommit(true);
+        verify(mockCoreApi, never()).connectionSetAutocommit(any(), anyBoolean());
+      }
+    }
+
+    @Test
+    void shouldThrowOnSetAutoCommitAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertThrows(SQLException.class, () -> conn.setAutoCommit(false));
+    }
+
+    @Test
+    void shouldUpdateCacheBeforeRpcEvenWhenRpcFails() throws Exception {
+      try (Connection conn = createConnection()) {
+        when(mockCoreApi.connectionSetAutocommit(any(), anyBoolean()))
+            .thenThrow(new SQLException("simulated set-autocommit failure"));
+        assertThrows(SQLException.class, () -> conn.setAutoCommit(false));
+        // Cache reflects the new value despite the failed RPC; matches snowflake-jdbc parity.
+        assertFalse(conn.getAutoCommit());
+      }
+    }
+  }
+
+  @Nested
+  class Schema {
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = stubConnectionMock();
+    }
+
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
     }
 
     @Test
@@ -558,5 +543,83 @@ class SnowflakeConnectionImplTest {
       assertThrows(SQLException.class, conn::getSchema);
       assertThrows(SQLException.class, () -> conn.setSchema("OTHER_SCHEMA"));
     }
+  }
+
+  @Nested
+  class Transactions {
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = stubConnectionMock();
+    }
+
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
+    }
+
+    @Test
+    void shouldInvokeCommitRpcOnCommit() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.commit();
+        verify(mockCoreApi).connectionCommit(any());
+      }
+    }
+
+    @Test
+    void shouldInvokeRollbackRpcOnRollback() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.rollback();
+        verify(mockCoreApi).connectionRollback(any());
+      }
+    }
+
+    @Test
+    void shouldThrowOnCommitAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertThrows(SQLException.class, conn::commit);
+    }
+
+    @Test
+    void shouldThrowOnRollbackAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertThrows(SQLException.class, conn::rollback);
+    }
+  }
+
+  private static CoreDriverApi stubConnectionMock() throws SQLException {
+    DatabaseHandle dbHandle = DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
+    ConnectionHandle connHandle = ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+
+    CoreDriverApi mock = mock(CoreDriverApi.class);
+    when(mock.databaseNew())
+        .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
+    when(mock.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
+    when(mock.connectionNew())
+        .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
+    when(mock.connectionSetOptions(any(), any()))
+        .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
+    when(mock.connectionSetAutocommit(any(), anyBoolean()))
+        .thenReturn(ConnectionSetAutocommitResponse.getDefaultInstance());
+    when(mock.connectionInit(any(), any(), any()))
+        .thenReturn(ConnectionInitResponse.getDefaultInstance());
+    when(mock.connectionGetParameter(any(), eq("AUTOCOMMIT")))
+        .thenReturn(ConnectionGetParameterResponse.getDefaultInstance());
+    when(mock.connectionClose(any())).thenReturn(ConnectionCloseResponse.getDefaultInstance());
+    when(mock.connectionRelease(any())).thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+    when(mock.databaseRelease(any())).thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+    return mock;
+  }
+
+  private static Connection openConnection(CoreDriverApi mockCoreApi) throws SQLException {
+    Properties props = new Properties();
+    props.setProperty("account", "test_account");
+    props.setProperty("user", "test_user");
+    props.setProperty("password", MOCK_PASSWORD);
+    return new SnowflakeConnectionImpl(
+        "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
   }
 }

@@ -10,6 +10,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoRequest;
@@ -31,8 +33,12 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionRollbackRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionRollbackResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSendHttpRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSendHttpResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetAutocommitRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetAutocommitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersRequest;
@@ -141,6 +147,30 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .putAllOptions(options)
             .build();
     return invoke(() -> client.connectionSetOptions(request));
+  }
+
+  public ConnectionSetAutocommitResponse connectionSetAutocommit(
+      ConnectionHandle connHandle, boolean autocommit) throws SQLException {
+    ConnectionSetAutocommitRequest request =
+        ConnectionSetAutocommitRequest.newBuilder()
+            .setConnHandle(connHandle)
+            .setAutocommit(autocommit)
+            .build();
+    return invoke(() -> client.connectionSetAutocommit(request));
+  }
+
+  public ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle)
+      throws SQLException {
+    ConnectionCommitRequest request =
+        ConnectionCommitRequest.newBuilder().setConnHandle(connHandle).build();
+    return invoke(() -> client.connectionCommit(request));
+  }
+
+  public ConnectionRollbackResponse connectionRollback(ConnectionHandle connHandle)
+      throws SQLException {
+    ConnectionRollbackRequest request =
+        ConnectionRollbackRequest.newBuilder().setConnHandle(connHandle).build();
+    return invoke(() -> client.connectionRollback(request));
   }
 
   public ConnectionSetSessionParametersResponse connectionSetSessionParameters(
