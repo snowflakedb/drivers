@@ -213,6 +213,41 @@ pub unsafe extern "system" fn SQLGetTypeInfo(
     result.to_sql_code()
 }
 
+/// ODBC catalog function: list columns matching pattern arguments.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLColumns(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    column_name: *const sql::Char,
+    name_length4: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLColumns");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::columns::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        column_name,
+        name_length4,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -224,6 +259,39 @@ pub unsafe extern "system" fn SQLGetTypeInfoW(
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetTypeInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::catalog::get_type_info(statement_handle, data_type);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLColumnsW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    column_name: *const WideChar,
+    name_length4: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLColumns");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::columns::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        column_name,
+        name_length4,
+    );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     record_err!(sql::HandleType::Stmt, statement_handle, result);
     result.to_sql_code()

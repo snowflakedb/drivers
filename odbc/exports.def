@@ -47,6 +47,7 @@ EXPORTS
     SQLSetEnvAttr
     SQLSetStmtAttrW
     SQLTablesW
+    SQLColumnsW
     ConfigDSN
     ConfigDSNW
     ConfigDriver
