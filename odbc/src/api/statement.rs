@@ -9,7 +9,7 @@ use crate::api::error::{
     InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu, JsonBindingSnafu,
     NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
     OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
-    StillExecutingSnafu, UnsupportedFeatureSnafu,
+    StillExecutingSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::handle_registry::HandleId;
 use crate::api::query_type::{QueryType, ResultKind};
@@ -2240,7 +2240,19 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
 
     tracing::debug!("get_stmt_attr: attribute={}", attribute);
 
-    let attr = StmtAttr::try_from(attribute)?;
+    let attr = match StmtAttr::try_from(attribute) {
+        Ok(a) => a,
+        // A get of a valid-but-unsupported ODBC attribute returns HYC00; an
+        // identifier outside the ODBC-defined range returns HY092 — the error
+        // `try_from` already produced (SNOW-3235557).
+        Err(e) => {
+            return if StmtAttr::is_known_odbc(attribute) {
+                UnsupportedAttributeSnafu { attribute }.fail()
+            } else {
+                Err(e)
+            };
+        }
+    };
     let guard = stmt_from_handle(statement_handle)?;
     let inner = guard.inner.lock();
 
