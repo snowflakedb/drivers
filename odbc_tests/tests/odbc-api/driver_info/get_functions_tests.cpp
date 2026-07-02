@@ -252,25 +252,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: HY095 - Invalid Functio
   SQLUSMALLINT supported = SQL_FALSE;
   ret = SQLGetFunctions(dbc_handle(), 9999, &supported);
 
-  NON_IODBC {
-    // And the DM forwards the call; the driver validates the
-    //   function ID and reports HY095 (function type out of range)
-    REQUIRE(ret == SQL_ERROR);
-    const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-    REQUIRE(!records.empty());
-    REQUIRE(std::string(records[0].sqlState) == "HY095");
-  }
-  IODBC_ONLY {
-    // iODBC forwards SQLGetFunctions to the driver without range-checking the
-    // FunctionId (unlike unixODBC, which rejects it with HY095 before dispatch),
-    // and the call succeeds rather than erroring.
-    REQUIRE(ret == SQL_SUCCESS);
-    // `supported` is intentionally not asserted: FunctionId 9999 is outside the
-    // ODBC function-id space, so its flag is read from an out-of-range slot of
-    // the function-support bitmap and is indeterminate (observed as both
-    // SQL_FALSE and SQL_TRUE across runs). In-range "unsupported → SQL_FALSE"
-    // coverage lives in "Correctly reports unsupported optional functions".
-  }
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc_handle()),
+               OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY095"));
 
   SQLDisconnect(dbc_handle());
 }

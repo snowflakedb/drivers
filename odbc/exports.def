@@ -27,6 +27,7 @@ EXPORTS
     SQLGetConnectAttrW
     SQLGetData
     SQLGetDescFieldW
+    SQLGetDescRecW
     SQLGetDiagFieldW
     SQLGetDiagRecW
     SQLGetEnvAttr

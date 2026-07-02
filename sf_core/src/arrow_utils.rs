@@ -31,6 +31,7 @@ pub fn create_field_with_type(
             metadata.insert("logicalType".to_string(), "TEXT".to_string());
             metadata.insert("charLength".to_string(), length.to_string());
             metadata.insert("byteLength".to_string(), byte_length.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
                     .with_metadata(metadata),
@@ -46,6 +47,7 @@ pub fn create_field_with_type(
             metadata.insert("logicalType".to_string(), "FIXED".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
             metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             let data_type = match data_type {
                 Some(dt) => Ok(dt),
                 None => GenericSnafu {
@@ -58,6 +60,7 @@ pub fn create_field_with_type(
         RowType::Boolean { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "BOOLEAN".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Boolean), *nullable)
                     .with_metadata(metadata),
@@ -66,6 +69,7 @@ pub fn create_field_with_type(
         RowType::Real { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "REAL".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Float64), *nullable)
                     .with_metadata(metadata),
@@ -74,6 +78,7 @@ pub fn create_field_with_type(
         RowType::Date { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DATE".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Date32), *nullable)
                     .with_metadata(metadata),
@@ -97,6 +102,7 @@ pub fn create_field_with_type(
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), logical_type.to_string());
             metadata.insert("scale".to_string(), scale.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             let data_type = if scale <= &7 {
                 data_type.unwrap_or(DataType::Int64)
             } else {
@@ -122,6 +128,7 @@ pub fn create_field_with_type(
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "TIMESTAMP_TZ".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             let data_type = if scale <= &3 {
                 DataType::Struct(
                     vec![
@@ -153,6 +160,7 @@ pub fn create_field_with_type(
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "TIME".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             let data_type = if scale <= &4 {
                 data_type.unwrap_or(DataType::Int32)
             } else {
@@ -170,6 +178,7 @@ pub fn create_field_with_type(
             metadata.insert("logicalType".to_string(), "BINARY".to_string());
             metadata.insert("byteLength".to_string(), byte_length.to_string());
             metadata.insert("charLength".to_string(), length.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Binary), *nullable)
                     .with_metadata(metadata),
@@ -183,6 +192,7 @@ pub fn create_field_with_type(
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DECFLOAT".to_string());
             metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             let data_type = data_type.unwrap_or_else(|| {
                 DataType::Struct(
                     vec![
@@ -199,6 +209,7 @@ pub fn create_field_with_type(
         RowType::Variant { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "VARIANT".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
                     .with_metadata(metadata),
@@ -207,6 +218,7 @@ pub fn create_field_with_type(
         RowType::Object { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "OBJECT".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
                     .with_metadata(metadata),
@@ -215,6 +227,7 @@ pub fn create_field_with_type(
         RowType::Array { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "ARRAY".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
                     .with_metadata(metadata),
@@ -230,6 +243,7 @@ pub fn create_field_with_type(
             metadata.insert("logicalType".to_string(), "INTERVAL_YEAR_MONTH".to_string());
             metadata.insert("precision".to_string(), precision.to_string());
             metadata.insert("scale".to_string(), scale.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(Field::new(
                 name,
                 data_type.unwrap_or(DataType::Int64), // Int64 is the default representation; large values may use Int32 or Decimal128
@@ -247,6 +261,7 @@ pub fn create_field_with_type(
             metadata.insert("logicalType".to_string(), "INTERVAL_DAY_TIME".to_string());
             metadata.insert("precision".to_string(), precision.to_string());
             metadata.insert("scale".to_string(), scale.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(Field::new(
                 name,
                 data_type.unwrap_or(DataType::Int64), // Int64 is the default; values >106,751 days require Decimal128
@@ -274,6 +289,7 @@ pub fn create_field_with_type(
             };
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), logical_type.to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(default_dt), *nullable)
                     .with_metadata(metadata),
@@ -287,6 +303,7 @@ pub fn create_field_with_type(
         } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "VECTOR".to_string());
+            metadata.insert("nullable".to_string(), nullable.to_string());
             let child_type = match element_type {
                 VectorElementType::Int32 => DataType::Int32,
                 VectorElementType::Float32 => DataType::Float32,

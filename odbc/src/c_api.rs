@@ -897,6 +897,26 @@ pub unsafe extern "system" fn SQLGetInfoW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetFunctions(
+    connection_handle: sql::Handle,
+    function_id: sql::USmallInt,
+    supported_ptr: *mut sql::USmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetFunctions");
+    if connection_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::get_functions(connection_handle, function_id, supported_ptr);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    record_err!(sql::HandleType::Dbc, connection_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLSetConnectAttr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
@@ -2096,6 +2116,7 @@ pub unsafe extern "system" fn SQLGetDescField(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescField");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
+    let mut warnings = vec![];
     let result = api::descriptor::get_desc_field::<api::encoding::Narrow>(
         descriptor_handle,
         rec_number,
@@ -2103,10 +2124,16 @@ pub unsafe extern "system" fn SQLGetDescField(
         value_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Desc,
+        descriptor_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Desc, descriptor_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.
@@ -2122,6 +2149,7 @@ pub unsafe extern "system" fn SQLGetDescFieldW(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescFieldW");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
+    let mut warnings = vec![];
     let result = api::descriptor::get_desc_field::<api::encoding::Wide>(
         descriptor_handle,
         rec_number,
@@ -2129,10 +2157,103 @@ pub unsafe extern "system" fn SQLGetDescFieldW(
         value_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Desc,
+        descriptor_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Desc, descriptor_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetDescRec(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    name: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescRec");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
+    let mut warnings = vec![];
+    let result = api::descriptor::get_desc_rec::<api::encoding::Narrow>(
+        descriptor_handle,
+        rec_number,
+        name,
+        buffer_length,
+        string_length_ptr,
+        type_ptr,
+        sub_type_ptr,
+        length_ptr,
+        precision_ptr,
+        scale_ptr,
+        nullable_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Desc,
+        descriptor_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Desc, descriptor_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetDescRecW(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    name: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescRecW");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
+    let mut warnings = vec![];
+    let result = api::descriptor::get_desc_rec::<api::encoding::Wide>(
+        descriptor_handle,
+        rec_number,
+        name,
+        buffer_length,
+        string_length_ptr,
+        type_ptr,
+        sub_type_ptr,
+        length_ptr,
+        precision_ptr,
+        scale_ptr,
+        nullable_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Desc,
+        descriptor_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Desc, descriptor_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety

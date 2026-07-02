@@ -242,6 +242,62 @@ pub(crate) enum IrdFieldValue<'a> {
     Str(&'a str),
 }
 
+pub(crate) fn compute_ird_name(field: &arrow::datatypes::Field) -> &str {
+    field.name()
+}
+
+pub(crate) fn compute_ird_verbose_type(
+    field: &arrow::datatypes::Field,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<sql::SmallInt> {
+    let t = verbose_sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
+    Ok(t.0)
+}
+
+pub(crate) fn compute_ird_concise_type(
+    field: &arrow::datatypes::Field,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<sql::SmallInt> {
+    let t = sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
+    Ok(t.0)
+}
+
+pub(crate) fn compute_ird_nullable(field: &arrow::datatypes::Field) -> sql::SmallInt {
+    match field.metadata().get("nullable") {
+        Some(v) if v == "true" => sql::Nullability::NULLABLE.0,
+        Some(_) => sql::Nullability::NO_NULLS.0,
+        None => {
+            if field.is_nullable() {
+                sql::Nullability::NULLABLE.0
+            } else {
+                sql::Nullability::NO_NULLS.0
+            }
+        }
+    }
+}
+
+pub(crate) fn compute_ird_precision(
+    field: &arrow::datatypes::Field,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<sql::SmallInt> {
+    let v = precision_from_field(field, numeric_settings).context(ConversionSnafu)?;
+    Ok(v as sql::SmallInt)
+}
+
+pub(crate) fn compute_ird_scale(
+    field: &arrow::datatypes::Field,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<sql::SmallInt> {
+    decimal_digits_from_field(field, numeric_settings).context(ConversionSnafu)
+}
+
+pub(crate) fn compute_ird_octet_length(
+    field: &arrow::datatypes::Field,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<sql::Len> {
+    octet_length_from_field(field, numeric_settings).context(ConversionSnafu)
+}
+
 /// Compute the value of an IRD record field from Arrow metadata.
 /// Shared logic between `SQLColAttribute` and `SQLGetDescField(IRD)`.
 pub(crate) fn compute_ird_field<'a>(
@@ -251,38 +307,23 @@ pub(crate) fn compute_ird_field<'a>(
 ) -> OdbcResult<IrdFieldValue<'a>> {
     use IrdFieldValue::*;
     match desc_field {
-        DescField::Type => {
-            let t =
-                verbose_sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
-            Ok(SmallInt(t.0))
-        }
-        DescField::ConciseType => {
-            let t = sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
-            Ok(SmallInt(t.0))
-        }
+        DescField::Type => Ok(SmallInt(compute_ird_verbose_type(field, numeric_settings)?)),
+        DescField::ConciseType => Ok(SmallInt(compute_ird_concise_type(field, numeric_settings)?)),
         DescField::Nullable | DescField::ColumnNullable => {
-            let val = if field.is_nullable() {
-                sql::Nullability::NULLABLE.0
-            } else {
-                sql::Nullability::NO_NULLS.0
-            };
-            Ok(SmallInt(val))
+            Ok(SmallInt(compute_ird_nullable(field)))
         }
         DescField::Precision | DescField::ColumnPrecision => {
-            let v = precision_from_field(field, numeric_settings).context(ConversionSnafu)?;
-            Ok(SmallInt(v as sql::SmallInt))
+            Ok(SmallInt(compute_ird_precision(field, numeric_settings)?))
         }
         DescField::Scale | DescField::ColumnScale => {
-            let v = decimal_digits_from_field(field, numeric_settings).context(ConversionSnafu)?;
-            Ok(SmallInt(v))
+            Ok(SmallInt(compute_ird_scale(field, numeric_settings)?))
         }
         DescField::Length => {
             let v = column_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
             Ok(Len(v as sql::Len))
         }
         DescField::OctetLength | DescField::ColumnLength => {
-            let v = octet_length_from_field(field, numeric_settings).context(ConversionSnafu)?;
-            Ok(Len(v))
+            Ok(Len(compute_ird_octet_length(field, numeric_settings)?))
         }
         DescField::DisplaySize => {
             let v = display_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
@@ -310,7 +351,7 @@ pub(crate) fn compute_ird_field<'a>(
         DescField::FixedPrecScale => Ok(SmallInt(0)), // SQL_FALSE
         DescField::Unnamed => Ok(SmallInt(0)),   // SQL_NAMED
         DescField::Name | DescField::ColumnName | DescField::Label | DescField::BaseColumnName => {
-            Ok(Str(field.name()))
+            Ok(Str(compute_ird_name(field)))
         }
         DescField::TableName
         | DescField::BaseTableName
@@ -409,12 +450,7 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     if !nullable_ptr.is_null() {
-        let nullable = if field.is_nullable() {
-            sql::Nullability::NULLABLE.0
-        } else {
-            sql::Nullability::NO_NULLS.0
-        };
-        unsafe { std::ptr::write(nullable_ptr, nullable) };
+        unsafe { std::ptr::write(nullable_ptr, compute_ird_nullable(field)) };
     }
 
     Ok(())

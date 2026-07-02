@@ -381,6 +381,7 @@ pub(super) async fn build_reader_from_rowset_data(
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
+    nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data {
         RowsetData::Upload(results) => {
@@ -388,7 +389,7 @@ pub(super) async fn build_reader_from_rowset_data(
         }
         RowsetData::Download(results) => download_results_reader(results, wrapper_presets)
             .context(DownloadResultsConversionSnafu),
-        _ => read_batches(data, http_client, prefetch_config)
+        _ => read_batches(data, http_client, prefetch_config, nullable_flags)
             .await
             .context(BatchReadingSnafu),
     }
@@ -398,11 +399,12 @@ pub(super) async fn read_batches(
     data: &RowsetData,
     http_client: Client,
     prefetch_config: &PrefetchConfig,
+    nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
         RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            single_chunk_reader(chunk_base64).context(ChunkReadingSnafu)
+            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadingSnafu)
         }
         RowsetData::ArrowMultiChunk {
             initial_base64_opt,
@@ -412,6 +414,7 @@ pub(super) async fn read_batches(
             chunk_download_data.clone().into(),
             http_client.clone(),
             prefetch_config,
+            nullable_flags,
         )
         .await
         .context(ChunkReadingSnafu),
