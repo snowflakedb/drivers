@@ -521,3 +521,16 @@ rules:
       props.setProperty("password", System.getenv("SNOWFLAKE_TEST_PASSWORD"));
       props.setProperty("token", INVALID_TOKEN_PLACEHOLDER);  // exercises auth rejection
       ```
+
+  - id: ud-java-nullable-getter-file-audit
+    rule: |
+      **OBJECTIVE** (alternative to per-line `ud-java-wasnull-after-nullable-getter`): Audit JDBC test files for systematic NULL-handling gaps instead of flagging each getter call independently.
+
+      **REQUIREMENT**: When reviewing a test file, scan all `ResultSet` nullable getter usages (`getString`, `getObject`, `getInt`, `getLong`, `getDouble`, etc.). If any read lacks a subsequent `wasNull()` assertion, produce exactly one file-level finding.
+
+      **COMMENT TEMPLATE**:
+      "This file has N nullable getter reads without `wasNull()` verification at lines [list]. JDBC requires explicit nullability checks — add `assertTrue(rs.wasNull())` after NULL reads and `assertFalse(rs.wasNull())` after non-null reads. Patterns include `assertNull(rs.getString(...))`, `assertEquals(sentinel, rs.getInt(...))`, and similar."
+
+      **PRIORITY**: High when N >= 3 (systematic gap); Medium when N is 1-2.
+
+      Do not emit per-line comments for the same file in the same PR.
