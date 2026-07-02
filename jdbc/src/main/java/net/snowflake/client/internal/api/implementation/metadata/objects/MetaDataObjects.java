@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import static java.sql.ResultSetMetaData.columnNoNulls;
 import static java.sql.ResultSetMetaData.columnNullable;
+import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.matches;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,7 +19,6 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
-import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataParams.ContextAwareMetadataSearch;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.RowConverter;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
@@ -78,19 +78,9 @@ public class MetaDataObjects {
         params.applySessionContext(originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
-    boolean isExactSchema = contextAware.isExactSchema();
 
-    MetaDataQueryBuilder sqlQueryBuilder = queryBuilder(contextAware).show("schemas");
-    if (isExactSchema
-        && schemaPattern != null
-        && params.isEnableWildcardsInShowMetadataCommands()) {
-      String escapedSchemaPattern =
-          schemaPattern.replaceAll("_", "\\\\\\\\_").replaceAll("%", "\\\\\\\\%");
-      sqlQueryBuilder.likeWithWildcards(escapedSchemaPattern);
-    } else {
-      sqlQueryBuilder.like(schemaPattern);
-    }
-    String sqlQuery = sqlQueryBuilder.in(catalog).build();
+    String sqlQuery =
+        queryBuilder(contextAware).show("schemas").likeSchema(schemaPattern).in(catalog).build();
 
     if (sqlQuery == null) {
       return emptyResultSet(MetaDataResultSetFormat.GET_SCHEMAS);
@@ -103,9 +93,7 @@ public class MetaDataObjects {
         row -> {
           String schemaName = row.getString(2);
           String dbName = row.getString(5);
-          if (compiledSchemaPattern == null
-              || compiledSchemaPattern.matcher(schemaName).matches()
-              || isExactSchema && schemaPattern.equals(schemaName)) {
+          if (contextAware.schemaMatches(compiledSchemaPattern, schemaName)) {
             return new Object[] {schemaName, dbName};
           }
           return null;
@@ -177,9 +165,9 @@ public class MetaDataObjects {
             comment = row.getString(6);
           }
 
-          if ((compiledTablePattern == null || compiledTablePattern.matcher(tableName).matches())
-              && (compiledSchemaPattern == null
-                  || compiledSchemaPattern.matcher(schemaName).matches())) {
+          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          if (matches(compiledTablePattern, tableName)
+              && matches(compiledSchemaPattern, schemaName)) {
             return new Object[] {
               dbName, schemaName, tableName, kind, comment, null, null, null, null, null
             };
@@ -250,11 +238,10 @@ public class MetaDataObjects {
           String catalogName = row.getString(10);
           String autoIncrement = row.getString(11);
 
-          if ((compiledTablePattern == null || compiledTablePattern.matcher(tableName).matches())
-              && (compiledSchemaPattern == null
-                  || compiledSchemaPattern.matcher(schemaName).matches())
-              && (compiledColumnPattern == null
-                  || compiledColumnPattern.matcher(columnName).matches())) {
+          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          if (matches(compiledTablePattern, tableName)
+              && matches(compiledSchemaPattern, schemaName)
+              && matches(compiledColumnPattern, columnName)) {
 
             int ordinalPosition = ordinalTracker.nextOrdinalFor(tableName);
 
@@ -343,7 +330,6 @@ public class MetaDataObjects {
         params.applySessionContext(originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
-    boolean isExactSchema = contextAware.isExactSchema();
 
     String sqlQuery =
         queryBuilder(contextAware)
@@ -367,11 +353,8 @@ public class MetaDataObjects {
           String procedureName = row.getString("name");
           String remarks = row.getString("description");
           String specificName = row.getString("arguments");
-          if ((compiledProcedurePattern == null
-                  || compiledProcedurePattern.matcher(procedureName).matches())
-              && (compiledSchemaPattern == null
-                  || compiledSchemaPattern.matcher(schemaName).matches()
-                  || isExactSchema && schemaPattern.equals(schemaName))) {
+          if (matches(compiledProcedurePattern, procedureName)
+              && contextAware.schemaMatches(compiledSchemaPattern, schemaName)) {
 
             return new Object[] {
               catalogName,
@@ -395,7 +378,6 @@ public class MetaDataObjects {
         params.applySessionContext(originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
-    boolean isExactSchema = contextAware.isExactSchema();
 
     String sqlQuery =
         queryBuilder(contextAware)
@@ -426,11 +408,8 @@ public class MetaDataObjects {
           // TODO(SNOW-3695645): getProcedures has correct behavior of using getString("arguments")
           //  for "specificName", consider to fix it here as well
           String specificName = functionName;
-          if ((compiledFunctionPattern == null
-                  || compiledFunctionPattern.matcher(functionName).matches())
-              && (compiledSchemaPattern == null
-                  || compiledSchemaPattern.matcher(schemaName).matches()
-                  || isExactSchema && schemaPattern.equals(schemaName))) {
+          if (matches(compiledFunctionPattern, functionName)
+              && contextAware.schemaMatches(compiledSchemaPattern, schemaName)) {
 
             return new Object[] {
               catalogName, schemaName, functionName, remarks, functionType, specificName
@@ -571,7 +550,7 @@ public class MetaDataObjects {
     return inputValidTableTypes;
   }
 
-  private final Object[][] TYPE_INFO =
+  private static final Object[][] TYPE_INFO =
       new Object[][] {
         {
           "NUMBER",
