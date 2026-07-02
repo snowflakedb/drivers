@@ -50,6 +50,8 @@ rules:
 
       **REQUIREMENT**: When converting a `Result` from one error type to another, always use `.context(MySnafu { ... })?` (from `snafu::ResultExt`) instead of `.map_err(|e| ...)`. The `.context()` method automatically captures source location via `#[snafu(implicit)]` and produces cleaner, more consistent error chains. Import `snafu::ResultExt` to access `.context()`.
 
+      **SEVERITY NOTE**: This is a style/consistency issue with no behavioral impact. Set expectations accordingly in the comment: "This is a style consistency issue with no behavioral impact — prioritize only when touching the surrounding code."
+
       For cases where the source error type does not match the Snafu variant's `source` field directly (e.g., boxing heterogeneous error types), use `.boxed().context(MySnafu)` to first erase the type via `Box<dyn Error + Send + Sync>`.
 
       ❌ **BAD:**
@@ -110,6 +112,12 @@ rules:
       **REQUIREMENT**: Each module/domain MUST define its own error enum rather than propagating or reusing error types from unrelated layers. Do not use `RestError` for encryption failures, `ConfigError` for TLS issues, or `ApiError` for internal parsing logic. Create a focused error type for the domain (e.g., `EncryptionError`, `CrlError`) and wrap it via a Snafu variant in the parent error type.
 
       Error variant naming MUST use past-tense failure descriptions: `Base64DecodeFailed`, `ConfigFileRead`, `CrlDownload` -- NOT gerunds or generic suffixes like `Base64Error`, `ConfigReadError`, `DownloadError`.
+
+      **SCOPE SEPARATION**: Distinguish behavioral violations (wrong error type reused across layers, incorrect error mapping semantics) from naming-only violations (variant suffix like `HttpError` vs `HttpRequestFailed`). Behavioral violations are High priority. Naming-only violations are Low priority style feedback.
+
+      **PRE-EXISTING PATTERN CHECK**: Before flagging a naming-only violation, check sibling modules in the same directory and parent module for the same pattern. If the identical naming convention already exists in pre-existing code (not introduced in the current PR), do NOT flag the new code in isolation. Either skip the comment entirely, or note: "This matches the existing pattern in `<sibling-file>.rs`; consider fixing both together in a follow-up."
+
+      **CONSOLIDATION**: Emit at most one naming-convention comment per error enum per PR.
 
       ❌ **BAD:**
       ```rust
@@ -336,6 +344,8 @@ rules:
       **REQUIREMENT**: When a Snafu error variant wraps a source error type that is large (complex enums with many variants, types containing `String` + nested enums), use `#[snafu(source(from(LargeError, Box::new)))]` to box the source. This prevents the entire error enum from being inflated to the size of its largest variant, which matters because `Result<T, E>` is as large as `max(T, E)` and errors flow through every `?` call.
 
       Apply this when the source type is a complex error enum from this crate (like `QueryResponseProcessingError`) or any third-party type known to be large. Standard library errors (`std::io::Error`, `serde_json::Error`) are typically already pointer-sized and do not need boxing.
+
+      **CONSOLIDATION**: Emit at most ONE comment per error type per PR. If the same unboxed large source type (e.g., `AwsAttestationError`, `AzureAttestationError`) appears in multiple variants or files within the PR, consolidate into a single finding listing all locations. Do not post duplicate comments for the same type.
 
       ❌ **BAD:**
       ```rust
