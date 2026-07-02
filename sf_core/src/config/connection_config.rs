@@ -361,8 +361,15 @@ fn build_tls_config(settings: &ParamStore) -> TlsConfig {
     let custom_root_store_path = settings
         .get_string(CUSTOM_ROOT_STORE_PATH)
         .map(PathBuf::from);
-    let verify_hostname = settings.get_bool(VERIFY_HOSTNAME).unwrap_or(true);
-    let verify_certificates = settings.get_bool(VERIFY_CERTIFICATES).unwrap_or(true);
+    let skip_tls_verify = settings.get_bool(TLS_SKIP_VERIFY).unwrap_or(false);
+    if skip_tls_verify {
+        tracing::warn!(
+            "TLS verification disabled via tls_skip_verify: certificate, hostname, and CRL revocation checks are all bypassed. Do not use in production."
+        );
+    }
+    let verify_hostname = !skip_tls_verify && settings.get_bool(VERIFY_HOSTNAME).unwrap_or(true);
+    let verify_certificates =
+        !skip_tls_verify && settings.get_bool(VERIFY_CERTIFICATES).unwrap_or(true);
 
     TlsConfig {
         crl_config,
@@ -1476,6 +1483,73 @@ mod tests {
         let config = ConnectionConfig::build(&settings).unwrap();
         assert!(!config.tls.verify_hostname);
         assert!(config.tls.verify_certificates);
+    }
+
+    #[test]
+    fn tls_skip_verify_disables_both_checks() {
+        let mut settings = minimal_password_settings();
+        settings.insert("tls_skip_verify".into(), Setting::Bool(true));
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(!config.tls.verify_hostname);
+        assert!(!config.tls.verify_certificates);
+    }
+
+    #[test]
+    fn tls_skip_verify_overrides_individual_verify_flags() {
+        let mut settings = minimal_password_settings();
+        settings.insert("tls_skip_verify".into(), Setting::Bool(true));
+        settings.insert("verify_hostname".into(), Setting::Bool(true));
+        settings.insert("verify_certificates".into(), Setting::Bool(true));
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(!config.tls.verify_hostname);
+        assert!(!config.tls.verify_certificates);
+    }
+
+    #[test]
+    fn tls_skip_verify_canonicalizes_from_any_case_and_disables_verification() {
+        use crate::config::param_registry::registry;
+
+        for raw_key in ["tls_skip_verify", "TLS_SKIP_VERIFY", "Tls_Skip_Verify"] {
+            let canonical = registry()
+                .resolve(raw_key)
+                .unwrap_or_else(|| panic!("{raw_key} should resolve"))
+                .canonical_name;
+            assert_eq!(canonical, "tls_skip_verify");
+
+            let mut settings = minimal_password_settings();
+            settings.insert(canonical.to_string(), Setting::Bool(true));
+
+            let config = ConnectionConfig::build(&settings).unwrap();
+            assert!(
+                !config.tls.verify_hostname,
+                "{raw_key} should disable hostname check"
+            );
+            assert!(
+                !config.tls.verify_certificates,
+                "{raw_key} should disable cert check"
+            );
+        }
+    }
+
+    #[test]
+    fn tls_skip_verify_bypasses_crl_even_when_crl_check_mode_enabled() {
+        // Locks the registry description's CRL claim against drift: tls_skip_verify forces
+        // verify_certificates=false, and create_tls_client_with_config (tls/client.rs) then
+        // early-returns an insecure client without installing the CRL verifier — so CRL is
+        // bypassed even at crl_check_mode=ENABLED. The mode itself is left intact, just unused.
+        let mut settings = minimal_password_settings();
+        settings.insert("tls_skip_verify".into(), Setting::Bool(true));
+        settings.insert("crl_check_mode".into(), Setting::String("ENABLED".into()));
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(!config.tls.verify_certificates);
+        assert!(!config.tls.verify_hostname);
+        assert!(matches!(
+            config.tls.crl_config.check_mode,
+            CertRevocationCheckMode::Enabled
+        ));
     }
 
     #[test]
