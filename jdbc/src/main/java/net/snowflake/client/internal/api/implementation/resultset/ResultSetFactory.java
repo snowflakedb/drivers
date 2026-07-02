@@ -131,9 +131,13 @@ public class ResultSetFactory {
 
   private static DataConversionContext buildConversionContext(SnowflakeStatementImpl statement)
       throws SQLException {
+    // unwrap() returns the caller's live connection, not a new one; this method borrows it rather
+    // than owning it, so it must not be closed here (try-with-resources would close the user's
+    // connection before any rows are read).
+    InternalSnowflakeConnection connection =
+        statement.getConnection().unwrap(InternalSnowflakeConnection.class);
     return SessionDataConversionContext.fromConnection(
-        ProtobufApis.coreDriverApi,
-        statement.getConnection().unwrap(InternalSnowflakeConnection.class).getHandle());
+        ProtobufApis.coreDriverApi, connection.getHandle(), connection.getResolvedProperties());
   }
 
   private static ResultSetGetStreamResponse fetchStreamAndRelease(

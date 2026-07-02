@@ -49,6 +49,8 @@ public interface ColumnAccessor {
 
   Timestamp getTimestamp(int columnIndex) throws SQLException;
 
+  Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException;
+
   Object getObject(int columnIndex) throws SQLException;
 
   int getColumnCount() throws SQLException;

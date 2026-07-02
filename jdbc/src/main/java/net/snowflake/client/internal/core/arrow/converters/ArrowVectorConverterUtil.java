@@ -115,6 +115,32 @@ public final class ArrowVectorConverterUtil {
         case OBJECT:
           return new VarCharConverter(vector, idx, context);
 
+        case TIMESTAMP:
+          // A bare TIMESTAMP column is resolved to a concrete type by
+          // CLIENT_TIMESTAMP_TYPE_MAPPING.
+          // Only the NTZ mapping is supported so far (TODO P1); LTZ/TZ land in P2/P3. Result-set
+          // Arrow
+          // metadata normally carries the concrete logical type, so this is defensive.
+          if (!SnowflakeType.TIMESTAMP_NTZ.name().equals(context.getTimestampMappedType())) {
+            throw new SnowflakeSQLException(
+                "Unsupported TIMESTAMP mapping for bare TIMESTAMP: "
+                    + context.getTimestampMappedType());
+          }
+          // fall through: mapped to NTZ
+        case TIMESTAMP_NTZ:
+          int ntzScale = getScaleFromFieldMetadata(vector);
+          // Select by struct child count, mirroring snowflake-jdbc: no children (compact Int64) vs.
+          // a two-field {epoch, fraction} struct.
+          if (vector.getField().getChildren().isEmpty()) {
+            return new BigIntToTimestampNTZConverter(vector, idx, context, ntzScale);
+          } else if (vector.getField().getChildren().size() == 2) {
+            return new TwoFieldStructToTimestampNTZConverter(vector, idx, context, ntzScale);
+          }
+          throw new SnowflakeSQLException(
+              "Unsupported Arrow physical layout for TIMESTAMP_NTZ: "
+                  + vector.getField().getChildren().size()
+                  + " struct children");
+
         default:
           throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());
       }

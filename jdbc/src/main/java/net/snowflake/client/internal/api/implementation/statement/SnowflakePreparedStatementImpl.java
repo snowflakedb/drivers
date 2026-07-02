@@ -214,7 +214,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private DataConversionContext conversionContext() {
     if (conversionContext == null) {
       conversionContext =
-          SessionDataConversionContext.fromConnection(coreDriverApi, connection.getHandle());
+          SessionDataConversionContext.fromConnection(
+              coreDriverApi, connection.getHandle(), connection.getResolvedProperties());
     }
     return conversionContext;
   }

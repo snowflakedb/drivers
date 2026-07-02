@@ -2,6 +2,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.sql.SQLException;
 import java.util.Map;
+import java.util.Properties;
 import java.util.TimeZone;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -45,7 +46,7 @@ public final class SessionDataConversionContext implements DataConversionContext
   private final String timestampMappedType;
 
   public static DataConversionContext fromConnection(
-      CoreDriverApi coreDriverApi, ConnectionHandle handle) {
+      CoreDriverApi coreDriverApi, ConnectionHandle handle, Properties clientProperties) {
     Map<String, String> params;
     try {
       ConnectionGetAllParametersResponse response =
@@ -101,12 +102,13 @@ public final class SessionDataConversionContext implements DataConversionContext
         parseBoolean(params.get("CLIENT_HONOR_CLIENT_TZ_FOR_TIMESTAMP_NTZ"), true);
     String timestampMappedType =
         orDefault(params.get("CLIENT_TIMESTAMP_TYPE_MAPPING"), "TIMESTAMP_LTZ");
-    // TODO(SNOW-3243330): JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC is a CLIENT-ONLY property that the server
-    // never echoes, so this read always falls through to the default below — a customer cannot
-    // override it yet, unlike snowflake-jdbc (SessionUtil reads it from the client Properties bag).
-    // The NTZ read phase (P1) is the first consumer; threading the resolved client Properties
-    // through fromConnection(...) lands there (shared with the DATE gap above). Inert until then.
-    boolean treatNTZAsUTC = parseBoolean(params.get("JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC"), false);
+    // JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC is client-side in snowflake-jdbc (SessionUtil reads it from
+    // the Properties bag). We read the client Properties first, then the server param map (the
+    // reference driver applies the server-echoed value, which ALTER SESSION drives), then the
+    // default — so a customer override wins and, absent one, we match the server value
+    // (SNOW-3243330).
+    boolean treatNTZAsUTC =
+        clientThenServer(clientProperties, params, "JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC", false);
 
     return new SessionDataConversionContext(
         dateFormatter,
@@ -130,6 +132,27 @@ public final class SessionDataConversionContext implements DataConversionContext
       return defaultValue;
     }
     return Boolean.parseBoolean(value.trim());
+  }
+
+  /**
+   * TODO revisit this in the near future Resolve a boolean session flag client-property-first, then
+   * the server parameter map, then the default. Mirrors snowflake-jdbc, where a client-only
+   * property (set in the {@link Properties} bag) takes precedence and otherwise the server-echoed
+   * session value applies. Property keys are matched case-insensitively (the JDBC {@code
+   * Properties} bag uses the documented mixed casing).
+   */
+  static boolean clientThenServer(
+      Properties clientProperties, Map<String, String> params, String key, boolean defaultValue) {
+    if (clientProperties != null) {
+      String clientValue = clientProperties.getProperty(key);
+      if (clientValue == null) {
+        clientValue = clientProperties.getProperty(key.toLowerCase());
+      }
+      if (clientValue != null && !clientValue.isEmpty()) {
+        return Boolean.parseBoolean(clientValue.trim());
+      }
+    }
+    return parseBoolean(params.get(key), defaultValue);
   }
 
   static SnowflakeDateTimeFormat buildDateFormatter(String snowflakeFormat) {

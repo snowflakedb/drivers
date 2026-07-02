@@ -131,7 +131,6 @@ public class DateTimeParityTest {
     runReadParity(SfType.TIME, tz, fmt, profile);
   }
 
-  @Disabled("TIMESTAMP_NTZ read parity not yet green; re-enable once the gaps are closed.")
   @ParameterizedTest(name = "READ TIMESTAMP_NTZ tz={0} fmt={1} profile={2}")
   @MethodSource("timestampNtzReadCells")
   void readTimestampNtzParity(String tz, String fmt, Profile profile) throws Exception {
@@ -750,7 +749,9 @@ public class DateTimeParityTest {
             Arrays.asList(
                 "JDBC_USE_SESSION_TIMEZONE",
                 "JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC",
-                "CLIENT_HONOR_CLIENT_TZ_FOR_TIMESTAMP_NTZ",
+                // CLIENT_HONOR_CLIENT_TZ_FOR_TIMESTAMP_NTZ is intentionally omitted: it can't be
+                // toggled against the test backend, so only its default (true) is exercised. See
+                // TIMESTAMP_MIGRATION_PLAN.md (Phase 1).
                 "JDBC_FORMAT_DATE_WITH_TIMEZONE")));
     PROFILES.put(
         SfType.TIMESTAMP_LTZ,

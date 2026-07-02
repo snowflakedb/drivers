@@ -7,12 +7,19 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
 import java.util.TimeZone;
+import lombok.Getter;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 
 abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
+  /** Struct child holding seconds since epoch. */
+  static final String FIELD_NAME_EPOCH = "epoch";
+
+  /** Struct child holding the sub-second nanosecond fraction. */
+  static final String FIELD_NAME_FRACTION = "fraction";
+
   protected String logicalTypeStr;
   private final ValueVector valueVector;
   protected final DataConversionContext context;
@@ -148,4 +155,21 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
 
   @Override
   public abstract String toString(int index) throws SFException;
+
+  /**
+   * Thrown when a Snowflake timestamp cannot be materialized as a {@link Timestamp} because its
+   * seconds-since-epoch falls outside the millisecond range a {@code long} can hold. Snowflake can
+   * use a full SB16 for a timestamp; certain operations (e.g. {@code getTimestamp}) are then
+   * unavailable, while {@code getString} can still render the seconds. Ported verbatim from
+   * snowflake-jdbc's {@code AbstractArrowVectorConverter.TimestampOperationNotAvailableException}.
+   */
+  public static class TimestampOperationNotAvailableException extends RuntimeException {
+    @Getter private final BigDecimal secsSinceEpoch;
+
+    TimestampOperationNotAvailableException(long secsSinceEpoch, int fraction) {
+      super("seconds=" + secsSinceEpoch + " nanos=" + fraction);
+      this.secsSinceEpoch =
+          new BigDecimal(secsSinceEpoch).add(new BigDecimal(fraction).scaleByPowerOfTen(-9));
+    }
+  }
 }
