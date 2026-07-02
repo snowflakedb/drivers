@@ -33,7 +33,14 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 rand = "0.9.2"
 bytes = "1"
-reqwest = { version = "0.12.23", features = ["json", "rustls-tls", "gzip", "stream"] }
+# rustls is the driver's only TLS backend. `default-features = false` drops
+# reqwest's `default-tls` (native-tls/OpenSSL/SChannel) so it is not compiled in
+# at all and rustls becomes the default backend uniformly (the CRL path and the
+# storage clients already use rustls). `rustls-tls-native-roots` keeps the OS
+# trust store as the default root source, matching the prior native-tls
+# behaviour. `charset`/`http2`/`macos-system-configuration` are re-added from
+# reqwest's default set (only `default-tls` is intentionally dropped).
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
@@ -70,6 +77,13 @@ aws-credential-types = "1.2.5"
 # Enables `ByteStream::from_body_1_x` so the S3 PUT path can stream a custom
 # (lazily-encrypting) http-body without buffering ciphertext.
 aws-smithy-types = { version = "1.3", features = ["http-body-1-x"] }
+# Hand-built, version-pinned AWS HTTP client (see `tls::aws_http_client`).
+# aws-smithy-http-client's TLS API exposes no min/max protocol-version knob, so
+# when the caller narrows the TLS window we adapt a hyper(-rustls) client to
+# smithy's `HttpClient` trait. Only engaged for a narrowed window.
+aws-smithy-runtime-api = { version = "1.9", features = ["client", "http-1x"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "aws-lc-rs"] }
 snafu = "0.8.7"
 error_trace = { path = "../error_trace" }
 fs2 = "0.4"
@@ -123,7 +137,9 @@ bzip2 = "0.6.0"
 brotli = "8.0.2"
 zstd = "0.13.3"
 test-case = "3.3.1"
-reqwest = { version = "0.12.23", features = ["blocking"] }
+# Dev/test reqwest: also rustls-only so test builds don't re-introduce
+# native-tls (feature unification would otherwise pull `default-tls` back in).
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "json", "rustls-tls", "rustls-tls-native-roots", "http2", "charset"] }
 wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"

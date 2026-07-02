@@ -37,7 +37,11 @@ pub fn create_tls_client_with_proxy(
     // Handle insecure configurations
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        return configure_http_client(Client::builder(), proxy)?
+        let builder = apply_reqwest_tls_versions(
+            configure_http_client(Client::builder(), proxy)?,
+            &tls_config,
+        );
+        return builder
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
             .build()
@@ -60,7 +64,10 @@ pub fn create_tls_client_with_proxy(
     // Create client based on CRL configuration
     match tls_config.crl_config.check_mode {
         CertRevocationCheckMode::Disabled => {
-            let mut builder = configure_http_client(Client::builder(), proxy)?;
+            let mut builder = apply_reqwest_tls_versions(
+                configure_http_client(Client::builder(), proxy)?,
+                &tls_config,
+            );
             if let Some(ref pem) = custom_pem {
                 tracing::debug!("CRL disabled, applying custom root store");
                 let certs = reqwest::Certificate::from_pem_bundle(pem).context(ClientBuildSnafu)?;
@@ -81,6 +88,11 @@ pub fn create_tls_client_with_proxy(
             tracing::debug!(
                 "CRL validation enabled, creating client with full TLS handshake validation"
             );
+            // Compute the enabled protocol-version window before moving
+            // `crl_config` into the builder. reqwest's min/max_tls_version are
+            // ignored on the preconfigured-rustls path, so the window must be
+            // baked into the rustls ClientConfig instead.
+            let protocol_versions = tls_config.versions.enabled_rustls_versions();
             let custom_root_store = match custom_pem {
                 Some(pem) => Some(create_root_store_from_pem(&pem)?),
                 None => None,
@@ -89,10 +101,116 @@ pub fn create_tls_client_with_proxy(
                 tls_config.crl_config,
                 custom_root_store,
                 tls_config.verify_hostname,
+                &protocol_versions,
                 proxy,
             )
         }
     }
+}
+
+pub(crate) fn apply_reqwest_tls_versions(
+    builder: ClientBuilder,
+    tls_config: &TlsConfig,
+) -> ClientBuilder {
+    apply_reqwest_tls_versions_window(builder, tls_config.versions)
+}
+
+pub(crate) fn apply_reqwest_tls_versions_window(
+    builder: ClientBuilder,
+    versions: crate::tls::config::TlsVersions,
+) -> ClientBuilder {
+    builder
+        .min_tls_version(versions.min.to_reqwest())
+        .max_tls_version(versions.max.to_reqwest())
+}
+
+/// Apply `tls_config` to a reqwest `ClientBuilder` and return the configured
+/// builder without calling `.build()`. Call sites can chain additional options
+/// (e.g. `.no_gzip()`, `.timeout()`) before the final `.build()`.
+///
+/// For the default `TlsConfig` this is a no-op: the original builder is returned unchanged.
+pub(crate) fn configure_tls_builder(
+    builder: ClientBuilder,
+    tls_config: &TlsConfig,
+) -> Result<ClientBuilder, TlsError> {
+    if !tls_config.verify_certificates {
+        tracing::warn!("Creating insecure TLS client - certificate verification disabled");
+        return Ok(apply_reqwest_tls_versions(builder, tls_config)
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true));
+    }
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let custom_pem = if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
+        tracing::debug!(
+            "Loading custom root certificate store from: {}",
+            pem_path.display()
+        );
+        Some(std::fs::read(pem_path).context(PemParseSnafu)?)
+    } else {
+        None
+    };
+
+    match tls_config.crl_config.check_mode {
+        CertRevocationCheckMode::Disabled => {
+            let mut b = apply_reqwest_tls_versions(builder, tls_config);
+            if let Some(ref pem) = custom_pem {
+                let certs = reqwest::Certificate::from_pem_bundle(pem).context(ClientBuildSnafu)?;
+                b = b.tls_built_in_root_certs(false);
+                for cert in certs {
+                    b = b.add_root_certificate(cert);
+                }
+            }
+            if !tls_config.verify_hostname {
+                b = b.danger_accept_invalid_hostnames(true);
+            }
+            Ok(b)
+        }
+        CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
+            tracing::debug!("CRL validation enabled, configuring storage TLS client");
+            let protocol_versions = tls_config.versions.enabled_rustls_versions();
+            let custom_root_store = match custom_pem {
+                Some(pem) => Some(create_root_store_from_pem(&pem)?),
+                None => None,
+            };
+            let rustls_cfg = build_crl_rustls_config(
+                tls_config.crl_config.clone(),
+                custom_root_store,
+                tls_config.verify_hostname,
+                &protocol_versions,
+            )?;
+            Ok(builder.use_preconfigured_tls(rustls_cfg))
+        }
+    }
+}
+
+/// Build a rustls `ClientConfig` with CRL validation. Shared by
+/// [`configure_tls_builder`] (storage clients) and
+/// [`create_crl_tls_client_with_root_store`] (connection-level client).
+fn build_crl_rustls_config(
+    crl_config: CrlConfig,
+    custom_root_store: Option<rustls::RootCertStore>,
+    verify_hostname: bool,
+    protocol_versions: &[&'static rustls::SupportedProtocolVersion],
+) -> Result<rustls::ClientConfig, TlsError> {
+    if !verify_hostname {
+        tracing::warn!("Hostname verification disabled (CRL path)");
+    }
+    let crl_verifier =
+        CrlServerCertVerifier::new_with_root_store(crl_config, custom_root_store, verify_hostname)
+            .context(VerifierBuildSnafu)?;
+
+    let version_builder = if protocol_versions.is_empty() {
+        tracing::debug!("empty TLS protocol-version window; falling back to rustls defaults");
+        ClientConfig::builder()
+    } else {
+        ClientConfig::builder_with_protocol_versions(protocol_versions)
+    };
+    Ok(version_builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(crl_verifier))
+        .with_no_client_auth())
 }
 
 /// Create a reqwest client with custom rustls configuration and optional custom root store
@@ -100,33 +218,22 @@ pub(crate) fn create_crl_tls_client_with_root_store(
     crl_config: CrlConfig,
     custom_root_store: Option<rustls::RootCertStore>,
     verify_hostname: bool,
+    protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     proxy: Option<&ProxyConfig>,
 ) -> Result<Client, TlsError> {
     tracing::debug!("Creating custom TLS client with CRL handshake validation");
-    if !verify_hostname {
-        tracing::warn!("Hostname verification disabled (CRL path)");
-    }
 
-    // Install default crypto provider for rustls (aws-lc-rs)
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    // Create custom certificate verifier with CRL validation
-    let crl_verifier = CrlServerCertVerifier::new_with_root_store(
+    let rustls_cfg = build_crl_rustls_config(
         crl_config.clone(),
         custom_root_store,
         verify_hostname,
-    )
-    .context(VerifierBuildSnafu)?;
+        protocol_versions,
+    )?;
 
-    // Create rustls client configuration with our custom verifier
-    let tls_config = ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(crl_verifier))
-        .with_no_client_auth();
-
-    // Create reqwest client with custom TLS configuration
     let client = configure_http_client(Client::builder(), proxy)?
-        .use_preconfigured_tls(tls_config)
+        .use_preconfigured_tls(rustls_cfg)
         .timeout(Duration::from_secs(
             crl_config.http_timeout.num_seconds() as u64
         ))

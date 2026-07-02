@@ -1,6 +1,8 @@
 use crate::config::ConfigError;
+use crate::config::InvalidParameterValueSnafu;
 use crate::config::param_names::{
-    CUSTOM_ROOT_STORE_PATH, TLS_SKIP_VERIFY, VERIFY_CERTIFICATES, VERIFY_HOSTNAME,
+    CUSTOM_ROOT_STORE_PATH, MAX_TLS_VERSION, MIN_TLS_VERSION, TLS_SKIP_VERIFY, VERIFY_CERTIFICATES,
+    VERIFY_HOSTNAME,
 };
 use crate::config::param_registry::{ParamKey, registry};
 use crate::config::settings::{Setting, Settings};
@@ -8,12 +10,133 @@ use crate::crl::config::CrlConfig;
 use crate::sensitive::SensitiveString;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TlsVersion {
+    Tls12,
+    Tls13,
+}
+
+impl TlsVersion {
+    pub(crate) fn parse(value: &str, parameter: &str) -> Result<Self, crate::config::ConfigError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "tls12" => Ok(Self::Tls12),
+            "tls13" => Ok(Self::Tls13),
+            "tls11" | "tls10" => InvalidParameterValueSnafu {
+                parameter,
+                value,
+                explanation: "TLS versions below 1.2 are not supported; use tls12 or tls13"
+                    .to_string(),
+            }
+            .fail(),
+            _ => InvalidParameterValueSnafu {
+                parameter,
+                value,
+                explanation: "expected one of: tls12, tls13".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Tls12 => "TLS 1.2",
+            Self::Tls13 => "TLS 1.3",
+        }
+    }
+
+    pub(crate) fn to_reqwest(self) -> reqwest::tls::Version {
+        match self {
+            Self::Tls12 => reqwest::tls::Version::TLS_1_2,
+            Self::Tls13 => reqwest::tls::Version::TLS_1_3,
+        }
+    }
+
+    pub(crate) fn to_rustls(self) -> &'static rustls::SupportedProtocolVersion {
+        match self {
+            Self::Tls12 => &rustls::version::TLS12,
+            Self::Tls13 => &rustls::version::TLS13,
+        }
+    }
+}
+
+/// The `[min, max]` TLS protocol-version window negotiated on the wire,
+/// resolved from the `min_tls_version` / `max_tls_version` parameters.
+///
+/// Bundled into one value so it threads through config, `StageInfo`, and the
+/// client builders as a single argument rather than a pair. Defaults to the
+/// full `Tls12..=Tls13` range — exactly what every TLS backend negotiates by
+/// default, so a default window requires no pinning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TlsVersions {
+    pub min: TlsVersion,
+    pub max: TlsVersion,
+}
+
+impl Default for TlsVersions {
+    fn default() -> Self {
+        Self {
+            min: TlsVersion::Tls12,
+            max: TlsVersion::Tls13,
+        }
+    }
+}
+
+impl TlsVersions {
+    /// Parse the `min_tls_version` / `max_tls_version` settings into a window,
+    /// applying defaults for absent values and rejecting an inverted window
+    /// (`min > max`). A bad spelling or sub-1.2 value fails here rather than
+    /// being silently ignored.
+    pub(crate) fn from_settings(
+        settings: &dyn crate::config::settings::Settings,
+    ) -> Result<Self, crate::config::ConfigError> {
+        let min_raw = settings.get_string(MIN_TLS_VERSION.as_str());
+        let max_raw = settings.get_string(MAX_TLS_VERSION.as_str());
+        let min = match min_raw.as_deref() {
+            Some(v) => TlsVersion::parse(v, MIN_TLS_VERSION.as_str())?,
+            None => TlsVersion::Tls12,
+        };
+        let max = match max_raw.as_deref() {
+            Some(v) => TlsVersion::parse(v, MAX_TLS_VERSION.as_str())?,
+            None => TlsVersion::Tls13,
+        };
+        if min > max {
+            return InvalidParameterValueSnafu {
+                parameter: MAX_TLS_VERSION.as_str(),
+                value: max_raw.unwrap_or_else(|| max.label().to_string()),
+                explanation: format!(
+                    "max_tls_version ({}) must be at least min_tls_version ({})",
+                    max.label(),
+                    min.label(),
+                ),
+            }
+            .fail();
+        }
+        Ok(Self { min, max })
+    }
+
+    /// The ordered set of rustls protocol versions enabled by the window.
+    ///
+    /// [`from_settings`](Self::from_settings) rejects `min > max`, so for any
+    /// window produced through it this is non-empty. Callers that build a
+    /// window by hand must uphold the same invariant; the rustls/AWS client
+    /// paths guard defensively against an empty result.
+    pub(crate) fn enabled_rustls_versions(self) -> Vec<&'static rustls::SupportedProtocolVersion> {
+        [TlsVersion::Tls12, TlsVersion::Tls13]
+            .into_iter()
+            .filter(|v| *v >= self.min && *v <= self.max)
+            .map(TlsVersion::to_rustls)
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub crl_config: CrlConfig,
     pub custom_root_store_path: Option<PathBuf>,
     pub verify_hostname: bool,
     pub verify_certificates: bool,
+    /// TLS protocol-version window to negotiate (default `Tls12..=Tls13`).
+    pub versions: TlsVersions,
 }
 
 /// HTTP proxy settings, supporting two equivalent input forms:
@@ -190,6 +313,7 @@ impl TlsConfig {
             custom_root_store_path: None,
             verify_hostname: false,
             verify_certificates: false,
+            versions: TlsVersions::default(),
         }
     }
 
@@ -202,14 +326,26 @@ impl TlsConfig {
             })
             .map(PathBuf::from);
         let skip_tls_verify = lookup_bool(settings, TLS_SKIP_VERIFY, false);
+        if skip_tls_verify {
+            tracing::warn!(
+                "TLS verification disabled via tls_skip_verify: certificate, hostname, and CRL revocation checks are all bypassed. Do not use in production."
+            );
+        }
         let verify_hostname = !skip_tls_verify && lookup_bool(settings, VERIFY_HOSTNAME, true);
         let verify_certificates =
             !skip_tls_verify && lookup_bool(settings, VERIFY_CERTIFICATES, true);
+
+        // The optional [min, max] TLS version window. Defaults match rustls'
+        // effective default (1.2..=1.3), so behaviour is unchanged unless the
+        // caller opts in; a bad spelling or inverted window fails here.
+        let versions = TlsVersions::from_settings(settings)?;
+
         Ok(Self {
             crl_config,
             custom_root_store_path,
             verify_hostname,
             verify_certificates,
+            versions,
         })
     }
 }
@@ -221,6 +357,7 @@ impl Default for TlsConfig {
             custom_root_store_path: None,
             verify_hostname: true,
             verify_certificates: true,
+            versions: TlsVersions::default(),
         }
     }
 }
@@ -281,5 +418,99 @@ mod tests {
         let cfg = TlsConfig::from_settings(&s).unwrap();
         assert!(!cfg.verify_hostname);
         assert!(cfg.verify_certificates);
+    }
+}
+
+#[cfg(test)]
+mod tls_version_tests {
+    use super::*;
+    use crate::config::settings::Setting;
+    use std::collections::HashMap;
+
+    fn settings(pairs: &[(&str, &str)]) -> HashMap<String, Setting> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), Setting::String(v.to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn should_parse_tls12_and_tls13_case_insensitively() {
+        for v in ["tls12", "TLS12"] {
+            assert_eq!(
+                TlsVersion::parse(v, "min_tls_version").unwrap(),
+                TlsVersion::Tls12,
+                "spelling {v:?} should parse as Tls12"
+            );
+        }
+        for v in ["tls13", "TLS13"] {
+            assert_eq!(
+                TlsVersion::parse(v, "max_tls_version").unwrap(),
+                TlsVersion::Tls13,
+                "spelling {v:?} should parse as Tls13"
+            );
+        }
+    }
+
+    #[test]
+    fn should_reject_sub_1_2_version_with_floor_message() {
+        for v in ["tls11", "tls10", "TLS11", "TLs10"] {
+            let err = TlsVersion::parse(v, "min_tls_version").unwrap_err();
+            assert!(
+                err.to_string().contains("below 1.2"),
+                "value {v:?} should be rejected as below the TLS 1.2 floor, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_reject_unrecognized_version() {
+        let err = TlsVersion::parse("tls99", "min_tls_version").unwrap_err();
+        assert!(err.to_string().contains("min_tls_version"));
+    }
+
+    #[test]
+    fn should_default_to_full_window_when_unset() {
+        let cfg = TlsConfig::from_settings(&settings(&[])).unwrap();
+        assert_eq!(cfg.versions.min, TlsVersion::Tls12);
+        assert_eq!(cfg.versions.max, TlsVersion::Tls13);
+    }
+
+    #[test]
+    fn should_parse_window_from_settings() {
+        let cfg = TlsConfig::from_settings(&settings(&[
+            ("min_tls_version", "tls13"),
+            ("max_tls_version", "tls13"),
+        ]))
+        .unwrap();
+        assert_eq!(cfg.versions.min, TlsVersion::Tls13);
+        assert_eq!(cfg.versions.max, TlsVersion::Tls13);
+    }
+
+    #[test]
+    fn should_reject_window_when_min_exceeds_max() {
+        let err = TlsConfig::from_settings(&settings(&[
+            ("min_tls_version", "tls13"),
+            ("max_tls_version", "tls12"),
+        ]))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("at least min_tls_version"),
+            "min>max should be rejected, got: {err}"
+        );
+    }
+
+    #[test]
+    fn enabled_rustls_versions_reflects_window() {
+        let full = TlsVersions::default();
+        assert_eq!(full.enabled_rustls_versions().len(), 2);
+
+        let tls13_only = TlsVersions {
+            min: TlsVersion::Tls13,
+            max: TlsVersion::Tls13,
+        };
+        let versions = tls13_only.enabled_rustls_versions();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, rustls::version::TLS13.version);
     }
 }

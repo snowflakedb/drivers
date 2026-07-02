@@ -219,6 +219,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: sf_core::tls::config::TlsConfig::default(),
             storage_account: None,
         },
         encryption_material: Some(material),
@@ -359,6 +360,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_virtual_url: false,
                 use_regional_url: false,
                 use_s3_regional_url: false,
+                tls_config: sf_core::tls::config::TlsConfig::default(),
                 storage_account: None,
             };
             sf_core::file_manager::internal::download_from_gcs_streaming(
@@ -393,6 +395,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_virtual_url: false,
                 use_regional_url: false,
                 use_s3_regional_url: false,
+                tls_config: sf_core::tls::config::TlsConfig::default(),
                 storage_account: Some("mystorageaccount".to_string()),
             };
             sf_core::file_manager::internal::download_from_azure_streaming(
@@ -513,6 +516,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
+        tls_config: sf_core::tls::config::TlsConfig::default(),
         storage_account: None,
     };
 

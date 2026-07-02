@@ -33,6 +33,7 @@ pub enum ConfigError {
         location: Location,
     },
     #[snafu(display("Invalid value '{value}' for parameter '{parameter}' - {explanation}"))]
+    #[snafu(visibility(pub(crate)))]
     InvalidParameterValue {
         parameter: String,
         value: String,

@@ -53,7 +53,7 @@ pub async fn upload_to_gcs_or_skip(
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
-    let client = create_gcs_client()?;
+    let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
     let has_refresher = refresher.is_some();
@@ -237,7 +237,7 @@ async fn gcs_get_with_refresh(
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<reqwest::Response, GcsDownloadError> {
-    let client = create_gcs_client()?;
+    let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     // Either presigned-URL source enables the 400-handling: the URL may
     // have expired and reissuing it produces a fresh signature. The
@@ -800,21 +800,30 @@ fn map_http_error(e: HttpError) -> GcsRequestError {
 
 // --- Helpers ---
 
-fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        // Disable reqwest's auto-gzip path so a GCS response carrying
-        // `Content-Encoding: gzip` (typically set by external loaders such
-        // as `gsutil cp -Z` or BigQuery exports) is handed to the caller
-        // verbatim. The driver is moving opaque, possibly CSE-encrypted
-        // bytes, and downstream SHA-256 digest / Content-Length checks
-        // assume wire bytes == body bytes. Mirrors JDBC's
-        // `HttpUtil.disableContentCompression()`
-        // (`SnowflakeGCSClient.java:237,:432` via `HttpUtil.java:420`) and
-        // the intent of Python's `remove_content_encoding` urllib3 hook
-        // (`storage_client.py:54-59`); the upload-side `content-encoding`
-        // strip in `upload_to_gcs` is the matching PUT-side defense.
-        .no_gzip()
+fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsRequestError> {
+    let builder = crate::tls::client::configure_tls_builder(
+        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+        &stage_info.tls_config,
+    )
+    .map_err(|e| {
+        ClientSetupSnafu {
+            detail: e.to_string(),
+        }
+        .build()
+    })?
+    // Disable reqwest's auto-gzip path so a GCS response carrying
+    // `Content-Encoding: gzip` (typically set by external loaders such
+    // as `gsutil cp -Z` or BigQuery exports) is handed to the caller
+    // verbatim. The driver is moving opaque, possibly CSE-encrypted
+    // bytes, and downstream SHA-256 digest / Content-Length checks
+    // assume wire bytes == body bytes. Mirrors JDBC's
+    // `HttpUtil.disableContentCompression()`
+    // (`SnowflakeGCSClient.java:237,:432` via `HttpUtil.java:420`) and
+    // the intent of Python's `remove_content_encoding` urllib3 hook
+    // (`storage_client.py:54-59`); the upload-side `content-encoding`
+    // strip in `upload_to_gcs` is the matching PUT-side defense.
+    .no_gzip();
+    builder
         .build()
         .map_err(|source| GcsRequestError::Http { source })
 }
@@ -1183,6 +1192,8 @@ enum GcsRequestError {
     MissingGcsCredentials,
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted { detail: String },
+    #[snafu(display("GCS client setup failed: {detail}"))]
+    ClientSetup { detail: String },
     #[snafu(display("Failed to serialize GCS metadata"))]
     Serialization { source: serde_json::Error },
 }
@@ -1206,6 +1217,9 @@ impl From<GcsRequestError> for GcsUploadError {
             }
             GcsRequestError::RetryExhausted { detail } => {
                 gcs_upload_error::RetryExhaustedSnafu { detail }.build()
+            }
+            GcsRequestError::ClientSetup { detail } => {
+                gcs_upload_error::ClientSetupFailedSnafu { detail }.build()
             }
             GcsRequestError::Serialization { source } => {
                 gcs_upload_error::SerializationSnafu.into_error(source)
@@ -1236,6 +1250,9 @@ impl From<GcsRequestError> for GcsDownloadError {
             }
             GcsRequestError::RetryExhausted { detail } => {
                 gcs_download_error::RetryExhaustedSnafu { detail }.build()
+            }
+            GcsRequestError::ClientSetup { detail } => {
+                gcs_download_error::ClientSetupFailedSnafu { detail }.build()
             }
             // Serialization is upload-only; if it ever fires on the download
             // path it's a logic bug, but we still need a total mapping.
@@ -1294,6 +1311,12 @@ pub enum GcsUploadError {
     },
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS client setup failed: {detail}"))]
+    ClientSetupFailed {
         detail: String,
         #[snafu(implicit)]
         location: Location,
@@ -1364,6 +1387,12 @@ pub enum GcsDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("GCS client setup failed: {detail}"))]
+    ClientSetupFailed {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
     StageInfoRefreshFailed {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
@@ -1412,6 +1441,7 @@ mod tests {
             use_virtual_url: overrides.use_virtual_url,
             use_regional_url: overrides.use_regional_url,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: None,
         }
     }
@@ -2074,7 +2104,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client().unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(&client, &url, Some("token")).await;
 
@@ -2095,7 +2125,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client().unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(&client, &url, Some("token")).await;
 
@@ -2117,7 +2147,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client().unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(&client, &url, Some("token")).await;
 
@@ -2133,7 +2163,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client().unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(&client, &url, Some("token")).await;
 
@@ -2152,7 +2182,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client().unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(&client, &url, Some("token")).await;
 
@@ -2175,7 +2205,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = create_gcs_client().unwrap();
+        let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
         let result = check_file_exists_gcs(&client, &url, Some("token")).await;
 

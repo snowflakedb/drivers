@@ -1036,6 +1036,18 @@ impl Connection {
             .unwrap_or(DEFAULT_PUT_GET_MAX_ATTEMPTS)
     }
 
+    /// The resolved TLS config for this connection, read from the established
+    /// [`ClientInfo`]. Falls back to the default `TlsConfig` before login
+    /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP
+    /// clients on the PUT/GET path to honour CRL, custom root stores, and the
+    /// protocol-version window.
+    pub(crate) fn tls_config(&self) -> crate::tls::config::TlsConfig {
+        self.client_info
+            .as_ref()
+            .map(|ci| ci.tls_config.clone())
+            .unwrap_or_default()
+    }
+
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
     pub(crate) fn query_transport_parameters(&self) -> Result<QueryParameters, ApiError> {
         let empty = ParamStore::new();

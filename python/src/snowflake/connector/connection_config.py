@@ -143,6 +143,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     master_validity_in_seconds: int | None = None
     """Remaining validity in seconds for the master token (session token auth)"""
 
+    max_tls_version: str | None = "tls13"
+    """Maximum TLS protocol version to negotiate (tls12 or tls13). Default: 'tls13'"""
+
+    min_tls_version: str | None = "tls12"
+    """Minimum TLS protocol version to negotiate (tls12 or tls13). Default: 'tls12'"""
+
     no_proxy: str | None = None
     """Comma-separated list of hosts to bypass the proxy for"""
 

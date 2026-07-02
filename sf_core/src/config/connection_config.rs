@@ -4,7 +4,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use base64::{Engine as _, engine::general_purpose};
-use chrono::Duration;
 use openssl::pkey::PKey;
 use snafu::OptionExt;
 use url::Url;
@@ -20,9 +19,8 @@ use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
     ValidationFailedSnafu,
 };
-use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::sensitive::SensitiveString;
-use crate::tls::config::{ProxyConfig, TlsConfig};
+use crate::tls::config::{ProxyConfig, TlsConfig, TlsVersion};
 
 // ---------------------------------------------------------------------------
 // Typed config structs
@@ -310,73 +308,17 @@ fn derive_server_url(settings: &ParamStore) -> Result<String, ConfigError> {
 }
 
 // ---------------------------------------------------------------------------
-// TLS / CRL config building (mirrored from tls::config / crl::config)
+// TLS / CRL config building
 // ---------------------------------------------------------------------------
 
-fn build_crl_config(settings: &ParamStore) -> CrlConfig {
-    // TODO: make matching case-insensitive (e.g. "disabled", "Enabled")
-    let check_mode = match settings.get_string(CRL_CHECK_MODE).as_deref() {
-        Some("0") | Some("DISABLED") | None => CertRevocationCheckMode::Disabled,
-        Some("1") | Some("ENABLED") => CertRevocationCheckMode::Enabled,
-        Some("2") | Some("ADVISORY") => CertRevocationCheckMode::Advisory,
-        Some(other) => {
-            tracing::warn!("Unknown crl_check_mode: {other}, using DISABLED");
-            CertRevocationCheckMode::Disabled
-        }
-    };
-
-    let enable_disk_caching = settings.get_bool(CRL_ENABLE_DISK_CACHING).unwrap_or(true);
-    let enable_memory_caching = settings.get_bool(CRL_ENABLE_MEMORY_CACHING).unwrap_or(true);
-    let cache_dir = settings.get_string(CRL_CACHE_DIR).map(PathBuf::from);
-    let validity_time = settings
-        .get_int(CRL_VALIDITY_TIME)
-        .map(Duration::days)
-        .unwrap_or(Duration::days(10));
-    let allow_certificates_without_crl_url = settings
-        .get_bool(CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL)
-        .unwrap_or(false);
-    let http_timeout = settings
-        .get_int(CRL_HTTP_TIMEOUT)
-        .map(Duration::seconds)
-        .unwrap_or(Duration::seconds(30));
-    let connection_timeout = settings
-        .get_int(CRL_CONNECTION_TIMEOUT)
-        .map(Duration::seconds)
-        .unwrap_or(Duration::seconds(10));
-
-    CrlConfig {
-        check_mode,
-        enable_disk_caching,
-        enable_memory_caching,
-        cache_dir,
-        validity_time,
-        allow_certificates_without_crl_url,
-        http_timeout,
-        connection_timeout,
-    }
-}
-
-fn build_tls_config(settings: &ParamStore) -> TlsConfig {
-    let crl_config = build_crl_config(settings);
-    let custom_root_store_path = settings
-        .get_string(CUSTOM_ROOT_STORE_PATH)
-        .map(PathBuf::from);
-    let skip_tls_verify = settings.get_bool(TLS_SKIP_VERIFY).unwrap_or(false);
-    if skip_tls_verify {
-        tracing::warn!(
-            "TLS verification disabled via tls_skip_verify: certificate, hostname, and CRL revocation checks are all bypassed. Do not use in production."
-        );
-    }
-    let verify_hostname = !skip_tls_verify && settings.get_bool(VERIFY_HOSTNAME).unwrap_or(true);
-    let verify_certificates =
-        !skip_tls_verify && settings.get_bool(VERIFY_CERTIFICATES).unwrap_or(true);
-
-    TlsConfig {
-        crl_config,
-        custom_root_store_path,
-        verify_hostname,
-        verify_certificates,
-    }
+/// Build the TLS config from settings.
+///
+/// Delegates to the single canonical parser [`TlsConfig::from_settings`]
+/// (which itself parses the CRL config) rather than re-deriving each field
+/// here, so a new TLS field is added in exactly one place and can't be
+/// silently dropped on this path (design-discipline rule 2).
+fn build_tls_config(settings: &ParamStore) -> Result<TlsConfig, ConfigError> {
+    TlsConfig::from_settings(settings)
 }
 
 /// Thin wrapper around [`ProxyConfig::from_settings`].
@@ -563,7 +505,7 @@ impl ConnectionConfig {
             })?;
         let server_url = derive_server_url(settings)?;
         let auth = build_auth_config(settings)?;
-        let tls = build_tls_config(settings);
+        let tls = build_tls_config(settings)?;
         let proxy = build_proxy_config(settings);
 
         let session = SessionContext {
@@ -1067,6 +1009,46 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         }
     }
 
+    // --- InvalidValue / ConflictingParameters: min_tls_version / max_tls_version ---
+    // Reuse the canonical parser so the accepted spellings can't drift from
+    // `TlsConfig::from_settings` (design-discipline rule 2). Each bad value is
+    // reported independently, then the [min, max] ordering, upholding this
+    // function's "collect ALL errors" contract.
+    let parse_tls = |key: crate::config::ParamKey| {
+        settings
+            .get_string(key)
+            .map(|v| (v.clone(), TlsVersion::parse(&v, key.as_str())))
+    };
+    let min_parsed = parse_tls(MIN_TLS_VERSION);
+    let max_parsed = parse_tls(MAX_TLS_VERSION);
+    for (key, parsed) in [
+        (MIN_TLS_VERSION, &min_parsed),
+        (MAX_TLS_VERSION, &max_parsed),
+    ] {
+        if let Some((raw, Err(err))) = parsed {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                parameter: key.into(),
+                message: format!("Invalid {key} '{raw}': {err}"),
+                code: ValidationCode::InvalidValue,
+            });
+        }
+    }
+    if let (Some((_, Ok(min))), Some((_, Ok(max)))) = (&min_parsed, &max_parsed)
+        && min > max
+    {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: MAX_TLS_VERSION.into(),
+            message: format!(
+                "max_tls_version ({}) must be at least min_tls_version ({})",
+                max.label(),
+                min.label()
+            ),
+            code: ValidationCode::ConflictingParameters,
+        });
+    }
+
     // --- ConflictingParameters: private_key + private_key_file ---
     let has_pk = settings.get(PRIVATE_KEY).is_some();
     let has_pk_file = settings.get_string(PRIVATE_KEY_FILE).is_some();
@@ -1103,6 +1085,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crl::config::CertRevocationCheckMode;
 
     fn settings_from(pairs: &[(&str, Setting)]) -> ParamStore {
         let mut settings = ParamStore::with_registry_defaults();
@@ -1966,6 +1949,51 @@ mod tests {
             .filter(|i| i.code == ValidationCode::ConflictingParameters)
             .collect();
         assert_eq!(conflict.len(), 1);
+    }
+
+    #[test]
+    fn validate_rejects_invalid_min_tls_version() {
+        let mut settings = minimal_password_settings();
+        settings.insert("min_tls_version".into(), Setting::String("tls99".into()));
+        let issues = validate_settings(&settings);
+        let bad: Vec<_> = issues
+            .iter()
+            .filter(|i| i.parameter == "min_tls_version" && i.code == ValidationCode::InvalidValue)
+            .collect();
+        assert_eq!(bad.len(), 1, "invalid min_tls_version should be reported");
+    }
+
+    #[test]
+    fn validate_rejects_min_tls_version_above_max() {
+        let mut settings = minimal_password_settings();
+        settings.insert("min_tls_version".into(), Setting::String("tls13".into()));
+        settings.insert("max_tls_version".into(), Setting::String("tls12".into()));
+        let issues = validate_settings(&settings);
+        let conflict: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.parameter == "max_tls_version" && i.code == ValidationCode::ConflictingParameters
+            })
+            .collect();
+        assert_eq!(
+            conflict.len(),
+            1,
+            "min > max should be reported as a conflict"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_canonical_tls_versions() {
+        let mut settings = minimal_password_settings();
+        settings.insert("min_tls_version".into(), Setting::String("tls12".into()));
+        settings.insert("max_tls_version".into(), Setting::String("tls13".into()));
+        let issues = validate_settings(&settings);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i.parameter.as_str(), "min_tls_version" | "max_tls_version")),
+            "valid tls12/tls13 should not produce issues, got: {issues:?}"
+        );
     }
 
     #[test]
