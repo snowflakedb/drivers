@@ -26,6 +26,7 @@ import java.util.UUID;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.TestParameters;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -45,767 +46,784 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
   // ---------- Identity ----------
 
-  @Test
-  void shouldReturnSnowflakeForDatabaseProductName() throws Exception {
-    assertEquals("Snowflake", metaData().getDatabaseProductName());
-  }
+  @Nested
+  class Identity {
 
-  @Test
-  void shouldContainSnowflakeInDriverName() throws Exception {
-    // Both drivers identify as a Snowflake driver: legacy returns "Snowflake",
-    // universal-driver returns "Snowflake JDBC Driver". Substring is the
-    // strictest assertion that still holds across both.
-    assertTrue(metaData().getDriverName().contains("Snowflake"));
-  }
+    @Test
+    void shouldReturnSnowflakeForDatabaseProductName() throws Exception {
+      assertEquals("Snowflake", metaData().getDatabaseProductName());
+    }
 
-  @Test
-  void shouldReportConsistentVersionMetadata() throws Exception {
-    DatabaseMetaData md = metaData();
+    @Test
+    void shouldContainSnowflakeInDriverName() throws Exception {
+      // Both drivers identify as a Snowflake driver: legacy returns "Snowflake",
+      // universal-driver returns "Snowflake JDBC Driver". Substring is the
+      // strictest assertion that still holds across both.
+      assertTrue(metaData().getDriverName().contains("Snowflake"));
+    }
 
-    String version = md.getDriverVersion();
-    assertTrue(
-        version.matches("\\d+\\.\\d+(\\.\\d+)?(-.*)?"),
-        () -> "driver version not in major.minor[.patch][-suffix] form: " + version);
+    @Test
+    void shouldReportConsistentVersionMetadata() throws Exception {
+      DatabaseMetaData md = metaData();
 
-    int major = md.getDriverMajorVersion();
-    int minor = md.getDriverMinorVersion();
-    String[] parts = version.split("[.\\-]");
-    assertEquals(Integer.parseInt(parts[0]), major, "driver major must match driver version");
-    assertEquals(Integer.parseInt(parts[1]), minor, "driver minor must match driver version");
+      String version = md.getDriverVersion();
+      assertTrue(
+          version.matches("\\d+\\.\\d+(\\.\\d+)?(-.*)?"),
+          () -> "driver version not in major.minor[.patch][-suffix] form: " + version);
 
-    // JDBC API level shipped by both drivers.
-    assertEquals(4, md.getJDBCMajorVersion());
-    assertEquals(2, md.getJDBCMinorVersion());
-  }
+      int major = md.getDriverMajorVersion();
+      int minor = md.getDriverMinorVersion();
+      String[] parts = version.split("[.\\-]");
+      assertEquals(Integer.parseInt(parts[0]), major, "driver major must match driver version");
+      assertEquals(Integer.parseInt(parts[1]), minor, "driver minor must match driver version");
 
-  @Test
-  void shouldReturnDoubleQuoteForIdentifierQuoteString() throws Exception {
-    assertEquals("\"", metaData().getIdentifierQuoteString());
-  }
+      // JDBC API level shipped by both drivers.
+      assertEquals(4, md.getJDBCMajorVersion());
+      assertEquals(2, md.getJDBCMinorVersion());
+    }
 
-  @Test
-  void shouldReturnBackslashForSearchStringEscape() throws Exception {
-    assertEquals("\\", metaData().getSearchStringEscape());
-  }
+    @Test
+    void shouldReturnDoubleQuoteForIdentifierQuoteString() throws Exception {
+      assertEquals("\"", metaData().getIdentifierQuoteString());
+    }
 
-  @Test
-  void shouldReturnDollarForExtraNameCharacters() throws Exception {
-    assertEquals("$", metaData().getExtraNameCharacters());
-  }
+    @Test
+    void shouldReturnBackslashForSearchStringEscape() throws Exception {
+      assertEquals("\\", metaData().getSearchStringEscape());
+    }
 
-  @Test
-  void shouldReturnSchemaForSchemaTerm() throws Exception {
-    assertEquals("schema", metaData().getSchemaTerm());
-  }
+    @Test
+    void shouldReturnDollarForExtraNameCharacters() throws Exception {
+      assertEquals("$", metaData().getExtraNameCharacters());
+    }
 
-  @Test
-  void shouldReturnProcedureForProcedureTerm() throws Exception {
-    assertEquals("procedure", metaData().getProcedureTerm());
-  }
+    @Test
+    void shouldReturnSchemaForSchemaTerm() throws Exception {
+      assertEquals("schema", metaData().getSchemaTerm());
+    }
 
-  @Test
-  void shouldReturnDatabaseForCatalogTerm() throws Exception {
-    assertEquals("database", metaData().getCatalogTerm());
-  }
+    @Test
+    void shouldReturnProcedureForProcedureTerm() throws Exception {
+      assertEquals("procedure", metaData().getProcedureTerm());
+    }
 
-  @Test
-  void shouldReturnDotForCatalogSeparator() throws Exception {
-    assertEquals(".", metaData().getCatalogSeparator());
-  }
+    @Test
+    void shouldReturnDatabaseForCatalogTerm() throws Exception {
+      assertEquals("database", metaData().getCatalogTerm());
+    }
 
-  @Test
-  void shouldReturnSqlStateSqlForSqlStateType() throws Exception {
-    assertEquals(DatabaseMetaData.sqlStateSQL, metaData().getSQLStateType());
+    @Test
+    void shouldReturnDotForCatalogSeparator() throws Exception {
+      assertEquals(".", metaData().getCatalogSeparator());
+    }
+
+    @Test
+    void shouldReturnSqlStateSqlForSqlStateType() throws Exception {
+      assertEquals(DatabaseMetaData.sqlStateSQL, metaData().getSQLStateType());
+    }
   }
 
   // ---------- Capabilities: procedures, tables, read-only ----------
 
-  @Test
-  void shouldReturnFalseForAllProceduresAreCallable() throws Exception {
-    assertFalse(metaData().allProceduresAreCallable());
-  }
-
-  @Test
-  void shouldReturnTrueForAllTablesAreSelectable() throws Exception {
-    assertTrue(metaData().allTablesAreSelectable());
-  }
-
-  @Test
-  void shouldReturnFalseForIsReadOnly() throws Exception {
-    assertFalse(metaData().isReadOnly());
-  }
-
-  // ---------- Capabilities: null ordering ----------
-
-  @Test
-  void shouldReturnTrueForNullsAreSortedHigh() throws Exception {
-    assertTrue(metaData().nullsAreSortedHigh());
-  }
-
-  @Test
-  void shouldReturnFalseForNullsAreSortedLow() throws Exception {
-    assertFalse(metaData().nullsAreSortedLow());
-  }
-
-  @Test
-  void shouldReturnFalseForNullsAreSortedAtStart() throws Exception {
-    assertFalse(metaData().nullsAreSortedAtStart());
-  }
-
-  @Test
-  void shouldReturnFalseForNullsAreSortedAtEnd() throws Exception {
-    assertFalse(metaData().nullsAreSortedAtEnd());
-  }
-
-  // ---------- Capabilities: file storage ----------
-
-  @Test
-  void shouldReturnFalseForUsesLocalFiles() throws Exception {
-    assertFalse(metaData().usesLocalFiles());
-  }
-
-  @Test
-  void shouldReturnFalseForUsesLocalFilePerTable() throws Exception {
-    assertFalse(metaData().usesLocalFilePerTable());
-  }
-
-  // ---------- Capabilities: identifier case ----------
-
-  @Test
-  void shouldReturnFalseForSupportsMixedCaseIdentifiers() throws Exception {
-    assertFalse(metaData().supportsMixedCaseIdentifiers());
-  }
-
-  @Test
-  void shouldReturnTrueForStoresUpperCaseIdentifiers() throws Exception {
-    assertTrue(metaData().storesUpperCaseIdentifiers());
-  }
-
-  @Test
-  void shouldReturnFalseForStoresLowerCaseIdentifiers() throws Exception {
-    assertFalse(metaData().storesLowerCaseIdentifiers());
-  }
-
-  @Test
-  void shouldReturnFalseForStoresMixedCaseIdentifiers() throws Exception {
-    assertFalse(metaData().storesMixedCaseIdentifiers());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsMixedCaseQuotedIdentifiers() throws Exception {
-    assertTrue(metaData().supportsMixedCaseQuotedIdentifiers());
-  }
-
-  @Test
-  void shouldReturnFalseForStoresUpperCaseQuotedIdentifiers() throws Exception {
-    assertFalse(metaData().storesUpperCaseQuotedIdentifiers());
-  }
-
-  @Test
-  void shouldReturnFalseForStoresLowerCaseQuotedIdentifiers() throws Exception {
-    assertFalse(metaData().storesLowerCaseQuotedIdentifiers());
-  }
-
-  @Test
-  void shouldReturnTrueForStoresMixedCaseQuotedIdentifiers() throws Exception {
-    assertTrue(metaData().storesMixedCaseQuotedIdentifiers());
-  }
-
-  // ---------- Capabilities: DDL/DML ----------
-
-  @Test
-  void shouldReturnTrueForSupportsAlterTableWithAddColumn() throws Exception {
-    assertTrue(metaData().supportsAlterTableWithAddColumn());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsAlterTableWithDropColumn() throws Exception {
-    assertTrue(metaData().supportsAlterTableWithDropColumn());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsColumnAliasing() throws Exception {
-    assertTrue(metaData().supportsColumnAliasing());
-  }
-
-  @Test
-  void shouldReturnTrueForNullPlusNonNullIsNull() throws Exception {
-    assertTrue(metaData().nullPlusNonNullIsNull());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsConvert() throws Exception {
-    assertFalse(metaData().supportsConvert());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsConvertWithTypes() throws Exception {
-    assertFalse(metaData().supportsConvert(Types.INTEGER, Types.VARCHAR));
-  }
-
-  // ---------- Capabilities: correlation, ordering, grouping ----------
-
-  @Test
-  void shouldReturnTrueForSupportsTableCorrelationNames() throws Exception {
-    assertTrue(metaData().supportsTableCorrelationNames());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsDifferentTableCorrelationNames() throws Exception {
-    assertFalse(metaData().supportsDifferentTableCorrelationNames());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsExpressionsInOrderBy() throws Exception {
-    assertTrue(metaData().supportsExpressionsInOrderBy());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsOrderByUnrelated() throws Exception {
-    assertTrue(metaData().supportsOrderByUnrelated());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsGroupBy() throws Exception {
-    assertTrue(metaData().supportsGroupBy());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsGroupByUnrelated() throws Exception {
-    assertFalse(metaData().supportsGroupByUnrelated());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsGroupByBeyondSelect() throws Exception {
-    assertTrue(metaData().supportsGroupByBeyondSelect());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsLikeEscapeClause() throws Exception {
-    assertFalse(metaData().supportsLikeEscapeClause());
-  }
-
-  // ---------- Capabilities: results, transactions, columns ----------
-
-  @Test
-  void shouldReturnFalseForSupportsMultipleResultSets() throws Exception {
-    assertFalse(metaData().supportsMultipleResultSets());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsMultipleTransactions() throws Exception {
-    assertTrue(metaData().supportsMultipleTransactions());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsNonNullableColumns() throws Exception {
-    assertTrue(metaData().supportsNonNullableColumns());
-  }
-
-  // ---------- Capabilities: SQL grammar ----------
-
-  @Test
-  void shouldReturnFalseForSupportsMinimumSQLGrammar() throws Exception {
-    assertFalse(metaData().supportsMinimumSQLGrammar());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsCoreSQLGrammar() throws Exception {
-    assertFalse(metaData().supportsCoreSQLGrammar());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsExtendedSQLGrammar() throws Exception {
-    assertFalse(metaData().supportsExtendedSQLGrammar());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsANSI92EntryLevelSQL() throws Exception {
-    assertTrue(metaData().supportsANSI92EntryLevelSQL());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsANSI92IntermediateSQL() throws Exception {
-    assertFalse(metaData().supportsANSI92IntermediateSQL());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsANSI92FullSQL() throws Exception {
-    assertFalse(metaData().supportsANSI92FullSQL());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsIntegrityEnhancementFacility() throws Exception {
-    assertFalse(metaData().supportsIntegrityEnhancementFacility());
-  }
-
-  // ---------- Capabilities: outer joins ----------
-
-  @Test
-  void shouldReturnTrueForSupportsOuterJoins() throws Exception {
-    assertTrue(metaData().supportsOuterJoins());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsFullOuterJoins() throws Exception {
-    assertTrue(metaData().supportsFullOuterJoins());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsLimitedOuterJoins() throws Exception {
-    assertTrue(metaData().supportsLimitedOuterJoins());
-  }
-
-  // ---------- Capabilities: catalog/schema placement ----------
-
-  @Test
-  void shouldReturnTrueForIsCatalogAtStart() throws Exception {
-    assertTrue(metaData().isCatalogAtStart());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsSchemasInDataManipulation() throws Exception {
-    assertTrue(metaData().supportsSchemasInDataManipulation());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsSchemasInProcedureCalls() throws Exception {
-    assertFalse(metaData().supportsSchemasInProcedureCalls());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsSchemasInTableDefinitions() throws Exception {
-    assertTrue(metaData().supportsSchemasInTableDefinitions());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsSchemasInIndexDefinitions() throws Exception {
-    assertFalse(metaData().supportsSchemasInIndexDefinitions());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsSchemasInPrivilegeDefinitions() throws Exception {
-    assertFalse(metaData().supportsSchemasInPrivilegeDefinitions());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsCatalogsInDataManipulation() throws Exception {
-    assertTrue(metaData().supportsCatalogsInDataManipulation());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsCatalogsInProcedureCalls() throws Exception {
-    assertFalse(metaData().supportsCatalogsInProcedureCalls());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsCatalogsInTableDefinitions() throws Exception {
-    assertTrue(metaData().supportsCatalogsInTableDefinitions());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsCatalogsInIndexDefinitions() throws Exception {
-    assertFalse(metaData().supportsCatalogsInIndexDefinitions());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsCatalogsInPrivilegeDefinitions() throws Exception {
-    assertFalse(metaData().supportsCatalogsInPrivilegeDefinitions());
-  }
-
-  // ---------- Capabilities: positioned/select-for-update/stored procedures ----------
-
-  @Test
-  void shouldReturnFalseForSupportsPositionedDelete() throws Exception {
-    assertFalse(metaData().supportsPositionedDelete());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsPositionedUpdate() throws Exception {
-    assertFalse(metaData().supportsPositionedUpdate());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsSelectForUpdate() throws Exception {
-    assertFalse(metaData().supportsSelectForUpdate());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsStoredProcedures() throws Exception {
-    assertTrue(metaData().supportsStoredProcedures());
-  }
-
-  // ---------- Capabilities: subqueries, set operations ----------
-
-  @Test
-  void shouldReturnTrueForSupportsSubqueriesInComparisons() throws Exception {
-    assertTrue(metaData().supportsSubqueriesInComparisons());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsSubqueriesInExists() throws Exception {
-    assertTrue(metaData().supportsSubqueriesInExists());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsSubqueriesInIns() throws Exception {
-    assertTrue(metaData().supportsSubqueriesInIns());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsSubqueriesInQuantifieds() throws Exception {
-    assertFalse(metaData().supportsSubqueriesInQuantifieds());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsCorrelatedSubqueries() throws Exception {
-    assertTrue(metaData().supportsCorrelatedSubqueries());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsUnion() throws Exception {
-    assertTrue(metaData().supportsUnion());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsUnionAll() throws Exception {
-    assertTrue(metaData().supportsUnionAll());
-  }
-
-  // ---------- Capabilities: cursors, statements across commit/rollback ----------
-
-  @Test
-  void shouldReturnFalseForSupportsOpenCursorsAcrossCommit() throws Exception {
-    assertFalse(metaData().supportsOpenCursorsAcrossCommit());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsOpenCursorsAcrossRollback() throws Exception {
-    assertFalse(metaData().supportsOpenCursorsAcrossRollback());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsOpenStatementsAcrossCommit() throws Exception {
-    assertFalse(metaData().supportsOpenStatementsAcrossCommit());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsOpenStatementsAcrossRollback() throws Exception {
-    assertFalse(metaData().supportsOpenStatementsAcrossRollback());
-  }
-
-  // ---------- Capabilities: transactions ----------
-
-  @Test
-  void shouldReturnReadCommittedForDefaultTransactionIsolation() throws Exception {
-    assertEquals(
-        Connection.TRANSACTION_READ_COMMITTED, metaData().getDefaultTransactionIsolation());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsTransactions() throws Exception {
-    assertTrue(metaData().supportsTransactions());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsTransactionIsolationLevelNone() throws Exception {
-    assertTrue(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_NONE));
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsTransactionIsolationLevelReadCommitted() throws Exception {
-    assertTrue(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_READ_COMMITTED));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsTransactionIsolationLevelReadUncommitted() throws Exception {
-    assertFalse(
-        metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_READ_UNCOMMITTED));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsTransactionIsolationLevelRepeatableRead() throws Exception {
-    assertFalse(
-        metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_REPEATABLE_READ));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsTransactionIsolationLevelSerializable() throws Exception {
-    assertFalse(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_SERIALIZABLE));
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsDataDefinitionAndDataManipulationTransactions() throws Exception {
-    assertTrue(metaData().supportsDataDefinitionAndDataManipulationTransactions());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsDataManipulationTransactionsOnly() throws Exception {
-    assertFalse(metaData().supportsDataManipulationTransactionsOnly());
-  }
-
-  @Test
-  void shouldReturnTrueForDataDefinitionCausesTransactionCommit() throws Exception {
-    assertTrue(metaData().dataDefinitionCausesTransactionCommit());
-  }
-
-  @Test
-  void shouldReturnFalseForDataDefinitionIgnoredInTransactions() throws Exception {
-    assertFalse(metaData().dataDefinitionIgnoredInTransactions());
-  }
-
-  // ---------- Capabilities: result sets ----------
-
-  @Test
-  void shouldReturnTrueForSupportsResultSetTypeForwardOnly() throws Exception {
-    assertTrue(metaData().supportsResultSetType(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsResultSetTypeScrollInsensitive() throws Exception {
-    assertFalse(metaData().supportsResultSetType(ResultSet.TYPE_SCROLL_INSENSITIVE));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsResultSetTypeScrollSensitive() throws Exception {
-    assertFalse(metaData().supportsResultSetType(ResultSet.TYPE_SCROLL_SENSITIVE));
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsResultSetConcurrencyForwardReadOnly() throws Exception {
-    assertTrue(
-        metaData()
-            .supportsResultSetConcurrency(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsResultSetConcurrencyForwardUpdatable() throws Exception {
-    assertFalse(
-        metaData()
-            .supportsResultSetConcurrency(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE));
-  }
-
-  @Test
-  void shouldReturnFalseForOwnUpdatesAreVisible() throws Exception {
-    assertFalse(metaData().ownUpdatesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForOwnDeletesAreVisible() throws Exception {
-    assertFalse(metaData().ownDeletesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForOwnInsertsAreVisible() throws Exception {
-    assertFalse(metaData().ownInsertsAreVisible(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForOthersUpdatesAreVisible() throws Exception {
-    assertFalse(metaData().othersUpdatesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForOthersDeletesAreVisible() throws Exception {
-    assertFalse(metaData().othersDeletesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForOthersInsertsAreVisible() throws Exception {
-    assertFalse(metaData().othersInsertsAreVisible(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForUpdatesAreDetected() throws Exception {
-    assertFalse(metaData().updatesAreDetected(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForDeletesAreDetected() throws Exception {
-    assertFalse(metaData().deletesAreDetected(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnFalseForInsertsAreDetected() throws Exception {
-    assertFalse(metaData().insertsAreDetected(ResultSet.TYPE_FORWARD_ONLY));
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsBatchUpdates() throws Exception {
-    assertTrue(metaData().supportsBatchUpdates());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsResultSetHoldabilityCloseAtCommit() throws Exception {
-    assertTrue(metaData().supportsResultSetHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT));
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsResultSetHoldabilityHoldOverCommit() throws Exception {
-    assertFalse(metaData().supportsResultSetHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT));
-  }
-
-  @Test
-  void shouldReturnCloseCursorsAtCommitForResultSetHoldability() throws Exception {
-    assertEquals(ResultSet.CLOSE_CURSORS_AT_COMMIT, metaData().getResultSetHoldability());
-  }
-
-  // ---------- Capabilities: JDBC 3.0+ misc ----------
-
-  @Test
-  void shouldReturnFalseForSupportsSavepoints() throws Exception {
-    assertFalse(metaData().supportsSavepoints());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsNamedParameters() throws Exception {
-    assertFalse(metaData().supportsNamedParameters());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsMultipleOpenResults() throws Exception {
-    assertFalse(metaData().supportsMultipleOpenResults());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsGetGeneratedKeys() throws Exception {
-    assertFalse(metaData().supportsGetGeneratedKeys());
-  }
-
-  @Test
-  void shouldReturnFalseForLocatorsUpdateCopy() throws Exception {
-    assertFalse(metaData().locatorsUpdateCopy());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsStatementPooling() throws Exception {
-    assertFalse(metaData().supportsStatementPooling());
-  }
-
-  @Test
-  void shouldReturnTrueForSupportsStoredFunctionsUsingCallSyntax() throws Exception {
-    assertTrue(metaData().supportsStoredFunctionsUsingCallSyntax());
-  }
-
-  @Test
-  void shouldReturnFalseForSupportsRefCursors() throws Exception {
-    assertFalse(metaData().supportsRefCursors());
-  }
-
-  @Test
-  void shouldReturnZeroForMaxLogicalLobSize() throws Exception {
-    assertEquals(0L, metaData().getMaxLogicalLobSize());
+  @Nested
+  class Capabilities {
+
+    @Test
+    void shouldReturnFalseForAllProceduresAreCallable() throws Exception {
+      assertFalse(metaData().allProceduresAreCallable());
+    }
+
+    @Test
+    void shouldReturnTrueForAllTablesAreSelectable() throws Exception {
+      assertTrue(metaData().allTablesAreSelectable());
+    }
+
+    @Test
+    void shouldReturnFalseForIsReadOnly() throws Exception {
+      assertFalse(metaData().isReadOnly());
+    }
+
+    // ---------- Capabilities: null ordering ----------
+
+    @Test
+    void shouldReturnTrueForNullsAreSortedHigh() throws Exception {
+      assertTrue(metaData().nullsAreSortedHigh());
+    }
+
+    @Test
+    void shouldReturnFalseForNullsAreSortedLow() throws Exception {
+      assertFalse(metaData().nullsAreSortedLow());
+    }
+
+    @Test
+    void shouldReturnFalseForNullsAreSortedAtStart() throws Exception {
+      assertFalse(metaData().nullsAreSortedAtStart());
+    }
+
+    @Test
+    void shouldReturnFalseForNullsAreSortedAtEnd() throws Exception {
+      assertFalse(metaData().nullsAreSortedAtEnd());
+    }
+
+    // ---------- Capabilities: file storage ----------
+
+    @Test
+    void shouldReturnFalseForUsesLocalFiles() throws Exception {
+      assertFalse(metaData().usesLocalFiles());
+    }
+
+    @Test
+    void shouldReturnFalseForUsesLocalFilePerTable() throws Exception {
+      assertFalse(metaData().usesLocalFilePerTable());
+    }
+
+    // ---------- Capabilities: identifier case ----------
+
+    @Test
+    void shouldReturnFalseForSupportsMixedCaseIdentifiers() throws Exception {
+      assertFalse(metaData().supportsMixedCaseIdentifiers());
+    }
+
+    @Test
+    void shouldReturnTrueForStoresUpperCaseIdentifiers() throws Exception {
+      assertTrue(metaData().storesUpperCaseIdentifiers());
+    }
+
+    @Test
+    void shouldReturnFalseForStoresLowerCaseIdentifiers() throws Exception {
+      assertFalse(metaData().storesLowerCaseIdentifiers());
+    }
+
+    @Test
+    void shouldReturnFalseForStoresMixedCaseIdentifiers() throws Exception {
+      assertFalse(metaData().storesMixedCaseIdentifiers());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsMixedCaseQuotedIdentifiers() throws Exception {
+      assertTrue(metaData().supportsMixedCaseQuotedIdentifiers());
+    }
+
+    @Test
+    void shouldReturnFalseForStoresUpperCaseQuotedIdentifiers() throws Exception {
+      assertFalse(metaData().storesUpperCaseQuotedIdentifiers());
+    }
+
+    @Test
+    void shouldReturnFalseForStoresLowerCaseQuotedIdentifiers() throws Exception {
+      assertFalse(metaData().storesLowerCaseQuotedIdentifiers());
+    }
+
+    @Test
+    void shouldReturnTrueForStoresMixedCaseQuotedIdentifiers() throws Exception {
+      assertTrue(metaData().storesMixedCaseQuotedIdentifiers());
+    }
+
+    // ---------- Capabilities: DDL/DML ----------
+
+    @Test
+    void shouldReturnTrueForSupportsAlterTableWithAddColumn() throws Exception {
+      assertTrue(metaData().supportsAlterTableWithAddColumn());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsAlterTableWithDropColumn() throws Exception {
+      assertTrue(metaData().supportsAlterTableWithDropColumn());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsColumnAliasing() throws Exception {
+      assertTrue(metaData().supportsColumnAliasing());
+    }
+
+    @Test
+    void shouldReturnTrueForNullPlusNonNullIsNull() throws Exception {
+      assertTrue(metaData().nullPlusNonNullIsNull());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsConvert() throws Exception {
+      assertFalse(metaData().supportsConvert());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsConvertWithTypes() throws Exception {
+      assertFalse(metaData().supportsConvert(Types.INTEGER, Types.VARCHAR));
+    }
+
+    // ---------- Capabilities: correlation, ordering, grouping ----------
+
+    @Test
+    void shouldReturnTrueForSupportsTableCorrelationNames() throws Exception {
+      assertTrue(metaData().supportsTableCorrelationNames());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsDifferentTableCorrelationNames() throws Exception {
+      assertFalse(metaData().supportsDifferentTableCorrelationNames());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsExpressionsInOrderBy() throws Exception {
+      assertTrue(metaData().supportsExpressionsInOrderBy());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsOrderByUnrelated() throws Exception {
+      assertTrue(metaData().supportsOrderByUnrelated());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsGroupBy() throws Exception {
+      assertTrue(metaData().supportsGroupBy());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsGroupByUnrelated() throws Exception {
+      assertFalse(metaData().supportsGroupByUnrelated());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsGroupByBeyondSelect() throws Exception {
+      assertTrue(metaData().supportsGroupByBeyondSelect());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsLikeEscapeClause() throws Exception {
+      assertFalse(metaData().supportsLikeEscapeClause());
+    }
+
+    // ---------- Capabilities: results, transactions, columns ----------
+
+    @Test
+    void shouldReturnFalseForSupportsMultipleResultSets() throws Exception {
+      assertFalse(metaData().supportsMultipleResultSets());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsMultipleTransactions() throws Exception {
+      assertTrue(metaData().supportsMultipleTransactions());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsNonNullableColumns() throws Exception {
+      assertTrue(metaData().supportsNonNullableColumns());
+    }
+
+    // ---------- Capabilities: SQL grammar ----------
+
+    @Test
+    void shouldReturnFalseForSupportsMinimumSQLGrammar() throws Exception {
+      assertFalse(metaData().supportsMinimumSQLGrammar());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsCoreSQLGrammar() throws Exception {
+      assertFalse(metaData().supportsCoreSQLGrammar());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsExtendedSQLGrammar() throws Exception {
+      assertFalse(metaData().supportsExtendedSQLGrammar());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsANSI92EntryLevelSQL() throws Exception {
+      assertTrue(metaData().supportsANSI92EntryLevelSQL());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsANSI92IntermediateSQL() throws Exception {
+      assertFalse(metaData().supportsANSI92IntermediateSQL());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsANSI92FullSQL() throws Exception {
+      assertFalse(metaData().supportsANSI92FullSQL());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsIntegrityEnhancementFacility() throws Exception {
+      assertFalse(metaData().supportsIntegrityEnhancementFacility());
+    }
+
+    // ---------- Capabilities: outer joins ----------
+
+    @Test
+    void shouldReturnTrueForSupportsOuterJoins() throws Exception {
+      assertTrue(metaData().supportsOuterJoins());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsFullOuterJoins() throws Exception {
+      assertTrue(metaData().supportsFullOuterJoins());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsLimitedOuterJoins() throws Exception {
+      assertTrue(metaData().supportsLimitedOuterJoins());
+    }
+
+    // ---------- Capabilities: catalog/schema placement ----------
+
+    @Test
+    void shouldReturnTrueForIsCatalogAtStart() throws Exception {
+      assertTrue(metaData().isCatalogAtStart());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsSchemasInDataManipulation() throws Exception {
+      assertTrue(metaData().supportsSchemasInDataManipulation());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsSchemasInProcedureCalls() throws Exception {
+      assertFalse(metaData().supportsSchemasInProcedureCalls());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsSchemasInTableDefinitions() throws Exception {
+      assertTrue(metaData().supportsSchemasInTableDefinitions());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsSchemasInIndexDefinitions() throws Exception {
+      assertFalse(metaData().supportsSchemasInIndexDefinitions());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsSchemasInPrivilegeDefinitions() throws Exception {
+      assertFalse(metaData().supportsSchemasInPrivilegeDefinitions());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsCatalogsInDataManipulation() throws Exception {
+      assertTrue(metaData().supportsCatalogsInDataManipulation());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsCatalogsInProcedureCalls() throws Exception {
+      assertFalse(metaData().supportsCatalogsInProcedureCalls());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsCatalogsInTableDefinitions() throws Exception {
+      assertTrue(metaData().supportsCatalogsInTableDefinitions());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsCatalogsInIndexDefinitions() throws Exception {
+      assertFalse(metaData().supportsCatalogsInIndexDefinitions());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsCatalogsInPrivilegeDefinitions() throws Exception {
+      assertFalse(metaData().supportsCatalogsInPrivilegeDefinitions());
+    }
+
+    // ---------- Capabilities: positioned/select-for-update/stored procedures ----------
+
+    @Test
+    void shouldReturnFalseForSupportsPositionedDelete() throws Exception {
+      assertFalse(metaData().supportsPositionedDelete());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsPositionedUpdate() throws Exception {
+      assertFalse(metaData().supportsPositionedUpdate());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsSelectForUpdate() throws Exception {
+      assertFalse(metaData().supportsSelectForUpdate());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsStoredProcedures() throws Exception {
+      assertTrue(metaData().supportsStoredProcedures());
+    }
+
+    // ---------- Capabilities: subqueries, set operations ----------
+
+    @Test
+    void shouldReturnTrueForSupportsSubqueriesInComparisons() throws Exception {
+      assertTrue(metaData().supportsSubqueriesInComparisons());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsSubqueriesInExists() throws Exception {
+      assertTrue(metaData().supportsSubqueriesInExists());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsSubqueriesInIns() throws Exception {
+      assertTrue(metaData().supportsSubqueriesInIns());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsSubqueriesInQuantifieds() throws Exception {
+      assertFalse(metaData().supportsSubqueriesInQuantifieds());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsCorrelatedSubqueries() throws Exception {
+      assertTrue(metaData().supportsCorrelatedSubqueries());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsUnion() throws Exception {
+      assertTrue(metaData().supportsUnion());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsUnionAll() throws Exception {
+      assertTrue(metaData().supportsUnionAll());
+    }
+
+    // ---------- Capabilities: cursors, statements across commit/rollback ----------
+
+    @Test
+    void shouldReturnFalseForSupportsOpenCursorsAcrossCommit() throws Exception {
+      assertFalse(metaData().supportsOpenCursorsAcrossCommit());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsOpenCursorsAcrossRollback() throws Exception {
+      assertFalse(metaData().supportsOpenCursorsAcrossRollback());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsOpenStatementsAcrossCommit() throws Exception {
+      assertFalse(metaData().supportsOpenStatementsAcrossCommit());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsOpenStatementsAcrossRollback() throws Exception {
+      assertFalse(metaData().supportsOpenStatementsAcrossRollback());
+    }
+
+    // ---------- Capabilities: transactions ----------
+
+    @Test
+    void shouldReturnReadCommittedForDefaultTransactionIsolation() throws Exception {
+      assertEquals(
+          Connection.TRANSACTION_READ_COMMITTED, metaData().getDefaultTransactionIsolation());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsTransactions() throws Exception {
+      assertTrue(metaData().supportsTransactions());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsTransactionIsolationLevelNone() throws Exception {
+      assertTrue(metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_NONE));
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsTransactionIsolationLevelReadCommitted() throws Exception {
+      assertTrue(
+          metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_READ_COMMITTED));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsTransactionIsolationLevelReadUncommitted() throws Exception {
+      assertFalse(
+          metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_READ_UNCOMMITTED));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsTransactionIsolationLevelRepeatableRead() throws Exception {
+      assertFalse(
+          metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_REPEATABLE_READ));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsTransactionIsolationLevelSerializable() throws Exception {
+      assertFalse(
+          metaData().supportsTransactionIsolationLevel(Connection.TRANSACTION_SERIALIZABLE));
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsDataDefinitionAndDataManipulationTransactions()
+        throws Exception {
+      assertTrue(metaData().supportsDataDefinitionAndDataManipulationTransactions());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsDataManipulationTransactionsOnly() throws Exception {
+      assertFalse(metaData().supportsDataManipulationTransactionsOnly());
+    }
+
+    @Test
+    void shouldReturnTrueForDataDefinitionCausesTransactionCommit() throws Exception {
+      assertTrue(metaData().dataDefinitionCausesTransactionCommit());
+    }
+
+    @Test
+    void shouldReturnFalseForDataDefinitionIgnoredInTransactions() throws Exception {
+      assertFalse(metaData().dataDefinitionIgnoredInTransactions());
+    }
+
+    // ---------- Capabilities: result sets ----------
+
+    @Test
+    void shouldReturnTrueForSupportsResultSetTypeForwardOnly() throws Exception {
+      assertTrue(metaData().supportsResultSetType(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsResultSetTypeScrollInsensitive() throws Exception {
+      assertFalse(metaData().supportsResultSetType(ResultSet.TYPE_SCROLL_INSENSITIVE));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsResultSetTypeScrollSensitive() throws Exception {
+      assertFalse(metaData().supportsResultSetType(ResultSet.TYPE_SCROLL_SENSITIVE));
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsResultSetConcurrencyForwardReadOnly() throws Exception {
+      assertTrue(
+          metaData()
+              .supportsResultSetConcurrency(
+                  ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsResultSetConcurrencyForwardUpdatable() throws Exception {
+      assertFalse(
+          metaData()
+              .supportsResultSetConcurrency(
+                  ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE));
+    }
+
+    @Test
+    void shouldReturnFalseForOwnUpdatesAreVisible() throws Exception {
+      assertFalse(metaData().ownUpdatesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForOwnDeletesAreVisible() throws Exception {
+      assertFalse(metaData().ownDeletesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForOwnInsertsAreVisible() throws Exception {
+      assertFalse(metaData().ownInsertsAreVisible(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForOthersUpdatesAreVisible() throws Exception {
+      assertFalse(metaData().othersUpdatesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForOthersDeletesAreVisible() throws Exception {
+      assertFalse(metaData().othersDeletesAreVisible(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForOthersInsertsAreVisible() throws Exception {
+      assertFalse(metaData().othersInsertsAreVisible(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForUpdatesAreDetected() throws Exception {
+      assertFalse(metaData().updatesAreDetected(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForDeletesAreDetected() throws Exception {
+      assertFalse(metaData().deletesAreDetected(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnFalseForInsertsAreDetected() throws Exception {
+      assertFalse(metaData().insertsAreDetected(ResultSet.TYPE_FORWARD_ONLY));
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsBatchUpdates() throws Exception {
+      assertTrue(metaData().supportsBatchUpdates());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsResultSetHoldabilityCloseAtCommit() throws Exception {
+      assertTrue(metaData().supportsResultSetHoldability(ResultSet.CLOSE_CURSORS_AT_COMMIT));
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsResultSetHoldabilityHoldOverCommit() throws Exception {
+      assertFalse(metaData().supportsResultSetHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT));
+    }
+
+    @Test
+    void shouldReturnCloseCursorsAtCommitForResultSetHoldability() throws Exception {
+      assertEquals(ResultSet.CLOSE_CURSORS_AT_COMMIT, metaData().getResultSetHoldability());
+    }
+
+    // ---------- Capabilities: JDBC 3.0+ misc ----------
+
+    @Test
+    void shouldReturnFalseForSupportsSavepoints() throws Exception {
+      assertFalse(metaData().supportsSavepoints());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsNamedParameters() throws Exception {
+      assertFalse(metaData().supportsNamedParameters());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsMultipleOpenResults() throws Exception {
+      assertFalse(metaData().supportsMultipleOpenResults());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsGetGeneratedKeys() throws Exception {
+      assertFalse(metaData().supportsGetGeneratedKeys());
+    }
+
+    @Test
+    void shouldReturnFalseForLocatorsUpdateCopy() throws Exception {
+      assertFalse(metaData().locatorsUpdateCopy());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsStatementPooling() throws Exception {
+      assertFalse(metaData().supportsStatementPooling());
+    }
+
+    @Test
+    void shouldReturnTrueForSupportsStoredFunctionsUsingCallSyntax() throws Exception {
+      assertTrue(metaData().supportsStoredFunctionsUsingCallSyntax());
+    }
+
+    @Test
+    void shouldReturnFalseForSupportsRefCursors() throws Exception {
+      assertFalse(metaData().supportsRefCursors());
+    }
+
+    @Test
+    void shouldReturnZeroForMaxLogicalLobSize() throws Exception {
+      assertEquals(0L, metaData().getMaxLogicalLobSize());
+    }
   }
 
   // ---------- Limits ----------
 
-  @Test
-  void shouldReturnLimitForMaxCharLiteralLength() throws Exception {
-    // VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT defaults to 16 MB; some accounts raise it.
-    int len = metaData().getMaxCharLiteralLength();
-    assertTrue(len >= 16_777_216, () -> "expected >= 16 MB, got " + len);
-  }
+  @Nested
+  class Limits {
 
-  @Test
-  void shouldReturnLimitForMaxBinaryLiteralLength() throws Exception {
-    // Hex-encoded binary literal: two chars per byte, so half the char limit.
-    DatabaseMetaData md = metaData();
-    assertEquals(md.getMaxCharLiteralLength() / 2, md.getMaxBinaryLiteralLength());
-  }
+    @Test
+    void shouldReturnLimitForMaxCharLiteralLength() throws Exception {
+      // VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT defaults to 16 MB; some accounts raise it.
+      int len = metaData().getMaxCharLiteralLength();
+      assertTrue(len >= 16_777_216, () -> "expected >= 16 MB, got " + len);
+    }
 
-  @Test
-  void shouldReturn255ForMaxColumnNameLength() throws Exception {
-    assertEquals(255, metaData().getMaxColumnNameLength());
-  }
+    @Test
+    void shouldReturnLimitForMaxBinaryLiteralLength() throws Exception {
+      // Hex-encoded binary literal: two chars per byte, so half the char limit.
+      DatabaseMetaData md = metaData();
+      assertEquals(md.getMaxCharLiteralLength() / 2, md.getMaxBinaryLiteralLength());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxColumnsInGroupBy() throws Exception {
-    assertEquals(0, metaData().getMaxColumnsInGroupBy());
-  }
+    @Test
+    void shouldReturn255ForMaxColumnNameLength() throws Exception {
+      assertEquals(255, metaData().getMaxColumnNameLength());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxColumnsInIndex() throws Exception {
-    assertEquals(0, metaData().getMaxColumnsInIndex());
-  }
+    @Test
+    void shouldReturnZeroForMaxColumnsInGroupBy() throws Exception {
+      assertEquals(0, metaData().getMaxColumnsInGroupBy());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxColumnsInOrderBy() throws Exception {
-    assertEquals(0, metaData().getMaxColumnsInOrderBy());
-  }
+    @Test
+    void shouldReturnZeroForMaxColumnsInIndex() throws Exception {
+      assertEquals(0, metaData().getMaxColumnsInIndex());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxColumnsInSelect() throws Exception {
-    assertEquals(0, metaData().getMaxColumnsInSelect());
-  }
+    @Test
+    void shouldReturnZeroForMaxColumnsInOrderBy() throws Exception {
+      assertEquals(0, metaData().getMaxColumnsInOrderBy());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxColumnsInTable() throws Exception {
-    assertEquals(0, metaData().getMaxColumnsInTable());
-  }
+    @Test
+    void shouldReturnZeroForMaxColumnsInSelect() throws Exception {
+      assertEquals(0, metaData().getMaxColumnsInSelect());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxConnections() throws Exception {
-    assertEquals(0, metaData().getMaxConnections());
-  }
+    @Test
+    void shouldReturnZeroForMaxColumnsInTable() throws Exception {
+      assertEquals(0, metaData().getMaxColumnsInTable());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxCursorNameLength() throws Exception {
-    assertEquals(0, metaData().getMaxCursorNameLength());
-  }
+    @Test
+    void shouldReturnZeroForMaxConnections() throws Exception {
+      assertEquals(0, metaData().getMaxConnections());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxIndexLength() throws Exception {
-    assertEquals(0, metaData().getMaxIndexLength());
-  }
+    @Test
+    void shouldReturnZeroForMaxCursorNameLength() throws Exception {
+      assertEquals(0, metaData().getMaxCursorNameLength());
+    }
 
-  @Test
-  void shouldReturn255ForMaxSchemaNameLength() throws Exception {
-    assertEquals(255, metaData().getMaxSchemaNameLength());
-  }
+    @Test
+    void shouldReturnZeroForMaxIndexLength() throws Exception {
+      assertEquals(0, metaData().getMaxIndexLength());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxProcedureNameLength() throws Exception {
-    assertEquals(0, metaData().getMaxProcedureNameLength());
-  }
+    @Test
+    void shouldReturn255ForMaxSchemaNameLength() throws Exception {
+      assertEquals(255, metaData().getMaxSchemaNameLength());
+    }
 
-  @Test
-  void shouldReturn255ForMaxCatalogNameLength() throws Exception {
-    assertEquals(255, metaData().getMaxCatalogNameLength());
-  }
+    @Test
+    void shouldReturnZeroForMaxProcedureNameLength() throws Exception {
+      assertEquals(0, metaData().getMaxProcedureNameLength());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxRowSize() throws Exception {
-    assertEquals(0, metaData().getMaxRowSize());
-  }
+    @Test
+    void shouldReturn255ForMaxCatalogNameLength() throws Exception {
+      assertEquals(255, metaData().getMaxCatalogNameLength());
+    }
 
-  @Test
-  void shouldReturnTrueForDoesMaxRowSizeIncludeBlobs() throws Exception {
-    assertTrue(metaData().doesMaxRowSizeIncludeBlobs());
-  }
+    @Test
+    void shouldReturnZeroForMaxRowSize() throws Exception {
+      assertEquals(0, metaData().getMaxRowSize());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxStatementLength() throws Exception {
-    assertEquals(0, metaData().getMaxStatementLength());
-  }
+    @Test
+    void shouldReturnTrueForDoesMaxRowSizeIncludeBlobs() throws Exception {
+      assertTrue(metaData().doesMaxRowSizeIncludeBlobs());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxStatements() throws Exception {
-    assertEquals(0, metaData().getMaxStatements());
-  }
+    @Test
+    void shouldReturnZeroForMaxStatementLength() throws Exception {
+      assertEquals(0, metaData().getMaxStatementLength());
+    }
 
-  @Test
-  void shouldReturn255ForMaxTableNameLength() throws Exception {
-    assertEquals(255, metaData().getMaxTableNameLength());
-  }
+    @Test
+    void shouldReturnZeroForMaxStatements() throws Exception {
+      assertEquals(0, metaData().getMaxStatements());
+    }
 
-  @Test
-  void shouldReturnZeroForMaxTablesInSelect() throws Exception {
-    assertEquals(0, metaData().getMaxTablesInSelect());
-  }
+    @Test
+    void shouldReturn255ForMaxTableNameLength() throws Exception {
+      assertEquals(255, metaData().getMaxTableNameLength());
+    }
 
-  @Test
-  void shouldReturn255ForMaxUserNameLength() throws Exception {
-    assertEquals(255, metaData().getMaxUserNameLength());
+    @Test
+    void shouldReturnZeroForMaxTablesInSelect() throws Exception {
+      assertEquals(0, metaData().getMaxTablesInSelect());
+    }
+
+    @Test
+    void shouldReturn255ForMaxUserNameLength() throws Exception {
+      assertEquals(255, metaData().getMaxUserNameLength());
+    }
   }
 
   // ---------- Plumbing ----------
@@ -967,653 +985,618 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
   // ---------- ResultSet-returning methods that issue Snowflake queries ----------
 
-  @Test
-  void shouldReturnCurrentDatabasesForCatalogs() throws Exception {
-    Connection conn = getDefaultConnection();
-    DatabaseMetaData metaData = conn.getMetaData();
-    String currentDatabase;
-    try (Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE()")) {
-      assertTrue(rs.next());
-      currentDatabase = rs.getString(1);
-    }
+  @Nested
+  class Objects {
 
-    try (ResultSet resultSet = metaData.getCatalogs()) {
-      ResultSetMetaData rsMeta = resultSet.getMetaData();
-      assertEquals(1, rsMeta.getColumnCount());
-      assertMetadataColumn(rsMeta, 1, "TABLE_CAT");
-
-      Set<String> databases = new HashSet<>();
-      while (resultSet.next()) {
-        databases.add(resultSet.getString(1));
-      }
-      assertFalse(databases.isEmpty());
-      assertTrue(databases.contains(currentDatabase));
-    }
-  }
-
-  @Test
-  void shouldReturnAccessibleSchemasForSchemas() throws Exception {
-    Connection conn = getDefaultConnection();
-    DatabaseMetaData metaData = conn.getMetaData();
-    String currentDatabase;
-    String currentSchema;
-    try (Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
-      assertTrue(rs.next());
-      currentDatabase = rs.getString(1);
-      currentSchema = rs.getString(2);
-    }
-
-    try (ResultSet resultSet = metaData.getSchemas()) {
-      ResultSetMetaData rsMeta = resultSet.getMetaData();
-      assertEquals(2, rsMeta.getColumnCount());
-      assertMetadataColumn(rsMeta, 1, "TABLE_SCHEM");
-      assertMetadataColumn(rsMeta, 2, "TABLE_CATALOG");
-
-      Map<String, List<String>> catalogToSchema = new HashMap<>();
-      while (resultSet.next()) {
-        String schema = resultSet.getString("TABLE_SCHEM");
-        String catalog = resultSet.getString("TABLE_CATALOG");
-        catalogToSchema.putIfAbsent(catalog, new ArrayList<>());
-        catalogToSchema.get(catalog).add(schema);
-      }
-      assertFalse(catalogToSchema.isEmpty());
-      assertTrue(catalogToSchema.containsKey(currentDatabase));
-      assertTrue(catalogToSchema.get(currentDatabase).contains(currentSchema));
-    }
-  }
-
-  @Test
-  void shouldReturnMatchingSchemasForSchemasWithCatalogAndPattern() throws Exception {
-    Connection conn = getDefaultConnection();
-    DatabaseMetaData metaData = conn.getMetaData();
-    String currentDatabase;
-    String currentSchema;
-    try (Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
-      assertTrue(rs.next());
-      currentDatabase = rs.getString(1);
-      currentSchema = rs.getString(2);
-    }
-
-    try (ResultSet resultSet = metaData.getSchemas(currentDatabase, currentSchema)) {
-      assertTrue(resultSet.next());
-      assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
-      assertEquals(currentDatabase, resultSet.getString("TABLE_CATALOG"));
-      assertFalse(resultSet.next());
-    }
-
-    try (ResultSet resultSet = metaData.getSchemas(currentDatabase, "%")) {
-      Set<String> schemas = new HashSet<>();
-      while (resultSet.next()) {
-        assertEquals(currentDatabase, resultSet.getString("TABLE_CATALOG"));
-        schemas.add(resultSet.getString("TABLE_SCHEM"));
-      }
-      assertTrue(schemas.contains(currentSchema));
-    }
-
-    try (ResultSet resultSet = metaData.getSchemas("NONEXISTENT_DB_XYZ", "%")) {
-      assertFalse(resultSet.next());
-    }
-  }
-
-  @Test
-  void shouldReturnMatchingTablesFromGetTables() throws Exception {
-    try (Connection conn = openConnection()) {
+    @Test
+    void shouldReturnCurrentDatabasesForCatalogs() throws Exception {
+      Connection conn = getDefaultConnection();
       DatabaseMetaData metaData = conn.getMetaData();
-      String currentDatabase;
-      String currentSchema;
-      try (Statement s = conn.createStatement();
-          ResultSet rs = s.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
-        assertTrue(rs.next());
-        currentDatabase = rs.getString(1);
-        currentSchema = rs.getString(2);
+      String currentDatabase = conn.getCatalog();
+
+      try (ResultSet resultSet = metaData.getCatalogs()) {
+        ResultSetMetaData rsMeta = resultSet.getMetaData();
+        assertEquals(1, rsMeta.getColumnCount());
+        assertMetadataColumn(rsMeta, 1, "TABLE_CAT");
+
+        Set<String> databases = new HashSet<>();
+        while (resultSet.next()) {
+          databases.add(resultSet.getString(1));
+        }
+        assertFalse(databases.isEmpty());
+        assertTrue(databases.contains(currentDatabase));
+      }
+    }
+
+    @Test
+    void shouldReturnAccessibleSchemasForSchemas() throws Exception {
+      Connection conn = getDefaultConnection();
+      DatabaseMetaData metaData = conn.getMetaData();
+      String currentDatabase = conn.getCatalog();
+      String currentSchema = conn.getSchema();
+
+      try (ResultSet resultSet = metaData.getSchemas()) {
+        ResultSetMetaData rsMeta = resultSet.getMetaData();
+        assertEquals(2, rsMeta.getColumnCount());
+        assertMetadataColumn(rsMeta, 1, "TABLE_SCHEM");
+        assertMetadataColumn(rsMeta, 2, "TABLE_CATALOG");
+
+        Map<String, List<String>> catalogToSchema = new HashMap<>();
+        while (resultSet.next()) {
+          String schema = resultSet.getString("TABLE_SCHEM");
+          String catalog = resultSet.getString("TABLE_CATALOG");
+          catalogToSchema.putIfAbsent(catalog, new ArrayList<>());
+          catalogToSchema.get(catalog).add(schema);
+        }
+        assertFalse(catalogToSchema.isEmpty());
+        assertTrue(catalogToSchema.containsKey(currentDatabase));
+        assertTrue(catalogToSchema.get(currentDatabase).contains(currentSchema));
+      }
+    }
+
+    @Test
+    void shouldReturnMatchingSchemasForSchemasWithCatalogAndPattern() throws Exception {
+      Connection conn = getDefaultConnection();
+      DatabaseMetaData metaData = conn.getMetaData();
+      String currentDatabase = conn.getCatalog();
+      String currentSchema = conn.getSchema();
+
+      try (ResultSet resultSet = metaData.getSchemas(currentDatabase, currentSchema)) {
+        assertTrue(resultSet.next());
+        assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+        assertEquals(currentDatabase, resultSet.getString("TABLE_CATALOG"));
+        assertFalse(resultSet.next());
       }
 
-      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-      String targetTable = "T0_" + suffix;
-      String targetView = "V0_" + suffix;
-      try (Statement stmt = conn.createStatement()) {
-        stmt.execute("create or replace table " + targetTable + "(C1 int)");
-        stmt.execute("create or replace view " + targetView + " as select 1 as C");
-        try {
-          // column shape
-          try (ResultSet resultSet =
-              metaData.getTables(currentDatabase, currentSchema, "%", null)) {
-            ResultSetMetaData rsMeta = resultSet.getMetaData();
-            assertEquals(10, rsMeta.getColumnCount());
-            assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
-            assertEquals("TABLE_SCHEM", rsMeta.getColumnName(2));
-            assertEquals("TABLE_NAME", rsMeta.getColumnName(3));
-            assertEquals("TABLE_TYPE", rsMeta.getColumnName(4));
-            assertEquals("REMARKS", rsMeta.getColumnName(5));
-          }
+      try (ResultSet resultSet = metaData.getSchemas(currentDatabase, "%")) {
+        Set<String> schemas = new HashSet<>();
+        while (resultSet.next()) {
+          assertEquals(currentDatabase, resultSet.getString("TABLE_CATALOG"));
+          schemas.add(resultSet.getString("TABLE_SCHEM"));
+        }
+        assertTrue(schemas.contains(currentSchema));
+      }
 
-          // TABLE type filter
-          try (ResultSet resultSet =
-              metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"TABLE"})) {
-            Set<String> tables = new HashSet<>();
-            while (resultSet.next()) {
+      try (ResultSet resultSet = metaData.getSchemas("NONEXISTENT_DB_XYZ", "%")) {
+        assertFalse(resultSet.next());
+      }
+    }
+
+    @Test
+    void shouldReturnMatchingTablesFromGetTables() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String targetTable = "T0_" + suffix;
+        String targetView = "V0_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute("create or replace table " + targetTable + "(C1 int)");
+          stmt.execute("create or replace view " + targetView + " as select 1 as C");
+          try {
+            // column shape
+            try (ResultSet resultSet =
+                metaData.getTables(currentDatabase, currentSchema, "%", null)) {
+              ResultSetMetaData rsMeta = resultSet.getMetaData();
+              assertEquals(10, rsMeta.getColumnCount());
+              assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
+              assertEquals("TABLE_SCHEM", rsMeta.getColumnName(2));
+              assertEquals("TABLE_NAME", rsMeta.getColumnName(3));
+              assertEquals("TABLE_TYPE", rsMeta.getColumnName(4));
+              assertEquals("REMARKS", rsMeta.getColumnName(5));
+            }
+
+            // TABLE type filter
+            try (ResultSet resultSet =
+                metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"TABLE"})) {
+              Set<String> tables = new HashSet<>();
+              while (resultSet.next()) {
+                assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+                assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+                assertEquals("TABLE", resultSet.getString("TABLE_TYPE"));
+                tables.add(resultSet.getString("TABLE_NAME"));
+              }
+              assertTrue(tables.contains(targetTable));
+              assertFalse(tables.contains(targetView));
+            }
+
+            // VIEW type filter
+            try (ResultSet resultSet =
+                metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"VIEW"})) {
+              Set<String> views = new HashSet<>();
+              while (resultSet.next()) {
+                assertEquals("VIEW", resultSet.getString("TABLE_TYPE"));
+                views.add(resultSet.getString("TABLE_NAME"));
+              }
+              assertTrue(views.contains(targetView));
+              assertFalse(views.contains(targetTable));
+            }
+
+            // exact name match
+            try (ResultSet resultSet =
+                metaData.getTables(
+                    currentDatabase, currentSchema, targetTable, new String[] {"TABLE"})) {
+              assertTrue(resultSet.next());
+              assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+              assertFalse(resultSet.next());
+            }
+
+            // invalid type returns empty
+            try (ResultSet resultSet =
+                metaData.getTables(
+                    currentDatabase, currentSchema, "%", new String[] {"INVALID_TYPE"})) {
+              assertFalse(resultSet.next());
+            }
+
+            // non-existent db returns empty
+            try (ResultSet resultSet =
+                metaData.getTables("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", null)) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + targetTable);
+            stmt.execute("drop view if exists " + targetView);
+          }
+        }
+      }
+    }
+
+    @Test
+    void shouldReturnKnownTypesForTableTypes() throws Exception {
+      try (ResultSet rs = metaData().getTableTypes()) {
+        ResultSetMetaData rsMeta = rs.getMetaData();
+        assertEquals(1, rsMeta.getColumnCount());
+        assertEquals("TABLE_TYPE", rsMeta.getColumnName(1));
+
+        Set<String> types = new HashSet<>();
+        while (rs.next()) {
+          types.add(rs.getString("TABLE_TYPE"));
+        }
+        assertTrue(types.contains("TABLE"));
+        assertTrue(types.contains("VIEW"));
+      }
+    }
+
+    @Test
+    void shouldReturnTableColumnsForColumns() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String targetTable = "T0_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "create or replace table "
+                  + targetTable
+                  + "(C1 int, C2 varchar(100), C7 date not null)");
+          try {
+            try (ResultSet resultSet =
+                metaData.getColumns(currentDatabase, currentSchema, targetTable, "%")) {
+              ResultSetMetaData rsMeta = resultSet.getMetaData();
+              assertEquals(24, rsMeta.getColumnCount());
+              assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
+              assertEquals("TABLE_SCHEM", rsMeta.getColumnName(2));
+              assertEquals("TABLE_NAME", rsMeta.getColumnName(3));
+              assertEquals("COLUMN_NAME", rsMeta.getColumnName(4));
+              assertEquals("DATA_TYPE", rsMeta.getColumnName(5));
+              assertEquals("ORDINAL_POSITION", rsMeta.getColumnName(17));
+              assertEquals("IS_NULLABLE", rsMeta.getColumnName(18));
+
+              assertTrue(resultSet.next());
               assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
               assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
-              assertEquals("TABLE", resultSet.getString("TABLE_TYPE"));
-              tables.add(resultSet.getString("TABLE_NAME"));
+              assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+              assertEquals("C1", resultSet.getString("COLUMN_NAME"));
+              assertEquals(Types.BIGINT, resultSet.getInt("DATA_TYPE"));
+              assertEquals("NUMBER", resultSet.getString("TYPE_NAME"));
+              assertEquals(38, resultSet.getInt("COLUMN_SIZE"));
+              assertEquals(ResultSetMetaData.columnNullable, resultSet.getInt("NULLABLE"));
+              assertEquals(1, resultSet.getInt("ORDINAL_POSITION"));
+              assertEquals("YES", resultSet.getString("IS_NULLABLE"));
+
+              assertTrue(resultSet.next());
+              assertEquals("C2", resultSet.getString("COLUMN_NAME"));
+              assertEquals(Types.VARCHAR, resultSet.getInt("DATA_TYPE"));
+              assertEquals(100, resultSet.getInt("COLUMN_SIZE"));
+              assertEquals(100, resultSet.getInt("CHAR_OCTET_LENGTH"));
+              assertEquals(2, resultSet.getInt("ORDINAL_POSITION"));
+
+              assertTrue(resultSet.next());
+              assertEquals("C7", resultSet.getString("COLUMN_NAME"));
+              assertEquals(Types.DATE, resultSet.getInt("DATA_TYPE"));
+              assertEquals(ResultSetMetaData.columnNoNulls, resultSet.getInt("NULLABLE"));
+              assertEquals("NO", resultSet.getString("IS_NULLABLE"));
+              assertEquals(3, resultSet.getInt("ORDINAL_POSITION"));
+              assertFalse(resultSet.next());
             }
-            assertTrue(tables.contains(targetTable));
-            assertFalse(tables.contains(targetView));
-          }
 
-          // VIEW type filter
-          try (ResultSet resultSet =
-              metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"VIEW"})) {
-            Set<String> views = new HashSet<>();
-            while (resultSet.next()) {
-              assertEquals("VIEW", resultSet.getString("TABLE_TYPE"));
-              views.add(resultSet.getString("TABLE_NAME"));
+            try (ResultSet resultSet =
+                metaData.getColumns(currentDatabase, currentSchema, targetTable, "C2")) {
+              assertTrue(resultSet.next());
+              assertEquals("C2", resultSet.getString("COLUMN_NAME"));
+              assertFalse(resultSet.next());
             }
-            assertTrue(views.contains(targetView));
-            assertFalse(views.contains(targetTable));
-          }
 
-          // exact name match
-          try (ResultSet resultSet =
-              metaData.getTables(
-                  currentDatabase, currentSchema, targetTable, new String[] {"TABLE"})) {
-            assertTrue(resultSet.next());
-            assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
-            assertFalse(resultSet.next());
+            try (ResultSet resultSet =
+                metaData.getColumns("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
+              assertFalse(resultSet.next());
+            }
+            try (ResultSet resultSet =
+                metaData.getColumns(currentDatabase, "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
+              assertFalse(resultSet.next());
+            }
+            try (ResultSet resultSet =
+                metaData.getColumns(currentDatabase, currentSchema, "TBL\\_NOT\\_EXIST", "%")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + targetTable);
           }
-
-          // invalid type returns empty
-          try (ResultSet resultSet =
-              metaData.getTables(
-                  currentDatabase, currentSchema, "%", new String[] {"INVALID_TYPE"})) {
-            assertFalse(resultSet.next());
-          }
-
-          // non-existent db returns empty
-          try (ResultSet resultSet =
-              metaData.getTables("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", null)) {
-            assertFalse(resultSet.next());
-          }
-        } finally {
-          stmt.execute("drop table if exists " + targetTable);
-          stmt.execute("drop view if exists " + targetView);
         }
       }
     }
-  }
 
-  @Test
-  void shouldReturnKnownTypesForTableTypes() throws Exception {
-    try (ResultSet rs = metaData().getTableTypes()) {
-      ResultSetMetaData rsMeta = rs.getMetaData();
-      assertEquals(1, rsMeta.getColumnCount());
-      assertEquals("TABLE_TYPE", rsMeta.getColumnName(1));
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnPrivilegesForColumnPrivileges() {}
 
-      Set<String> types = new HashSet<>();
-      while (rs.next()) {
-        types.add(rs.getString("TABLE_TYPE"));
-      }
-      assertTrue(types.contains("TABLE"));
-      assertTrue(types.contains("VIEW"));
-    }
-  }
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnPrivilegesForTablePrivileges() {}
 
-  @Test
-  void shouldReturnTableColumnsForColumns() throws Exception {
-    try (Connection conn = openConnection()) {
-      DatabaseMetaData metaData = conn.getMetaData();
-      String currentDatabase;
-      String currentSchema;
-      try (ResultSet rs =
-          conn.createStatement().executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnKeyColumnsForPrimaryKeys() {}
+
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnForeignKeysForImportedKeys() {}
+
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnForeignKeysForExportedKeys() {}
+
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnRelationshipsForCrossReference() {}
+
+    @Test
+    void shouldReturnSupportedTypesForTypeInfo() throws Exception {
+      try (ResultSet rs = metaData().getTypeInfo()) {
+        ResultSetMetaData rsMeta = rs.getMetaData();
+        assertEquals(18, rsMeta.getColumnCount());
+        assertEquals("TYPE_NAME", rsMeta.getColumnName(1));
+        assertEquals("DATA_TYPE", rsMeta.getColumnName(2));
+        assertEquals("PRECISION", rsMeta.getColumnName(3));
+        assertEquals("LITERAL_PREFIX", rsMeta.getColumnName(4));
+        assertEquals("LITERAL_SUFFIX", rsMeta.getColumnName(5));
+        assertEquals("CREATE_PARAMS", rsMeta.getColumnName(6));
+        assertEquals("NULLABLE", rsMeta.getColumnName(7));
+        assertEquals("CASE_SENSITIVE", rsMeta.getColumnName(8));
+        assertEquals("SEARCHABLE", rsMeta.getColumnName(9));
+        assertEquals("UNSIGNED_ATTRIBUTE", rsMeta.getColumnName(10));
+        assertEquals("FIXED_PREC_SCALE", rsMeta.getColumnName(11));
+        assertEquals("AUTO_INCREMENT", rsMeta.getColumnName(12));
+        assertEquals("LOCAL_TYPE_NAME", rsMeta.getColumnName(13));
+        assertEquals("MINIMUM_SCALE", rsMeta.getColumnName(14));
+        assertEquals("MAXIMUM_SCALE", rsMeta.getColumnName(15));
+        assertEquals("SQL_DATA_TYPE", rsMeta.getColumnName(16));
+        assertEquals("SQL_DATETIME_SUB", rsMeta.getColumnName(17));
+        assertEquals("NUM_PREC_RADIX", rsMeta.getColumnName(18));
+
+        // NUMBER
         assertTrue(rs.next());
-        currentDatabase = rs.getString(1);
-        currentSchema = rs.getString(2);
-      }
+        assertEquals("NUMBER", rs.getString("TYPE_NAME"));
+        assertEquals(Types.DECIMAL, rs.getInt("DATA_TYPE"));
+        assertEquals(38, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(0, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(37, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
 
-      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-      String targetTable = "T0_" + suffix;
-      try (Statement stmt = conn.createStatement()) {
-        stmt.execute(
-            "create or replace table "
-                + targetTable
-                + "(C1 int, C2 varchar(100), C7 date not null)");
-        try {
-          try (ResultSet resultSet =
-              metaData.getColumns(currentDatabase, currentSchema, targetTable, "%")) {
-            ResultSetMetaData rsMeta = resultSet.getMetaData();
-            assertEquals(24, rsMeta.getColumnCount());
-            assertEquals("TABLE_CAT", rsMeta.getColumnName(1));
-            assertEquals("TABLE_SCHEM", rsMeta.getColumnName(2));
-            assertEquals("TABLE_NAME", rsMeta.getColumnName(3));
-            assertEquals("COLUMN_NAME", rsMeta.getColumnName(4));
-            assertEquals("DATA_TYPE", rsMeta.getColumnName(5));
-            assertEquals("ORDINAL_POSITION", rsMeta.getColumnName(17));
-            assertEquals("IS_NULLABLE", rsMeta.getColumnName(18));
-
-            assertTrue(resultSet.next());
-            assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
-            assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
-            assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
-            assertEquals("C1", resultSet.getString("COLUMN_NAME"));
-            assertEquals(Types.BIGINT, resultSet.getInt("DATA_TYPE"));
-            assertEquals("NUMBER", resultSet.getString("TYPE_NAME"));
-            assertEquals(38, resultSet.getInt("COLUMN_SIZE"));
-            assertEquals(ResultSetMetaData.columnNullable, resultSet.getInt("NULLABLE"));
-            assertEquals(1, resultSet.getInt("ORDINAL_POSITION"));
-            assertEquals("YES", resultSet.getString("IS_NULLABLE"));
-
-            assertTrue(resultSet.next());
-            assertEquals("C2", resultSet.getString("COLUMN_NAME"));
-            assertEquals(Types.VARCHAR, resultSet.getInt("DATA_TYPE"));
-            assertEquals(100, resultSet.getInt("COLUMN_SIZE"));
-            assertEquals(100, resultSet.getInt("CHAR_OCTET_LENGTH"));
-            assertEquals(2, resultSet.getInt("ORDINAL_POSITION"));
-
-            assertTrue(resultSet.next());
-            assertEquals("C7", resultSet.getString("COLUMN_NAME"));
-            assertEquals(Types.DATE, resultSet.getInt("DATA_TYPE"));
-            assertEquals(ResultSetMetaData.columnNoNulls, resultSet.getInt("NULLABLE"));
-            assertEquals("NO", resultSet.getString("IS_NULLABLE"));
-            assertEquals(3, resultSet.getInt("ORDINAL_POSITION"));
-            assertFalse(resultSet.next());
-          }
-
-          try (ResultSet resultSet =
-              metaData.getColumns(currentDatabase, currentSchema, targetTable, "C2")) {
-            assertTrue(resultSet.next());
-            assertEquals("C2", resultSet.getString("COLUMN_NAME"));
-            assertFalse(resultSet.next());
-          }
-
-          try (ResultSet resultSet =
-              metaData.getColumns("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
-            assertFalse(resultSet.next());
-          }
-          try (ResultSet resultSet =
-              metaData.getColumns(currentDatabase, "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
-            assertFalse(resultSet.next());
-          }
-          try (ResultSet resultSet =
-              metaData.getColumns(currentDatabase, currentSchema, "TBL\\_NOT\\_EXIST", "%")) {
-            assertFalse(resultSet.next());
-          }
-        } finally {
-          stmt.execute("drop table if exists " + targetTable);
-        }
-      }
-    }
-  }
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnPrivilegesForColumnPrivileges() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnPrivilegesForTablePrivileges() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnKeyColumnsForPrimaryKeys() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnForeignKeysForImportedKeys() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnForeignKeysForExportedKeys() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnRelationshipsForCrossReference() {}
-
-  @Test
-  void shouldReturnSupportedTypesForTypeInfo() throws Exception {
-    try (ResultSet rs = metaData().getTypeInfo()) {
-      ResultSetMetaData rsMeta = rs.getMetaData();
-      assertEquals(18, rsMeta.getColumnCount());
-      assertEquals("TYPE_NAME", rsMeta.getColumnName(1));
-      assertEquals("DATA_TYPE", rsMeta.getColumnName(2));
-      assertEquals("PRECISION", rsMeta.getColumnName(3));
-      assertEquals("LITERAL_PREFIX", rsMeta.getColumnName(4));
-      assertEquals("LITERAL_SUFFIX", rsMeta.getColumnName(5));
-      assertEquals("CREATE_PARAMS", rsMeta.getColumnName(6));
-      assertEquals("NULLABLE", rsMeta.getColumnName(7));
-      assertEquals("CASE_SENSITIVE", rsMeta.getColumnName(8));
-      assertEquals("SEARCHABLE", rsMeta.getColumnName(9));
-      assertEquals("UNSIGNED_ATTRIBUTE", rsMeta.getColumnName(10));
-      assertEquals("FIXED_PREC_SCALE", rsMeta.getColumnName(11));
-      assertEquals("AUTO_INCREMENT", rsMeta.getColumnName(12));
-      assertEquals("LOCAL_TYPE_NAME", rsMeta.getColumnName(13));
-      assertEquals("MINIMUM_SCALE", rsMeta.getColumnName(14));
-      assertEquals("MAXIMUM_SCALE", rsMeta.getColumnName(15));
-      assertEquals("SQL_DATA_TYPE", rsMeta.getColumnName(16));
-      assertEquals("SQL_DATETIME_SUB", rsMeta.getColumnName(17));
-      assertEquals("NUM_PREC_RADIX", rsMeta.getColumnName(18));
-
-      // NUMBER
-      assertTrue(rs.next());
-      assertEquals("NUMBER", rs.getString("TYPE_NAME"));
-      assertEquals(Types.DECIMAL, rs.getInt("DATA_TYPE"));
-      assertEquals(38, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(0, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(37, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // INTEGER
-      assertTrue(rs.next());
-      assertEquals("INTEGER", rs.getString("TYPE_NAME"));
-      assertEquals(Types.INTEGER, rs.getInt("DATA_TYPE"));
-      assertEquals(38, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(0, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(0, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // DOUBLE
-      assertTrue(rs.next());
-      assertEquals("DOUBLE", rs.getString("TYPE_NAME"));
-      assertEquals(Types.DOUBLE, rs.getInt("DATA_TYPE"));
-      assertEquals(38, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(0, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(37, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // VARCHAR
-      assertTrue(rs.next());
-      assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
-      assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
-      assertEquals(-1, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // DATE
-      assertTrue(rs.next());
-      assertEquals("DATE", rs.getString("TYPE_NAME"));
-      assertEquals(Types.DATE, rs.getInt("DATA_TYPE"));
-      assertEquals(-1, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // TIME
-      assertTrue(rs.next());
-      assertEquals("TIME", rs.getString("TYPE_NAME"));
-      assertEquals(Types.TIME, rs.getInt("DATA_TYPE"));
-      assertEquals(-1, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // TIMESTAMP
-      assertTrue(rs.next());
-      assertEquals("TIMESTAMP", rs.getString("TYPE_NAME"));
-      assertEquals(Types.TIMESTAMP, rs.getInt("DATA_TYPE"));
-      assertEquals(-1, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      // BOOLEAN
-      assertTrue(rs.next());
-      assertEquals("BOOLEAN", rs.getString("TYPE_NAME"));
-      assertEquals(Types.BOOLEAN, rs.getInt("DATA_TYPE"));
-      assertEquals(-1, rs.getInt("PRECISION"));
-      assertNull(rs.getString("LITERAL_PREFIX"));
-      assertNull(rs.getString("LITERAL_SUFFIX"));
-      assertNull(rs.getString("CREATE_PARAMS"));
-      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
-      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
-      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
-      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
-      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
-      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
-      assertNull(rs.getString("LOCAL_TYPE_NAME"));
-      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
-      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
-      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
-      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
-      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
-
-      assertFalse(rs.next());
-    }
-  }
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnIndexDescriptorsForIndexInfo() {}
-
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnUserDefinedTypesForUDTs() {}
-
-  @Test
-  void shouldReturnProceduresForProcedures() throws Exception {
-    try (Connection conn = openConnection()) {
-      DatabaseMetaData metaData = conn.getMetaData();
-      String currentDatabase;
-      String currentSchema;
-      try (Statement s = conn.createStatement();
-          ResultSet rs = s.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+        // INTEGER
         assertTrue(rs.next());
-        currentDatabase = rs.getString(1);
-        currentSchema = rs.getString(2);
+        assertEquals("INTEGER", rs.getString("TYPE_NAME"));
+        assertEquals(Types.INTEGER, rs.getInt("DATA_TYPE"));
+        assertEquals(38, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(0, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(0, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        // DOUBLE
+        assertTrue(rs.next());
+        assertEquals("DOUBLE", rs.getString("TYPE_NAME"));
+        assertEquals(Types.DOUBLE, rs.getInt("DATA_TYPE"));
+        assertEquals(38, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(0, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(37, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        // VARCHAR
+        assertTrue(rs.next());
+        assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
+        assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
+        assertEquals(-1, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        // DATE
+        assertTrue(rs.next());
+        assertEquals("DATE", rs.getString("TYPE_NAME"));
+        assertEquals(Types.DATE, rs.getInt("DATA_TYPE"));
+        assertEquals(-1, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        // TIME
+        assertTrue(rs.next());
+        assertEquals("TIME", rs.getString("TYPE_NAME"));
+        assertEquals(Types.TIME, rs.getInt("DATA_TYPE"));
+        assertEquals(-1, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        // TIMESTAMP
+        assertTrue(rs.next());
+        assertEquals("TIMESTAMP", rs.getString("TYPE_NAME"));
+        assertEquals(Types.TIMESTAMP, rs.getInt("DATA_TYPE"));
+        assertEquals(-1, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        // BOOLEAN
+        assertTrue(rs.next());
+        assertEquals("BOOLEAN", rs.getString("TYPE_NAME"));
+        assertEquals(Types.BOOLEAN, rs.getInt("DATA_TYPE"));
+        assertEquals(-1, rs.getInt("PRECISION"));
+        assertNull(rs.getString("LITERAL_PREFIX"));
+        assertNull(rs.getString("LITERAL_SUFFIX"));
+        assertNull(rs.getString("CREATE_PARAMS"));
+        assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+        assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+        assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+        assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+        assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+        assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+        assertNull(rs.getString("LOCAL_TYPE_NAME"));
+        assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+        assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+        assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+        assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+        assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+        assertFalse(rs.next());
       }
+    }
 
-      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-      String procName = "TEST_PROC_" + suffix;
-      try (Statement stmt = conn.createStatement()) {
-        stmt.execute(
-            "CREATE OR REPLACE PROCEDURE "
-                + procName
-                + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
-        try {
-          // column shape
-          try (ResultSet rs = metaData.getProcedures(currentDatabase, currentSchema, "%")) {
-            ResultSetMetaData rsMeta = rs.getMetaData();
-            assertEquals(6, rsMeta.getColumnCount());
-            assertEquals("PROCEDURE_CAT", rsMeta.getColumnName(1));
-            assertEquals("PROCEDURE_SCHEM", rsMeta.getColumnName(2));
-            assertEquals("PROCEDURE_NAME", rsMeta.getColumnName(3));
-            assertEquals("REMARKS", rsMeta.getColumnName(4));
-            assertEquals("PROCEDURE_TYPE", rsMeta.getColumnName(5));
-            assertEquals("SPECIFIC_NAME", rsMeta.getColumnName(6));
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnIndexDescriptorsForIndexInfo() {}
 
-            boolean found = false;
-            while (rs.next()) {
-              if (procName.equals(rs.getString("PROCEDURE_NAME"))) {
-                assertEquals(currentDatabase, rs.getString("PROCEDURE_CAT"));
-                assertEquals(currentSchema, rs.getString("PROCEDURE_SCHEM"));
-                assertEquals(
-                    DatabaseMetaData.procedureReturnsResult, rs.getShort("PROCEDURE_TYPE"));
-                assertFalse(rs.wasNull());
-                found = true;
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnUserDefinedTypesForUDTs() {}
+
+    @Test
+    void shouldReturnProceduresForProcedures() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String procName = "TEST_PROC_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "CREATE OR REPLACE PROCEDURE "
+                  + procName
+                  + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
+          try {
+            // column shape
+            try (ResultSet rs = metaData.getProcedures(currentDatabase, currentSchema, "%")) {
+              ResultSetMetaData rsMeta = rs.getMetaData();
+              assertEquals(6, rsMeta.getColumnCount());
+              assertEquals("PROCEDURE_CAT", rsMeta.getColumnName(1));
+              assertEquals("PROCEDURE_SCHEM", rsMeta.getColumnName(2));
+              assertEquals("PROCEDURE_NAME", rsMeta.getColumnName(3));
+              assertEquals("REMARKS", rsMeta.getColumnName(4));
+              assertEquals("PROCEDURE_TYPE", rsMeta.getColumnName(5));
+              assertEquals("SPECIFIC_NAME", rsMeta.getColumnName(6));
+
+              boolean found = false;
+              while (rs.next()) {
+                if (procName.equals(rs.getString("PROCEDURE_NAME"))) {
+                  assertEquals(currentDatabase, rs.getString("PROCEDURE_CAT"));
+                  assertEquals(currentSchema, rs.getString("PROCEDURE_SCHEM"));
+                  assertEquals(
+                      DatabaseMetaData.procedureReturnsResult, rs.getShort("PROCEDURE_TYPE"));
+                  assertFalse(rs.wasNull());
+                  found = true;
+                }
               }
+              assertTrue(found, "Procedure " + procName + " not found in getProcedures result");
             }
-            assertTrue(found, "Procedure " + procName + " not found in getProcedures result");
-          }
 
-          // exact name match
-          try (ResultSet rs = metaData.getProcedures(currentDatabase, currentSchema, procName)) {
-            assertTrue(rs.next());
-            assertEquals(procName, rs.getString("PROCEDURE_NAME"));
-            assertFalse(rs.next());
-          }
+            // exact name match
+            try (ResultSet rs = metaData.getProcedures(currentDatabase, currentSchema, procName)) {
+              assertTrue(rs.next());
+              assertEquals(procName, rs.getString("PROCEDURE_NAME"));
+              assertFalse(rs.next());
+            }
 
-          // non-existent db returns empty
-          try (ResultSet rs = metaData.getProcedures("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
-            assertFalse(rs.next());
+            // non-existent db returns empty
+            try (ResultSet rs =
+                metaData.getProcedures("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
+              assertFalse(rs.next());
+            }
+          } finally {
+            stmt.execute("DROP PROCEDURE IF EXISTS " + procName + "(FLOAT)");
           }
-        } finally {
-          stmt.execute("DROP PROCEDURE IF EXISTS " + procName + "(FLOAT)");
         }
       }
     }
-  }
 
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnProcedureColumnsForProcedureColumns() {}
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnProcedureColumnsForProcedureColumns() {}
 
-  @Test
-  void shouldReturnFunctionsForFunctions() throws Exception {
-    try (Connection conn = openConnection()) {
-      DatabaseMetaData metaData = conn.getMetaData();
-      String currentDatabase;
-      String currentSchema;
-      try (Statement s = conn.createStatement();
-          ResultSet rs = s.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
-        assertTrue(rs.next());
-        currentDatabase = rs.getString(1);
-        currentSchema = rs.getString(2);
-      }
+    @Test
+    void shouldReturnFunctionsForFunctions() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
 
-      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
-      String funcName = "TEST_FUNC_" + suffix;
-      try (Statement stmt = conn.createStatement()) {
-        stmt.execute(
-            "CREATE OR REPLACE FUNCTION "
-                + funcName
-                + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
-        try {
-          // column shape
-          try (ResultSet rs = metaData.getFunctions(currentDatabase, currentSchema, "%")) {
-            ResultSetMetaData rsMeta = rs.getMetaData();
-            assertEquals(6, rsMeta.getColumnCount());
-            assertEquals("FUNCTION_CAT", rsMeta.getColumnName(1));
-            assertEquals("FUNCTION_SCHEM", rsMeta.getColumnName(2));
-            assertEquals("FUNCTION_NAME", rsMeta.getColumnName(3));
-            assertEquals("REMARKS", rsMeta.getColumnName(4));
-            assertEquals("FUNCTION_TYPE", rsMeta.getColumnName(5));
-            assertEquals("SPECIFIC_NAME", rsMeta.getColumnName(6));
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String funcName = "TEST_FUNC_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "CREATE OR REPLACE FUNCTION "
+                  + funcName
+                  + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
+          try {
+            // column shape
+            try (ResultSet rs = metaData.getFunctions(currentDatabase, currentSchema, "%")) {
+              ResultSetMetaData rsMeta = rs.getMetaData();
+              assertEquals(6, rsMeta.getColumnCount());
+              assertEquals("FUNCTION_CAT", rsMeta.getColumnName(1));
+              assertEquals("FUNCTION_SCHEM", rsMeta.getColumnName(2));
+              assertEquals("FUNCTION_NAME", rsMeta.getColumnName(3));
+              assertEquals("REMARKS", rsMeta.getColumnName(4));
+              assertEquals("FUNCTION_TYPE", rsMeta.getColumnName(5));
+              assertEquals("SPECIFIC_NAME", rsMeta.getColumnName(6));
 
-            boolean found = false;
-            while (rs.next()) {
-              if (funcName.equals(rs.getString("FUNCTION_NAME"))) {
-                assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
-                assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
-                int funcType = rs.getInt("FUNCTION_TYPE");
-                assertFalse(rs.wasNull());
-                assertTrue(
-                    funcType == DatabaseMetaData.functionReturnsTable
-                        || funcType == DatabaseMetaData.functionNoTable,
-                    () -> "Unexpected FUNCTION_TYPE: " + funcType);
-                found = true;
+              boolean found = false;
+              while (rs.next()) {
+                if (funcName.equals(rs.getString("FUNCTION_NAME"))) {
+                  assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
+                  assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+                  int funcType = rs.getInt("FUNCTION_TYPE");
+                  assertFalse(rs.wasNull());
+                  assertTrue(
+                      funcType == DatabaseMetaData.functionReturnsTable
+                          || funcType == DatabaseMetaData.functionNoTable,
+                      () -> "Unexpected FUNCTION_TYPE: " + funcType);
+                  found = true;
+                }
               }
+              assertTrue(found, "Function " + funcName + " not found in getFunctions result");
             }
-            assertTrue(found, "Function " + funcName + " not found in getFunctions result");
-          }
 
-          // exact name match
-          try (ResultSet rs = metaData.getFunctions(currentDatabase, currentSchema, funcName)) {
-            assertTrue(rs.next());
-            assertEquals(funcName, rs.getString("FUNCTION_NAME"));
-            assertFalse(rs.next());
-          }
+            // exact name match
+            try (ResultSet rs = metaData.getFunctions(currentDatabase, currentSchema, funcName)) {
+              assertTrue(rs.next());
+              assertEquals(funcName, rs.getString("FUNCTION_NAME"));
+              assertFalse(rs.next());
+            }
 
-          // non-existent db returns empty
-          try (ResultSet rs = metaData.getFunctions("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
-            assertFalse(rs.next());
+            // non-existent db returns empty
+            try (ResultSet rs =
+                metaData.getFunctions("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
+              assertFalse(rs.next());
+            }
+          } finally {
+            stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT)");
           }
-        } finally {
-          stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT)");
         }
       }
     }
-  }
 
-  @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnFunctionColumnsForFunctionColumns() {}
+    @Test
+    @Disabled("requires query against Snowflake; happy-path test pending")
+    void shouldReturnFunctionColumnsForFunctionColumns() {}
+  }
 
   private static void assertMetadataColumn(ResultSetMetaData rsMeta, int col, String name)
       throws Exception {
