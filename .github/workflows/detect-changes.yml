@@ -7,9 +7,15 @@ on:
       core:
         description: "True if core Rust code changed"
         value: ${{ jobs.detect.outputs.core }}
+      dotnet:
+        description: "True if dotnet wrapper code changed"
+        value: ${{ jobs.detect.outputs.dotnet }}
       jdbc:
         description: "True if JDBC wrapper code changed"
         value: ${{ jobs.detect.outputs.jdbc }}
+      nodejs:
+        description: "True if Node.js wrapper code changed"
+        value: ${{ jobs.detect.outputs.nodejs }}
       odbc:
         description: "True if ODBC wrapper code changed"
         value: ${{ jobs.detect.outputs.odbc }}
@@ -19,9 +25,6 @@ on:
       python_packaging:
         description: "True if Python packaging files changed"
         value: ${{ jobs.detect.outputs.python_packaging }}
-      nodejs:
-        description: "True if Node.js wrapper code changed"
-        value: ${{ jobs.detect.outputs.nodejs }}
       shared:
         description: "True if shared config/build files changed"
         value: ${{ jobs.detect.outputs.shared }}
@@ -31,24 +34,30 @@ on:
       # "Should run" outputs — GHA always runs ALL unit tests; these flags
       # control whether to run at all (skip when only unrelated files changed).
       # Per-feature test selection is handled by Buildkite via ci/select_tests.py.
+      run_dotnet:
+        description: "True if dotnet tests should run"
+        value: ${{ jobs.detect.outputs.run_dotnet }}
       run_jdbc:
         description: "True if JDBC tests should run"
         value: ${{ jobs.detect.outputs.run_jdbc }}
       run_odbc:
         description: "True if ODBC tests should run"
         value: ${{ jobs.detect.outputs.run_odbc }}
+      run_nodejs:
+        description: "True if Node.js tests should run"
+        value: ${{ jobs.detect.outputs.run_nodejs }}
       run_python:
         description: "True if Python tests should run"
         value: ${{ jobs.detect.outputs.run_python }}
       run_python_packaging:
         description: "True if Python packaging tests should run"
         value: ${{ jobs.detect.outputs.run_python_packaging }}
-      run_nodejs:
-        description: "True if Node.js tests should run"
-        value: ${{ jobs.detect.outputs.run_nodejs }}
       run_rust_core:
         description: "True if Rust Core tests should run"
         value: ${{ jobs.detect.outputs.run_rust_core }}
+      run_dotnet_reference:
+        description: "True if .NET reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_dotnet_reference }}
       run_jdbc_reference:
         description: "True if JDBC reference tests should run (e2e/integ tests changed)"
         value: ${{ jobs.detect.outputs.run_jdbc_reference }}
@@ -71,24 +80,27 @@ jobs:
     outputs:
       # Raw outputs
       core: ${{ steps.filter.outputs.core }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
       jdbc: ${{ steps.filter.outputs.jdbc }}
+      nodejs: ${{ steps.filter.outputs.nodejs }}
       odbc: ${{ steps.filter.outputs.odbc }}
       python: ${{ steps.filter.outputs.python }}
       python_packaging: ${{ steps.filter.outputs.python_packaging }}
-      nodejs: ${{ steps.filter.outputs.nodejs }}
       shared: ${{ steps.filter.outputs.shared }}
       docs_only: ${{ steps.computed.outputs.docs_only }}
       # Pre-computed "should run" outputs
+      run_dotnet: ${{ steps.computed.outputs.run_dotnet }}
       run_jdbc: ${{ steps.computed.outputs.run_jdbc }}
+      run_nodejs: ${{ steps.computed.outputs.run_nodejs }}
       run_odbc: ${{ steps.computed.outputs.run_odbc }}
       run_python: ${{ steps.computed.outputs.run_python }}
       run_python_packaging: ${{ steps.computed.outputs.run_python_packaging }}
-      run_nodejs: ${{ steps.computed.outputs.run_nodejs }}
       run_rust_core: ${{ steps.computed.outputs.run_rust_core }}
+      run_dotnet_reference: ${{ steps.computed.outputs.run_dotnet_reference }}
       run_jdbc_reference: ${{ steps.computed.outputs.run_jdbc_reference }}
+      run_nodejs_reference: ${{ steps.computed.outputs.run_nodejs_reference }}
       run_odbc_reference: ${{ steps.computed.outputs.run_odbc_reference }}
       run_python_reference: ${{ steps.computed.outputs.run_python_reference }}
-      run_nodejs_reference: ${{ steps.computed.outputs.run_nodejs_reference }}
       run_odbc_packaging: ${{ steps.computed.outputs.run_odbc_packaging }}
     steps:
       - name: Checkout repository
@@ -128,6 +140,13 @@ jobs:
               - '.github/actions/setup-windows-openssl/**'
               - 'ci/test_matrix/models/core.py'
               - 'ci/test_matrix/mappings/core.py'
+            dotnet:
+              - 'dotnet/**'
+              - '.github/workflows/test-dotnet.yml'
+              - 'scripts/validate_behavior_differences.py'
+            dotnet_e2e_integ:
+              - 'dotnet/tests/**'
+              - '.github/workflows/test-dotnet.yml'
             jdbc:
               - 'jdbc/**'
               - 'jdbc_bridge/**'
@@ -139,6 +158,13 @@ jobs:
               - 'jdbc/src/test/java/net/snowflake/jdbc/**'
               - 'jdbc/src/test/resources/**'
               - 'jdbc/build.gradle'
+            nodejs:
+              - 'nodejs/**'
+              - '.github/workflows/test-nodejs.yml'
+              - 'scripts/validate_behavior_differences.py'
+            nodejs_e2e_integ:
+              - 'nodejs/tests/e2e/**'
+              - '.github/workflows/test-nodejs.yml'
             odbc:
               - 'odbc/**'
               - 'odbc_tests/**'
@@ -193,13 +219,6 @@ jobs:
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
-            nodejs:
-              - 'nodejs/**'
-              - '.github/workflows/test-nodejs.yml'
-              - 'scripts/validate_behavior_differences.py'
-            nodejs_e2e_integ:
-              - 'nodejs/tests/e2e/**'
-              - '.github/workflows/test-nodejs.yml'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -261,6 +280,17 @@ jobs:
             )
           ' <<<'${{ steps.filter.outputs.all_files }}')
           echo "docs_only=$DOCS_ONLY" >> $GITHUB_OUTPUT
+          
+          # .NET should run only if dotnet changed
+          # Intentionally excludes `core` and `shared` for now: the .NET
+          # driver is a fresh skeleton with no real integration yet.
+          # Broaden this rule (add `core`/`shared`) once the wrapper actually depends on them.
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.dotnet }}" == "true" ]]; then
+            echo "run_dotnet=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_dotnet=false" >> $GITHUB_OUTPUT
+          fi
 
           # JDBC should run if: jdbc OR core OR shared changed
           if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
@@ -270,6 +300,18 @@ jobs:
             echo "run_jdbc=true" >> $GITHUB_OUTPUT
           else
             echo "run_jdbc=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Node.js should run only if files inside nodejs/** changed.
+          # Intentionally excludes `core` and `shared` for now: the Node.js
+          # driver is a fresh skeleton with no real integration yet, so
+          # changes to shared infra do not trigger nodejs tests.
+          # Broaden this rule (add `core`/`shared`) once the wrapper actually depends on them.
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs }}" == "true" ]]; then
+            echo "run_nodejs=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nodejs=false" >> $GITHUB_OUTPUT
           fi
 
           # ODBC should run if: odbc OR core OR shared changed
@@ -308,25 +350,29 @@ jobs:
           else
             echo "run_rust_core=false" >> $GITHUB_OUTPUT
           fi
-
-          # Node.js should run only if files inside nodejs/** changed.
-          # Intentionally excludes `core` and `shared` for now: the Node.js
-          # driver is a fresh skeleton with no real integration yet, so
-          # changes to shared infra do not trigger nodejs tests.
-          # Broaden this rule (add `core`/`shared`) once the wrapper actually depends on them.
+          
+          # dotnet reference tests should run if: e2e tests changed
           if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
-             [[ "${{ steps.filter.outputs.nodejs }}" == "true" ]]; then
-            echo "run_nodejs=true" >> $GITHUB_OUTPUT
+            [[ "${{ steps.filter.outputs.dotnet_e2e_integ }}" == "true" ]]; then
+            echo "run_dotnet_reference=true" >> $GITHUB_OUTPUT
           else
-            echo "run_nodejs=false" >> $GITHUB_OUTPUT
+            echo "run_dotnet_reference=false" >> $GITHUB_OUTPUT
           fi
-
+         
           # JDBC reference tests should run if: e2e/integ tests changed
           if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
              [[ "${{ steps.filter.outputs.jdbc_e2e_integ }}" == "true" ]]; then
             echo "run_jdbc_reference=true" >> $GITHUB_OUTPUT
           else
             echo "run_jdbc_reference=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Node.js reference tests should run if: e2e tests changed
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs_e2e_integ }}" == "true" ]]; then
+            echo "run_nodejs_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nodejs_reference=false" >> $GITHUB_OUTPUT
           fi
 
           # ODBC reference tests should run if: e2e/integ tests changed
@@ -345,14 +391,6 @@ jobs:
             echo "run_python_reference=false" >> $GITHUB_OUTPUT
           fi
 
-          # Node.js reference tests should run if: e2e tests changed
-          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
-             [[ "${{ steps.filter.outputs.nodejs_e2e_integ }}" == "true" ]]; then
-            echo "run_nodejs_reference=true" >> $GITHUB_OUTPUT
-          else
-            echo "run_nodejs_reference=false" >> $GITHUB_OUTPUT
-          fi
-
           # ODBC packaging should run if installer/packaging files changed
           if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
              [[ "${{ steps.filter.outputs.odbc_packaging }}" == "true" ]]; then
@@ -363,9 +401,9 @@ jobs:
 
           if [[ "$DOCS_ONLY" == "true" ]]; then
             for v in run_jdbc run_odbc run_python run_python_packaging \
-                     run_rust_core run_nodejs run_jdbc_reference \
+                     run_rust_core run_nodejs run_dotnet run_jdbc_reference \
                      run_odbc_reference run_python_reference \
-                     run_nodejs_reference run_odbc_packaging; do
+                     run_nodejs_reference run_dotnet_reference run_odbc_packaging; do
               echo "$v=false" >> $GITHUB_OUTPUT
             done
           fi
@@ -384,6 +422,7 @@ jobs:
           echo "| Python | ${{ steps.filter.outputs.python }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python Packaging | ${{ steps.filter.outputs.python_packaging }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | ${{ steps.filter.outputs.nodejs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dotnet | ${{ steps.filter.outputs.dotnet }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -401,3 +440,5 @@ jobs:
           echo "| Python Packaging | ${{ steps.computed.outputs.run_python_packaging }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | ${{ steps.computed.outputs.run_nodejs }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js Reference | ${{ steps.computed.outputs.run_nodejs_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dotnet | ${{ steps.computed.outputs.run_dotnet }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dotnet Reference | ${{ steps.computed.outputs.run_dotnet_reference }} |" >> $GITHUB_STEP_SUMMARY

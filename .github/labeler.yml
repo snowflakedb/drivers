@@ -10,6 +10,11 @@ nodejs:
       - any-glob-to-any-file:
           - nodejs/**
 
+dotnet:
+  - changed-files:
+      - any-glob-to-any-file:
+          - dotnet/**
+
 python:
   - changed-files:
       - any-glob-to-any-file:

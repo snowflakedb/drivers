@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+
+# NuGet
+*.nupkg
+*.snupkg
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# User-specific files
+*.user
+*.suo
+*.userprefs
+
+# IDE
+.vs/
+.idea/
+
+# Test results
+TestResults/
