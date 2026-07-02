@@ -94,6 +94,11 @@ rules:
 
       **REQUIREMENT**: Immediately after calling a nullable getter (`getString`, `getObject`, `getInt`, etc.) on a column that may be SQL NULL, tests MUST call `ResultSet.wasNull()` and assert the expected nullability. Do not infer NULL from sentinel values alone.
 
+      **CONSOLIDATION**: Emit at most ONE comment per file per PR. If multiple violations exist in the same file, consolidate them into a single finding that lists every affected line number. Do not post separate comments for each `assertNull()` / getter call on the same file.
+
+      **COMMENT TEMPLATE** (use when multiple instances exist in one file):
+      "This file has N instances of nullable getter assertions without `wasNull()` verification. Affected lines: [line1, line2, ...]. After each `assertNull(rs.getX(...))` (or equivalent nullable read), add `assertTrue(rs.wasNull())` (or `assertFalse` when the column is non-null)."
+
       ❌ **BAD:**
       ```java
       assertTrue(rs.next());
