@@ -3,89 +3,92 @@ use std::path::PathBuf;
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
-use crate::logging::opentelemetry::init_tracer;
+pub use crate::logging::log_manager::LogManager;
 use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
-use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
-use tracing_subscriber::Registry;
-use tracing_subscriber::layer::SubscriberExt;
 
 pub mod c_api;
-mod callback_layer;
-mod error;
-mod opentelemetry;
+pub(crate) mod callback_layer;
+pub(crate) mod error;
+pub mod log_manager;
+pub(crate) mod opentelemetry;
 
-pub struct LoggingConfig {
-    pub log_file: Option<PathBuf>,
-    pub stderr: bool,
-    pub opentelemetry: bool,
+/// Time-based log-file rotation strategy.
+///
+/// Wraps `tracing_appender::rolling::Rotation` so callers don't depend on
+/// the appender crate directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogRotation {
+    #[default]
+    Never,
+    Daily,
+    Hourly,
+    Minutely,
 }
 
-impl LoggingConfig {
-    pub fn new(log_file: Option<PathBuf>, stderr: bool, opentelemetry: bool) -> Self {
-        Self {
-            log_file,
-            stderr,
-            opentelemetry,
+impl LogRotation {
+    pub(crate) fn to_appender_rotation(self) -> tracing_appender::rolling::Rotation {
+        match self {
+            Self::Never => tracing_appender::rolling::Rotation::NEVER,
+            Self::Daily => tracing_appender::rolling::Rotation::DAILY,
+            Self::Hourly => tracing_appender::rolling::Rotation::HOURLY,
+            Self::Minutely => tracing_appender::rolling::Rotation::MINUTELY,
         }
     }
 }
 
-struct EmptyLayer;
+/// Configuration for the logging subsystem.
+#[derive(Debug, Clone)]
+pub struct LoggingConfig {
+    pub enabled: bool,
+    pub level: LevelFilter,
+    pub log_path: Option<PathBuf>,
+    pub log_file_name: Option<String>,
+    /// Desired maximum size (in bytes) for a single log file.
+    ///
+    /// **Not yet enforced.** `tracing-appender` only supports time-based
+    /// rotation, so size-based rotation is not available. When this field is
+    /// `Some`, a warning is emitted at init time and the value is otherwise
+    /// ignored. The field is retained for forward-compatibility with a future
+    /// size-aware appender.
+    pub max_file_size: Option<u64>,
+    pub max_file_count: Option<u32>,
+    pub rotation: LogRotation,
+    pub open_telemetry: bool,
+    pub stderr: bool,
+    /// Process-wide default for `log_query_text`, applied as a fallback when
+    /// neither a connection-string option nor a `connections.toml` /
+    /// `config.toml` setting is provided. `None` means "unset; fall through to
+    /// the registry default".
+    pub log_query_text: Option<bool>,
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`] for precedence semantics.
+    pub log_query_parameters: Option<bool>,
+    /// When `true`, `OdbcError::message_text()` appends the full error trace
+    /// to user-facing diagnostic messages. Default `true`.
+    pub error_trace_enabled: bool,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            level: LevelFilter::INFO,
+            log_path: None,
+            log_file_name: None,
+            max_file_size: None,
+            max_file_count: None,
+            rotation: LogRotation::default(),
+            open_telemetry: false,
+            stderr: false,
+            log_query_text: None,
+            log_query_parameters: None,
+            error_trace_enabled: true,
+        }
+    }
+}
+
+pub(crate) struct EmptyLayer;
 
 impl<S: Subscriber> Layer<S> for EmptyLayer {}
-
-pub fn init(config: LoggingConfig) -> Result<(), LogError> {
-    init_logging::<EmptyLayer>(config, None)
-}
-
-pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<(), LogError>
-where
-    L: Layer<Registry> + Send + Sync,
-{
-    let subscriber = Registry::default();
-    let subscriber = subscriber.with(extra_layer);
-
-    let file_layer = if let Some(log_file) = config.log_file {
-        let log_file =
-            std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
-        Some(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(log_file)
-                .with_filter(LevelFilter::INFO),
-        )
-    } else {
-        None
-    };
-    let subscriber = subscriber.with(file_layer);
-
-    let opentelemetry_layer = if config.opentelemetry {
-        let tracer_layer = init_tracer()?;
-        Some(OpenTelemetryLayer::new(tracer_layer))
-    } else {
-        None
-    };
-    let subscriber = subscriber.with(opentelemetry_layer);
-
-    let stderr_layer = if config.stderr {
-        Some(
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_filter(LevelFilter::ERROR),
-        )
-    } else {
-        None
-    };
-    let subscriber = subscriber.with(stderr_layer);
-
-    #[cfg(feature = "perf_timing")]
-    let subscriber = subscriber.with(Some(crate::perf_timing::create_perf_layer()));
-    #[cfg(not(feature = "perf_timing"))]
-    let subscriber = subscriber.with(None::<EmptyLayer>);
-
-    tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| LogError::InitError(e.to_string()))?;
-    Ok(())
-}

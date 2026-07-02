@@ -6,737 +6,630 @@ import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.util.Properties;
 import net.snowflake.client.api.connection.SnowflakeDatabaseMetaData;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataCapabilities;
+import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataIdentity;
+import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
+import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, SnowflakeDatabaseMetaData {
-  private static final String DatabaseProductName = "Snowflake";
-  private static final String DriverName = "Snowflake";
-  private static final char SEARCH_STRING_ESCAPE = '\\';
-  private static final String JDBCVersion = "4.2";
+public class SnowflakeDatabaseMetaDataImpl
+    implements DatabaseMetaData, SnowflakeDatabaseMetaData, DelegatingWrapper {
 
   private final SnowflakeConnectionImpl connection;
+  private final MetaDataIdentity identity;
+  private final MetaDataCapabilities capabilities;
+  private final MetaDataLimits limits;
+  private final MetaDataObjects objects;
 
-  public SnowflakeDatabaseMetaDataImpl(SnowflakeConnectionImpl connection) {
+  public SnowflakeDatabaseMetaDataImpl(
+      SnowflakeConnectionImpl connection, Properties properties, CoreDriverApi coreDriverApi) {
     this.connection = connection;
+    this.identity = new MetaDataIdentity(connection, properties);
+    this.capabilities = new MetaDataCapabilities(connection);
+    this.limits = new MetaDataLimits(connection, coreDriverApi);
+    this.objects = new MetaDataObjects(connection, coreDriverApi);
   }
 
   @Override
   public boolean allProceduresAreCallable() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.allProceduresAreCallable();
   }
 
   @Override
   public boolean allTablesAreSelectable() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.allTablesAreSelectable();
   }
 
   @Override
   public String getURL() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getURL();
   }
 
   @Override
   public String getUserName() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getUserName();
   }
 
-  /** Read only mode is not supported. */
   @Override
   public boolean isReadOnly() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.isReadOnly();
   }
 
   @Override
   public boolean nullsAreSortedHigh() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.nullsAreSortedHigh();
   }
 
   @Override
   public boolean nullsAreSortedLow() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.nullsAreSortedLow();
   }
 
   @Override
   public boolean nullsAreSortedAtStart() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.nullsAreSortedAtStart();
   }
 
   @Override
   public boolean nullsAreSortedAtEnd() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.nullsAreSortedAtEnd();
   }
 
   @Override
   public String getDatabaseProductName() throws SQLException {
-    connection.checkClosed();
-    return DatabaseProductName;
+    return identity.getDatabaseProductName();
   }
 
   @Override
   public String getDatabaseProductVersion() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getDatabaseProductVersion();
   }
 
   @Override
   public String getDriverName() throws SQLException {
-    connection.checkClosed();
-    return DriverName;
+    return identity.getDriverName();
   }
 
   @Override
   public String getDriverVersion() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getDriverVersion();
   }
 
   @Override
   public int getDriverMajorVersion() {
-    throw new NotImplementedException();
+    return identity.getDriverMajorVersion();
   }
 
   @Override
   public int getDriverMinorVersion() {
-    throw new NotImplementedException();
+    return identity.getDriverMinorVersion();
   }
 
   @Override
   public boolean usesLocalFiles() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.usesLocalFiles();
   }
 
   @Override
   public boolean usesLocalFilePerTable() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.usesLocalFilePerTable();
   }
 
   @Override
   public boolean supportsMixedCaseIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsMixedCaseIdentifiers();
   }
 
   @Override
   public boolean storesUpperCaseIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.storesUpperCaseIdentifiers();
   }
 
   @Override
   public boolean storesLowerCaseIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.storesLowerCaseIdentifiers();
   }
 
   @Override
   public boolean storesMixedCaseIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.storesMixedCaseIdentifiers();
   }
 
   @Override
   public boolean supportsMixedCaseQuotedIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsMixedCaseQuotedIdentifiers();
   }
 
   @Override
   public boolean storesUpperCaseQuotedIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.storesUpperCaseQuotedIdentifiers();
   }
 
   @Override
   public boolean storesLowerCaseQuotedIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.storesLowerCaseQuotedIdentifiers();
   }
 
   @Override
   public boolean storesMixedCaseQuotedIdentifiers() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.storesMixedCaseQuotedIdentifiers();
   }
 
   @Override
   public String getIdentifierQuoteString() throws SQLException {
-    connection.checkClosed();
-    return "\"";
+    return identity.getIdentifierQuoteString();
   }
 
   @Override
   public String getSQLKeywords() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getSQLKeywords();
   }
 
   @Override
   public String getNumericFunctions() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getNumericFunctions();
   }
 
   @Override
   public String getStringFunctions() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getStringFunctions();
   }
 
   @Override
   public String getSystemFunctions() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getSystemFunctions();
   }
 
   @Override
   public String getTimeDateFunctions() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return identity.getTimeDateFunctions();
   }
 
   @Override
   public String getSearchStringEscape() throws SQLException {
-    connection.checkClosed();
-    return Character.toString(SEARCH_STRING_ESCAPE);
+    return identity.getSearchStringEscape();
   }
 
   @Override
   public String getExtraNameCharacters() throws SQLException {
-    connection.checkClosed();
-    return "$";
+    return identity.getExtraNameCharacters();
   }
 
   @Override
   public boolean supportsAlterTableWithAddColumn() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsAlterTableWithAddColumn();
   }
 
   @Override
   public boolean supportsAlterTableWithDropColumn() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsAlterTableWithDropColumn();
   }
 
   @Override
   public boolean supportsColumnAliasing() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsColumnAliasing();
   }
 
   @Override
   public boolean nullPlusNonNullIsNull() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.nullPlusNonNullIsNull();
   }
 
   @Override
   public boolean supportsConvert() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsConvert();
   }
 
   @Override
   public boolean supportsConvert(int fromType, int toType) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsConvert(fromType, toType);
   }
 
   @Override
   public boolean supportsTableCorrelationNames() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsTableCorrelationNames();
   }
 
   @Override
   public boolean supportsDifferentTableCorrelationNames() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsDifferentTableCorrelationNames();
   }
 
   @Override
   public boolean supportsExpressionsInOrderBy() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsExpressionsInOrderBy();
   }
 
   @Override
   public boolean supportsOrderByUnrelated() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsOrderByUnrelated();
   }
 
   @Override
   public boolean supportsGroupBy() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsGroupBy();
   }
 
   @Override
   public boolean supportsGroupByUnrelated() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsGroupByUnrelated();
   }
 
   @Override
   public boolean supportsGroupByBeyondSelect() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsGroupByBeyondSelect();
   }
 
   @Override
   public boolean supportsLikeEscapeClause() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsLikeEscapeClause();
   }
 
   @Override
   public boolean supportsMultipleResultSets() throws SQLException {
-    connection.checkClosed();
-    // TODO: it should be true when we support multi statements
-    return false;
+    return capabilities.supportsMultipleResultSets();
   }
 
   @Override
   public boolean supportsMultipleTransactions() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsMultipleTransactions();
   }
 
   @Override
   public boolean supportsNonNullableColumns() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsNonNullableColumns();
   }
 
   @Override
   public boolean supportsMinimumSQLGrammar() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsMinimumSQLGrammar();
   }
 
   @Override
   public boolean supportsCoreSQLGrammar() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsCoreSQLGrammar();
   }
 
   @Override
   public boolean supportsExtendedSQLGrammar() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsExtendedSQLGrammar();
   }
 
   @Override
   public boolean supportsANSI92EntryLevelSQL() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsANSI92EntryLevelSQL();
   }
 
   @Override
   public boolean supportsANSI92IntermediateSQL() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsANSI92IntermediateSQL();
   }
 
   @Override
   public boolean supportsANSI92FullSQL() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsANSI92FullSQL();
   }
 
   @Override
   public boolean supportsIntegrityEnhancementFacility() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsIntegrityEnhancementFacility();
   }
 
   @Override
   public boolean supportsOuterJoins() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsOuterJoins();
   }
 
   @Override
   public boolean supportsFullOuterJoins() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsFullOuterJoins();
   }
 
   @Override
   public boolean supportsLimitedOuterJoins() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsLimitedOuterJoins();
   }
 
   @Override
   public String getSchemaTerm() throws SQLException {
-    connection.checkClosed();
-    return "schema";
+    return identity.getSchemaTerm();
   }
 
   @Override
   public String getProcedureTerm() throws SQLException {
-    connection.checkClosed();
-    return "procedure";
+    return identity.getProcedureTerm();
   }
 
   @Override
   public String getCatalogTerm() throws SQLException {
-    connection.checkClosed();
-    return "database";
+    return identity.getCatalogTerm();
   }
 
   @Override
   public boolean isCatalogAtStart() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.isCatalogAtStart();
   }
 
   @Override
   public String getCatalogSeparator() throws SQLException {
-    connection.checkClosed();
-    return ".";
+    return identity.getCatalogSeparator();
   }
 
   @Override
   public boolean supportsSchemasInDataManipulation() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsSchemasInDataManipulation();
   }
 
   @Override
   public boolean supportsSchemasInProcedureCalls() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsSchemasInProcedureCalls();
   }
 
   @Override
   public boolean supportsSchemasInTableDefinitions() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsSchemasInTableDefinitions();
   }
 
   @Override
   public boolean supportsSchemasInIndexDefinitions() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsSchemasInIndexDefinitions();
   }
 
   @Override
   public boolean supportsSchemasInPrivilegeDefinitions() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsSchemasInPrivilegeDefinitions();
   }
 
   @Override
   public boolean supportsCatalogsInDataManipulation() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsCatalogsInDataManipulation();
   }
 
   @Override
   public boolean supportsCatalogsInProcedureCalls() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsCatalogsInProcedureCalls();
   }
 
   @Override
   public boolean supportsCatalogsInTableDefinitions() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsCatalogsInTableDefinitions();
   }
 
   @Override
   public boolean supportsCatalogsInIndexDefinitions() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsCatalogsInIndexDefinitions();
   }
 
   @Override
   public boolean supportsCatalogsInPrivilegeDefinitions() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsCatalogsInPrivilegeDefinitions();
   }
 
   @Override
   public boolean supportsPositionedDelete() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsPositionedDelete();
   }
 
   @Override
   public boolean supportsPositionedUpdate() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsPositionedUpdate();
   }
 
   @Override
   public boolean supportsSelectForUpdate() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsSelectForUpdate();
   }
 
   @Override
   public boolean supportsStoredProcedures() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsStoredProcedures();
   }
 
   @Override
   public boolean supportsSubqueriesInComparisons() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsSubqueriesInComparisons();
   }
 
   @Override
   public boolean supportsSubqueriesInExists() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsSubqueriesInExists();
   }
 
   @Override
   public boolean supportsSubqueriesInIns() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsSubqueriesInIns();
   }
 
   @Override
   public boolean supportsSubqueriesInQuantifieds() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsSubqueriesInQuantifieds();
   }
 
   @Override
   public boolean supportsCorrelatedSubqueries() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsCorrelatedSubqueries();
   }
 
   @Override
   public boolean supportsUnion() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsUnion();
   }
 
   @Override
   public boolean supportsUnionAll() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsUnionAll();
   }
 
   @Override
   public boolean supportsOpenCursorsAcrossCommit() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsOpenCursorsAcrossCommit();
   }
 
   @Override
   public boolean supportsOpenCursorsAcrossRollback() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsOpenCursorsAcrossRollback();
   }
 
   @Override
   public boolean supportsOpenStatementsAcrossCommit() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsOpenStatementsAcrossCommit();
   }
 
   @Override
   public boolean supportsOpenStatementsAcrossRollback() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsOpenStatementsAcrossRollback();
   }
 
   @Override
   public int getMaxBinaryLiteralLength() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return limits.getMaxBinaryLiteralLength();
   }
 
   @Override
   public int getMaxCharLiteralLength() throws SQLException {
-    connection.checkClosed();
-    throw new NotImplementedException();
+    return limits.getMaxCharLiteralLength();
   }
 
   @Override
   public int getMaxColumnNameLength() throws SQLException {
-    connection.checkClosed();
-    return 255;
+    return limits.getMaxColumnNameLength();
   }
 
   @Override
   public int getMaxColumnsInGroupBy() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxColumnsInGroupBy();
   }
 
   @Override
   public int getMaxColumnsInIndex() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxColumnsInIndex();
   }
 
   @Override
   public int getMaxColumnsInOrderBy() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxColumnsInOrderBy();
   }
 
   @Override
   public int getMaxColumnsInSelect() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxColumnsInSelect();
   }
 
   @Override
   public int getMaxColumnsInTable() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxColumnsInTable();
   }
 
   @Override
   public int getMaxConnections() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxConnections();
   }
 
   @Override
   public int getMaxCursorNameLength() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxCursorNameLength();
   }
 
   @Override
   public int getMaxIndexLength() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxIndexLength();
   }
 
   @Override
   public int getMaxSchemaNameLength() throws SQLException {
-    connection.checkClosed();
-    return 255;
+    return limits.getMaxSchemaNameLength();
   }
 
   @Override
   public int getMaxProcedureNameLength() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxProcedureNameLength();
   }
 
   @Override
   public int getMaxCatalogNameLength() throws SQLException {
-    connection.checkClosed();
-    return 255;
+    return limits.getMaxCatalogNameLength();
   }
 
   @Override
   public int getMaxRowSize() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxRowSize();
   }
 
   @Override
   public boolean doesMaxRowSizeIncludeBlobs() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return limits.doesMaxRowSizeIncludeBlobs();
   }
 
   @Override
   public int getMaxStatementLength() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxStatementLength();
   }
 
   @Override
   public int getMaxStatements() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxStatements();
   }
 
   @Override
   public int getMaxTableNameLength() throws SQLException {
-    connection.checkClosed();
-    return 255;
+    return limits.getMaxTableNameLength();
   }
 
   @Override
   public int getMaxTablesInSelect() throws SQLException {
-    connection.checkClosed();
-    return 0;
+    return limits.getMaxTablesInSelect();
   }
 
   @Override
   public int getMaxUserNameLength() throws SQLException {
-    connection.checkClosed();
-    return 255;
+    return limits.getMaxUserNameLength();
   }
 
   @Override
   public int getDefaultTransactionIsolation() throws SQLException {
-    connection.checkClosed();
-    return Connection.TRANSACTION_READ_COMMITTED;
+    return capabilities.getDefaultTransactionIsolation();
   }
 
   @Override
   public boolean supportsTransactions() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsTransactions();
   }
 
   @Override
   public boolean supportsTransactionIsolationLevel(int level) throws SQLException {
-    connection.checkClosed();
-    return (level == Connection.TRANSACTION_NONE)
-        || (level == Connection.TRANSACTION_READ_COMMITTED);
+    return capabilities.supportsTransactionIsolationLevel(level);
   }
 
   @Override
   public boolean supportsDataDefinitionAndDataManipulationTransactions() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsDataDefinitionAndDataManipulationTransactions();
   }
 
   @Override
   public boolean supportsDataManipulationTransactionsOnly() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsDataManipulationTransactionsOnly();
   }
 
   @Override
   public boolean dataDefinitionCausesTransactionCommit() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.dataDefinitionCausesTransactionCommit();
   }
 
   @Override
   public boolean dataDefinitionIgnoredInTransactions() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.dataDefinitionIgnoredInTransactions();
   }
 
-  // Stub implementations for remaining methods
   @Override
   public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new SQLFeatureNotSupportedException("getProcedures not supported");
+    throw new NotImplementedException();
   }
 
   @Override
@@ -752,7 +645,7 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
       String catalog, String schemaPattern, String tableNamePattern, String[] types)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getTables(catalog, schemaPattern, tableNamePattern, types);
   }
 
   @Override
@@ -764,7 +657,7 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public ResultSet getCatalogs() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getCatalogs();
   }
 
   @Override
@@ -777,7 +670,8 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   public ResultSet getColumns(
       String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getColumns(catalog, schemaPattern, tableNamePattern, columnNamePattern, false);
   }
 
   @Override
@@ -850,74 +744,62 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
 
   @Override
   public boolean supportsResultSetType(int type) throws SQLException {
-    connection.checkClosed();
-    return (type == ResultSet.TYPE_FORWARD_ONLY);
+    return capabilities.supportsResultSetType(type);
   }
 
   @Override
   public boolean supportsResultSetConcurrency(int type, int concurrency) throws SQLException {
-    connection.checkClosed();
-    return (type == ResultSet.TYPE_FORWARD_ONLY && concurrency == ResultSet.CONCUR_READ_ONLY);
+    return capabilities.supportsResultSetConcurrency(type, concurrency);
   }
 
   @Override
   public boolean ownUpdatesAreVisible(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.ownUpdatesAreVisible(type);
   }
 
   @Override
   public boolean ownDeletesAreVisible(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.ownDeletesAreVisible(type);
   }
 
   @Override
   public boolean ownInsertsAreVisible(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.ownInsertsAreVisible(type);
   }
 
   @Override
   public boolean othersUpdatesAreVisible(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.othersUpdatesAreVisible(type);
   }
 
   @Override
   public boolean othersDeletesAreVisible(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.othersDeletesAreVisible(type);
   }
 
   @Override
   public boolean othersInsertsAreVisible(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.othersInsertsAreVisible(type);
   }
 
   @Override
   public boolean updatesAreDetected(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.updatesAreDetected(type);
   }
 
   @Override
   public boolean deletesAreDetected(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.deletesAreDetected(type);
   }
 
   @Override
   public boolean insertsAreDetected(int type) throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.insertsAreDetected(type);
   }
 
   @Override
   public boolean supportsBatchUpdates() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsBatchUpdates();
   }
 
   @Override
@@ -937,26 +819,22 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   // Additional JDBC 3.0+ methods (stubs)
   @Override
   public boolean supportsSavepoints() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsSavepoints();
   }
 
   @Override
   public boolean supportsNamedParameters() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsNamedParameters();
   }
 
   @Override
   public boolean supportsMultipleOpenResults() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsMultipleOpenResults();
   }
 
   @Override
   public boolean supportsGetGeneratedKeys() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsGetGeneratedKeys();
   }
 
   @Override
@@ -980,53 +858,47 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
 
   @Override
   public boolean supportsResultSetHoldability(int holdability) throws SQLException {
-    connection.checkClosed();
-    return holdability == ResultSet.CLOSE_CURSORS_AT_COMMIT;
+    return capabilities.supportsResultSetHoldability(holdability);
   }
 
   @Override
   public int getResultSetHoldability() throws SQLException {
-    return ResultSet.CLOSE_CURSORS_AT_COMMIT;
+    return capabilities.getResultSetHoldability();
   }
 
   @Override
   public int getDatabaseMajorVersion() throws SQLException {
-    connection.checkClosed();
-    return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMajorVersion();
+    return identity.getDatabaseMajorVersion();
   }
 
   @Override
   public int getDatabaseMinorVersion() throws SQLException {
-    connection.checkClosed();
-    return connection.unwrap(SnowflakeConnectionImpl.class).getDatabaseMinorVersion();
+    return identity.getDatabaseMinorVersion();
   }
 
   @Override
   public int getJDBCMajorVersion() throws SQLException {
-    connection.checkClosed();
-    return Integer.parseInt(JDBCVersion.split("\\.", 2)[0]);
+    return identity.getJDBCMajorVersion();
   }
 
   @Override
   public int getJDBCMinorVersion() throws SQLException {
-    connection.checkClosed();
-    return Integer.parseInt(JDBCVersion.split("\\.", 2)[1]);
+    return identity.getJDBCMinorVersion();
   }
 
   @Override
   public int getSQLStateType() throws SQLException {
-    return sqlStateSQL;
+    return capabilities.getSQLStateType();
   }
 
   @Override
   public boolean locatorsUpdateCopy() throws SQLException {
-    return false;
+    return capabilities.locatorsUpdateCopy();
   }
 
   @Override
   public boolean supportsStatementPooling() throws SQLException {
-    connection.checkClosed();
-    return false;
+    return capabilities.supportsStatementPooling();
   }
 
   @Override
@@ -1037,13 +909,12 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getSchemas(catalog, schemaPattern);
   }
 
   @Override
   public boolean supportsStoredFunctionsUsingCallSyntax() throws SQLException {
-    connection.checkClosed();
-    return true;
+    return capabilities.supportsStoredFunctionsUsingCallSyntax();
   }
 
   @Override
@@ -1084,19 +955,6 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   }
 
   @Override
-  public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
-    }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
-  }
-
-  @Override
-  public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    throw new SQLFeatureNotSupportedException("isWrapperFor not supported");
-  }
-
-  @Override
   public ResultSet getStreams(String catalog, String schemaPattern, String streamName)
       throws SQLException {
     throw new NotImplementedException();
@@ -1110,6 +968,8 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
       String columnNamePattern,
       boolean extendedSet)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getColumns(
+        catalog, schemaPattern, tableNamePattern, columnNamePattern, extendedSet);
   }
 }

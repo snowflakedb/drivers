@@ -14,12 +14,12 @@ plugins {
 // ====================
 // Project metadata
 // ====================
-def oldJdbcVersion = '4.0.1'
+def oldJdbcVersion = '4.3.1'
 def slf4jVersion = '2.0.9'
 def lombokVersion = '1.18.42'
 
 group = 'com.snowflake'
-version = '0.1.0'
+version = '4.0.0'
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
 
@@ -27,7 +27,15 @@ targetCompatibility = '1.8'
 // Dependency resolution
 // ====================
 repositories {
-    mavenCentral()
+    // On Jenkins, resolve via Snowflake's Artifactory Maven Central proxy to avoid public Central rate limits.
+    if (System.getenv('JENKINS_HOME')) {
+        maven {
+            name = 'Snowflake internal Artifactory (Maven Central proxy)'
+            url 'https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/development-maven-virtual'
+        }
+    } else {
+        mavenCentral()
+    }
 }
 
 configurations {
@@ -36,7 +44,9 @@ configurations {
 
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testImplementation 'org.mockito:mockito-core:4.6.1'
+    testImplementation 'org.mockito:mockito-core:4.11.0'
+    testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.4.4'
+    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
     testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
     testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 
@@ -45,7 +55,6 @@ dependencies {
     implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
     implementation 'javax.annotation:javax.annotation-api:1.3.2'
     implementation 'org.apache.arrow:arrow-vector:17.0.0'
-    implementation 'org.apache.arrow:arrow-memory:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-core:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
     implementation 'org.apache.arrow:arrow-c-data:17.0.0'
@@ -80,10 +89,15 @@ checkstyle {
 tasks.withType(Checkstyle).configureEach {
     // Don't check generated sources
     exclude '**/protobuf_gen/**'
+    exclude '**/DriverVersion.java'
     reports {
         xml.required = true
         html.required = true
     }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
 }
 
 jacoco {
@@ -112,8 +126,35 @@ tasks.register('generateProtobuf', Exec) {
         '--output', 'src/main/java/'
 }
 
+def generatedVersionDir = layout.buildDirectory.dir("generated/sources/version/main/java")
+
+tasks.register('generateDriverVersion') {
+    inputs.property("version", project.version)
+    outputs.dir(generatedVersionDir)
+    doLast {
+        def pkgDir = generatedVersionDir.get()
+            .dir("net/snowflake/client/api/driver").asFile
+        pkgDir.mkdirs()
+        new File(pkgDir, "DriverVersion.java").text = """\
+package net.snowflake.client.api.driver;
+
+import javax.annotation.Generated;
+
+@Generated("generateDriverVersion")
+final class DriverVersion {
+  static final String VALUE = "${project.version}";
+
+  private DriverVersion() {}
+}
+"""
+    }
+}
+
+sourceSets.main.java.srcDir(generatedVersionDir)
+
 tasks.named('compileJava') {
     dependsOn('generateProtobuf')
+    dependsOn('generateDriverVersion')
 }
 
 // ====================
@@ -130,10 +171,17 @@ jar {
     }
 }
 
+// Copy the cargo-built native lib into the JAR's resources so JNICoreTransport
+// can extract it at runtime (no CORE_PATH env var required for end users).
+// Path inside the JAR: net/snowflake/client/internal/unicore/native/.
+// The actual filenames produced by `cargo build --package jdbc_bridge`:
+//   - linux:   libjdbc_bridge.so
+//   - macos:   libjdbc_bridge.dylib
+//   - windows: jdbc_bridge.dll
 def copyNativeLib = tasks.register('copyNativeLib', Copy) {
     from '../target/release'
-    include 'libjdbc.*'
-    into 'build/resources/main'
+    include 'libjdbc_bridge.*', 'jdbc_bridge.dll'
+    into 'build/resources/main/net/snowflake/client/internal/unicore/native'
 }
 
 tasks.named('processResources') {
@@ -172,16 +220,71 @@ publishing {
 // ====================
 // Test tasks
 // ====================
+testlogger {
+    theme 'standard'
+    showExceptions true
+    showStackTraces true
+    // Strip JUnit/Gradle/JDK frames from "Caused by" chains so the
+    // application stack frame is the first thing you see.
+    showFullStackTraces false
+    showCauses true
+    showStandardStreams false
+    showFailedStandardStreams true
+    // Flag tests slower than 30s
+    slowThreshold 30_000
+    showSummary true
+}
+
 def configureCommonTestTask = { t ->
-    t.useJUnitPlatform()
+    t.useJUnitPlatform {
+        def includeTags = System.getenv('GRADLE_INCLUDE_TAGS')?.trim()
+        def excludeTags = System.getenv('GRADLE_EXCLUDE_TAGS')?.trim()
+        if (includeTags) {
+            includeTags.split(',').each { tag -> it.includeTags tag.trim() }
+        }
+        if (excludeTags) {
+            excludeTags.split(',').each { tag -> it.excludeTags tag.trim() }
+        }
+        if (!includeTags && !excludeTags) {
+            it.excludeTags 'requires_browser'
+        }
+    }
     t.minHeapSize = '1g'
     t.maxHeapSize = '4g'
+
+    // Run test classes across parallel JVM forks (one Snowflake session each).
+    // Defaults to 4; override via GRADLE_MAX_PARALLEL_FORKS.
+    def rawForks = System.getenv('GRADLE_MAX_PARALLEL_FORKS')
+    def forks = rawForks?.trim()
+    if (forks) {
+        int parsedForks
+        try {
+            parsedForks = Integer.parseInt(forks)
+            if (parsedForks < 1) {
+                throw new NumberFormatException("value must be >= 1")
+            }
+        } catch (NumberFormatException e) {
+            throw new GradleException("Environment variable GRADLE_MAX_PARALLEL_FORKS must be a positive integer, but was: '${rawForks}'", e)
+        }
+        t.maxParallelForks = parsedForks
+    } else {
+        t.maxParallelForks = 4
+    }
+
+    // Log the effective fork count for CI visibility.
+    t.doFirst {
+        t.logger.lifecycle("[parallel] ${t.name}: maxParallelForks=${t.maxParallelForks} " +
+            "(runner availableProcessors=${Runtime.runtime.availableProcessors()})")
+    }
 
     if (JavaVersion.current().isJava9Compatible()) {
         t.jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
     }
     if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_19)) {
         t.jvmArgs '--enable-native-access=ALL-UNNAMED'
+    }
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+        t.jvmArgs '-Dnet.bytebuddy.experimental=true'
     }
 
     t.outputs.upToDateWhen { false }
@@ -191,7 +294,16 @@ def configureCommonTestTask = { t ->
                   System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
                   'libjdbc_bridge.so'
     t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
-    t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
+    // PARAMETER_PATH defaults to the checked-in parameters.json but may be overridden by the
+    // environment (e.g. tests/auth/auth_browser_jdbc.sh points it at parameters_preprod.json).
+    t.environment 'PARAMETER_PATH', System.getenv('PARAMETER_PATH') ?: file('../parameters.json').absolutePath
+
+    // Suppress the real browser launch for headless runs so EXTERNALBROWSER WireMock integration
+    // tests can simulate the callback. The auth-browser e2e suite sets SF_TEST_HEADLESS_BROWSER=true
+    // and needs the real opener, so leave the opener untouched in that case.
+    if (System.getenv('SF_TEST_HEADLESS_BROWSER') != 'true') {
+        t.environment 'SF_TEST_BROWSER_OPENER', 'noop'
+    }
 
     def rawRetryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
     def retryCount = rawRetryCount?.trim()
@@ -211,10 +323,37 @@ def configureCommonTestTask = { t ->
             maxFailures = 10
         }
     }
+
+    // Collect failed tests and reprint them at the end of the run so they're
+    // not buried in 500+ lines of pass output. test-logger has no end-of-run
+    // failure block; this hooks Gradle's TestListener directly.
+    // Synchronized: with maxParallelForks > 1 Gradle may invoke afterTest from
+    // multiple forks concurrently, so the backing list must be thread-safe and
+    // the afterSuite iteration must hold the list's monitor.
+    def failures = Collections.synchronizedList([] as List<String>)
+    t.afterTest { desc, result ->
+        if (result.resultType.toString() == 'FAILURE') {
+            def msg = result.exceptions ? result.exceptions[0].toString().readLines()[0] : 'no message'
+            failures << "  ${desc.className} > ${desc.name}\n      ${msg}"
+        }
+    }
+    t.afterSuite { desc, result ->
+        if (desc.parent == null && failures) {
+            t.logger.lifecycle("\nFAILED TESTS (${failures.size()}):")
+            synchronized (failures) {
+                failures.each { t.logger.lifecycle(it) }
+            }
+            t.logger.lifecycle("")
+        }
+    }
 }
 
 test {
     configureCommonTestTask(delegate)
+    // Parity tests need a special harness with two URLClassLoaders and system properties wired
+    // in by the parityTest task; running them under the default test task fails immediately on
+    // a missing parity.newClasspath property. Excluded by package.
+    exclude '**/e2e/parity/**'
 }
 
 tasks.register('referenceTest', Test) {
@@ -222,6 +361,13 @@ tasks.register('referenceTest', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     include 'net/snowflake/client/api/**'
     include 'net/snowflake/jdbc/**'
+    // Tests that reference symbols only present in this module's SnowflakeDriver
+    // (not on the legacy snowflake-jdbc artifact) must be excluded from this run.
+    exclude '**/SnowflakeDriverVersionTest.class'
+    // Parity tests are designed to be invoked only via the parityTest task; their harness
+    // assumes both drivers are loaded into isolated URLClassLoaders, which the legacy-driver
+    // reference run does not provide.
+    exclude '**/e2e/parity/**'
     // Isolate old-driver reference tests from this module's main runtime deps.
     // Keep only test output/resources + test-only runtime deps + old JDBC driver deps.
     classpath = sourceSets.test.output +
@@ -253,9 +399,62 @@ jacocoTestReport {
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect {
             fileTree(dir: it, exclude: [
-                '**/protobuf_gen/**'
+                '**/protobuf_gen/**',
+                '**/DriverVersion.class'
             ])
         }))
+    }
+}
+
+// Single-JVM parity oracle: loads universal-driver and snowflake-jdbc 4.3.1 into isolated
+// URLClassLoaders so DateTimeParityTest can hit both drivers side-by-side and diff their output
+// directly (instead of running the suite twice and reconciling JUnit XML).
+//
+// REQUIRES HOTSPOT (Temurin / Oracle / Liberica). On Eclipse OpenJ9 the universal-driver's
+// jdbc_bridge::sflogger_layer crashes with `operating system stack overflow` on the first JNI
+// event because its JNI sequence leaves a pending Java exception that subsequent calls never
+// clear. That is a real jdbc_bridge bug, not a parity-test bug, and it reproduces with the
+// regular `:test` task on OpenJ9 too. Track the fix separately; the matrix needs HotSpot today.
+tasks.register('parityTest', Test) {
+    configureCommonTestTask(delegate)
+    testClassesDirs = sourceSets.test.output.classesDirs
+
+    // Keep universal-driver off the test JVM's system classloader so each driver lives only
+    // inside its own URLClassLoader. Stricter isolation; not required for correctness but
+    // avoids classloader-confused JNI lookups if the bridge ever sets a thread-context loader
+    // we didn't expect.
+    classpath = sourceSets.test.output +
+            (sourceSets.test.runtimeClasspath - sourceSets.main.output)
+
+    dependsOn(processResources)
+
+    def newClasspath = sourceSets.main.runtimeClasspath
+            .collect { it.absolutePath }.join(File.pathSeparator)
+    def oldClasspath = configurations.referenceTestsOldDriver
+            .collect { it.absolutePath }.join(File.pathSeparator)
+
+    systemProperty 'parity.newClasspath', newClasspath
+    systemProperty 'parity.oldClasspath', oldClasspath
+
+    include '**/DateTimeParityTest.class'
+    shouldRunAfter test
+
+    doFirst {
+        // Fail fast with a clear message before the JVM forks on OpenJ9. The actual error from
+        // the bridge is unhelpful (a deep stack overflow inside `nativeHandleMessage`).
+        def vmName = System.getProperty('java.vm.name') ?: ''
+        if (vmName.contains('OpenJ9')) {
+            throw new GradleException(
+                "parityTest does not run on OpenJ9 (current java.vm.name='" + vmName + "'). " +
+                "Use HotSpot (e.g. Temurin or Oracle JDK). The universal-driver's JNI bridge " +
+                "currently crashes with a stack overflow on OpenJ9 because of a defect in " +
+                "jdbc_bridge::sflogger_layer; that is not a parity-test bug.")
+        }
+    }
+
+    reports {
+        junitXml.required = true
+        html.required = true
     }
 }
 

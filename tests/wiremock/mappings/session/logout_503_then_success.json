@@ -1,0 +1,55 @@
+{
+  "mappings": [
+    {
+      "name": "Logout first attempt fails with 503",
+      "scenarioName": "logout-retry",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "First Failure",
+      "request": {
+        "urlPath": "/session",
+        "method": "POST",
+        "queryParameters": {
+          "delete": {
+            "equalTo": "true"
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "jsonBody": {
+          "success": false,
+          "message": "Service Unavailable"
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Retry-After": "0"
+        }
+      }
+    },
+    {
+      "name": "Logout second attempt succeeds",
+      "scenarioName": "logout-retry",
+      "requiredScenarioState": "First Failure",
+      "newScenarioState": "Success",
+      "request": {
+        "urlPath": "/session",
+        "method": "POST",
+        "queryParameters": {
+          "delete": {
+            "equalTo": "true"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    }
+  ]
+}

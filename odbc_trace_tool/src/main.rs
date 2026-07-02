@@ -1,3 +1,4 @@
+mod captured_value;
 mod compare;
 mod generator;
 mod ir;
@@ -50,6 +51,26 @@ enum Commands {
         /// Tag used in the Catch2 test (e.g. "[replay]").
         #[arg(short, long, default_value = "replay")]
         tag: String,
+
+        /// Emit C++ with TODO comments for unsupported ODBC calls instead of failing.
+        #[arg(long, default_value = "false")]
+        allow_unsupported: bool,
+
+        /// Emit a capture harness (records obscured GetData values to JSON) instead
+        /// of a replay test with value assertions.
+        #[arg(long, default_value = "false")]
+        emit_capture_harness: bool,
+    },
+
+    /// Apply live-captured GetData values from a harness JSON file into an IR YAML.
+    ApplyCapture {
+        /// Path to the IR YAML file to update in place.
+        #[arg(short, long)]
+        ir: PathBuf,
+
+        /// Path to the seq-keyed JSON map written by the capture harness.
+        #[arg(long)]
+        values: PathBuf,
     },
 
     /// Extract SQL queries from a trace and write a YAML mapping file.
@@ -146,6 +167,7 @@ enum FormatArg {
     Auto,
     Iodbc,
     Unixodbc,
+    Winodbc,
 }
 
 fn main() {
@@ -163,8 +185,10 @@ fn main() {
             format,
             test_name,
             tag,
+            allow_unsupported,
+            emit_capture_harness,
         } => {
-            let calls = load_calls(&input, &format);
+            let (calls, entry_lines) = load_calls_with_lines(&input, &format);
 
             let qm_path =
                 query_map_path.unwrap_or_else(|| default_sibling_path(&input, "queries.yaml"));
@@ -172,19 +196,94 @@ fn main() {
             let qm = load_or_create_query_map(&qm_path, &calls);
 
             let config = generator::cpp::GeneratorConfig {
-                test_name,
+                test_name: if emit_capture_harness {
+                    format!("capture {test_name}")
+                } else {
+                    test_name
+                },
                 tag,
                 query_map: Some(qm),
+                allow_unsupported,
+                capture_mode: emit_capture_harness,
             };
-            let cpp_output = generator::cpp::generate(&calls, &config);
+            let cpp_output = match generator::cpp::generate_with_lines(
+                &calls,
+                &entry_lines,
+                &config,
+            ) {
+                Ok(cpp) => cpp,
+                Err(generator::cpp::GenerateError::Unsupported(calls)) => {
+                    eprintln!("Error: trace contains unsupported ODBC calls:");
+                    for entry in &calls {
+                        eprintln!("  {} ({} occurrence(s))", entry.name, entry.count);
+                    }
+                    eprintln!("Add typed handlers in odbc_trace_tool or pass --allow-unsupported");
+                    process::exit(1);
+                }
+                Err(generator::cpp::GenerateError::MissingRequired(missing)) => {
+                    eprintln!(
+                            "error: trace tool refused to generate code because the IR is missing required fields:"
+                        );
+                    for err in &missing {
+                        eprintln!("  - {err}");
+                    }
+                    eprintln!(
+                            "Fix the upstream parser (or trace) so each call carries the required field; we will not silently substitute a different valid ODBC value."
+                        );
+                    process::exit(2);
+                }
+            };
 
-            let out_path = output.unwrap_or_else(|| default_sibling_path(&input, "test.cpp"));
+            let out_path = if emit_capture_harness {
+                output.unwrap_or_else(|| {
+                    PathBuf::from("odbc_tests/tests/capture_harness/capture.cpp")
+                })
+            } else {
+                output.unwrap_or_else(|| default_sibling_path(&input, "test.cpp"))
+            };
+
+            if let Some(parent) = out_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("Error creating output directory: {e}");
+                    process::exit(1);
+                }
+            }
 
             if let Err(e) = std::fs::write(&out_path, &cpp_output) {
                 eprintln!("Error writing output file: {e}");
                 process::exit(1);
             }
             println!("Generated test written to {}", out_path.display());
+        }
+        Commands::ApplyCapture { ir, values } => {
+            let json = std::fs::read_to_string(&values).unwrap_or_else(|e| {
+                eprintln!("Error reading capture values {}: {e}", values.display());
+                process::exit(1);
+            });
+            let by_seq = captured_value::parse_capture_map(&json).unwrap_or_else(|e| {
+                eprintln!("Error parsing capture values: {e}");
+                process::exit(1);
+            });
+
+            let mut trace_ir = ir::load_ir_yaml(&ir).unwrap_or_else(|e| {
+                eprintln!("Error loading IR YAML {}: {e}", ir.display());
+                process::exit(1);
+            });
+            trace_ir.apply_captured_values(&by_seq);
+
+            let yaml = serde_yaml::to_string(&trace_ir).unwrap_or_else(|e| {
+                eprintln!("Error serializing IR: {e}");
+                process::exit(1);
+            });
+            if let Err(e) = std::fs::write(&ir, &yaml) {
+                eprintln!("Error writing IR {}: {e}", ir.display());
+                process::exit(1);
+            }
+            println!(
+                "Applied {} captured value(s) to {}",
+                by_seq.len(),
+                ir.display()
+            );
         }
         Commands::Split {
             input,
@@ -378,15 +477,51 @@ fn load_ir(input: &Path, format: &FormatArg) -> ir::TraceIr {
 
 /// Load a flat call list, either from IR YAML or by parsing a trace log.
 fn load_calls(input: &Path, format: &FormatArg) -> Vec<model::OdbcCall> {
+    load_calls_with_lines(input, format).0
+}
+
+/// Like [`load_calls`] but also returns per-call source trace line numbers
+/// when they can be recovered. The IR YAML preserves entry lines as
+/// `path:line` strings; we parse the trailing integer back out so the
+/// generator's validator can include it in error messages. Trace-file
+/// inputs return the raw line numbers directly. Lines are returned in a
+/// parallel `Vec<Option<usize>>` aligned with the returned calls.
+fn load_calls_with_lines(
+    input: &Path,
+    format: &FormatArg,
+) -> (Vec<model::OdbcCall>, Vec<Option<usize>>) {
     if is_yaml_file(input) {
         let trace_ir = ir::load_ir_yaml(input).unwrap_or_else(|e| {
             eprintln!("Error loading IR YAML {}: {e}", input.display());
             process::exit(1);
         });
-        trace_ir.flatten_calls()
+        let ops = trace_ir.all_operations_sorted();
+        let calls = ops.iter().map(|op| op.call.clone()).collect();
+        let lines = ops
+            .iter()
+            .map(|op| {
+                // Operation.entry_line is formatted as `"path:line"` (or
+                // bare `"line"`); extract the trailing integer when
+                // present so the generator's validator can surface it.
+                op.entry_line.as_deref().and_then(|s| {
+                    s.rsplit_once(':')
+                        .map(|(_, n)| n)
+                        .unwrap_or(s)
+                        .parse::<usize>()
+                        .ok()
+                })
+            })
+            .collect();
+        (calls, lines)
     } else {
         let trace = parse_trace(input, format);
-        trace.calls.into_iter().map(|tc| tc.call).collect()
+        let mut calls = Vec::with_capacity(trace.calls.len());
+        let mut lines = Vec::with_capacity(trace.calls.len());
+        for tc in trace.calls {
+            lines.push(tc.entry_line);
+            calls.push(tc.call);
+        }
+        (calls, lines)
     }
 }
 
@@ -437,11 +572,15 @@ fn parse_trace(input: &std::path::Path, format: &FormatArg) -> model::TraceLog {
         FormatArg::Auto => parser::parse_file_auto(input),
         FormatArg::Iodbc => parser::parse_file(input, model::TraceFormat::IOdbc),
         FormatArg::Unixodbc => parser::parse_file(input, model::TraceFormat::UnixOdbc),
+        FormatArg::Winodbc => parser::parse_file(input, model::TraceFormat::WinOdbc),
     };
 
     match result {
         Ok(mut trace) => {
             trace.header.source_file = Some(input.display().to_string());
+            if matches!(format, FormatArg::Auto) {
+                println!("Detected format: {:?}", trace.header.format);
+            }
             trace
         }
         Err(e) => {

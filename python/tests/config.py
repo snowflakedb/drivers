@@ -11,6 +11,10 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 def get_test_parameters() -> dict[str, Any]:
     """Get test connection parameters from environment or parameters file.
 
+    Loads the base ``testconnection`` section from the parameters file, then overlays
+    any keys from ``testconnection-python`` when present. MFA credentials can still
+    be overridden via environment variables.
+
     Returns:
         Dictionary containing test connection parameters from parameters.json
         or environment variables as fallback.
@@ -21,10 +25,17 @@ def get_test_parameters() -> dict[str, Any]:
         with open(parameter_path) as f:
             parameters = json.load(f)
         params = parameters.get("testconnection", {})
+        python_overrides = parameters.get("testconnection-python")
+        if python_overrides:
+            params.update(python_overrides)
         # MFA credentials are not typically present in parameters.json (they belong to a
         # separate MFA-enabled account user).  Always overlay from env vars so that MFA
         # E2E tests can run in any environment regardless of whether parameters.json exists.
-        mfa_env_vars = ["SNOWFLAKE_TEST_MFA_USER", "SNOWFLAKE_TEST_MFA_PASSWORD", "SNOWFLAKE_TEST_MFA_PASSCODE"]
+        mfa_env_vars = [
+            "SNOWFLAKE_TEST_MFA_USER",
+            "SNOWFLAKE_TEST_MFA_PASSWORD",
+            "SNOWFLAKE_TEST_MFA_SEED",
+        ]
         for key in mfa_env_vars:
             env_val = os.environ.get(key)
             if env_val is not None:
@@ -50,6 +61,6 @@ def get_test_parameters() -> dict[str, Any]:
         "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
         "SNOWFLAKE_TEST_MFA_USER",
         "SNOWFLAKE_TEST_MFA_PASSWORD",
-        "SNOWFLAKE_TEST_MFA_PASSCODE",
+        "SNOWFLAKE_TEST_MFA_SEED",
     ]
     return {k: os.environ.get(k) for k in env_vars}

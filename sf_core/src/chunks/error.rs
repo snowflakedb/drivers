@@ -36,6 +36,12 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to encode chunk as Arrow IPC"))]
+    ArrowIpcEncoding {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to decode base64 data"))]
     Base64Decoding {
         source: base64::DecodeError,
@@ -45,6 +51,12 @@ pub enum ChunkError {
     #[snafu(display("Failed to decompress gzip chunk data"))]
     ChunkDecompression {
         source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Background chunk-decompression task failed to join"))]
+    SpawnBlockingFailed {
+        source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
     },

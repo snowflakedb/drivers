@@ -1,11 +1,13 @@
 pub mod arrow_deserialize;
 pub mod arrow_extract_value;
 pub mod arrow_result_helper;
+pub mod cloud_gating;
 pub mod config;
 pub mod file_utils;
 pub mod mocks;
 pub mod private_key_helper;
 pub mod put_get_common;
 pub mod snowflake_test_client;
+pub mod test_server;
 pub mod test_utils;
 pub mod tls_proxy;

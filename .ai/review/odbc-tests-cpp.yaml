@@ -1,11 +1,9 @@
 id: odbc-tests-cpp-rules
 friendly_name: "Universal Driver ODBC Tests (C++)"
-status: shadow
-percentage_of_prs_reviewed: 100
+status: enabled
 allowed_folders:
   - "odbc_tests"
 excluded_folders: []
-llm_model: "claude-4-sonnet"
 allowed_file_extensions:
   - ".cpp"
   - ".hpp"

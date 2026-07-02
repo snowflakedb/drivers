@@ -89,6 +89,16 @@ pub fn create_connection(
     set_connection_option(rt, &conn_handle, "role", &params.role)?;
     set_connection_option(rt, &conn_handle, "host", &params.host)?;
 
+    // Opt into HTTP(S)_PROXY env-var detection. sf_core defaults `use_proxy_env`
+    // to false (default-deny, introduced in SNOW-2314158), but the WireMock perf
+    // harness routes traffic to the proxy purely via the HTTPS_PROXY/HTTP_PROXY
+    // env vars. Without this opt-in the recorded-http suite records zero traffic
+    // and replay fails with "No mapping files found". Mirrors the python adapter's
+    // use_proxy_env=True and the ODBC adapter's USE_PROXY_ENV=true.
+    if std::env::var("HTTPS_PROXY").is_ok() || std::env::var("HTTP_PROXY").is_ok() {
+        set_connection_option(rt, &conn_handle, "use_proxy_env", "true")?;
+    }
+
     set_tls_options(rt, &conn_handle, params)?;
 
     // Initialize connection (performs login)
@@ -164,13 +174,26 @@ pub fn get_server_version(rt: &DriverRuntime, conn_handle: ConnectionHandle) -> 
         .statement_execute_query_blocking(StatementExecuteQueryRequest {
             stmt_handle: Some(version_stmt),
             bindings: None,
+            timeout_seconds: None,
         })
         .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
-    let result = response
-        .result
-        .ok_or_else(|| "No result in execute response".to_string())?;
-    let mut reader = create_arrow_reader(result)?;
+    let rs_handle = match response.result {
+        Some(execute_query_response::Result::Single(rs)) => rs
+            .result_set_handle
+            .ok_or_else(|| "Missing ResultSet handle".to_string())?,
+        _ => return Err("Unexpected result type from server version query".to_string()),
+    };
+    let stream_response = rt
+        .client
+        .result_set_get_stream_blocking(ResultSetGetStreamRequest {
+            result_set_handle: Some(rs_handle.clone()),
+        })
+        .map_err(|e| format!("Failed to get result set stream: {:?}", e))?;
+    let _ = rt.client.result_set_release_blocking(ResultSetReleaseRequest {
+        result_set_handle: Some(rs_handle),
+    });
+    let mut reader = create_arrow_reader(stream_response)?;
 
     if let Some(batch_result) = reader.next() {
         let batch = batch_result.map_err(|e| format!("Failed to read batch: {:?}", e))?;
@@ -223,6 +246,7 @@ pub fn execute_setup_queries(
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
             .map_err(|e| format!("Setup query execution failed: {:?}", e))?;
 
@@ -250,6 +274,7 @@ fn set_connection_option(
         .connection_set_options_blocking(ConnectionSetOptionsRequest {
             conn_handle: Some(*conn_handle),
             options,
+            no_connection_details: false,
         })
         .map_err(|e| format!("Connection option set failed ({}): {:?}", key, e))?;
     Ok(())

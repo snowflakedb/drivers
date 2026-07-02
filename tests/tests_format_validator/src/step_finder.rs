@@ -613,6 +613,115 @@ impl MethodBoundaryFinder {
 
         Ok(empty_steps)
     }
+
+    /// Find the end line of a method given its already-known start line index.
+    /// Avoids rescanning the file from the top — use when start position is known.
+    pub(super) fn find_method_end_from(&self, lines: &[&str], start_idx: usize) -> usize {
+        let mut brace_depth = 0;
+        let mut found_opening_brace = false;
+        let search_limit = start_idx + 500;
+
+        if self.config.uses_braces {
+            let start_line = lines[start_idx].trim();
+            let mut in_string = false;
+            let mut string_delimiter = '\0';
+            let mut escaped = false;
+
+            for ch in start_line.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match ch {
+                    '\\' if in_string => escaped = true,
+                    '"' | '\'' => {
+                        if !in_string {
+                            in_string = true;
+                            string_delimiter = ch;
+                        } else if ch == string_delimiter {
+                            in_string = false;
+                            string_delimiter = '\0';
+                        }
+                    }
+                    '{' if !in_string => {
+                        brace_depth += 1;
+                        found_opening_brace = true;
+                    }
+                    '}' if !in_string => {
+                        if found_opening_brace {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                return start_idx;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        for (i, line) in lines.iter().enumerate().skip(start_idx + 1) {
+            let trimmed = line.trim();
+
+            if i > search_limit && !found_opening_brace {
+                break;
+            }
+
+            if self.config.uses_braces {
+                let mut in_string = false;
+                let mut string_delimiter = '\0';
+                let mut escaped = false;
+
+                for ch in trimmed.chars() {
+                    if escaped {
+                        escaped = false;
+                        continue;
+                    }
+                    match ch {
+                        '\\' if in_string => escaped = true,
+                        '"' | '\'' => {
+                            if !in_string {
+                                in_string = true;
+                                string_delimiter = ch;
+                            } else if ch == string_delimiter {
+                                in_string = false;
+                                string_delimiter = '\0';
+                            }
+                        }
+                        '{' if !in_string => {
+                            brace_depth += 1;
+                            found_opening_brace = true;
+                        }
+                        '}' if !in_string => {
+                            if found_opening_brace {
+                                brace_depth -= 1;
+                                if brace_depth == 0 {
+                                    return i;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if !self.config.method_end_patterns.is_empty() {
+                let line_indent = line.len() - line.trim_start().len();
+                let start_line_indent =
+                    lines[start_idx].len() - lines[start_idx].trim_start().len();
+
+                if line_indent <= start_line_indent {
+                    for pattern in self.config.method_end_patterns {
+                        if trimmed == *pattern || trimmed.starts_with(pattern) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        }
+
+        lines.len()
+    }
 }
 
 pub struct StepFinder {
@@ -793,6 +902,58 @@ impl StepFinder {
         } else {
             Ok((vec![], vec![]))
         }
+    }
+
+    /// Find all test methods that are missing required When/Then Gherkin step comments.
+    ///
+    /// Returns a list of `(method_name, line_number, missing_keywords)` for each method
+    /// that lacks at least one non-empty `// When <text>` or `// Then <text>` comment.
+    pub fn find_methods_missing_when_then(
+        &self,
+        file_path: &Path,
+    ) -> Result<Vec<(String, usize, Vec<String>)>> {
+        let content = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
+
+        let comment_prefix = self.comment_prefix();
+        let boundary_finder = MethodBoundaryFinder::new(self.language_config());
+        let all_methods = boundary_finder.find_all_test_methods_with_lines(&content)?;
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Non-empty When/Then: keyword followed by at least one non-whitespace char.
+        // Anchored to start of line to avoid matching inside string literals.
+        let when_regex = Regex::new(&format!(
+            r"(?m)^\s*{}\s*When\s+\S",
+            regex::escape(comment_prefix)
+        ))?;
+        let then_regex = Regex::new(&format!(
+            r"(?m)^\s*{}\s*Then\s+\S",
+            regex::escape(comment_prefix)
+        ))?;
+
+        let mut violations = Vec::new();
+        for (method_name, line_number) in all_methods {
+            // line_number is 1-indexed; convert to 0-indexed start
+            let start_idx = line_number.saturating_sub(1);
+            let end_idx = boundary_finder.find_method_end_from(&lines, start_idx);
+
+            let method_text = lines[start_idx..=end_idx.min(lines.len().saturating_sub(1))]
+                .join("\n");
+
+            let mut missing = Vec::new();
+            if !when_regex.is_match(&method_text) {
+                missing.push("When".to_string());
+            }
+            if !then_regex.is_match(&method_text) {
+                missing.push("Then".to_string());
+            }
+
+            if !missing.is_empty() {
+                violations.push((method_name, line_number, missing));
+            }
+        }
+
+        Ok(violations)
     }
 
     /// Find test functions/methods with line numbers that match a scenario name

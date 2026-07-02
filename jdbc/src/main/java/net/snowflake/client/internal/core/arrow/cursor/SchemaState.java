@@ -1,7 +1,7 @@
 package net.snowflake.client.internal.core.arrow.cursor;
 
 import java.sql.SQLException;
-import java.sql.Types;
+import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
@@ -9,6 +9,7 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverterUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -16,20 +17,51 @@ import org.apache.arrow.vector.types.pojo.Field;
 public final class SchemaState {
   private static final DataConversionContext EMPTY_CONTEXT = new DataConversionContext() {};
 
+  /**
+   * Sample TIME used to measure the formatted display width of a TIME column: every field is
+   * non-zero (12:34:56.123456789) so a scale-9 render exercises the widest possible output. Mirrors
+   * snowflake-jdbc's {@code SFResultSetMetaData}.
+   */
+  private static final LocalTime TIME_WIDTH_SAMPLE = LocalTime.of(12, 34, 56, 123_456_789);
+
+  private final DataConversionContext context;
   private String[] columnNames;
   private int[] columnTypes;
+  private int[] columnScales;
   private ArrowVectorConverter[] converterCache;
 
   public SchemaState(VectorSchemaRoot root) throws SQLException {
+    this(root, EMPTY_CONTEXT);
+  }
+
+  public SchemaState(VectorSchemaRoot root, DataConversionContext context) throws SQLException {
+    this.context = context;
     List<Field> fields = root.getSchema().getFields();
     columnNames = new String[fields.size()];
     columnTypes = new int[fields.size()];
+    columnScales = new int[fields.size()];
     converterCache = new ArrowVectorConverter[fields.size()];
     for (int i = 0; i < fields.size(); i++) {
       Field field = fields.get(i);
       columnNames[i] = field.getName();
       SnowflakeType logicalType = ArrowVectorConverterUtil.getSnowflakeTypeFromFieldMetadata(field);
-      columnTypes[i] = mapLogicalTypeToSqlType(logicalType);
+      columnTypes[i] = SnowflakeUtil.toSqlType(logicalType);
+      columnScales[i] = readScale(field);
+    }
+  }
+
+  private static int readScale(Field field) {
+    if (field.getMetadata() == null) {
+      return 0;
+    }
+    String scaleStr = field.getMetadata().get("scale");
+    if (scaleStr == null) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(scaleStr);
+    } catch (NumberFormatException e) {
+      return 0;
     }
   }
 
@@ -37,8 +69,26 @@ public final class SchemaState {
     return columnNames;
   }
 
+  /** The session-derived conversion context (timezone, date/time formatters, date flags). */
+  public DataConversionContext getConversionContext() {
+    return context;
+  }
+
   public int[] getColumnTypes() {
     return columnTypes;
+  }
+
+  public int[] getColumnScales() {
+    return columnScales;
+  }
+
+  /**
+   * Length of a TIME value formatted with the session {@code TIME_OUTPUT_FORMAT}, used for TIME
+   * column precision/display size. Mirrors snowflake-jdbc's {@code SFResultSetMetaData}, which
+   * formats a scale-9 sample time and takes its string length (8 for the default "HH24:MI:SS").
+   */
+  public int getTimeStringLength() {
+    return context.getTimeFormatter().format(TIME_WIDTH_SAMPLE, 9).length();
   }
 
   public int getColumnCount() {
@@ -58,7 +108,7 @@ public final class SchemaState {
     try {
       FieldVector vector = root.getVector(index);
       ArrowVectorConverter converter =
-          ArrowVectorConverterUtil.initConverter(vector, EMPTY_CONTEXT, index);
+          ArrowVectorConverterUtil.initConverter(vector, context, index);
       converterCache[index] = converter;
       return converter;
     } catch (SnowflakeSQLException e) {
@@ -81,31 +131,6 @@ public final class SchemaState {
     converterCache = null;
     columnNames = null;
     columnTypes = null;
-  }
-
-  private int mapLogicalTypeToSqlType(SnowflakeType logicalType) {
-    if (logicalType == null) {
-      return Types.OTHER;
-    }
-    // TODO: Other types will be handled later
-    switch (logicalType) {
-      case TEXT:
-      case CHAR:
-      case VARIANT:
-        return Types.VARCHAR;
-      case FIXED:
-      case DECFLOAT:
-        return Types.DECIMAL;
-      case REAL:
-        return Types.DOUBLE;
-      case BOOLEAN:
-        return Types.BOOLEAN;
-      case BINARY:
-        return Types.BINARY;
-      case DATE:
-        return Types.DATE;
-      default:
-        return Types.OTHER;
-    }
+    columnScales = null;
   }
 }

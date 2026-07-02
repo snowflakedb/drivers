@@ -6,7 +6,7 @@ import java.io.ByteArrayInputStream;
 import java.io.StringReader;
 import java.sql.PreparedStatement;
 import java.sql.SQLFeatureNotSupportedException;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

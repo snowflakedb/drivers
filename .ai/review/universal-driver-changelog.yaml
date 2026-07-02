@@ -1,0 +1,75 @@
+id: universal-driver-changelog
+friendly_name: "Universal Driver Changelog Rules"
+status: enabled
+allowed_folders: []
+excluded_folders: []
+rules:
+  - id: ud-pr-description-changelog-required
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Every PR that introduces a user-visible change must include a `## Changelog` section at the **end** of the PR description. This section is the source of truth for release notes and must describe what changed from the user's perspective.
+
+      **REQUIREMENT**:
+      1. The PR description MUST contain a `## Changelog` section.
+      2. It MUST be the **last section** in the PR description (nothing follows it except optional blank lines).
+      3. It MUST contain at least one bullet point written in user-facing language: what the user gains, what was fixed, or what changed in behavior — not how the code works internally.
+      4. Bullet points MUST start with a past-tense verb: `Added`, `Fixed`, `Removed`, `Improved`, `Changed`.
+      5. Avoid: Jira ticket numbers, PR numbers, internal module names, implementation details, or references to code structure.
+
+      **EXEMPTIONS** — Do NOT flag if ALL of the following are true:
+      - The PR touches only CI/CD config, tooling, tests, build scripts, or internal documentation with no effect on the shipped driver.
+      - Even then, an empty `## Changelog` section is acceptable but not required.
+
+      **POSITION RULE**: The `## Changelog` section must be last. If other sections (e.g., `## Test plan`, `## Summary`) appear after it, that is a violation.
+
+      ❌ **BAD — No Changelog section:**
+      ```
+      ## Summary
+      Fixes a connection reset bug.
+
+      ## Test plan
+      - Ran integration tests.
+      ```
+
+      ❌ **BAD — Changelog is not the last section:**
+      ```
+      ## Summary
+      Fixes a connection reset bug.
+
+      ## Changelog
+      - Fixed connection reset on idle timeout.
+
+      ## Test plan
+      - Ran integration tests.
+      ```
+
+      ❌ **BAD — Internal/implementation language:**
+      ```
+      ## Changelog
+      - Refactored `SessionManager::reset_idle_state()` to call `flush_pending_ops` before closing.
+      ```
+
+      ✅ **GOOD:**
+      ```
+      ## Summary
+      Fixes a connection reset bug on idle timeout.
+
+      ## Test plan
+      - Ran integration tests.
+
+      ## Changelog
+      - Fixed an issue where connections were unexpectedly reset after an idle timeout period.
+      ```
+
+      ✅ **GOOD (multiple components):**
+      ```
+      ## Summary
+      Adds OAuth token refresh support.
+
+      ## Test plan
+      - Added integration tests for token refresh flow.
+
+      ## Changelog
+      - Added automatic OAuth token refresh to prevent authentication failures on long-running sessions.
+      - Improved error messages when OAuth configuration is invalid.
+      ```

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Types;
 import java.util.Arrays;
@@ -13,7 +14,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SkipForJSONResultSet;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -22,6 +24,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 public class FloatTests extends SnowflakeIntegrationTestBase {
   private static final String FLOAT_TYPE = "FLOAT";
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
+  // Realistic large maximum value (15 significant digits, works in both Arrow and JSON)
+  private static final double FLOAT_REALISTIC_MAX = 1.79769313486231e+308;
 
   @Test
   public void shouldCastFloatValuesToAppropriateTypeForFloatAndSynonyms() throws Exception {
@@ -106,6 +110,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
 
   @ParameterizedTest
   @MethodSource("floatCaseBoundaryValues")
+  @SkipForJSONResultSet("JSON format loses precision for Double.MAX_VALUE boundary values")
   public void shouldHandleFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms(
       String caseName, String sql) throws Exception {
     // Given Snowflake client is logged in
@@ -152,6 +157,34 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
 
           // Then Result should verify precision around 15 decimal digits
           assertSingleRow(resultSet, Arrays.asList(123456789012345.0, 1234567890123456.0));
+        });
+  }
+
+  @Test
+  public void shouldHandleRealisticLargeFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms()
+      throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Query "SELECT <query_values>" is executed
+    String sql = String.format("SELECT %1$s::%2$s, -%1$s::%2$s", FLOAT_REALISTIC_MAX, FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain floats [<expected_values>]
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+          double val1 = resultSet.getDouble(1);
+          double val2 = resultSet.getDouble(2);
+
+          assertEquals(FLOAT_REALISTIC_MAX, val1, Math.abs(FLOAT_REALISTIC_MAX * 1e-15));
+          assertEquals(-FLOAT_REALISTIC_MAX, val2, Math.abs(FLOAT_REALISTIC_MAX * 1e-15));
+
+          // Verify values are finite (works in both Arrow and JSON)
+          assertFalse(Double.isInfinite(val1), "Column 1 should be finite");
+          assertFalse(Double.isInfinite(val2), "Column 2 should be finite");
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
   }
 
@@ -309,6 +342,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
+  @SkipForJSONResultSet("JSON format loses precision for Double.MAX_VALUE boundary values")
   public void shouldHandleFloatBoundaryValuesFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
@@ -470,6 +504,39 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
               resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
           assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
+  }
+
+  @Test
+  public void shouldInsertFloatUsingParameterBindingForFloatAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists
+    String tableName = createTempTable(connection, "ud_float_bind_", "col " + FLOAT_TYPE);
+
+    // When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
+    Double[] testValues = {0.0, 123.456, -789.012, null};
+    // Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+      for (Double value : testValues) {
+        if (value == null) {
+          preparedStatement.setNull(1, Types.DOUBLE);
+        } else {
+          preparedStatement.setDouble(1, value);
+        }
+        preparedStatement.addBatch();
+      }
+      int[] counts = preparedStatement.executeBatch();
+      assertEquals(testValues.length, counts.length, "Expected one count per batched row");
+    }
+
+    // Then Result should contain the same values including NULL
+    withQueryResult(
+        connection,
+        "SELECT * FROM " + tableName + " ORDER BY col NULLS LAST",
+        resultSet ->
+            assertSingleColumnRows(resultSet, Arrays.asList(-789.012, 0.0, 123.456, null)));
   }
 
   private static void assertSingleRow(ResultSet resultSet, List<Double> expected) throws Exception {

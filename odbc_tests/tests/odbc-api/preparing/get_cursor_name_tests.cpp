@@ -23,6 +23,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: Auto-generated cursor
   SQLCHAR cursor_name[128] = {};
   SQLSMALLINT name_len = 0;
   SQLRETURN ret = SQLGetCursorName(stmt_handle(), cursor_name, sizeof(cursor_name), &name_len);
+
+  OLD_IODBC_ONLY("BD#66") {
+    // The old driver doesn't expose auto-generated cursor names through iODBC:
+    //   the very first SQLGetCursorName call returns SQL_ERROR (no SQL_CUR name
+    //   is synthesized on an unprepared statement). The new driver emits a
+    //   SQL_CUR-prefixed default like unixODBC.
+    REQUIRE(ret == SQL_ERROR);
+    return;
+  }
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(name_len > 0);
 
@@ -48,6 +57,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetCursorName: Different statements h
   SQLSMALLINT len1 = 0, len2 = 0;
 
   ret = SQLGetCursorName(stmt1, name1, sizeof(name1), &len1);
+  OLD_IODBC_ONLY("BD#66") {
+    // The old driver doesn't synthesize per-statement auto cursor names through
+    //   iODBC; SQLGetCursorName on a fresh statement returns SQL_ERROR.
+    REQUIRE(ret == SQL_ERROR);
+    SQLFreeHandle(SQL_HANDLE_STMT, stmt1);
+    SQLFreeHandle(SQL_HANDLE_STMT, stmt2);
+    SQLDisconnect(dbc_handle());
+    return;
+  }
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLGetCursorName(stmt2, name2, sizeof(name2), &len2);
   REQUIRE(ret == SQL_SUCCESS);
@@ -114,9 +132,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: Cursor name persists 
   SQLCHAR cursor_name[128] = {};
   SQLSMALLINT name_len = 0;
   ret = SQLGetCursorName(stmt_handle(), cursor_name, sizeof(cursor_name), &name_len);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(name_len == 11);
-  REQUIRE(std::string(reinterpret_cast<char*>(cursor_name)) == "CloseCursor");
+  OLD_IODBC_ONLY("BD#66") {
+    // The old driver under iODBC drops the cursor name once SQLCloseCursor
+    //   releases the underlying cursor: SQLGetCursorName returns SQL_ERROR
+    //   instead of replaying the user-supplied name. The new driver keeps
+    //   the name attached to the statement handle until another
+    //   SQLSetCursorName overrides it.
+    REQUIRE(ret == SQL_ERROR);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(name_len == 11);
+    REQUIRE(std::string(reinterpret_cast<char*>(cursor_name)) == "CloseCursor");
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture,
@@ -165,7 +193,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: NULL CursorName buffe
   // Per spec: "If CursorName is NULL, NameLengthPtr will still return the total number of characters"
   SQLSMALLINT name_len = 0;
   ret = SQLGetCursorName(stmt_handle(), nullptr, 0, &name_len);
-  REQUIRE(ret == SQL_SUCCESS);
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver flags the NULL buffer as an implicit string truncation
+    //   and returns SQL_SUCCESS_WITH_INFO instead of plain SQL_SUCCESS (same
+    //   pattern as SQLGetInfo with NULL InfoValuePtr).
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
   REQUIRE(name_len == 11);
 }
 
@@ -223,7 +259,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: HY090 for negative Bu
   SQLSMALLINT name_len = 0;
   // HY090: Invalid string or buffer length (negative BufferLength)
   SQLRETURN ret = SQLGetCursorName(stmt_handle(), cursor_name, -1, &name_len);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM validates BufferLength<0 itself and surfaces the ODBC 2.x
+    //   alias "S1090" before forwarding to the old driver.
+    REQUIRE_EXPECTED_ERROR(ret, "S1090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: HY010 during SQL_NEED_DATA",
@@ -243,7 +286,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: HY010 during SQL_NEED
   SQLCHAR name[64] = {};
   SQLSMALLINT name_len = 0;
   ret = SQLGetCursorName(stmt_handle(), name, sizeof(name), &name_len);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM catches SQLGetCursorName during SQL_NEED_DATA as a function
+    //   sequence error and surfaces the ODBC 2.x alias "S1010" before the old
+    //   driver can map it to "HY010".
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 
   SQLCancel(stmt_handle());
 }

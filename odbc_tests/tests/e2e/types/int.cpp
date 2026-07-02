@@ -380,7 +380,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert integer using parameter bindi
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should insert and select integers from table using batch parameter binding for int and synonyms",
                  "[int]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists

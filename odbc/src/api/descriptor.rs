@@ -1,41 +1,22 @@
 use crate::api::CDataType;
-use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
+use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
+use crate::api::error::StatementNotExecutedSnafu;
+use crate::api::handle_registry::HandleGuard;
+use crate::api::types::{DescriptorAccess, DescriptorKind, State, Statement};
+use crate::api::utils::{IrdFieldValue, compute_ird_field};
+use crate::api::{DescField, OdbcResult, StatementState, desc_from_handle};
+use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use tracing;
 
-/// Check if the owning statement is in a NeedData state (S8/S9/S10).
-///
-/// Uses `desc_ref_from_handle` to validate the descriptor handle (null
-/// and kind checks) and obtain a typed reference, then reads the
-/// back-pointer to the owning `Statement` to check its state.
-///
-/// ODBC spec allows ARD/APD/IPD access during S8-S10 (only IRD is
-/// restricted), but we block all four descriptor kinds to match
-/// reference driver behavior.
-fn check_need_data(desc_handle: sql::Handle) -> OdbcResult<()> {
-    let stmt_ptr = match desc_ref_from_handle(desc_handle)? {
-        DescriptorRef::Ard(desc) => desc.stmt,
-        DescriptorRef::Ird(desc) => desc.stmt,
-        DescriptorRef::Apd(desc) => desc.stmt,
-        DescriptorRef::Ipd(desc) => desc.stmt,
-    };
-    if !stmt_ptr.is_null() {
-        let stmt = unsafe { &*stmt_ptr };
-        if stmt.state.as_ref().is_need_data() {
-            return crate::api::error::InvalidDuringDaeSnafu.fail();
-        }
-    }
-    Ok(())
-}
-
-/// Get a descriptor field value
-pub fn get_desc_field(
+/// Get a descriptor field value.
+pub fn get_desc_field<E: OdbcEncoding>(
     desc_handle: sql::Handle,
     rec_number: sql::SmallInt,
     field_identifier: sql::SmallInt,
     value_ptr: sql::Pointer,
-    _buffer_length: sql::Integer,
-    _string_length_ptr: *mut sql::Integer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
 ) -> OdbcResult<()> {
     tracing::debug!(
         "get_desc_field: desc_handle={:?}, rec_number={}, field_identifier={}",
@@ -43,8 +24,6 @@ pub fn get_desc_field(
         rec_number,
         field_identifier
     );
-
-    check_need_data(desc_handle)?;
 
     if value_ptr.is_null() {
         tracing::error!("get_desc_field: value_ptr is null");
@@ -57,13 +36,45 @@ pub fn get_desc_field(
     }
 
     let field = DescField::try_from(field_identifier)?;
-    let desc_ref = desc_ref_from_handle(desc_handle)?;
+    let access = desc_from_handle(desc_handle)?;
 
-    match desc_ref {
-        DescriptorRef::Ard(desc) => get_ard_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ird(desc) => get_ird_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Apd(desc) => get_apd_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ipd(desc) => get_ipd_field(desc, rec_number, field, value_ptr),
+    if field == DescField::AllocType {
+        let alloc_type: sql::SmallInt = match &access {
+            DescriptorAccess::Implicit { .. } => 1, // SQL_DESC_ALLOC_AUTO
+            DescriptorAccess::Explicit { .. } => 2, // SQL_DESC_ALLOC_USER
+        };
+        unsafe {
+            std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, alloc_type);
+        }
+        return Ok(());
+    }
+
+    match access {
+        DescriptorAccess::Implicit { guard, kind } => {
+            let inner = guard.inner.lock();
+            if inner.state.as_ref().is_need_data() {
+                return crate::api::error::InvalidDuringDaeSnafu.fail();
+            }
+            match kind {
+                DescriptorKind::Ard => get_ard_field(&inner.ard, rec_number, field, value_ptr),
+                DescriptorKind::Ird => get_ird_field::<E>(
+                    &inner.ird,
+                    rec_number,
+                    field,
+                    value_ptr,
+                    buffer_length,
+                    string_length_ptr,
+                    &guard,
+                    &inner.state,
+                ),
+                DescriptorKind::Apd => get_apd_field(&inner.apd, rec_number, field, value_ptr),
+                DescriptorKind::Ipd => get_ipd_field(&inner.ipd, rec_number, field, value_ptr),
+            }
+        }
+        DescriptorAccess::Explicit { desc } => {
+            let desc = desc.lock();
+            get_ard_field(&desc, rec_number, field, value_ptr)
+        }
     }
 }
 
@@ -114,8 +125,8 @@ fn get_ard_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -185,8 +196,8 @@ fn get_ard_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -194,11 +205,16 @@ fn get_ard_field(
     }
 }
 
-fn get_ird_field(
+#[allow(clippy::too_many_arguments)]
+fn get_ird_field<E: OdbcEncoding>(
     desc: &crate::api::IrdDescriptor,
     rec_number: sql::SmallInt,
     field: DescField,
     value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+    guard: &HandleGuard<Statement>,
+    state: &State<StatementState>,
 ) -> OdbcResult<()> {
     if rec_number == 0 {
         match field {
@@ -225,18 +241,51 @@ fn get_ird_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported IRD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
         }
     } else {
-        tracing::warn!(
-            "get_desc_field: IRD record fields not supported (rec={})",
-            rec_number
-        );
-        crate::api::error::NoMoreDataSnafu.fail()
+        let schema = match state.as_ref() {
+            StatementState::Prepared { schema } => schema.clone(),
+            StatementState::QueryExecuted { reader, .. } => reader.schema(),
+            StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+            _ => return StatementNotExecutedSnafu.fail(),
+        };
+
+        let col_idx = (rec_number as usize) - 1;
+        if col_idx >= schema.fields().len() {
+            return crate::api::error::NoMoreDataSnafu.fail();
+        }
+
+        let arrow_field = schema.field(col_idx);
+        let dbc = guard.conn()?;
+        let numeric_settings = dbc.connection.lock().numeric_settings;
+
+        match compute_ird_field(arrow_field, field, &numeric_settings)? {
+            IrdFieldValue::SmallInt(v) => {
+                unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, v) };
+            }
+            IrdFieldValue::Integer(v) => {
+                unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::Integer, v) };
+            }
+            IrdFieldValue::Len(v) => {
+                unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::Len, v) };
+            }
+            IrdFieldValue::Str(s) => {
+                // TODO: pass a Warnings collector and propagate 01004 on truncation
+                write_string_bytes_i32::<E>(
+                    s,
+                    value_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -255,21 +304,39 @@ pub fn set_desc_field(
         field_identifier
     );
 
-    check_need_data(desc_handle)?;
-
     if rec_number < 0 {
         tracing::error!("set_desc_field: invalid negative rec_number {}", rec_number);
         return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
     let field = DescField::try_from(field_identifier)?;
-    let desc_ref = desc_ref_from_handle(desc_handle)?;
 
-    match desc_ref {
-        DescriptorRef::Ard(desc) => set_ard_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ird(desc) => set_ird_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Apd(desc) => set_apd_field(desc, rec_number, field, value_ptr),
-        DescriptorRef::Ipd(desc) => set_ipd_field(desc, rec_number, field, value_ptr),
+    if field == DescField::AllocType {
+        return crate::api::error::InvalidDescriptorFieldIdSnafu {
+            field_id: field_identifier,
+        }
+        .fail();
+    }
+
+    let access = desc_from_handle(desc_handle)?;
+
+    match access {
+        DescriptorAccess::Implicit { guard, kind } => {
+            let mut inner = guard.inner.lock();
+            if inner.state.as_ref().is_need_data() {
+                return crate::api::error::InvalidDuringDaeSnafu.fail();
+            }
+            match kind {
+                DescriptorKind::Ard => set_ard_field(&mut inner.ard, rec_number, field, value_ptr),
+                DescriptorKind::Ird => set_ird_field(&mut inner.ird, rec_number, field, value_ptr),
+                DescriptorKind::Apd => set_apd_field(&mut inner.apd, rec_number, field, value_ptr),
+                DescriptorKind::Ipd => set_ipd_field(&mut inner.ipd, rec_number, field, value_ptr),
+            }
+        }
+        DescriptorAccess::Explicit { desc } => {
+            let mut desc = desc.lock();
+            set_ard_field(&mut desc, rec_number, field, value_ptr)
+        }
     }
 }
 
@@ -317,8 +384,8 @@ fn set_ard_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported ARD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -428,8 +495,8 @@ fn set_ard_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported ARD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -459,8 +526,8 @@ fn set_ird_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported IRD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -470,8 +537,8 @@ fn set_ird_field(
             "set_desc_field: IRD record fields are read-only (rec={})",
             rec_number
         );
-        crate::api::error::UnknownAttributeSnafu {
-            attribute: field as i32,
+        crate::api::error::InvalidDescriptorFieldIdSnafu {
+            field_id: field as i16,
         }
         .fail()
     }
@@ -526,8 +593,8 @@ fn get_apd_field(
             "get_desc_field: unsupported APD field {:?} for record 0",
             field
         );
-        return crate::api::error::UnknownAttributeSnafu {
-            attribute: field as i32,
+        return crate::api::error::InvalidDescriptorFieldIdSnafu {
+            field_id: field as i16,
         }
         .fail();
     }
@@ -571,8 +638,8 @@ fn get_apd_field(
         }
         _ => {
             tracing::warn!("get_desc_field: unsupported APD record field {:?}", field);
-            crate::api::error::UnknownAttributeSnafu {
-                attribute: field as i32,
+            crate::api::error::InvalidDescriptorFieldIdSnafu {
+                field_id: field as i16,
             }
             .fail()
         }
@@ -617,8 +684,8 @@ fn set_apd_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported APD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -653,8 +720,8 @@ fn set_apd_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported APD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -704,8 +771,8 @@ fn get_ipd_field(
             "get_desc_field: unsupported IPD field {:?} for record 0",
             field
         );
-        return crate::api::error::UnknownAttributeSnafu {
-            attribute: field as i32,
+        return crate::api::error::InvalidDescriptorFieldIdSnafu {
+            field_id: field as i16,
         }
         .fail();
     }
@@ -761,8 +828,8 @@ fn get_ipd_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported IPD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -788,8 +855,8 @@ fn set_ipd_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported IPD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }
@@ -825,8 +892,8 @@ fn set_ipd_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported IPD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
+                crate::api::error::InvalidDescriptorFieldIdSnafu {
+                    field_id: field as i16,
                 }
                 .fail()
             }

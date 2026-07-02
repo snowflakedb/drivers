@@ -12,7 +12,9 @@ from .type_codes import FIXED
 if TYPE_CHECKING:
     from pyarrow import Schema, Table
 
-    from ..cursor import ResultMetadata
+    from ..aio.connection import Connection as AsyncConnection
+    from ..connection import Connection
+    from .cursor.result_metadata import ResultMetadata
 
 
 def release_arrow_stream(stream_ptr: int | None) -> None:
@@ -26,7 +28,7 @@ def release_arrow_stream(stream_ptr: int | None) -> None:
     If the stream is in a bad state (already released, corrupt), the
     ArrowStreamIterator constructor will fail.  We catch that to avoid
     propagating errors into callers that are doing best-effort cleanup
-    (e.g. _QueryResult.__del__ or reset()).
+    (e.g. from_prepare_result cleanup).
     """
     if not stream_ptr:
         return
@@ -38,11 +40,12 @@ def release_arrow_stream(stream_ptr: int | None) -> None:
 
 def create_row_iterator(
     stream_ptr: int,
+    connection: Connection | AsyncConnection,
     use_dict_result: bool = False,
     use_numpy: bool = False,
 ) -> ArrowStreamIterator:
     """Build an :class:`ArrowStreamIterator` that yields one row at a time."""
-    context = ArrowConverterContext()
+    context = ArrowConverterContext.create(connection)
     return ArrowStreamIterator(
         stream_ptr,
         context,
@@ -53,11 +56,12 @@ def create_row_iterator(
 
 def create_table_iterator(
     stream_ptr: int,
+    connection: Connection | AsyncConnection,
     number_to_decimal: bool = False,
     force_microsecond_precision: bool = False,
 ) -> ArrowStreamTableIterator:
     """Build an :class:`ArrowStreamTableIterator` that yields one RecordBatch at a time."""
-    context = ArrowConverterContext()
+    context = ArrowConverterContext.create(connection)
     return ArrowStreamTableIterator(
         stream_ptr,
         context,
@@ -78,7 +82,7 @@ def normalize_fixed_column_types(
     """
     new_fields = []
     changed = False
-    for field, metadata in zip(schema, description):
+    for field, metadata in zip(schema, description, strict=False):
         if metadata.type_code == FIXED and field.type != pyarrow.int64():
             new_fields.append(field.with_type(pyarrow.int64()))
             changed = True

@@ -13,6 +13,7 @@
 
 #include "HandleWrapper.hpp"
 #include "MetaOfSqlCTypes.hpp"
+#include "WideString.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 
@@ -94,10 +95,31 @@ static typename MetaOfSqlCType<SQL_C_TYPE>::type check_interval_trailing_truncat
   return value;
 }
 
-// Check for interval leading field precision loss (SQLSTATE 22015)
+// Check for interval leading field precision loss (SQLSTATE 22015).
+// See also `check_interval_field_overflow` below for the trailing-range
+// form of the same 22015 case; the two helpers carry distinct intent at
+// the call site but assert the same SQLSTATE.
 template <int SQL_C_TYPE>
 static void check_interval_precision_lost(const StatementHandleWrapper& stmt, int column) {
   INFO("Checking interval leading field precision lost for column " << column);
+  typename MetaOfSqlCType<SQL_C_TYPE>::type value;
+  SQLLEN indicator = -999;
+  SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(stmt);
+  CHECK(records.size() == 1);
+  CHECK(records[0].sqlState == "22015");
+}
+
+// Check for interval field overflow (SQLSTATE 22015) on a *trailing*
+// composite field that fell outside its canonical ANSI range (HOUR > 23,
+// MINUTE/SECOND > 59, MONTH > 11). Asserts the same SQLSTATE as
+// `check_interval_precision_lost` above; the distinct helper carries
+// intent at the call site and lets the diagnostic in the test output
+// point at the trailing-range case explicitly.
+template <int SQL_C_TYPE>
+static void check_interval_field_overflow(const StatementHandleWrapper& stmt, int column) {
+  INFO("Checking interval field overflow (22015) for column " << column);
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator = -999;
   SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);
@@ -139,13 +161,17 @@ inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSM
   return std::string(buffer, indicator);
 }
 
-inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
-  char16_t buffer[8192];
+inline std::u32string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  // Buffer is sized in DM-side `SQLWCHAR` units (2 bytes under UTF-16,
+  // 4 under UTF-32). The result is decoded to a Unicode code-point
+  // sequence so callers can compare against `U"..."` literals
+  // regardless of the loaded driver manager.
+  SQLWCHAR buffer[8192];
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(indicator >= 0);
-  return std::u16string(buffer, indicator / sizeof(char16_t));
+  return sf::wide::decode_wide(buffer, static_cast<std::size_t>(indicator) / sf::wide::wchar_byte_size());
 }
 
 // Verifies that a SQLGetData conversion fails with an incompatible-conversion SQLSTATE.

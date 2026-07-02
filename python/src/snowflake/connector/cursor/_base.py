@@ -1,55 +1,50 @@
-"""
-Base cursor class and supporting decorators.
-
-This module defines the abstract base cursor class (``SnowflakeCursorBase``)
-and its associated helpers: ``FetchMode``, type aliases, and decorator
-functions for precondition checks.
-"""
+"""Base cursor class for database operations (PEP 249)."""
 
 from __future__ import annotations
 
 import abc
-import ctypes
-import enum
-import functools
 import logging
 
-from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
+from collections.abc import Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, overload
 
+from .._internal.api_client.client_api import core_driver
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
     create_row_iterator,
     create_table_iterator,
 )
-from .._internal.binding_converters import (
-    ClientSideBindingConverter,
-    JsonBindingConverter,
-    ParamStyle,
+from .._internal.binding_converters import ParamStyle
+from .._internal.cursor import (
+    Args,
+    CursorBaseMixin,
+    DictRow,
+    MultiStatementQueryResultState,
+    QueryResult,
+    QueryResultWaiter,
+    ResultMetadata,
+    Row,
 )
-from .._internal.decorators import pep249, snowpark_compat
-from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
-from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
+from .._internal.cursor.decorators import (
+    requires_open,
+    requires_open_cursor_not_connection,
+    with_prefetch_hook,
+)
+from .._internal.decorators import api_telemetry, pep249, snowpark_compat
+from .._internal.errorcode import ER_INVALID_VALUE
+from .._internal.extras import pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
-    BinaryDataPtr,
-    ConnectionAbortQueryRequest,
-    ConnectionGetQueryResultRequest,
-    ExecuteResult,
+    ExecuteQueryResponse,
+    MultiStatementResult,
     PrepareResult,
     QueryBindings,
-    ResultChunk,
-    StatementExecuteAsyncRequest,
-    StatementExecuteQueryRequest,
+    ResultSetResponse,
     StatementHandle,
-    StatementPrepareRequest,
-    StatementResultChunksRequest,
 )
-from .._internal.statement_utils import create_statement
-from ..errors import InterfaceError, NotSupportedError, ProgrammingError
+from .._internal.statement_utils import statement
+from ..errors import NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
-from ._query_result import _QueryResult
-from ._query_result_waiter import QueryResultWaiter
-from ._result_metadata import QueryResultStats, ResultMetadata
+from ._result_set_wrapper import _ResultSetWrapper
 
 
 if TYPE_CHECKING:
@@ -61,71 +56,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-Row = tuple[Any, ...]
-DictRow = dict[str, Any]
 
+def _resolve_alias(
+    canonical: object,
+    alias: object,
+    canonical_name: str,
+    alias_name: str,
+) -> object:
+    """Return the resolved value from a canonical/legacy-alias pair.
 
-F = TypeVar("F", bound=Callable[..., Any])
-T = TypeVar("T", bound=Sequence[Any])
-
-
-class FetchMode(enum.Enum):
-    """Distinguishes row-by-row fetching from Arrow/Pandas fetching.
-
-    Once a cursor begins consuming results with one mode, switching to
-    the other is disallowed until a new ``execute()`` resets state.
+    Raises ProgrammingError if both are provided.
     """
-
-    ROW = "row"
-    ARROW = "arrow"
-
-
-def _requires_open(func: F) -> F:
-    @functools.wraps(func)
-    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-        if self.is_closed():
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
-
-        return func(self, *args, **kwargs)
-
-    return cast(F, wrapper)
+    if canonical is not None and alias is not None:
+        raise ProgrammingError(
+            msg=f"Cannot supply both '{canonical_name}' and '{alias_name}'; pass one only.",
+            errno=ER_INVALID_VALUE,
+        )
+    return alias if alias is not None else canonical
 
 
-def _with_prefetch_hook(func: F) -> F:
-    """Invoke the cursor's prefetch hook (if set) before entering the wrapped method."""
-
-    @functools.wraps(func)
-    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-        if self._prefetch_hook is not None:
-            self._prefetch_hook()
-        return func(self, *args, **kwargs)
-
-    return cast(F, wrapper)
-
-
-def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
-    """Validate and lock the cursor's fetch mode before entering the wrapped method."""
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-            if self._fetch_mode and self._fetch_mode != mode:
-                if mode == FetchMode.ARROW:
-                    raise ProgrammingError("Cannot use arrow/pandas fetch methods after row-by-row fetching")
-                elif mode == FetchMode.ROW:
-                    raise ProgrammingError("Cannot use row-by-row fetch methods after arrow/pandas fetching")
-                else:
-                    raise ProgrammingError(f"Unexpected fetch mode: {mode}")
-            self._fetch_mode = mode
-
-            return func(self, *args, **kwargs)
-
-        return cast(F, wrapper)
-
-    return decorator
-
-
-class SnowflakeCursorBase(abc.ABC):
+class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
 
@@ -134,6 +84,9 @@ class SnowflakeCursorBase(abc.ABC):
     must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
     """
 
+    _connection: Connection
+    _iterator: ArrowStreamIterator | None
+
     def __init__(self, connection: Connection) -> None:
         """
         Initialize a new cursor object.
@@ -141,29 +94,12 @@ class SnowflakeCursorBase(abc.ABC):
         Args:
             connection: Connection object that created this cursor
         """
-        # -- Core cursor state (identity, lifecycle, error handling) --
-        self._connection: Connection = connection
-        self._closed: bool = False
-        self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
-        self._errorhandler: Callable
+        self._connection = connection
+        super().__init__()
+        self._iterator = None
 
-        # -- PEP 249 cursor configuration (persists for cursor lifetime) --
-        self._arraysize: int = 1
-
-        # -- Query result state (replaced on execute, mutated on reset/consume) --
-        self._query_result: _QueryResult = _QueryResult()
-
-        # Cursor navigation position — mutable to avoid allocation per fetchone
-        self._rownumber: int = -1
-
-        # -- Active iteration state (cleared on reset) --
-        self._result_chunks: list[ResultChunk] | None = None
-        self._iterator: ArrowStreamIterator | None = None
-        self._fetch_mode: FetchMode | None = None
-
-        # Keep binding data reference to prevent garbage collection while Rust uses it
-        self._binding_data: None | bytes = None
-
+        # -- ResultSet guard (set by _execute, cleared on reset) --
+        self._result_set = _ResultSetWrapper()
         # Backward compat: Snowpark reads _request_id for logging
         self._request_id: str | None = None
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
@@ -179,57 +115,6 @@ class SnowflakeCursorBase(abc.ABC):
         """The :class:`Connection` object that created this cursor."""
         return self._connection
 
-    @property
-    @pep249
-    def description(self) -> list[ResultMetadata] | None:
-        """
-        Read-only attribute describing the result columns of a query.
-
-        Returns a sequence of 7-item tuples, each containing:
-        - name: Column name (str)
-        - type_code: Integer type code (int)
-        - display_size: Display size in characters (int | None)
-        - internal_size: Internal size in bytes (int | None)
-        - precision: Precision for numeric types (int | None)
-        - scale: Scale for numeric types (int | None)
-        - null_ok: True if column can contain NULLs (bool | None)
-
-        Returns None if no query has been executed or if the query didn't produce a result set.
-        """
-        return self._query_result.description
-
-    @property
-    @pep249
-    def rowcount(self) -> int | None:
-        """
-        Read-only attribute specifying the number of rows that the last
-        .execute*() produced or affected.
-
-        Returns:
-            int: Number of rows affected, or None if not determined
-        """
-        return self._query_result.rowcount
-
-    @property
-    @pep249
-    def arraysize(self) -> int:
-        """Number of rows to fetch at a time with .fetchmany(). Defaults to 1."""
-        return self._arraysize
-
-    @arraysize.setter
-    def arraysize(self, value: int) -> None:
-        self._arraysize = int(value)
-
-    @property
-    @pep249
-    def messages(self) -> list[tuple[type[Exception], dict[str, str | bool]]]:
-        """List of (exception class, exception value) tuples received from the database."""
-        return self._messages
-
-    @messages.setter
-    def messages(self, value: list[tuple[type[Exception], dict[str, str | bool]]]) -> None:
-        self._messages = value
-
     # ------------------------------------------------------------------
     # Result format control
     # ------------------------------------------------------------------
@@ -240,53 +125,30 @@ class SnowflakeCursorBase(abc.ABC):
         """Whether fetch methods return dicts instead of tuples."""
 
     # ------------------------------------------------------------------
-    # Execution
+    # Error handling
     # ------------------------------------------------------------------
 
     @property
-    def query(self) -> str | None:
-        """
-        Read-only attribute containing the SQL text of the last executed or described query.
-
-        Returns:
-            str | None: The SQL query string, or None if no query has been executed or described
-        """
-        return self._query_result.query
+    def _errorhandler_cursor(self) -> SnowflakeCursorBase:
+        return self
 
     @property
-    def sfqid(self) -> str | None:
-        """
-        Read-only attribute containing the Snowflake Query ID for the last executed or described query.
+    def _errorhandler_connection(self) -> Connection:
+        return self._connection
 
-        Returns:
-            str | None: Snowflake Query ID (UUID format), or None if no query has been executed or described
-        """
-        return self._query_result.sfqid
-
-    @property
-    def stats(self) -> QueryResultStats:
-        """Returns detailed row-level statistics for DML operations."""
-        return self._query_result.stats
-
-    @property
-    @pep249
-    def rownumber(self) -> int | None:
-        """The current 0-based index of the cursor in the result set, or ``None`` if indeterminate."""
-        return self._rownumber if self._rownumber >= 0 else None
-
-    @property
-    def sqlstate(self) -> str | None:
-        """The SQLSTATE code of the last executed operation."""
-        return self._query_result.sqlstate
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
 
     @overload
     def callproc(self, procname: str) -> tuple: ...
 
     @overload
-    def callproc(self, procname: str, args: T) -> T: ...
+    def callproc(self, procname: str, args: Args) -> Args: ...
 
     @pep249
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def callproc(self, procname: str, args: Any = None) -> Any:
         """Call a stored procedure.
 
@@ -298,105 +160,47 @@ class SnowflakeCursorBase(abc.ABC):
         Returns:
             The input parameters.
         """
-        if args is None:
-            args = ()
-        if isinstance(args, (str, bytes)):
-            raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
-        if not isinstance(args, Sequence):
-            raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
-        command = f"CALL {procname}({self._connection.paramstyle.placeholders(len(args))})"
+        command, args = self._prepare_call_proc_statement(procname, args)
         self.execute(command, args)
         return args
 
-    @property
-    def is_file_transfer(self) -> bool:
-        """Whether the last executed command was a PUT or GET file transfer."""
-        raise NotImplementedError("is_file_transfer is not yet implemented")
+    @requires_open
+    def set_statement_parameter(self, key: str, value: Any) -> None:
+        """Set a sticky statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
 
-    def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
-        """Serialize parameters and build a QueryBindings protobuf message.
+        Persists across `execute()` calls on this cursor until explicitly
+        changed. For per-call kwargs (one execute, no bleed across calls),
+        use the `statement_parameters` channel in `execute()` instead.
 
-        Converts Python parameter values to JSON via JsonBindingConverter, then
-        wraps the result in a zero-copy BinaryDataPtr so the Rust core can read
-        the JSON directly from Python memory.
-
-        The encoded bytes are stored on ``self._binding_data`` to prevent
-        garbage collection while Rust holds the pointer.
-
-        Returns:
-            QueryBindings with the serialized JSON, or None if parameters
-            serialize to nothing (e.g. empty list).
-        """
-        json_str, length = JsonBindingConverter.serialize_parameters(parameters)
-        if json_str is None:
-            return None
-
-        # Convert string to bytes and keep a reference to prevent garbage
-        # collection while Rust uses the underlying buffer.
-        json_bytes = json_str.encode("utf-8")
-        self._binding_data = json_bytes
-
-        # Get memory address of the bytes buffer (no-copy scheme)
-        ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
-        if ptr_value is None:
-            raise RuntimeError("Failed to obtain memory pointer for binding data")
-
-        # Convert pointer to 8-byte little-endian representation
-        ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
-
-        binary_data_ptr = BinaryDataPtr(
-            value=ptr_bytes,  # 8-byte pointer value
-            length=length,
-        )
-        return QueryBindings(json=binary_data_ptr)
-
-    def _prepare_query(
-        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None
-    ) -> tuple[str, QueryBindings | None]:
-        """Prepare query and bindings based on paramstyle.
+        This must be called before execute() to take effect.
 
         Args:
-            operation: SQL statement
-            parameters: Parameters to bind (sequence or dict)
-
-        Returns:
-            Tuple of (query string, QueryBindings or None)
+            key: Parameter name (e.g., "MULTI_STATEMENT_COUNT").
+            value: Parameter value.
 
         Raises:
-            ProgrammingError: If dict parameters used with server-side binding
+            InterfaceError: If cursor is closed.
+
+        Example:
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3")
         """
-        if parameters is None:
-            return operation, None
-
-        paramstyle = self._connection.paramstyle
-
-        if paramstyle.is_client_side():
-            # format paramstyle only supports positional params (%s), not named params
-            if paramstyle == ParamStyle.FORMAT and isinstance(parameters, dict):
-                raise ProgrammingError(
-                    "Dict parameters not supported with format paramstyle. "
-                    "Use pyformat paramstyle for named parameters, or use a sequence."
-                )
-            # Client-side binding: interpolate parameters into SQL string
-            query = ClientSideBindingConverter.interpolate_query(operation, parameters)
-            return query, None
-        else:
-            # Server-side binding: qmark or numeric
-            if isinstance(parameters, dict):
-                raise ProgrammingError(
-                    "Named parameters (dict) not supported with qmark/numeric paramstyle. "
-                    "Use pyformat paramstyle for named parameters."
-                )
-            bindings = self._build_query_bindings(parameters)
-            return operation, bindings
+        # Store in cursor for application in _execute
+        self._set_statement_parameter(key, value)
 
     @pep249
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        num_statements: int | None = None,
+        _skip_upload_on_content_match: bool = False,
+        *,
+        params: Sequence[Any] | dict[str, Any] | None = None,
+        _force_qmark_paramstyle: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -407,20 +211,47 @@ class SnowflakeCursorBase(abc.ABC):
             operation (str): SQL statement to execute
             parameters (sequence or dict): Parameters for the operation.
                 For qmark/numeric paramstyle: sequence of values
-                For pyformat paramstyle: sequence (%s) or dict (%(name)s)
+                For pyformat/format paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
+            num_statements (int, optional): Number of statements in a multistatement query.
+            _skip_upload_on_content_match (bool, optional): On PUT, skip
+                re-upload when the remote ``x-ms-meta-sfcdigest`` matches the
+                locally-computed SHA-256. Opt-in optimization for racing
+                concurrent uploaders; only meaningful with ``OVERWRITE=TRUE``.
+                Underscore-prefixed for parity with the legacy
+                Python-connector kwarg name.
+            params: Legacy alias for ``parameters`` (kwarg-only). Cannot be
+                supplied together with ``parameters``.
+            _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
+                the connection's paramstyle is pyformat/format. Used by
+                callers that emit ``?`` placeholders unconditionally.
         """
-        self.reset()
-        return self._execute(operation, parameters, _is_put_get, **kwargs)
+        parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
 
-    def _format_query_for_log(self, query: str) -> str:
-        return self._connection._format_query_for_log(query)
+        # Per-call params: this execute() only, never persisted on the cursor.
+        statement_parameters = self._collect_statement_params(
+            skip_upload_on_content_match=_skip_upload_on_content_match,
+            num_statements=num_statements,
+        )
+
+        self.reset()
+        return self._execute(
+            operation,
+            parameters,
+            _is_put_get,
+            statement_parameters=statement_parameters,
+            _force_qmark_paramstyle=_force_qmark_paramstyle,
+            **kwargs,
+        )
 
     def _execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        *,
+        statement_parameters: dict[str, Any] | None = None,
+        _force_qmark_paramstyle: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
@@ -442,111 +273,188 @@ class SnowflakeCursorBase(abc.ABC):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
-        query, bindings = self._prepare_query(operation, parameters)
+        query, binding_params = self._prepare_query(
+            operation, parameters, _force_qmark_paramstyle=_force_qmark_paramstyle
+        )
 
-        result: ExecuteResult | None = None
-        with create_statement(self.connection, query) as stmt_handle:
-            result = self._execute_query(stmt_handle, bindings)
-            self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle)
+        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            self._apply_statement_parameters(stmt_handle, statement_parameters)
 
-        self._query_result = _QueryResult.from_execute_result(result)
+            bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
+            response = self._execute_query(stmt_handle, bindings)
+
+            if response.HasField("multi"):
+                self._handle_multi_statement_response(response.multi, query)
+            else:
+                self._apply_result_set(response.single, query)
+
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
-
         return self
 
-    def _fetch_result_chunk_metadata(self, stmt_handle: StatementHandle) -> list[ResultChunk] | None:
-        """Retrieve chunk metadata while the statement handle is still alive."""
-        try:
-            request = StatementResultChunksRequest(stmt_handle=stmt_handle)
-            response = self._connection.db_api.statement_result_chunks(request)
-            if response.HasField("result"):
-                return list(response.result.chunks)
-            return None
-        except Exception:
-            logger.warning("Failed to fetch result chunk metadata", exc_info=True)
-            return None
+    def _apply_statement_parameters(
+        self,
+        stmt_handle: StatementHandle,
+        statement_parameters: dict[str, Any] | None = None,
+    ) -> None:
+        """Apply sticky `_statement_parameters` merged with per-call
+        `statement_parameters` via SetOptions RPC. Per-call wins on key
+        collision and is never persisted on the cursor.
+        """
+        options = self._build_statement_parameters_options(statement_parameters)
+        if not options:
+            return
+        core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
 
-    def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteResult:
+    def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
+        """Execute query and return ExecuteQueryResponse (single or multi)."""
         try:
-            request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
-            return self._connection.db_api.statement_execute_query(request).result
+            return core_driver.statement_execute_query(stmt_handle=stmt_handle, bindings=bindings)
         except ProgrammingError as exc:
-            self._query_result = _QueryResult.from_programming_error(exc)
+            self._query_result = QueryResult.from_programming_error(exc)
             raise
 
-    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult:
+    def _handle_multi_statement_response(self, result: MultiStatementResult, query: str) -> None:
+        self._multi_statement = MultiStatementQueryResultState.from_result(result)
+
+        # Edge case: empty multi-statement result
+        if self._multi_statement is None:
+            self._query_result = QueryResult(query=query)
+            return
+
+        first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
+        # already populate cursor with first child query results
+        rs_response = self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
+        self._apply_result_set(rs_response, query)
+
+    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
+        self._result_set.replace(rs_response.result_set_handle)
+        self._query_result = QueryResult.from_result_set_response(rs_response, query)
+
+    def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
+        """Fetch a ResultSetResponse (handle + descriptor) for a given query ID."""
         try:
-            request = StatementPrepareRequest(stmt_handle=stmt_handle)
-            return self._connection.db_api.statement_prepare(request).result
+            return core_driver.connection_get_result_set(
+                conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+                query_id=query_id,
+            )
+        except Exception as exc:
+            if isinstance(exc, ProgrammingError):
+                raise
+            raise ProgrammingError(msg=f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
+
+    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult | None:
+        try:
+            return core_driver.statement_prepare(stmt_handle=stmt_handle).result
         except ProgrammingError as exc:
-            self._query_result = _QueryResult.from_programming_error(exc)
+            self._query_result = QueryResult.from_programming_error(exc)
             raise
+
+    def _executemany_per_row(
+        self,
+        operation: str,
+        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]],
+        _force_qmark_paramstyle: bool = False,
+    ) -> None:
+        """Execute each parameter set individually and aggregate rowcount.
+
+        Used by ``executemany`` whenever array binding does not apply: client-side
+        paramstyles, dict parameters, or statements the server reports as not
+        array-bindable (e.g. UPDATE, DELETE, MERGE).
+        """
+        self.reset()
+        total_rowcount = 0
+        unknown_rowcount = False
+        for params in seq_of_parameters:
+            self._execute(
+                operation,
+                params,
+                _force_qmark_paramstyle=_force_qmark_paramstyle,
+            )  # no reset between calls
+            rc = self._query_result.rowcount
+            if rc is None or rc == -1:
+                unknown_rowcount = True
+            elif not unknown_rowcount:
+                total_rowcount += rc
+        # Per PEP 249, -1 indicates that the number of rows is unknown,
+        # but for backward compatibility it's set to None.
+        self._query_result.rowcount = None if unknown_rowcount else total_rowcount
 
     @pep249
-    @_requires_open
-    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
+    @api_telemetry
+    @requires_open
+    def executemany(
+        self,
+        operation: str,
+        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        *,
+        seqparams: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        _force_qmark_paramstyle: bool = False,
+    ) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
-        For qmark/numeric paramstyles, uses array binding to execute all parameter
-        sets in a single request. For pyformat/format paramstyles, executes each
-        row individually with client-side interpolation.
+        For qmark/numeric paramstyles with sequence parameters, issues a describe
+        request first to read the server's ``arrayBindSupported`` flag (the same
+        mechanism used by the JDBC and ODBC drivers). If the server confirms array
+        binding is supported, all rows are transposed into column-major arrays and
+        sent in a single request; when the cell count meets
+        ``CLIENT_STAGE_ARRAY_BINDING_THRESHOLD`` the bindings are serialized to CSV
+        and staged. If the server reports array binding is not supported (e.g. for
+        UPDATE, DELETE, MERGE), each parameter set is executed individually with
+        scalar JSON binding.
+
+        For pyformat/format paramstyles and dict parameters, executes each row
+        individually with client-side interpolation.
 
         Args:
-            operation (str): SQL statement (typically INSERT, UPDATE, or DELETE)
+            operation (str): SQL statement (INSERT, UPDATE, DELETE, etc.)
             seq_of_parameters (sequence): Sequence of parameter sequences or dicts
+            seqparams: Legacy alias for ``seq_of_parameters`` (kwarg-only).
+                Cannot be supplied together with ``seq_of_parameters``.
+            _force_qmark_paramstyle: If True, treat as qmark even when the
+                connection's paramstyle is pyformat/format.
 
         Raises:
             InterfaceError: If parameter sequences have inconsistent lengths
         """
+        seq_of_parameters = _resolve_alias(  # type: ignore[assignment]
+            seq_of_parameters, seqparams, "seq_of_parameters", "seqparams"
+        )
+
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
 
-        paramstyle = self._connection.paramstyle
+        paramstyle = ParamStyle.QMARK if _force_qmark_paramstyle else self._connection.paramstyle
         first_params = seq_of_parameters[0]
 
         # Execute individually for:
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
-            self.reset()
-            total_rowcount = 0
-            unknown_rowcount = False
-            for params in seq_of_parameters:
-                self._execute(operation, params)  # no reset between calls
-                rc = self._query_result.rowcount
-                if rc is None or rc == -1:
-                    unknown_rowcount = True
-                elif not unknown_rowcount:
-                    total_rowcount += rc
-            # Per PEP 249, -1 indicates that the number of rows is unknown,
-            # but for backward compatibility it's set to None.
-            self._query_result.rowcount = None if unknown_rowcount else total_rowcount
+            self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
             return
 
-        # Server-side binding: validate and use array binding
-        # Dict params were handled above; only sequences reach here.
-        rows = cast(Sequence[Sequence[Any]], seq_of_parameters)
+        # Validate row widths and pre-compute column-major layout before the server
+        # round-trip so InterfaceError from mismatched lengths surfaces early.
+        transposed = self._build_array_binding_params(operation, seq_of_parameters, first_params)
 
-        # Error code 251007 (ER_INVALID_VALUE) matches reference driver behavior
-        first_len = len(first_params)
-        for params in rows:
-            if len(params) != first_len:
-                raise InterfaceError(
-                    f"Bulk data size don't match. expected: {first_len}, got: {len(params)}, command: {operation}",
-                    errno=ER_INVALID_VALUE,
-                )
+        # Ask the server whether array binding is supported for this statement.
+        # This mirrors how JDBC (describeSqlIfNotTried) and the C/ODBC driver
+        # (_snowflake_execute_ex describe-only request) gate batch execution.
+        with statement(self.connection.conn_handle, operation) as stmt_handle:  # type: ignore[arg-type]
+            prepare_result = self._prepare(stmt_handle)
 
-        # Transpose from row-major to column-major format
-        # Input:  [(row1_col1, row1_col2), (row2_col1, row2_col2), ...]
-        # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
-        num_columns = first_len
-        transposed = [[row[col_idx] for row in rows] for col_idx in range(num_columns)]
+        if prepare_result is None or not prepare_result.array_bind_supported:
+            # Per-row fallback: server does not support array binding for this
+            # statement type (e.g. UPDATE, DELETE, MERGE).
+            self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
+            return
 
-        # Execute using array binding (existing path handles list values)
-        self.execute(operation, transposed)
+        # Server confirmed array binding: use pre-computed column-major params.
+        self.execute(operation, transposed, _force_qmark_paramstyle=_force_qmark_paramstyle)
 
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def describe(
         self,
         operation: str,
@@ -571,13 +479,13 @@ class SnowflakeCursorBase(abc.ABC):
             - Updates cursor.description with the column metadata
         """
         self.reset()
-        query, bindings = self._prepare_query(operation, parameters)
+        query, _ = self._prepare_query(operation, parameters)
 
         prepare_result: PrepareResult | None = None
-        with create_statement(self.connection, query) as stmt_handle:
+        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             prepare_result = self._prepare(stmt_handle)
 
-        self._query_result = _QueryResult.from_prepare_result(prepare_result)
+        self._query_result = QueryResult.from_prepare_result(prepare_result)
 
         if self._query_result.description:
             self._rownumber = -1
@@ -598,9 +506,8 @@ class SnowflakeCursorBase(abc.ABC):
     # Fetch – shared implementation
     # ------------------------------------------------------------------
 
-    @_requires_open
-    @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
+    @requires_open_cursor_not_connection
+    @with_prefetch_hook
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
@@ -622,8 +529,9 @@ class SnowflakeCursorBase(abc.ABC):
         """Fetch the next row of a query result set."""
 
     @pep249
-    @_requires_open
-    @_requires_fetch_mode(FetchMode.ROW)
+    @api_telemetry
+    @requires_open_cursor_not_connection
+    @with_prefetch_hook
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -641,7 +549,9 @@ class SnowflakeCursorBase(abc.ABC):
             size = self.arraysize
 
         if size < 0:
-            raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
+            raise ProgrammingError(
+                msg=f"The number of rows is not zero or positive number: {size}", errno=ER_INVALID_VALUE
+            )
 
         if size == 0:
             return []
@@ -653,9 +563,9 @@ class SnowflakeCursorBase(abc.ABC):
         return rows
 
     @pep249
-    @_requires_open
-    @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
+    @api_telemetry
+    @requires_open_cursor_not_connection
+    @with_prefetch_hook
     def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -674,10 +584,12 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     def _create_row_iterator(self) -> ArrowStreamIterator:
+        stream_ptr = self._result_set.get_arrow_stream_ptr()
         return create_row_iterator(
-            stream_ptr=self._query_result.consume_stream(),
+            stream_ptr=stream_ptr,
+            connection=self._connection,
             use_dict_result=self._use_dict_result,
-            use_numpy=self._connection._numpy,
+            use_numpy=bool(self._connection.config.numpy),
         )
 
     @pep249
@@ -715,35 +627,53 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @pep249
-    def nextset(self) -> None:
+    @api_telemetry
+    @requires_open
+    def nextset(self) -> SnowflakeCursorBase | None:
         """
-        Skip to the next available set, discarding any remaining rows from current set.
+        Skip to the next available result set, discarding remaining rows from current set.
+
+        This method is used for multi-statement queries where a single execute() produces
+        multiple result sets. Call nextset() to advance to the next query's results.
 
         Returns:
-            bool: True if next set is available, False/None otherwise
+            SnowflakeCursorBase: Self if next set is available.
+            None: If no more result sets are available.
 
         Raises:
-            NotImplementedError: If not implemented
+            InterfaceError: If cursor is closed.
+
+        Example:
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3")
+            print(cursor.fetchone())  # (1,)
+            cursor.nextset()
+            print(cursor.fetchone())  # (2,)
+            cursor.nextset()
+            print(cursor.fetchone())  # (3,)
+            result = cursor.nextset()  # None - no more results
         """
-        raise NotImplementedError("nextset is not implemented")
+        if self._multi_statement is None:
+            return None
+
+        query_id = self._multi_statement.advance()
+        if query_id is None:
+            return None
+
+        # Detach multi-statement state so reset() doesn't clear it
+        ms = self._multi_statement
+        self._multi_statement = None
+        self.reset()
+        self._multi_statement = ms
+
+        rs_response = self._fetch_result_set_by_query_id(query_id)
+        self._apply_result_set(rs_response, query=None)
+        self._rownumber = -1
+
+        return self
 
     @pep249
-    def setinputsizes(self, sizes: Sequence[Any]) -> None:
-        """Not supported."""
-        return None
-
-    @pep249
-    def setoutputsize(self, size: int, column: int | None = None) -> None:
-        """Not supported."""
-        return None
-
-    @property
-    @pep249
-    def lastrowid(self) -> None:
-        """Snowflake does not support lastrowid; returns None per PEP 249."""
-        return None
-
-    @pep249
+    @api_telemetry
     def scroll(self, value: int, mode: str = "relative") -> None:
         """Scroll the cursor in the result set."""
         raise NotSupportedError("scroll is not supported")
@@ -774,26 +704,34 @@ class SnowflakeCursorBase(abc.ABC):
         """
         return self._closed or self._connection.is_closed()
 
+    @requires_open_cursor_not_connection
     def reset(self, closing: bool = False) -> None:
         """Reset the result set.
 
-        Frees heavy result data (arrow streams) while for backward compatibility
-        preserving metadata that the old driver also keeps across resets:
-        ``description``, ``rownumber``, ``sfqid``, ``query``, and ``sqlstate``.
+        Frees heavy result data (arrow streams, multi-statement state) while
+        for backward compatibility preserving metadata that the old driver
+        also keeps across resets: ``description``, ``rownumber``, ``sfqid``,
+        ``query``, and ``sqlstate``.
+
+        Also clears the ``messages`` list so that errors from previous
+        operations do not leak into the next one.
 
         Args:
             closing: If True, do not reset rowcount,
                      see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
                      If False, reset rowcount to None.
         """
+        del self._messages[:]
         self._query_result.reset(closing=closing)
-        self._result_chunks = None
+        self._result_set.release()
         self._iterator = None
-        self._fetch_mode = None
         self._binding_data = None
         self._prefetch_hook = None
+        # Clear multistatement state
+        self._multi_statement = None
 
     @pep249
+    @api_telemetry
     def close(self) -> bool | None:
         """Close the cursor now.
 
@@ -810,89 +748,22 @@ class SnowflakeCursorBase(abc.ABC):
             return None
 
     # ------------------------------------------------------------------
-    # Session parameter accessors
-    # ------------------------------------------------------------------
-
-    @property
-    def timestamp_output_format(self) -> str | None:
-        """The session's ``TIMESTAMP_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._get_session_parameter("TIMESTAMP_OUTPUT_FORMAT")
-
-    @property
-    def timestamp_ltz_output_format(self) -> str | None:
-        """The session's ``TIMESTAMP_LTZ_OUTPUT_FORMAT`` parameter value.
-
-        Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
-        """
-        return self._connection._get_session_parameter("TIMESTAMP_LTZ_OUTPUT_FORMAT") or self.timestamp_output_format
-
-    @property
-    def timestamp_tz_output_format(self) -> str | None:
-        """The session's ``TIMESTAMP_TZ_OUTPUT_FORMAT`` parameter value.
-
-        Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
-        """
-        return self._connection._get_session_parameter("TIMESTAMP_TZ_OUTPUT_FORMAT") or self.timestamp_output_format
-
-    @property
-    def timestamp_ntz_output_format(self) -> str | None:
-        """The session's ``TIMESTAMP_NTZ_OUTPUT_FORMAT`` parameter value.
-
-        Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
-        """
-        return self._connection._get_session_parameter("TIMESTAMP_NTZ_OUTPUT_FORMAT") or self.timestamp_output_format
-
-    @property
-    def date_output_format(self) -> str | None:
-        """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._get_session_parameter("DATE_OUTPUT_FORMAT")
-
-    @property
-    def time_output_format(self) -> str | None:
-        """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
-        return self._connection._get_session_parameter("TIME_OUTPUT_FORMAT")
-
-    @property
-    def timezone(self) -> str | None:
-        """The session's ``TIMEZONE`` parameter value."""
-        return self._connection._get_session_parameter("TIMEZONE")
-
-    @property
-    def binary_output_format(self) -> str | None:
-        """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
-        return self._connection._get_session_parameter("BINARY_OUTPUT_FORMAT")
-
-    # ------------------------------------------------------------------
-    # Error handling
-    # ------------------------------------------------------------------
-
-    @property
-    @pep249
-    def errorhandler(self) -> Callable:
-        """PEP 249 error handler for this cursor."""
-        return self._errorhandler
-
-    @errorhandler.setter
-    def errorhandler(self, value: Callable | None) -> None:
-        if value is None:
-            raise ProgrammingError("Invalid errorhandler is specified")
-        self._errorhandler = value
-
-    # ------------------------------------------------------------------
     # Fetch – Arrow / Pandas
     # ------------------------------------------------------------------
 
     @requires_dependency(pyarrow)
-    @_requires_open
-    @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ARROW)
+    @api_telemetry
+    @requires_open
+    @with_prefetch_hook
     def fetch_arrow_batches(
         self,
         force_microsecond_precision: bool = False,
     ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
+        stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=self._query_result.consume_stream(),
+            stream_ptr=stream_ptr,
+            connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -900,9 +771,9 @@ class SnowflakeCursorBase(abc.ABC):
             yield pyarrow.Table.from_batches([batch])
 
     @requires_dependency(pyarrow)
-    @_requires_open
-    @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ARROW)
+    @api_telemetry
+    @requires_open
+    @with_prefetch_hook
     def fetch_arrow_all(
         self,
         force_return_table: bool = False,
@@ -910,8 +781,10 @@ class SnowflakeCursorBase(abc.ABC):
         **kwargs: Any,  # Snowpark passes split_blocks=True; ignored by the UD
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
+        stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=self._query_result.consume_stream(),
+            stream_ptr=stream_ptr,
+            connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -922,41 +795,49 @@ class SnowflakeCursorBase(abc.ABC):
         )
 
     @requires_dependency(pandas)
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
         """Fetch Pandas DataFrames in batches."""
         for table in self.fetch_arrow_batches(**kwargs):
             yield table.to_pandas()
 
     @requires_dependency(pandas)
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
         table: Table = self.fetch_arrow_all(force_return_table=True, **kwargs)
         return table.to_pandas()
 
-    def check_can_use_arrow_resultset(self) -> None:
-        check_dependency(pyarrow)
-
-    def check_can_use_pandas(self) -> None:
-        check_dependency(pandas)
-
     # ------------------------------------------------------------------
     # Distributed fetch
     # ------------------------------------------------------------------
 
-    @_requires_open
+    @api_telemetry
+    @requires_open
+    @with_prefetch_hook
     def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
-        return ResultBatch.from_chunks(self._result_chunks, self._query_result.description, self._connection)
+        result_chunks = self._result_set.get_chunks()
+        if result_chunks is None:
+            return None
+        return ResultBatch.from_chunks(
+            list(result_chunks.chunks),
+            self._query_result.description,
+            self._connection,
+            list(result_chunks.columns),
+        )
 
     # ------------------------------------------------------------------
     # Async query support
     # ------------------------------------------------------------------
 
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def query_result(self, qid: str) -> SnowflakeCursorBase:
-        """Fetch the result of a previously executed query by its Snowflake Query ID.
+        """
+        Fetch the result of a previously executed query by its Snowflake Query ID.
 
         Resets the cursor and populates it with the results from the specified
         query, making them available through the standard fetch methods
@@ -974,18 +855,30 @@ class SnowflakeCursorBase(abc.ABC):
         """
         self.reset()
 
-        request = ConnectionGetQueryResultRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_get_query_result(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        response = self._connection.db_api.connection_get_query_result(request)
 
-        self._query_result = _QueryResult.from_execute_result(response.result)
+        # Handle single or multi-statement response
+        if response.HasField("multi"):
+            multi_result = response.multi
+            if multi_result.query_ids:
+                first_qid = multi_result.query_ids[0]
+                rs_response = self._fetch_result_set_by_query_id(first_qid)
+                self._apply_result_set(rs_response, query=None)
+            else:
+                self._query_result = QueryResult()
+        else:
+            rs_response = response.single
+            self._apply_result_set(rs_response, query=None)
+
         self._rownumber = -1
 
         return self
 
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def get_results_from_sfqid(self, sfqid: str) -> None:
         """Get results from a previously executed query.
 
@@ -1018,7 +911,8 @@ class SnowflakeCursorBase(abc.ABC):
 
         self._prefetch_hook = prefetch_hook
 
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def execute_async(
         self,
         command: str,
@@ -1052,26 +946,26 @@ class SnowflakeCursorBase(abc.ABC):
         return self._execute_async(command, params)
 
     def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
-        query, bindings = self._prepare_query(command, params)
+        query, binding_params = self._prepare_query(command, params)
 
         response = None
-        with create_statement(self._connection, query) as stmt_handle:
-            request = StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
-            response = self._connection.db_api.statement_execute_async(request)
+        with statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
+            response = core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
 
         query_id = (response.query_id if response.query_id else None) if response else None
-        self._query_result = _QueryResult(sfqid=query_id)
+        self._query_result = QueryResult(sfqid=query_id)
 
         return {"queryId": query_id}
 
-    @_requires_open
+    @api_telemetry
+    @requires_open
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
-        request = ConnectionAbortQueryRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_abort_query(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        response = self._connection.db_api.connection_abort_query(request)
         return response.success
 
     # ------------------------------------------------------------------

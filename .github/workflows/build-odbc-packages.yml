@@ -1,0 +1,30 @@
+name: Build ODBC Packages
+
+# Builds every distributable ODBC artifact
+on:
+  push:
+    branches:
+      - 'release/odbc-**'
+  pull_request:
+    paths:
+      - 'odbc/installer/**'
+      - 'ci/Dockerfile.rocky-rpm-build'
+      - 'ci/Dockerfile.debian-deb-build'
+      - '.github/actions/install-wix-from-artifact/**'
+      - '.github/workflows/build-odbc-packages.yml'
+      - '.github/workflows/_build-odbc-packages.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_odbc_packages:
+    # Public-side gate: on the mirror (snowflakedb) build only on manual
+    # dispatch or release/* pushes; unchanged on the internal repo.
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
+    uses: ./.github/workflows/_build-odbc-packages.yml

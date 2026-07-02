@@ -8,7 +8,7 @@ All tests are parameterized to run with each type synonym to verify they behave 
 All type synonyms are treated as 64-bit IEEE 754 double precision.
 """
 
-from math import inf, nan
+from math import inf, isinf, nan
 
 import pytest
 
@@ -54,6 +54,8 @@ FLOAT_MIN_SUBNORMAL = 5e-324
 FLOAT_15_DIGITS = 123456789012345.0
 # 16-digit value: may have precision loss
 FLOAT_16_DIGITS = 1234567890123456.0
+# Realistic large maximum value (15 significant digits, works in both Arrow and JSON)
+FLOAT_REALISTIC_MAX = 1.79769313486231e308
 
 # =============================================================================
 # LARGE RESULT SET SIZE
@@ -129,6 +131,7 @@ class TestFloatLiteral:
         BOUNDARY_LITERAL_CASES,
         ids=["max", "min"],
     )
+    @pytest.mark.skip_for_json_result_set(reason="JSON format loses precision for Double.MAX_VALUE boundary values")
     def test_should_handle_float_case_boundary_values_from_literals_for_float_and_synonyms(
         self, execute_query, float_type, select_values, expected
     ):
@@ -155,6 +158,22 @@ class TestFloatLiteral:
 
         # Then Result should verify precision around 15 decimal digits
         assert_floats_equal(result, (FLOAT_15_DIGITS, FLOAT_16_DIGITS))
+
+    @float_type_parametrize
+    def test_should_handle_realistic_large_float_case_boundary_values_from_literals_for_float_and_synonyms(
+        self, execute_query, float_type
+    ):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT <query_values>" is executed
+        sql = f"SELECT {FLOAT_REALISTIC_MAX}::{float_type}, -{FLOAT_REALISTIC_MAX}::{float_type}"
+        result = execute_query(sql, single_row=True)
+
+        # Then Result should contain floats [<expected_values>]
+        assert_floats_equal(result, (FLOAT_REALISTIC_MAX, -FLOAT_REALISTIC_MAX))
+        # Verify values are finite (works in both Arrow and JSON)
+        assert all(not isinf(v) for v in result)
 
     @float_type_parametrize
     def test_should_handle_null_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
@@ -244,6 +263,7 @@ class TestFloatTable:
         assert_type(values, float)
 
     @float_type_parametrize
+    @pytest.mark.skip_for_json_result_set(reason="JSON format loses precision for 64-bit FLOAT max boundary values")
     def test_should_handle_float_boundary_values_from_table_for_float_and_synonyms(
         self, execute_query, tmp_schema, float_type
     ):

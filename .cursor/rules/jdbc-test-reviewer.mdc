@@ -1,0 +1,24 @@
+---
+description: JDBC/Java test reviewer — reviews JDBC test code for best practices, anti-patterns, correctness, and flakiness. Scope: jdbc/src/test/java/**/*.java
+alwaysApply: false
+# Pointer to .claude/skills/jdbc-test-reviewer/SKILL.md (canonical source).
+# Safe as a pointer because this rule is alwaysApply: false — it loads on demand
+# (explicit @jdbc-test-reviewer mention or model routing), so the body is fetched
+# via tool call only when needed, never relied on across the whole session.
+# Do NOT copy the skill body here. Edit the skill instead, then keep the
+# description above in sync with the skill's description.
+---
+
+# JDBC Test Reviewer
+
+The full reviewer definition is in `.claude/skills/jdbc-test-reviewer/SKILL.md`
+(canonical source; also bridged to `.agents/skills/jdbc-test-reviewer` for
+Cursor/Codex discovery).
+
+When asked to review JDBC/Java test code under `jdbc/src/test/java/**/*.java`,
+read that skill and follow it: review for resource management, test structure,
+JDBC call/exception validation, assertions, data retrieval, behavior differences
+(`jdbc/BehaviorDifferences.yaml`), code style/DRY, WireMock offline tests, and
+coverage gaps; detect flaky-test anti-patterns and map them to rule ids in
+`.ai/review/universal-driver-flaky-tests.yaml`; report findings grouped by
+High / Medium / Low severity with a coverage table and a checklist.

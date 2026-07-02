@@ -1,0 +1,335 @@
+package net.snowflake.client.internal.api.implementation.resultset;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.sql.Date;
+import java.sql.SQLException;
+import java.sql.Time;
+import java.sql.Timestamp;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class ConvertingRowReaderTest {
+
+  private RowReader delegate;
+  private String[] columnNames;
+  private ConvertingRowReader reader;
+
+  @BeforeEach
+  void setUp() {
+    delegate = mock(RowReader.class);
+    columnNames = new String[] {"ID", "NAME", "ACTIVE"};
+  }
+
+  private ConvertingRowReader readerWithPassthrough() {
+    return new ConvertingRowReader(
+        delegate,
+        columnNames,
+        row -> new Object[] {row.getInt(1), row.getString(2), row.getBoolean(3)});
+  }
+
+  // --- cursor navigation ---
+
+  @Test
+  void shouldDelegateNextToUnderlyingReader() throws SQLException {
+    reader = readerWithPassthrough();
+    when(delegate.next()).thenReturn(true, true, false);
+    when(delegate.getInt(1)).thenReturn(1, 2);
+    when(delegate.getString(2)).thenReturn("a", "b");
+    when(delegate.getBoolean(3)).thenReturn(true, false);
+
+    assertTrue(reader.next());
+    assertEquals(0, reader.getCurrentRow());
+    assertTrue(reader.next());
+    assertEquals(1, reader.getCurrentRow());
+    assertFalse(reader.next());
+  }
+
+  @Test
+  void shouldTransitionCursorState() throws SQLException {
+    reader = readerWithPassthrough();
+    when(delegate.next()).thenReturn(true, false);
+    when(delegate.getInt(1)).thenReturn(1);
+    when(delegate.getString(2)).thenReturn("x");
+    when(delegate.getBoolean(3)).thenReturn(true);
+
+    assertTrue(reader.isBeforeFirst());
+    assertFalse(reader.isAfterLast());
+    assertFalse(reader.isFirst());
+
+    assertTrue(reader.next());
+    assertFalse(reader.isBeforeFirst());
+    assertFalse(reader.isAfterLast());
+    assertTrue(reader.isFirst());
+
+    assertFalse(reader.next());
+    assertFalse(reader.isBeforeFirst());
+    assertTrue(reader.isAfterLast());
+    assertFalse(reader.isFirst());
+  }
+
+  // --- filtering ---
+
+  @Test
+  void shouldSkipRowWhenConverterReturnsNull() throws SQLException {
+    int[] callCount = {0};
+    reader =
+        new ConvertingRowReader(
+            delegate,
+            columnNames,
+            row -> {
+              callCount[0]++;
+              if (callCount[0] == 1) {
+                return null;
+              }
+              return new Object[] {42, "kept", true};
+            });
+    when(delegate.next()).thenReturn(true, true, false);
+
+    assertTrue(reader.next());
+    assertEquals(0, reader.getCurrentRow());
+    assertEquals("kept", reader.getString(2));
+
+    assertFalse(reader.next());
+  }
+
+  @Test
+  void shouldReturnExhaustedWhenAllRowsFiltered() throws SQLException {
+    reader = new ConvertingRowReader(delegate, columnNames, row -> null);
+    when(delegate.next()).thenReturn(true, true, false);
+
+    assertFalse(reader.next());
+    assertTrue(reader.isAfterLast());
+  }
+
+  // --- column access: typed getters ---
+
+  @Test
+  void shouldReturnToStringOfObjectFromGetString() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {123});
+    when(delegate.next()).thenReturn(true);
+
+    reader.next();
+    assertEquals("123", reader.getString(1));
+  }
+
+  @Test
+  void shouldReturnNullFromGetStringForNullValue() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {null});
+    when(delegate.next()).thenReturn(true);
+
+    reader.next();
+    assertNull(reader.getString(1));
+    assertTrue(reader.wasNull());
+  }
+
+  @Test
+  void shouldReturnBooleanFromBooleanObject() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {true});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+    assertTrue(reader.getBoolean(1));
+  }
+
+  @Test
+  void shouldReturnBooleanFromNumber() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {1});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+    assertTrue(reader.getBoolean(1));
+  }
+
+  @Test
+  void shouldReturnBooleanFromStringOne() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {"1"});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+    assertTrue(reader.getBoolean(1));
+  }
+
+  @Test
+  void shouldReturnFalseFromGetBooleanForNull() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"B"}, row -> new Object[] {null});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+    assertFalse(reader.getBoolean(1));
+    assertTrue(reader.wasNull());
+  }
+
+  @Test
+  void shouldReturnCorrectTypesFromNumericGetters() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {42});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertEquals((byte) 42, reader.getByte(1));
+    assertEquals((short) 42, reader.getShort(1));
+    assertEquals(42, reader.getInt(1));
+    assertEquals(42L, reader.getLong(1));
+    assertEquals(42.0f, reader.getFloat(1));
+    assertEquals(42.0, reader.getDouble(1));
+    assertEquals(new BigDecimal("42"), reader.getBigDecimal(1));
+  }
+
+  @Test
+  void shouldReturnZeroForNullNumericGetters() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {null});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertEquals(0, reader.getByte(1));
+    assertTrue(reader.wasNull());
+    assertEquals(0, reader.getShort(1));
+    assertTrue(reader.wasNull());
+    assertEquals(0, reader.getInt(1));
+    assertTrue(reader.wasNull());
+    assertEquals(0L, reader.getLong(1));
+    assertTrue(reader.wasNull());
+    assertEquals(0.0f, reader.getFloat(1));
+    assertTrue(reader.wasNull());
+    assertEquals(0.0, reader.getDouble(1));
+    assertTrue(reader.wasNull());
+    assertNull(reader.getBigDecimal(1));
+    assertTrue(reader.wasNull());
+  }
+
+  @Test
+  void shouldParseNumericGettersFromString() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {"7"});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertEquals((byte) 7, reader.getByte(1));
+    assertEquals((short) 7, reader.getShort(1));
+    assertEquals(7, reader.getInt(1));
+    assertEquals(7L, reader.getLong(1));
+    assertEquals(7.0f, reader.getFloat(1));
+    assertEquals(7.0, reader.getDouble(1));
+  }
+
+  @Test
+  void shouldReturnUtf8BytesFromGetBytes() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {"hello"});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertArrayEquals("hello".getBytes(StandardCharsets.UTF_8), reader.getBytes(1));
+  }
+
+  @Test
+  void shouldReturnNullFromGetBytesForNull() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {null});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertNull(reader.getBytes(1));
+    assertTrue(reader.wasNull());
+  }
+
+  @Test
+  void shouldPassThroughTypedObjectsFromDateTimestampTimeGetters() throws SQLException {
+    Date date = Date.valueOf("2025-01-15");
+    Time time = Time.valueOf("13:45:30");
+    Timestamp ts = Timestamp.valueOf("2025-01-15 13:45:30");
+
+    reader =
+        new ConvertingRowReader(
+            delegate, new String[] {"D", "T", "TS"}, row -> new Object[] {date, time, ts});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertEquals(date, reader.getDate(1));
+    assertEquals(time, reader.getTime(2));
+    assertEquals(ts, reader.getTimestamp(3));
+  }
+
+  @Test
+  void shouldReturnNullFromDateTimestampTimeGettersForNull() throws SQLException {
+    reader =
+        new ConvertingRowReader(
+            delegate, new String[] {"D", "T", "TS"}, row -> new Object[] {null, null, null});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertNull(reader.getDate(1));
+    assertTrue(reader.wasNull());
+    assertNull(reader.getTime(2));
+    assertTrue(reader.wasNull());
+    assertNull(reader.getTimestamp(3));
+    assertTrue(reader.wasNull());
+  }
+
+  @Test
+  void shouldReturnRawValueFromGetObject() throws SQLException {
+    Object obj = new Object();
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {obj});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertEquals(obj, reader.getObject(1));
+  }
+
+  // --- column metadata ---
+
+  @Test
+  void shouldReflectProjectedNamesInGetColumnCount() {
+    reader = readerWithPassthrough();
+    assertEquals(3, reader.getColumnCount());
+  }
+
+  @Test
+  void shouldReturnOneBasedNameFromGetColumnName() throws SQLException {
+    reader = readerWithPassthrough();
+    assertEquals("ID", reader.getColumnName(1));
+    assertEquals("NAME", reader.getColumnName(2));
+    assertEquals("ACTIVE", reader.getColumnName(3));
+  }
+
+  @Test
+  void shouldThrowOnGetColumnNameOutOfRange() {
+    reader = readerWithPassthrough();
+    assertThrows(SQLException.class, () -> reader.getColumnName(0));
+    assertThrows(SQLException.class, () -> reader.getColumnName(4));
+  }
+
+  // --- error conditions ---
+
+  @Test
+  void shouldThrowOnGetObjectWhenNoCurrentRow() {
+    reader = readerWithPassthrough();
+    assertThrows(SQLException.class, () -> reader.getObject(1));
+  }
+
+  @Test
+  void shouldThrowOnGetObjectForInvalidColumnIndex() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {"x"});
+    when(delegate.next()).thenReturn(true);
+    reader.next();
+
+    assertThrows(SQLException.class, () -> reader.getObject(0));
+    assertThrows(SQLException.class, () -> reader.getObject(2));
+  }
+
+  // --- close ---
+
+  @Test
+  void shouldDelegateCloseToUnderlyingReader() throws SQLException {
+    reader = readerWithPassthrough();
+    assertFalse(reader.isClosed());
+
+    reader.close();
+
+    assertTrue(reader.isClosed());
+    verify(delegate).close();
+  }
+}

@@ -1,20 +1,17 @@
+from contextlib import closing
+
 import pytest
 
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.utils import repo_root
-from tests.wiremock_client import WiremockClient
 
 
-def test_should_return_error_for_unsupported_compression_type(int_test_connection_factory):
+def test_should_return_error_for_unsupported_compression_type(int_test_connection_factory, wiremock):
     # Given Snowflake client is logged in
-    with WiremockClient().start() as wiremock:
-        wiremock.add_mapping("auth/login_success_jwt.json")
-        wiremock.add_mapping("put_get/put_unsupported_compression_type.json")
-        connection = int_test_connection_factory(server_url=wiremock.http_url())
-        cursor = connection.cursor()
-        try:
-            assert cursor is not None
-
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("put_get/put_unsupported_compression_type.json")
+    with closing(int_test_connection_factory(server_url=wiremock.http_url())) as connection:
+        with connection.cursor() as cursor:
             # And File compressed with unsupported format
             test_file_path = (
                 repo_root() / "tests" / "test_data" / "generated_test_data" / "compression" / "test_data.csv.xz"
@@ -33,5 +30,3 @@ def test_should_return_error_for_unsupported_compression_type(int_test_connectio
             if OLD_DRIVER_ONLY("BD#4"):
                 assert "253007" in str(exc_info.value)
                 assert "Feature is not supported" in str(exc_info.value)
-        finally:
-            cursor.close()

@@ -1,87 +1,561 @@
 behavior_differences:
   1:
     name: "Header of a gzip-compressed file does not contain filename"
+    status: allowed
+    type: bug
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
 
   2:
     name: "DEFLATE compression type option is now correctly auto-detected"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
 
   3:
     name: "BROTLI compression type option is now supported"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
 
   5:
     name: "Private key password parameter name changed"
-    description: |
-      NEW driver: `private_key_password`
-      OLD driver: `private_key_file_pwd`
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `private_key_file_pwd`
+    new_driver_behavior: |
+      `private_key_password`. The legacy name `private_key_file_pwd` is still accepted
+      and mapped to `private_key_password`, but emits a `DeprecationWarning`.
 
   11:
     name: "CONFIG_PARSER deprecated alias removed"
-    description: |
-      NEW driver: CONFIG_PARSER module attribute no longer exists; accessing it raises AttributeError.
-      OLD driver: CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
+    new_driver_behavior: |
+      CONFIG_PARSER module attribute no longer exists; accessing it raises AttributeError.
 
   12:
     name: "Deprecated add_subparser method and _sub_parsers property removed"
-    description: |
-      NEW driver: add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
-      OLD driver: add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.
+    new_driver_behavior: |
+      add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
 
   13:
     name: "Empty connections.toml preserves config.toml connections"
-    description: |
-      NEW driver: When connections.toml exists but is empty, connections from config.toml are preserved.
-      OLD driver: When connections.toml exists but is empty, it replaces config.toml connections with an empty set.
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      When connections.toml exists but is empty, it replaces config.toml connections with an empty set.
+    new_driver_behavior: |
+      When connections.toml exists but is empty, connections from config.toml are preserved.
 
   14:
     name: "ConfigManager without file_path returns MissingConfigOptionError on option retrieval"
-    description: |
-      NEW driver: Retrieving an option from a ConfigManager with no file_path returns an empty config and raises MissingConfigOptionError.
-      OLD driver: Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.
+    status: allowed
+    type: bug
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.
+    new_driver_behavior: |
+      Retrieving an option from a ConfigManager with no file_path returns an empty config and raises MissingConfigOptionError.
 
   15:
     name: "Session parameter updates visible across cursors without execute"
-    description: |
-      NEW driver: cursor session parameters (e.g. cursor.timestamp_output_format) read from a shared connection-level cache, so changes made by one cursor are immediately visible to other cursors on the same connection without requiring a query.
-      OLD driver: Each cursor populates its session parameters independently from query responses, so a cursor that has not executed a query will not reflect changes made by another cursor.
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      Each cursor populates its session parameters independently from query responses, so a cursor that has not executed a query will not reflect changes made by another cursor.
+    new_driver_behavior: |
+      Cursor session parameters (e.g. cursor.timestamp_output_format) read from a shared connection-level cache, so changes made by one cursor are immediately visible to other cursors on the same connection without requiring a query.
 
   16:
     name: "MFA token caching parameter renamed"
-    description: |
-      NEW driver: `client_store_temporary_credential` enables MFA token caching. The legacy name
-        `client_request_mfa_token` is also accepted as a backward-compatible alias and is silently
-        mapped to `client_store_temporary_credential`.
-      OLD driver: `client_request_mfa_token` enables MFA token caching.
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `client_request_mfa_token` enables MFA token caching.
+    new_driver_behavior: |
+      `client_store_temporary_credential` enables MFA token caching. The legacy name
+      `client_request_mfa_token` is also accepted as a backward-compatible alias and is mapped
+      to `client_store_temporary_credential`, but emits a `DeprecationWarning`.
 
   17:
     name: "rest.request() validates HTTP method (internal API)"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Does not validate the method parameter; attempts the request, which may result in an HttpError from the server.
+    new_driver_behavior: |
+      Raises ValueError for unsupported HTTP methods (only 'get' and 'post' are accepted).
     description: |
       Internal API used by Snowflake CLI via connection.rest.request().
-      NEW driver: Raises ValueError for unsupported HTTP methods (only 'get' and 'post' are accepted).
-      OLD driver: Does not validate the method parameter; attempts the request, which may result in an HttpError from the server.
 
   18:
     name: "JSONResultBatch supports Arrow and Pandas conversion"
-    description: |
-      NEW driver: `JSONResultBatch` and `ArrowResultBatch` are backward-compatibility aliases for the Arrow-backed `ResultBatch`.
-        `to_arrow()`, `to_pandas()`, and `create_iter(iter_unit=TABLE_UNIT)` all work on every batch regardless of its class.
-      OLD driver: `JSONResultBatch.to_arrow()` and `JSONResultBatch.to_pandas()` raise `NotSupportedError` because JSON-format chunks have no Arrow representation.
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `JSONResultBatch.to_arrow()` and `JSONResultBatch.to_pandas()` raise `NotSupportedError` because JSON-format chunks have no Arrow representation.
+    new_driver_behavior: |
+      `JSONResultBatch` and `ArrowResultBatch` are backward-compatibility aliases for the Arrow-backed `ResultBatch`.
+      `to_arrow()`, `to_pandas()`, and `create_iter(iter_unit=TABLE_UNIT)` all work on every batch regardless of its class.
 
   19:
     name: "write_pandas create_temp_table parameter removed"
-    description: |
-      NEW driver: The `create_temp_table` parameter is removed from `write_pandas`. Use `table_type='temp'` instead.
-      OLD driver: `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
+    new_driver_behavior: |
+      The `create_temp_table` parameter is removed from `write_pandas`. Use `table_type='temp'` instead.
 
   20:
     name: "ResultBatch does not expose session_manager or http_config"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `ResultBatch` exposes `session_manager` (get/set) and `http_config` (get/set)
+      properties used to control HTTP behavior for chunk downloads when the connection is no
+      longer active. A cloned `SessionManager` is serialized with the batch, allowing chunk
+      downloads without an active connection.
+    new_driver_behavior: |
+      `ResultBatch` does not have `session_manager` or `http_config` properties.
+      Chunk fetching is handled internally by the Rust core, so there is no Python-level HTTP
+      session management to configure on individual batches. After deserializing a `ResultBatch`
+      (e.g. via pickle), a live `Connection` must be provided to any data-fetching method
+      (`create_iter`, `to_arrow`, `to_pandas`, `populate_data`) or set via the `connection`
+      property, because the connection is not serialized.
+
+  21:
+    name: "Closed cursor raises InterfaceError on all operations"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      Only `execute()` has a closed-cursor guard (`InterfaceError`, errno=252006).
+      Other methods fail incidentally based on internal state:
+        - `fetchone`/`fetchmany`/`fetchall` raise `TypeError` because internal state is `None`.
+        - `executemany`, `callproc`, `reset`, `abort_query`, `query_result`, etc. raise `AttributeError` for the same reason.
+        - `get_results_from_sfqid` has no guard at all.
+    new_driver_behavior: |
+      Every cursor method now validates that the cursor is open and raises `InterfaceError("Cursor is closed.", errno=252006)` if it isn't.
+      Two guards are used:
+          - `@_requires_open` (checks both cursor and connection) on:
+            `execute`, `execute_async`, `executemany`, `describe`, `callproc`, `abort_query`, `get_results_from_sfqid`,
+            `query_result`, `get_result_batches`, `fetch_arrow_batches`, `fetch_arrow_all`, `fetch_pandas_batches`, `fetch_pandas_all`.
+          - `@_requires_open_cursor_not_connection` (checks only the cursor's own `_closed` flag, NOT the connection) on:
+            `fetchone`, `fetchmany`, `fetchall`, and `reset`.
+            This is a deliberate carve-out so that already-buffered result rows remain readable after `connection.close()`,
+            matching the old driver's behavior for that scenario.
+
+  22:
+    name: "Fetching before execute raises ProgrammingError"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      Calling `fetchone`, `fetchmany`, `fetchall`, or iterating a cursor before any query has been executed has no guard, so they raise `TypeError` because the cursor's internal result state is `None`.
+    new_driver_behavior: |
+      Calling `fetchone`, `fetchmany`, `fetchall`, or iterating a cursor before any query has been executed raises
+      `ProgrammingError("No results available (already consumed or not produced by this query)", errno=252009)` (`ER_NO_DATA_FOUND`).
+
+  23:
+    name: "Connection does not expose a public connect() method"
+    status: unknown
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      `SnowflakeConnection` exposes a public `connect(**kwargs)` method that `__init__` calls at the end of construction.
+      Despite being public, the method was not usable as a reconnect mechanism: after a successful connection
+      the driver calls `auth_class.reset_secrets()` and `self._password = None`, wiping credential state from the auth instance.
+      A subsequent `connect()` call — even with full kwargs re-supplied — fails.
+    new_driver_behavior: |
+      `Connection` does not have a public `connect()` method.
+      The connection to Snowflake is established internally during `__init__` via a private `_connect()` call.
+      All connection parameters must be provided at construction time.
+
+  24:
+    name: "region connection parameter and Connection.region property removed"
+    status: unknown
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `region` is accepted as a `connect()` kwarg and used internally to
+      construct the Snowflake hostname. `Connection.region` returns the value, emitting a
+      `PendingDeprecationWarning`. No known consumer (Airflow, Snow CLI, Snowpark,
+      SQLAlchemy) reads the property — they all store `region` independently.
+    new_driver_behavior: |
+      The `region` connection parameter is not accepted and `Connection` does
+      not have a `region` property. Callers that previously relied on `region` to derive
+      the hostname must supply the fully-qualified `account` identifier (e.g.
+      `"myaccount.us-east-1"`) or set `host` explicitly instead.
+
+  25:
+    name: "client_fetch_threads deprecated; client_fetch_use_mp removed"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      `client_fetch_threads` controls the chunk-fetch pool size (defaulting to
+      `client_prefetch_threads`). `client_fetch_use_mp=True` switches the pool from
+      `ThreadPoolExecutor` to `ProcessPoolExecutor`.
+    new_driver_behavior: |
+      `client_fetch_threads` is accepted as a deprecated alias for `client_prefetch_threads`
+      and emits a `DeprecationWarning`. The legacy `client_fetch_use_mp` parameter (which switched
+      chunk fetching from a thread pool to a process pool) has no equivalent: the universal driver
+      always uses a thread pool. Passing `client_fetch_use_mp` is accepted for source compatibility
+      but has no effect and emits a `DeprecationWarning`.
+
+  26:
+    name: "client_session_keep_alive[_heartbeat_frequency] setters removed"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      `Connection.client_session_keep_alive` and
+      `Connection.client_session_keep_alive_heartbeat_frequency` expose
+      setters. In the old connector both setters wrote to a private attribute
+      having no effect on the live heartbeat thread either.
+    new_driver_behavior: |
+      Both attributes are read-only properties. Assignment raises
+      `AttributeError`.
+
+  27:
+    name: "S3 endpoint for cn-* regions delegated to AWS SDK"
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      For S3 stages in China regions (`cn-*`), the old connector unconditionally constructs
+      the endpoint as `https://<bucket>.s3.<region>.amazonaws.com.cn` in
+      `S3StorageClient.transfer_accelerate_config` (`s3_storage_client.py`), regardless of the
+      `useS3RegionalUrl` / `useRegionalUrl` flags returned by GS. This is required because the
+      old connector uses its own REST client for PUT/GET and does not go through `boto3`'s
+      endpoint resolver for transfers.
+    new_driver_behavior: |
+      The universal driver only sets an explicit S3 endpoint when either
+      `stageInfo.endpoint` is set (FIPS / VPCE / custom override) or
+      `useS3RegionalUrl || useRegionalUrl` is true. For a `cn-*` region without any of those
+      flags, no endpoint override is configured and `aws-sdk-s3`'s default endpoint resolver
+      is trusted to pick `amazonaws.com.cn` from the region. This matches snowflake-jdbc
+      (`SnowflakeS3Client.java`) and libsnowflakeclient (`SnowflakeS3Client.cpp`), which both
+      delegate to their respective AWS SDKs in the same conditions.
     description: |
-      NEW driver: `ResultBatch` does not have `session_manager` or `http_config` properties.
-        Chunk fetching is handled internally by the Rust core, so there is no Python-level HTTP
-        session management to configure on individual batches. After deserializing a `ResultBatch`
-        (e.g. via pickle), a live `Connection` must be provided to any data-fetching method
-        (`create_iter`, `to_arrow`, `to_pandas`, `populate_data`) or set via the `connection`
-        property, because the connection is not serialized.
-      OLD driver: `ResultBatch` exposes `session_manager` (get/set) and `http_config` (get/set)
-        properties used to control HTTP behavior for chunk downloads when the connection is no
-        longer active. A cloned `SessionManager` is serialized with the batch, allowing chunk
-        downloads without an active connection.
+      The Python connector is the outlier among reference drivers: JDBC and libsnowflakeclient
+      already trust the AWS SDK partition resolver for `cn-*` when no regional-URL flag is set.
+      Verification on a real `cn-*` stage end-to-end is still pending.
+
+  28:
+    name: "oauth_enable_refresh_tokens parameter has no effect"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      `oauth_enable_refresh_tokens` (default `True`) gates whether the refresh
+      token returned by the IdP is used to refresh expired access tokens.
+    new_driver_behavior: |
+      `oauth_enable_refresh_tokens` is accepted for source compatibility but
+      has no effect and emits a `DeprecationWarning`. The universal driver
+      always uses the refresh token when the IdP returns one; use
+      `client_store_temporary_credential` to gate *caching* the refresh token
+      on disk.
+
+  29:
+    name: "oauth_credentials_in_body sends client_secret_post (body only, not body+header)"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `oauth_credentials_in_body=True` (default `False`) switches the
+      `OAUTH_CLIENT_CREDENTIALS` token request from HTTP Basic auth
+      (`client_secret_basic`) to *also* including `client_id`/`client_secret`
+      in the request body. The legacy connector's
+      `AuthByOauthCredentials._request_tokens` adds the credentials to the
+      form body while `_oauth_base._create_token_request_headers` still
+      emits the `Authorization: Basic` header unconditionally — so the
+      credentials are sent in BOTH the header and the body. Added to
+      `snowflake-connector-python` after an explicit customer request
+      tracked under `SNOW-2300649`.
+    new_driver_behavior: |
+      `oauth_credentials_in_body=True` is honored: the universal driver
+      sends `client_id`/`client_secret` in the token-request body only
+      (RFC 6749 `client_secret_post`) and does NOT emit the
+      `Authorization: Basic` header, matching the Node.js driver's
+      `ClientSecretPost` shape. The default (`False`) remains HTTP Basic
+      (`client_secret_basic`), which RFC 6749 §2.3.1 calls out as the only
+      client authentication method an Authorization Server MUST support:
+
+          > "The authorization server MUST support the HTTP Basic
+          >  authentication scheme for authenticating clients that were
+          >  issued a client password."
+
+      The behavioral difference is the body-only form: where legacy Python
+      duplicates the credentials in both the Basic header and the body, the
+      universal driver sends them in the body only. IdPs that strictly
+      require `client_secret_post` are satisfied by both drivers; IdPs that
+      happen to also read the Basic header on a `client_secret_post`
+      request will only see the body form from the universal driver.
+
+  30:
+    name: "enable_stage_s3_privatelink_for_us_east_1 renamed to use_s3_regional_url"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      `enable_stage_s3_privatelink_for_us_east_1` is the connection kwarg / session
+      parameter that forces PUT/GET to use the S3 regional endpoint
+      (`s3.<region>.amazonaws.com[.cn]`) instead of the global one. Required for
+      accounts using PrivateLink-to-S3 and for Snowpipe Streaming. The misleading
+      `_for_us_east_1` suffix is historical: the feature applies to any S3 region.
+    new_driver_behavior: |
+      `use_s3_regional_url` is the canonical connection kwarg. The name matches
+      the `StageInfo.use_s3_regional_url` field that drives endpoint selection
+      and aligns with libsnowflakeclient's connection-level `use_s3_regional_url`
+      attribute. `enable_stage_s3_privatelink_for_us_east_1` is accepted as a
+      deprecated alias and emits a `DeprecationWarning`. The server-pushed session
+      parameter `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` continues to be honored
+      verbatim (it is the same string all reference drivers — Python, JDBC,
+      libsnowflakeclient — read from the login response).
+
+  31:
+    name: "HTTP_PROXY/HTTPS_PROXY env vars are not consulted by default"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    impact: high
+    is_breaking_change: true
+    old_driver_behavior: |
+      Since 3.17.0, the legacy connector unconditionally consults
+      `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars and lets them override
+      explicit `proxy_host`/`proxy_port` connection parameters. A globally-set
+      env var silently overrides per-connection settings.
+    new_driver_behavior: |
+      Two changes that together standardize proxy precedence with
+      JDBC/Go/Node.js/ODBC:
+
+      1. Default-deny env detection. The new `use_proxy_env` parameter
+         (default: `false`) gates whether `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
+         are consulted at all. Customers who relied on env-var auto-pickup
+         must set `use_proxy_env=True` (or pass the env-equivalent ODBC alias
+         `PROXYWITHENV=true`).
+
+      2. Explicit params win. When both `use_proxy_env=True` AND an explicit
+         `proxy_host`/`proxy_port` (or legacy `PROXY` URL) are set, the
+         explicit param wins; env vars are ignored.
+
+      Both legacy formats are accepted: snowflake-connector-python
+      `proxy_host`/`proxy_port`/`proxy_user`/`proxy_password`/`no_proxy`
+      kwargs, and the legacy ODBC `PROXY=[scheme://][user:pass@]host[:port]`
+      URL form. When both are set, individual fields override URL components
+      per-field. See (snowflake-eng/universal-driver#29).
+
+  32:
+    name: "Azure Blob PUT does not set Content-Encoding header"
+    status: allowed
+    type: bug
+    reviewed: false
+    impact: high
+    is_breaking_change: true
+    old_driver_behavior: |
+      The Python connector sets `Content-Encoding: utf-8` on Azure Blob single-shot
+      PUT (the upload-chunk path in `azure_storage_client.py`) and
+      `x-ms-blob-content-encoding: utf-8` on the block-list commit (the final PUT
+      that finalizes a multi-block upload of a large file). The value is wrong:
+      `utf-8` is a character encoding, not an HTTP content coding (RFC 9110 §8.4
+      expects values like `gzip`, `br`, `deflate`, `zstd`, `identity`). Azure
+      tolerates the wrong value but persists it as a blob property echoed on
+      subsequent GETs.
+    new_driver_behavior: |
+      The universal driver omits `Content-Encoding` and `x-ms-blob-content-encoding`
+      entirely on Azure PUT, matching the Snowflake JDBC and libsnowflakeclient
+      drivers, which also omit them. The contract applies to every Azure PUT
+      codepath in UD, present and future. Existing blobs uploaded by the legacy
+      Python connector retain their stored `Content-Encoding: utf-8` property;
+      reading them with the new driver still works, because no driver acts on
+      the property when downloading.
+
+  33:
+    name: "Concurrent interactive auth prompts are serialized (disable_parallel_user_prompt)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a connection pool opens multiple connections concurrently for the same
+      `<user, host>` and interactive authentication is required (external browser,
+      USERNAME_PASSWORD_MFA, OAuth authorization code), each connection runs its
+      own interactive flow, so the user is shown one prompt per connection. There
+      is no parameter to serialize the prompts.
+    new_driver_behavior: |
+      Interactive auth prompts are serialized by a process-global per-`<user, host,
+      token-type>` lock: the first connection runs the interactive flow and caches
+      the token; connections that arrive while it holds the lock wait and then reuse
+      the cached token, so the user sees only one prompt. Locking engages only when
+      `client_store_temporary_credential=true` and `disable_parallel_user_prompt=true`
+      (the default). Set `disable_parallel_user_prompt=false` to opt out and let each
+      concurrent connection show its own prompt. The lock is released on failure and
+      on browser-callback timeout so a waiting connection can still authenticate.
+
+  34:
+    name: "executemany uses server arrayBindSupported flag to gate array binding"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      executemany detects INSERT via a client-side regex (^insert\s+into, IGNORECASE).
+      Statements that do not match the regex — including non-INSERT DML (UPDATE, DELETE,
+      MERGE) — fall back to per-row execution with scalar JSON binding.
+    new_driver_behavior: |
+      executemany issues a describe-only request first and reads the server's
+      arrayBindSupported flag, the same mechanism used by the JDBC and ODBC drivers.
+      If the server reports array binding is supported, all rows are transposed and
+      sent in a single array-bound request (with CSV stage upload above
+      CLIENT_STAGE_ARRAY_BINDING_THRESHOLD). If not supported, each parameter set is
+      executed individually with scalar JSON binding. For current Snowflake SQL, the
+      observable outcome is identical to the old regex approach; the server flag is
+      more robust for future statement types the server may make array-bindable.
+    description: |
+      The server's arrayBindSupported flag is the authoritative source and is already
+      used by JDBC (describeSqlIfNotTried in SnowflakePreparedStatementImpl) and the
+      C/ODBC driver (_snowflake_execute_ex describe-only request). The universal driver
+      now aligns with those implementations. The extra describe round-trip is the same
+      cost JDBC and ODBC already pay.
+
+  35:
+    name: "OAuth bad client secret surfaces IdP error slug instead of generic browser message"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When `oauth_client_secret` is wrong during `OAUTH_AUTHORIZATION_CODE` or
+      `OAUTH_CLIENT_CREDENTIALS`, the legacy connector fails with a generic
+      login error such as `Invalid HTTP request from web browser. Idp
+      authentication could have failed.` The IdP's OAuth `error` slug (for example
+      `invalid_client`) is not surfaced.
+    new_driver_behavior: |
+      The universal driver propagates the IdP token-endpoint error into the login
+      failure message, for example `Identity Provider responded with error:
+      invalid_client: ... OAuth flow failed`. The OAuth error slug is visible to
+      callers parsing the exception text.
+
+  37:
+    name: "Session token authentication: eager validation and master_token requirement"
+    status: todo
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When `session_token` is passed as a connection parameter, the old driver uses it
+      directly as the bearer token without any upfront validation. The session is
+      considered established immediately; if the token is invalid, the failure surfaces
+      later as an `HttpError` (errno 290401) during the post-login heartbeat call.
+      `master_token` is not required and may be omitted.
+    new_driver_behavior: |
+      When `session_token` is passed, the universal driver calls `/session/token-request`
+      (RENEW) before considering the connection open. This validates the tokens eagerly
+      and returns the real server-assigned `session_id` so telemetry is attributed
+      correctly. If the tokens are invalid, a `DatabaseError` is raised from
+      `connect()` before the connection object is returned to the caller.
+      `master_token` is required alongside `session_token` because the RENEW endpoint
+      uses it as the Authorization bearer; omitting it raises a `ProgrammingError`
+      at configuration time.
+    description: |
+      The eager-validation design aligns session token auth with every other auth
+      method in UD: callers can rely on `connect()` raising on bad credentials rather
+      than discovering failures at first use. The `master_token` requirement is a
+      direct consequence of the RENEW call — without it there is no way to authorize
+      the refresh request.
+
+  38:
+    name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `oauth_token_request_url` (and the authorization-code `external_authorization_url`)
+      accept any URL scheme. For the token endpoint an `http://` value produces only a log
+      warning ("OAuth URL uses insecure HTTP protocol") and the request proceeds. The
+      authorization-code flow does require `https://` for the *authorization* URL, but not
+      for the *token* URL, and there is no loopback carve-out.
+    new_driver_behavior: |
+      The universal driver requires `oauth_token_request_url` / `oauth_authorization_url` to
+      use the `https` scheme and rejects a non-loopback `http://` value at connect time
+      (InvalidParameterValue). `http://` remains accepted for loopback hosts (127.0.0.0/8,
+      ::1, localhost) so local IdP mocks keep working. RFC 6749 §3.1.2.1 and the OAuth 2.0
+      Security BCP require TLS on these endpoints. The loopback redirect URI is unaffected.
+    description: |
+      Security hardening tracked under SNOW-3663588; the same difference is documented as
+      BD#10 in jdbc/ and BD#81 in odbc_tests/ BehaviorDifferences.yaml. Callers that configured
+      a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
+      to `https://`.

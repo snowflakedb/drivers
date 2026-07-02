@@ -10,7 +10,6 @@
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -25,7 +24,6 @@
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set has correct number of columns",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -38,7 +36,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set has cor
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -67,7 +64,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Result set column 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Returns empty result set for existing table",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Snowflake does NOT support traditional SQL column-level GRANT privileges
   // (e.g., GRANT SELECT(col)). SQLColumnPrivileges always returns an empty result set.
 
@@ -81,7 +77,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Returns empty resu
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Various parameter combinations return empty",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Cannot verify actual search pattern/parameter behavior since Snowflake doesn't
   // support column privileges. These tests only verify that various parameter combinations
   // are accepted without error and return empty result sets.
@@ -115,7 +110,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Various parameter 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Non-existent table returns empty result set",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Cannot distinguish between "table doesn't exist" and "no privileges exist"
   // since Snowflake doesn't support column privileges - both return empty result sets.
 
@@ -133,7 +127,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Non-existent table
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Can call multiple times after close cursor",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -150,7 +143,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: Can call multiple 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: SQLRowCount returns -1",
                  "[odbc-api][catalog][columnprivileges]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -174,40 +166,87 @@ TEST_CASE("SQLColumnPrivileges: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY009 - NULL TableName pointer",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a NULL TableName pointer (which is required)
   const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM null-checks TableName and reports HY009
+    //   (invalid use of null pointer)
+    REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY { REQUIRE(ret == SQL_ERROR); }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative CatalogName length (-999)
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length up front with
+    //   HY090 (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR before
+    //   the call reaches the driver
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative SchemaName length (-999)
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative TableName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative TableName length (-999)
   const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative ColumnName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative ColumnName length (-999)
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("COLUMN"), -999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: 24000 - Cursor already open",
                  "[odbc-api][catalog][columnprivileges][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -220,8 +259,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: 24000 - Cursor alr
 
 TEST_CASE_METHOD(DbcFixture, "SQLColumnPrivileges: Requires active connection",
                  "[odbc-api][catalog][columnprivileges][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
 

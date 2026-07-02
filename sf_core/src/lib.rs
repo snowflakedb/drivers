@@ -2,6 +2,7 @@ extern crate tracing;
 extern crate tracing_subscriber;
 
 pub mod apis;
+pub mod diagnostic;
 
 pub mod arrow_utils;
 mod auth;
@@ -19,8 +20,10 @@ pub mod http;
 pub mod logging;
 pub mod perf_timing;
 pub mod query_types;
+pub mod refresh;
 pub mod rest;
 pub mod sensitive;
+pub mod stage_binding;
 pub mod telemetry;
 pub mod tls;
 pub mod token_cache;

@@ -1,5 +1,5 @@
 pub use crate::chunks::convert_string_rowset_to_arrow_reader;
-use crate::query_types::RowType;
+use crate::query_types::{GeoRepresentation, RowType, VectorElementType};
 use arrow::array::Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
@@ -175,9 +175,14 @@ pub fn create_field_with_type(
                     .with_metadata(metadata),
             )
         }
-        RowType::Decfloat { name, nullable } => {
+        RowType::Decfloat {
+            name,
+            nullable,
+            precision,
+        } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DECFLOAT".to_string());
+            metadata.insert("precision".to_string(), precision.to_string());
             let data_type = data_type.unwrap_or_else(|| {
                 DataType::Struct(
                     vec![
@@ -214,6 +219,85 @@ pub fn create_field_with_type(
                 Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
                     .with_metadata(metadata),
             )
+        }
+        RowType::IntervalYearMonth {
+            name,
+            nullable,
+            precision,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "INTERVAL_YEAR_MONTH".to_string());
+            metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            Ok(Field::new(
+                name,
+                data_type.unwrap_or(DataType::Int64), // Int64 is the default representation; large values may use Int32 or Decimal128
+                *nullable,
+            )
+            .with_metadata(metadata))
+        }
+        RowType::IntervalDaySecond {
+            name,
+            nullable,
+            precision,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "INTERVAL_DAY_TIME".to_string());
+            metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            Ok(Field::new(
+                name,
+                data_type.unwrap_or(DataType::Int64), // Int64 is the default; values >106,751 days require Decimal128
+                *nullable,
+            )
+            .with_metadata(metadata))
+        }
+        RowType::Geography {
+            name,
+            nullable,
+            representation,
+        }
+        | RowType::Geometry {
+            name,
+            nullable,
+            representation,
+        } => {
+            // The Python Arrow converter only recognises TEXT / BINARY logical types for
+            // geo data, so mirror what the server sends in native Arrow chunks (a TEXT
+            // column for GeoJSON/WKT/EWKT, a BINARY column for WKB/EWKB) rather than
+            // exposing GEOGRAPHY/GEOMETRY as a distinct logical type.
+            let (logical_type, default_dt) = match representation {
+                GeoRepresentation::Text => ("TEXT", DataType::Utf8),
+                GeoRepresentation::Binary => ("BINARY", DataType::Binary),
+            };
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), logical_type.to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(default_dt), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Vector {
+            name,
+            nullable,
+            dimension,
+            element_type,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "VECTOR".to_string());
+            let child_type = match element_type {
+                VectorElementType::Int32 => DataType::Int32,
+                VectorElementType::Float32 => DataType::Float32,
+            };
+            let data_type = data_type.unwrap_or_else(|| {
+                DataType::FixedSizeList(
+                    Arc::new(Field::new_list_field(child_type, true)),
+                    *dimension as i32,
+                )
+            });
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
     }
 }

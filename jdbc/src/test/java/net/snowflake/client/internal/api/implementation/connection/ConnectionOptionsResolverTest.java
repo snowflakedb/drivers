@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
@@ -26,6 +27,30 @@ public class ConnectionOptionsResolverTest {
     assertEquals("globalaccount", resolved.get("account"));
     assertEquals("TEST_WH", resolved.get("warehouse"));
     assertEquals("PUBLIC", resolved.get("schema"));
+  }
+
+  @Test
+  public void resolveWritesEffectiveUrlBackToUrlProperty() {
+    Properties resolved =
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake://testaccount.snowflakecomputing.com", new Properties());
+    assertEquals(
+        "jdbc:snowflake://testaccount.snowflakecomputing.com", resolved.getProperty("url"));
+  }
+
+  @Test
+  public void resolveFallsBackToUrlPropertyWhenInputUrlIsNull() {
+    Properties input = new Properties();
+    input.setProperty("url", "jdbc:snowflake://fromprops.snowflakecomputing.com");
+    Properties resolved = ConnectionOptionsResolver.resolve(null, input);
+    assertEquals("jdbc:snowflake://fromprops.snowflakecomputing.com", resolved.getProperty("url"));
+    assertEquals("fromprops.snowflakecomputing.com", resolved.getProperty("host"));
+  }
+
+  @Test
+  public void resolveLeavesUrlUnsetWhenNeitherInputNorPropertySupplied() {
+    Properties resolved = ConnectionOptionsResolver.resolve(null, new Properties());
+    assertNull(resolved.getProperty("url"));
   }
 
   @Test

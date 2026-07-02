@@ -291,6 +291,30 @@ class TestBinaryBinding:
             assert result == (corner_case,), f"Expected {corner_case!r}, got {result[0]!r}"
 
 
+class TestBinaryVarbinarySynonym:
+    """Verify that VARBINARY behaves identically to BINARY."""
+
+    def test_should_handle_varbinary_as_synonym_for_binary(self, execute_query, tmp_schema):
+        # Given Snowflake client is logged in
+        pass
+
+        # And A temporary table with VARBINARY column is created
+        table_name = f"{tmp_schema}.varbinary_synonym_test"
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col VARBINARY)")
+
+        # And The table is populated with binary values via VARBINARY column
+        execute_query(f"INSERT INTO {table_name} VALUES (X'48656C6C6F'), (X'576F726C64')")
+
+        # When Query "SELECT * FROM {table} ORDER BY col" is executed
+        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+
+        # Then the result should match the equivalent BINARY behavior
+        assert len(rows) == 2
+        assert_type([row[0] for row in rows], bytearray)
+        assert rows[0] == (b"Hello",)
+        assert rows[1] == (b"World",)
+
+
 class TestBinaryMultipleChunks:
     """Tests for BINARY type with multiple chunks downloading."""
 

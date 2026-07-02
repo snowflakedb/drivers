@@ -3,7 +3,7 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::config::{get_parameters, setup_logging};
 use crate::common::private_key_helper;
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::rest_parameters::{LoginMethod, LoginParameters};
 use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
@@ -23,9 +23,11 @@ fn should_maintain_session_across_multiple_queries() {
         let sql = format!("SELECT {} AS query_num", i);
         client.set_sql_query(&stmt, &sql);
         let result = client.execute_statement_query(&stmt);
+        let query_id = unwrap_single_query_id(&result);
+        let rs = client.get_result_set(&stmt, &query_id);
 
         // Then each query should succeed with the correct result
-        let mut helper = ArrowResultHelper::from_result(result);
+        let mut helper = ArrowResultHelper::from_result(rs);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], i as i64);
@@ -45,9 +47,11 @@ fn should_execute_queries_with_delay_between_them() {
         let sql = format!("SELECT {} AS seq", i);
         client.set_sql_query(&stmt, &sql);
         let result = client.execute_statement_query(&stmt);
+        let query_id = unwrap_single_query_id(&result);
+        let rs = client.get_result_set(&stmt, &query_id);
 
         // Then each query should succeed
-        let mut helper = ArrowResultHelper::from_result(result);
+        let mut helper = ArrowResultHelper::from_result(rs);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows[0][0], i as i64);
 
@@ -98,15 +102,17 @@ fn should_refresh_session_proactively() {
             client_info: client_info.clone(),
             session_parameters: None,
             spcs_token: None,
+            disable_parallel_user_prompt: false,
         };
 
         let http_client = create_tls_client_with_config(TlsConfig::insecure())
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
-        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None, None)
-            .await
-            .expect("Login should succeed");
+        let login_result =
+            snowflake_login_with_client(&http_client, &login_parameters, None, None, None)
+                .await
+                .expect("Login should succeed");
 
         let original_session_token = login_result.tokens.session_token.clone();
 

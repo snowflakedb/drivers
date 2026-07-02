@@ -4,12 +4,25 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <cerrno>
+#include <csetjmp>
+#include <csignal>
+#include <cstring>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_tostring.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_return_code.hpp"
 
@@ -43,6 +56,100 @@ struct StringMaker<OdbcResult> {
   }
 };
 }  // namespace Catch
+
+// ---------------------------------------------------------------------------
+// InvalidHandleProbe — result of a crash-isolated SQLFreeHandle call.
+// Used to verify that an ODBC handle has been invalidated without crashing
+// the test runner if the Driver Manager dereferences freed memory.
+// ---------------------------------------------------------------------------
+struct InvalidHandleProbe {
+  bool crashed = false;
+  SQLRETURN returnCode = SQL_SUCCESS;
+};
+
+namespace Catch {
+template <>
+struct StringMaker<InvalidHandleProbe> {
+  static std::string convert(const InvalidHandleProbe& probe) {
+    if (probe.crashed) return "handle access caused crash (SIGSEGV/access violation)";
+    return "SQLFreeHandle returned " + return_code_to_string(probe.returnCode);
+  }
+};
+}  // namespace Catch
+
+// ---------------------------------------------------------------------------
+// probe_invalid_handle — crash-isolated SQLFreeHandle probe.
+//
+// Per the ODBC spec, using a freed handle is undefined behavior: some Driver
+// Managers return SQL_INVALID_HANDLE while others let the driver dereference
+// freed memory.  Both outcomes prove the handle is no longer valid.
+//
+// Platform strategies:
+//   MSVC:          SEH __try/__except  (scoped, compiler-native)
+//   MinGW/non-MSVC Windows: signal(SIGSEGV) + setjmp/longjmp  (MSVCRT translates
+//                           EXCEPTION_ACCESS_VIOLATION → SIGSEGV)
+//   POSIX:         fork() child process  (full address-space isolation)
+// ---------------------------------------------------------------------------
+#if defined(_WIN32) && defined(_MSC_VER)
+
+inline InvalidHandleProbe probe_invalid_handle(SQLSMALLINT handle_type, SQLHANDLE handle) {
+  InvalidHandleProbe probe;
+  __try {
+    probe.returnCode = SQLFreeHandle(handle_type, handle);
+  } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER
+                                                               : EXCEPTION_CONTINUE_SEARCH) {
+    probe.crashed = true;
+  }
+  return probe;
+}
+
+#elif defined(_WIN32)
+
+inline InvalidHandleProbe probe_invalid_handle(SQLSMALLINT handle_type, SQLHANDLE handle) {
+  static thread_local std::jmp_buf rih_jmp_buf;
+  auto prev_handler = std::signal(SIGSEGV, [](int) { std::longjmp(rih_jmp_buf, 1); });
+
+  InvalidHandleProbe probe;
+  if (setjmp(rih_jmp_buf) == 0) {
+    probe.returnCode = SQLFreeHandle(handle_type, handle);
+  } else {
+    probe.crashed = true;
+  }
+
+  std::signal(SIGSEGV, prev_handler);
+  return probe;
+}
+
+#else
+
+inline InvalidHandleProbe probe_invalid_handle(SQLSMALLINT handle_type, SQLHANDLE handle) {
+  pid_t pid = fork();
+  if (pid == -1) {
+    FAIL("fork() failed: " << std::strerror(errno));
+  }
+  if (pid == 0) {
+    SQLRETURN r = SQLFreeHandle(handle_type, handle);
+    _exit(r == SQL_INVALID_HANDLE ? 0 : 1);
+  }
+
+  int status = 0;
+  while (waitpid(pid, &status, 0) == -1) {
+    if (errno != EINTR) {
+      FAIL("waitpid() failed: " << std::strerror(errno));
+    }
+  }
+
+  InvalidHandleProbe probe;
+  probe.crashed = WIFSIGNALED(status) && (WTERMSIG(status) == SIGSEGV || WTERMSIG(status) == SIGBUS);
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    probe.returnCode = SQL_INVALID_HANDLE;
+  } else if (!probe.crashed) {
+    probe.returnCode = SQL_SUCCESS;
+  }
+  return probe;
+}
+
+#endif
 
 namespace OdbcMatchers {
 
@@ -104,7 +211,43 @@ class IsStillExecuting : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string describe() const override { return "is SQL_STILL_EXECUTING"; }
 };
 
+// ODBC 3.x ↔ ODBC 2.x SQLSTATE equivalence table.
+//
+// iODBC's Driver Manager surfaces SQLSTATEs in the older ODBC 2.x spelling
+//   (`S1nnn`, `S0nnn`, `S1Cnn`, `S1Tnn`) where the ODBC 3.x DM (unixODBC,
+//   Microsoft, our own driver) returns the 3.x spelling (`HYnnn`, `42Snn`,
+//   `HYCnn`, `HYTnn`, `07009`). The pair represents the same diagnostic;
+//   tests written against the 3.x state should still pass under iODBC.
+//
+// Mapping is canonical (per the ODBC 3.x SQLSTATE mapping in MS-ODBC and
+//   the unixODBC/iODBC source trees). The comparison is bidirectional so a
+//   test asking for `HY010` matches a driver returning `S1010`, and vice
+//   versa. Outside iODBC the comparison stays strict.
+inline bool sqlstate_equivalent(const std::string& a, const std::string& b) {
+  if (a == b) return true;
+  if (!is_iodbc_test_suite()) return false;
+  static constexpr const char* kPairs[][2] = {
+      {"S1000", "HY000"}, {"S1001", "HY001"}, {"S1002", "07009"}, {"S1003", "HY003"}, {"S1004", "HY004"},
+      {"S1008", "HY008"}, {"S1009", "HY009"}, {"S1010", "HY010"}, {"S1011", "HY011"}, {"S1012", "HY012"},
+      {"S1090", "HY090"}, {"S1091", "HY091"}, {"S1092", "HY092"}, {"S1093", "07009"}, {"S1095", "HY095"},
+      {"S1096", "HY096"}, {"S1097", "HY097"}, {"S1098", "HY098"}, {"S1099", "HY099"}, {"S1100", "HY100"},
+      {"S1101", "HY101"}, {"S1103", "HY103"}, {"S1104", "HY104"}, {"S1105", "HY105"}, {"S1106", "HY106"},
+      {"S1107", "HY107"}, {"S1108", "HY108"}, {"S1109", "HY109"}, {"S1110", "HY110"}, {"S1111", "HY111"},
+      {"S1C00", "HYC00"}, {"S1T00", "HYT00"}, {"S0001", "42S01"}, {"S0002", "42S02"}, {"S0011", "42S11"},
+      {"S0012", "42S12"}, {"S0021", "42S21"}, {"S0022", "42S22"}, {"S0023", "42S23"},
+  };
+  for (const auto& pair : kPairs) {
+    if ((a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0])) return true;
+  }
+  return false;
+}
+
 // Matches when any diagnostic record has the given SQLSTATE.
+//
+// Under iODBC, the ODBC 2.x spelling returned by the iODBC DM (e.g. `S1010`)
+//   is treated as equivalent to its ODBC 3.x counterpart (`HY010`) so tests
+//   written against ODBC 3.x SQLSTATEs do not need to fork on the active
+//   driver manager. See `sqlstate_equivalent` for the full mapping.
 class HasSqlState : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string expectedState_;
 
@@ -113,11 +256,15 @@ class HasSqlState : public Catch::Matchers::MatcherBase<OdbcResult> {
 
   bool match(const OdbcResult& result) const override {
     for (const auto& rec : result.diagRecords) {
-      if (rec.sqlState == expectedState_) return true;
+      if (sqlstate_equivalent(rec.sqlState, expectedState_)) return true;
     }
     return false;
   }
-  std::string describe() const override { return "has SQLSTATE " + expectedState_; }
+  std::string describe() const override {
+    std::string out = "has SQLSTATE " + expectedState_;
+    if (is_iodbc_test_suite()) out += " (or ODBC 2.x equivalent under iODBC)";
+    return out;
+  }
 };
 
 // Matches when any diagnostic message contains the given substring.
@@ -134,6 +281,16 @@ class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
     return false;
   }
   std::string describe() const override { return "has diagnostic message containing \"" + substring_ + "\""; }
+};
+
+// Matches when a handle probe shows the handle is invalid (either the DM
+// returned SQL_INVALID_HANDLE or the call crashed with an access violation).
+class IsHandleInvalid : public Catch::Matchers::MatcherBase<InvalidHandleProbe> {
+ public:
+  bool match(const InvalidHandleProbe& probe) const override {
+    return probe.crashed || probe.returnCode == SQL_INVALID_HANDLE;
+  }
+  std::string describe() const override { return "handle is invalid (SQL_INVALID_HANDLE or access violation)"; }
 };
 
 }  // namespace OdbcMatchers
@@ -170,5 +327,9 @@ class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
 #define REQUIRE_EXPECTED_WARNING(ret, expectedState, handle, handleType) \
   REQUIRE_THAT(OdbcResult(ret, handleType, handle),                      \
                OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState(expectedState))
+
+// Asserts that an ODBC handle has been invalidated (crash or SQL_INVALID_HANDLE).
+#define REQUIRE_INVALID_HANDLE(handle_type, handle) \
+  REQUIRE_THAT(probe_invalid_handle(handle_type, handle), OdbcMatchers::IsHandleInvalid())
 
 #endif  // ODBC_MATCHERS_HPP

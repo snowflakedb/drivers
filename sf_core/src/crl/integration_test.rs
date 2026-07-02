@@ -81,7 +81,7 @@ mod integration_tests {
         );
 
         match &config.auth {
-            AuthConfig::Password { user, password } => {
+            AuthConfig::Password { user, password, .. } => {
                 assert_eq!(user, "test_user");
                 assert_eq!(password.reveal(), "test_password");
             }
@@ -131,7 +131,7 @@ mod integration_tests {
     #[test]
     fn test_user_agent_generation() {
         let client_info = ClientInfo {
-            application: "PythonConnector".to_string(),
+            client_app_id: "PythonConnector".to_string(),
             version: "3.15.0".to_string(),
             os: "Darwin".to_string(),
             ..test_client_info()

@@ -1,6 +1,6 @@
 use sf_core::apis::database_driver_v1::Setting;
 use sf_core::config::config_manager::{
-    load_all_config_sections_with_paths, load_config_section_with_paths,
+    load_all_config_merged_toml_with_paths, load_config_section_with_paths,
 };
 use sf_core::config::param_names;
 use sf_core::config::param_store::ParamStore;
@@ -52,7 +52,7 @@ warehouse = "mywarehouse"
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let resolved = resolver::resolve_with_paths(&explicit, &paths).unwrap();
+    let resolved = resolver::resolve_with_paths(&explicit, &paths, false).unwrap();
 
     // Then The connection settings should be loaded
     assert_eq!(
@@ -91,7 +91,7 @@ user = "config_user"
     ]);
 
     // When sf_core loads the connection config
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then The explicit setting should take precedence
     assert!(result.is_ok());
@@ -111,7 +111,7 @@ fn connection_not_found_in_config() {
 
     // When sf_core loads connection named nonexistent
     let explicit = make_explicit(&[("connection_name", "nonexistent")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
@@ -147,7 +147,7 @@ warehouse = "connections_wh"
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then connections.toml values should override config.toml
     assert!(result.is_ok());
@@ -180,7 +180,7 @@ account = "myaccount"
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then An insecure permissions error should be returned
     assert!(result.is_err());
@@ -206,7 +206,7 @@ validate_certs = true
 
     // When sf_core loads the connection config
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then Each value should be parsed to the correct Setting type
     assert!(result.is_ok());
@@ -222,7 +222,7 @@ fn empty_config_files() {
 
     // When sf_core loads connection named testconn
     let explicit = make_explicit(&[("connection_name", "testconn")]);
-    let result = resolver::resolve_with_paths(&explicit, &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths, false);
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
@@ -286,17 +286,20 @@ account = "myaccount"
     );
 
     // When sf_core loads all config sections
-    let result = load_all_config_sections_with_paths(&paths);
-    assert!(result.is_ok());
+    let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+    let sections = merged.as_table().expect("root must be a table");
 
-    // Then All sections should be returned including connections
-    let sections = result.unwrap();
-    assert_eq!(sections.len(), 4); // log, proxy, retry, connections.testconn
+    // Then all sections should be returned, with nesting preserved, and
+    // connections nested under a single `connections` table.
+    assert_eq!(sections.len(), 4); // log, proxy, retry, connections
     assert!(sections.contains_key("log"));
     assert!(sections.contains_key("proxy"));
     assert!(sections.contains_key("retry"));
-    assert!(sections.contains_key("connections.testconn"));
-    assert!(!sections.contains_key("connections"));
+    assert!(sections.contains_key("connections"));
+    assert_eq!(
+        merged["connections"]["testconn"]["account"].as_str(),
+        Some("myaccount")
+    );
 }
 
 #[test]

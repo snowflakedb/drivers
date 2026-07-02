@@ -1,5 +1,6 @@
 package net.snowflake.client.api.datasource;
 
+import java.security.PrivateKey;
 import java.util.Properties;
 import javax.sql.DataSource;
 
@@ -28,6 +29,40 @@ public interface SnowflakeDataSource extends DataSource {
   void setRole(String role);
 
   void setWarehouse(String warehouse);
+
+  void setAuthenticator(String authenticator);
+
+  void setToken(String token);
+
+  void setPrivateKey(PrivateKey privateKey);
+
+  void setPrivateKeyFile(String location, String password);
+
+  void setPrivateKeyBase64(String privateKeyBase64, String password);
+
+  void setPasscode(String passcode);
+
+  void setPasscodeInPassword(boolean isPasscodeInPassword);
+
+  void setOktaUsername(String oktaUsername);
+
+  void setDisableSamlURLCheck(boolean disableSamlURLCheck);
+
+  void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential);
+
+  void setOauthClientId(String oauthClientId);
+
+  void setOauthClientSecret(String oauthClientSecret);
+
+  void setOauthAuthorizationUrl(String oauthAuthorizationUrl);
+
+  void setOauthTokenRequestUrl(String oauthTokenRequestUrl);
+
+  void setOauthRedirectUri(String oauthRedirectUri);
+
+  void setOauthScope(String oauthScope);
+
+  void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens);
 
   String getUrl();
 

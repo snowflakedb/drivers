@@ -1,0 +1,27 @@
+{
+  "name": "Successful interactive MFA login (returns mfaToken for caching)",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'USERNAME_PASSWORD_MFA' && !@.TOKEN)]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token",
+        "masterToken": "mock_master_token",
+        "sessionId": 12345,
+        "mfaToken": "mock_mfa_token_from_server",
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": true}
+        ]
+      }
+    }
+  }
+}

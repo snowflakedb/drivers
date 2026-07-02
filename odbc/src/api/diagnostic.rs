@@ -5,7 +5,7 @@
 
 use crate::{
     api::{
-        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
+        Environment, OdbcError, OdbcResult, SqlState, conn_from_handle, desc_from_handle,
         encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
         env_from_handle,
         error::{
@@ -13,6 +13,7 @@ use crate::{
             NoMoreDataSnafu,
         },
         stmt_from_handle,
+        types::{DescriptorAccess, DescriptorKind},
     },
     conversion::warning::{Warning, Warnings},
 };
@@ -169,6 +170,8 @@ pub trait WithDiagnosticInfo {
     fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo;
 }
 
+// TODO: With changes to the environment locking mechanism we need to
+// rework this solution so that we do not acquire the environment 3 times during one call
 impl WithDiagnosticInfo for Environment {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
@@ -178,7 +181,7 @@ impl WithDiagnosticInfo for Environment {
     }
 }
 
-impl WithDiagnosticInfo for Connection {
+impl WithDiagnosticInfo for crate::api::Connection {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
     }
@@ -187,7 +190,7 @@ impl WithDiagnosticInfo for Connection {
     }
 }
 
-impl WithDiagnosticInfo for Statement {
+impl WithDiagnosticInfo for crate::api::StatementInner {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
     }
@@ -232,45 +235,49 @@ impl WithDiagnosticInfo for crate::api::types::IpdDescriptor {
     }
 }
 
-fn desc_diag_from_handle<'a>(handle: sql::Handle) -> &'a mut dyn WithDiagnosticInfo {
-    use crate::api::types::DescriptorKind;
-    let raw_kind = unsafe { *(handle as *const u8) };
-    let kind = DescriptorKind::try_from(raw_kind)
-        .expect("desc_diag_from_handle: invalid descriptor tag — caller passed a bad handle");
-    match kind {
-        DescriptorKind::Ard => unsafe { &mut *(handle as *mut crate::api::types::ArdDescriptor) },
-        DescriptorKind::Ird => unsafe { &mut *(handle as *mut crate::api::types::IrdDescriptor) },
-        DescriptorKind::Apd => unsafe { &mut *(handle as *mut crate::api::types::ApdDescriptor) },
-        DescriptorKind::Ipd => unsafe { &mut *(handle as *mut crate::api::types::IpdDescriptor) },
-    }
-}
-
 pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
     if handle.is_null() {
         return;
     }
-    let t: &mut dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Env => env_from_handle(handle),
-        sql::HandleType::Dbc => conn_from_handle(handle),
-        sql::HandleType::Stmt => stmt_from_handle(handle),
-        sql::HandleType::Desc => desc_diag_from_handle(handle),
-        _ => return,
-    };
-    t.get_diag_info_mut().clear();
-}
-
-pub fn from_handle_type<'a>(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
-) -> Option<&'a mut dyn WithDiagnosticInfo> {
-    match handle_type {
-        sql::HandleType::Env => Some(env_from_handle(handle)),
-        sql::HandleType::Dbc => Some(conn_from_handle(handle)),
-        sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
-        sql::HandleType::Desc => Some(desc_diag_from_handle(handle)),
-        _ => {
-            tracing::info!("Invalid handle type: {:?}", handle_type);
-            None
+    if handle_type == sql::HandleType::Env {
+        let Ok(env) = env_from_handle(handle) else {
+            return;
+        };
+        let mut guard = env.environment.lock();
+        guard.get_diag_info_mut().clear();
+        return;
+    }
+    if handle_type == sql::HandleType::Dbc {
+        let Ok(dbc) = conn_from_handle(handle) else {
+            return;
+        };
+        dbc.connection.lock().get_diag_info_mut().clear();
+        return;
+    }
+    if handle_type == sql::HandleType::Stmt {
+        let Ok(guard) = stmt_from_handle(handle) else {
+            return;
+        };
+        guard.inner.lock().get_diag_info_mut().clear();
+        return;
+    }
+    if handle_type == sql::HandleType::Desc {
+        let Ok(access) = desc_from_handle(handle) else {
+            return;
+        };
+        match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let mut inner = guard.inner.lock();
+                match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info_mut().clear(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info_mut().clear(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info_mut().clear(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info_mut().clear(),
+                }
+            }
+            DescriptorAccess::Explicit { desc } => {
+                desc.lock().get_diag_info_mut().clear();
+            }
         }
     }
 }
@@ -307,10 +314,61 @@ pub fn set_diag_info_from_warnings(
     if handle.is_null() {
         return;
     }
-    if let Some(t) = from_handle_type(handle_type, handle) {
-        let diagnostic_info = t.get_diag_info_mut();
+    if handle_type == sql::HandleType::Env {
+        let Ok(env) = env_from_handle(handle) else {
+            return;
+        };
+        let mut guard = env.environment.lock();
+        let diagnostic_info = guard.get_diag_info_mut();
         for warning in warnings {
             diagnostic_info.add_record(from_warning(warning));
+        }
+        return;
+    }
+    if handle_type == sql::HandleType::Dbc {
+        let Ok(dbc) = conn_from_handle(handle) else {
+            return;
+        };
+        let mut conn = dbc.connection.lock();
+        let diagnostic_info = conn.get_diag_info_mut();
+        for warning in warnings {
+            diagnostic_info.add_record(from_warning(warning));
+        }
+        return;
+    }
+    if handle_type == sql::HandleType::Stmt {
+        let Ok(guard) = stmt_from_handle(handle) else {
+            return;
+        };
+        let mut inner = guard.inner.lock();
+        for warning in warnings {
+            inner.get_diag_info_mut().add_record(from_warning(warning));
+        }
+        return;
+    }
+    if handle_type == sql::HandleType::Desc {
+        let Ok(access) = desc_from_handle(handle) else {
+            return;
+        };
+        match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let mut inner = guard.inner.lock();
+                let diagnostic_info = match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info_mut(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info_mut(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
+                };
+                for warning in warnings {
+                    diagnostic_info.add_record(from_warning(warning));
+                }
+            }
+            DescriptorAccess::Explicit { desc } => {
+                let mut desc = desc.lock();
+                for warning in warnings {
+                    desc.get_diag_info_mut().add_record(from_warning(warning));
+                }
+            }
         }
     }
 }
@@ -323,16 +381,53 @@ pub fn set_diag_info_from_result(
     if handle.is_null() {
         return;
     }
-    if let Some(t) = from_handle_type(handle_type, handle) {
-        let diagnostic_info = t.get_diag_info_mut();
-        match result {
-            Ok(_) => {}
-            // SQL_NEED_DATA is a success-class return code, not an error.
-            // Don't post a diagnostic record — the Driver Manager uses the
-            // return code alone to drive the DAE protocol.
-            Err(OdbcError::DaeRequired { .. }) => {}
-            Err(error) => {
-                diagnostic_info.add_record(error.to_diagnostic_record());
+    let add_from_result = |diagnostic_info: &mut DiagnosticInfo| match result {
+        Ok(_) => {}
+        Err(OdbcError::DaeRequired { .. }) => {}
+        Err(OdbcError::StillExecuting { .. }) => {}
+        Err(error) => {
+            diagnostic_info.add_record(error.to_diagnostic_record());
+        }
+    };
+    if handle_type == sql::HandleType::Env {
+        let Ok(env) = env_from_handle(handle) else {
+            return;
+        };
+        let mut guard = env.environment.lock();
+        add_from_result(guard.get_diag_info_mut());
+        return;
+    }
+    if handle_type == sql::HandleType::Dbc {
+        let Ok(dbc) = conn_from_handle(handle) else {
+            return;
+        };
+        add_from_result(dbc.connection.lock().get_diag_info_mut());
+        return;
+    }
+    if handle_type == sql::HandleType::Stmt {
+        let Ok(guard) = stmt_from_handle(handle) else {
+            return;
+        };
+        add_from_result(guard.inner.lock().get_diag_info_mut());
+        return;
+    }
+    if handle_type == sql::HandleType::Desc {
+        let Ok(access) = desc_from_handle(handle) else {
+            return;
+        };
+        match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let mut inner = guard.inner.lock();
+                let diagnostic_info = match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info_mut(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info_mut(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
+                };
+                add_from_result(diagnostic_info);
+            }
+            DescriptorAccess::Explicit { desc } => {
+                add_from_result(desc.lock().get_diag_info_mut());
             }
         }
     }
@@ -342,14 +437,36 @@ pub fn get_diag_info(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> OdbcResult<DiagnosticInfo> {
-    let t: &dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Env => env_from_handle(handle),
-        sql::HandleType::Dbc => conn_from_handle(handle),
-        sql::HandleType::Stmt => stmt_from_handle(handle),
-        sql::HandleType::Desc => desc_diag_from_handle(handle),
-        _ => return InvalidHandleSnafu.fail(),
-    };
-    Ok(t.get_diag_info().clone())
+    if handle_type == sql::HandleType::Env {
+        let env = env_from_handle(handle)?;
+        let guard = env.environment.lock();
+        return Ok(guard.get_diag_info().clone());
+    }
+    if handle_type == sql::HandleType::Dbc {
+        let dbc = conn_from_handle(handle)?;
+        return Ok(dbc.connection.lock().get_diag_info().clone());
+    }
+    if handle_type == sql::HandleType::Stmt {
+        let guard = stmt_from_handle(handle)?;
+        return Ok(guard.inner.lock().get_diag_info().clone());
+    }
+    if handle_type == sql::HandleType::Desc {
+        let access = desc_from_handle(handle)?;
+        return match access {
+            DescriptorAccess::Implicit { guard, kind } => {
+                let inner = guard.inner.lock();
+                let diag = match kind {
+                    DescriptorKind::Ard => inner.ard.get_diag_info(),
+                    DescriptorKind::Ird => inner.ird.get_diag_info(),
+                    DescriptorKind::Apd => inner.apd.get_diag_info(),
+                    DescriptorKind::Ipd => inner.ipd.get_diag_info(),
+                };
+                Ok(diag.clone())
+            }
+            DescriptorAccess::Explicit { desc } => Ok(desc.lock().get_diag_info().clone()),
+        };
+    }
+    InvalidHandleSnafu.fail()
 }
 
 /// Get diagnostic record from handle (SQLGetDiagRec / SQLGetDiagRecW).
@@ -576,82 +693,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::types::{
-        ApdDescriptor, ArdDescriptor, IpdDescriptor, IrdDescriptor, ToSqlReturn,
-    };
-
-    fn make_test_record() -> DiagnosticRecord {
-        DiagnosticRecord {
-            native_error: 0,
-            sql_state: SqlState::InvalidAttributeOptionIdentifier,
-            class_origin: ClassOrigin::Odbc3_0,
-            column_number: None,
-            row_number: None,
-            connection_name: String::new(),
-            message_text: "test diagnostic on descriptor".to_string(),
-        }
-    }
-
-    #[test]
-    fn desc_diag_from_handle_resolves_all_descriptor_kinds() {
-        let mut ard = ArdDescriptor::new();
-        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
-        let diag = desc_diag_from_handle(handle);
-        assert!(diag.get_diag_info().records.is_empty());
-
-        let mut apd = ApdDescriptor::new();
-        let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
-        let diag = desc_diag_from_handle(handle);
-        assert!(diag.get_diag_info().records.is_empty());
-
-        let mut ird = IrdDescriptor::new();
-        let handle = &mut ird as *mut IrdDescriptor as sql::Handle;
-        let diag = desc_diag_from_handle(handle);
-        assert!(diag.get_diag_info().records.is_empty());
-
-        let mut ipd = IpdDescriptor::new();
-        let handle = &mut ipd as *mut IpdDescriptor as sql::Handle;
-        let diag = desc_diag_from_handle(handle);
-        assert!(diag.get_diag_info().records.is_empty());
-    }
-
-    #[test]
-    fn get_diag_info_returns_records_on_descriptor() {
-        let mut ard = ArdDescriptor::new();
-        ard.diagnostic_info.add_record(make_test_record());
-
-        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
-        let info = get_diag_info(sql::HandleType::Desc, handle).unwrap();
-
-        assert_eq!(info.records.len(), 1);
-        assert_eq!(
-            info.records[0].sql_state,
-            SqlState::InvalidAttributeOptionIdentifier
-        );
-        assert_eq!(
-            info.records[0].message_text,
-            "test diagnostic on descriptor"
-        );
-    }
-
-    #[test]
-    fn clear_diag_info_clears_descriptor_diagnostics() {
-        let mut ard = ArdDescriptor::new();
-        ard.diagnostic_info.add_record(make_test_record());
-        assert_eq!(ard.diagnostic_info.records.len(), 1);
-
-        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
-        clear_diag_info(sql::HandleType::Desc, handle);
-
-        assert!(ard.diagnostic_info.records.is_empty());
-    }
-
-    #[test]
-    fn from_handle_type_returns_some_for_desc() {
-        let mut apd = ApdDescriptor::new();
-        let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
-        assert!(from_handle_type(sql::HandleType::Desc, handle).is_some());
-    }
+    use crate::api::types::ToSqlReturn;
 
     #[test]
     fn invalid_handle_type_returns_sql_error_not_invalid_handle() {
@@ -660,25 +702,5 @@ mod tests {
         }
         .fail();
         assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
-    }
-
-    #[test]
-    fn set_diag_info_from_result_posts_error_on_descriptor() {
-        let mut ird = IrdDescriptor::new();
-        let handle = &mut ird as *mut IrdDescriptor as sql::Handle;
-
-        let result: OdbcResult<()> = crate::api::error::InvalidHandleTypeSnafu {
-            handle_type: sql::HandleType::Desc as i16,
-        }
-        .fail();
-
-        set_diag_info_from_result(sql::HandleType::Desc, handle, &result);
-
-        let info = get_diag_info(sql::HandleType::Desc, handle).unwrap();
-        assert_eq!(info.records.len(), 1);
-        assert_eq!(
-            info.records[0].sql_state,
-            SqlState::InvalidAttributeOptionIdentifier
-        );
     }
 }

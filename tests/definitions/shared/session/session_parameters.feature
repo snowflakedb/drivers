@@ -10,3 +10,15 @@ Feature: Session parameters via connection options
     Given Snowflake client is logged in with connection option QUERY_TAG set to "session_param_e2e_test"
     When Query "SELECT CURRENT_QUERY_TAG()" is executed
     Then the result should contain value "session_param_e2e_test"
+
+  @jdbc_e2e @odbc_e2e
+  Scenario: should enable session keep-alive via connection string
+    Given Snowflake client is logged in with connection option CLIENT_SESSION_KEEP_ALIVE set to "true"
+    When Query "SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE'" is executed
+    Then the session parameter value should be "true"
+
+  @jdbc_e2e @odbc_e2e
+  Scenario: should set heartbeat frequency via connection string
+    Given Snowflake client is logged in with CLIENT_SESSION_KEEP_ALIVE=true and CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY=1800
+    When Query "SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY'" is executed
+    Then the session parameter value reflects the configured frequency

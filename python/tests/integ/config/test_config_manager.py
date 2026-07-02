@@ -4,6 +4,7 @@ import os
 import stat
 
 import pytest
+import tomlkit
 
 from snowflake.connector.config_manager import (
     ConfigManager,
@@ -909,3 +910,102 @@ user = "dev_user"
         assert set(connections.keys()) == {"default", "full"}
         assert connections["default"]["database"] == "db_for_test"
         assert connections["full"]["account"] == "dev_account"
+
+    def test_cli_plugins_nested_section_preserved(self, tmp_path):
+        """Deeply nested `[cli.plugins.<name>]` config must survive a read.
+
+        Regression for the scenario where the driver flattened each config
+        section into a scalar-only map, silently dropping nested sub-tables.
+        The Snowflake CLI registers a top-level ``cli`` option and reads plugin
+        enablement from ``config_manager["cli"]["plugins"][<name>]["enabled"]``;
+        when the ``plugins`` sub-table was dropped, ``cli`` came back empty and
+        no external plugin was ever loaded.
+        """
+        # Given config.toml enables a plugin under [cli.plugins.<name>]
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[cli.plugins.broken_plugin]
+enabled = true
+
+[connections.test]
+account = "test"
+""",
+        )
+
+        # When a ConfigManager registers the `cli` option as the CLI does
+        manager = _make_manager(config_file)
+        manager.add_option(name="cli", parse_str=tomlkit.parse, default=dict())
+
+        # Then the nested plugin enablement must be readable
+        cli_section = manager["cli"]
+        assert cli_section["plugins"]["broken_plugin"]["enabled"] is True
+
+    def test_cli_plugins_deeply_nested_config_preserved(self, tmp_path):
+        """Arbitrarily deep plugin config (e.g. `[cli.plugins.X.config]`) is preserved."""
+        # Given config.toml with multiple plugins and per-plugin config tables
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[cli.plugins.snowpark_hello]
+enabled = true
+
+[cli.plugins.snowpark_hello.config]
+greeting = "hello"
+times = 3
+
+[cli.plugins.multilingual_hello]
+enabled = false
+
+[connections.test]
+account = "test"
+""",
+        )
+
+        # When a ConfigManager registers the `cli` option as the CLI does
+        manager = _make_manager(config_file)
+        manager.add_option(name="cli", parse_str=tomlkit.parse, default=dict())
+
+        # Then every nested level is preserved with correct types
+        plugins = manager["cli"]["plugins"]
+        assert plugins["snowpark_hello"]["enabled"] is True
+        assert plugins["snowpark_hello"]["config"]["greeting"] == "hello"
+        assert plugins["snowpark_hello"]["config"]["times"] == 3
+        assert plugins["multilingual_hello"]["enabled"] is False
+
+    def test_cli_enabled_plugin_names_match_config(self, tmp_path):
+        """Mirror the CLI's enabled-plugin discovery over the `cli.plugins` table.
+
+        Replicates ``PluginConfigProvider.get_enabled_plugin_names``: iterate the
+        plugins table and collect those with ``enabled = true``. This is the read
+        path that returned an empty list when nested sections were dropped.
+        """
+        # Given config.toml enables two of three plugins
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[cli.plugins.alpha]
+enabled = true
+
+[cli.plugins.beta]
+enabled = false
+
+[cli.plugins.gamma]
+enabled = true
+
+[connections.test]
+account = "test"
+""",
+        )
+
+        # When the CLI-style read collects enabled plugin names
+        manager = _make_manager(config_file)
+        manager.add_option(name="cli", parse_str=tomlkit.parse, default=dict())
+        plugins = manager["cli"].get("plugins", {})
+        enabled = sorted(name for name, cfg in plugins.items() if cfg.get("enabled", False) is True)
+
+        # Then exactly the enabled plugins are discovered
+        assert enabled == ["alpha", "gamma"]

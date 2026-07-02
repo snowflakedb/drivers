@@ -10,8 +10,10 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use snafu::ResultExt;
 use tokio::sync::mpsc::error::SendError;
+use tracing::instrument::WithSubscriber;
 
-use super::{ChunkDownloadData, ChunkError, ChunkReadingSnafu};
+use super::memory_budget::{MemoryBudget, MemoryTicket};
+use super::{ChunkDownloadData, ChunkError, ChunkReadingSnafu, PrefetchConfig};
 
 pub trait DownloadChunk: Send + Sync + Clone + 'static {
     fn download_chunk(
@@ -22,6 +24,16 @@ pub trait DownloadChunk: Send + Sync + Clone + 'static {
 
 pub trait ParseChunk: Send + Sync + Clone + 'static {
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError>;
+}
+
+/// Channel message carrying all record batches from a single chunk.
+///
+/// The ticket keeps the memory reservation alive; dropping it releases
+/// the bytes back to the budget. Initial (inline) batches use an empty ticket.
+struct Chunk {
+    batches: VecDeque<RecordBatch>,
+    #[allow(dead_code)]
+    ticket: MemoryTicket,
 }
 
 /// Prefetching chunk reader that downloads and parses chunks in the background.
@@ -36,7 +48,10 @@ pub trait ParseChunk: Send + Sync + Clone + 'static {
 /// (e.g. [`tokio::task::spawn_blocking`]).
 pub struct PrefetchChunkReader<D: DownloadChunk, P: ParseChunk> {
     schema: SchemaRef,
-    batch_rx: tokio::sync::mpsc::Receiver<Result<RecordBatch, ArrowError>>,
+    batch_rx: tokio::sync::mpsc::Receiver<Result<Chunk, ArrowError>>,
+    /// Buffered batches from the current chunk, paired with the ticket that
+    /// keeps the memory reservation alive until all batches are yielded.
+    current: Option<Chunk>,
     phantom: PhantomData<(D, P)>,
 }
 
@@ -46,27 +61,35 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         chunks: VecDeque<ChunkDownloadData>,
         downloader: D,
         parser: P,
-        prefetch_concurrency: usize,
+        config: &PrefetchConfig,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
         let schema = initial.schema();
         let initial = initial
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
             .context(ChunkReadingSnafu)?;
-        let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
 
-        tokio::spawn(Self::prefetch_batches(
-            downloader,
-            parser,
-            chunks,
-            initial,
-            tx,
-            prefetch_concurrency,
-        ));
+        let prefetch_concurrency = config.prefetch_threads;
+        let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
+        let memory_budget = MemoryBudget::new(config.memory_limit_mb);
+
+        tokio::spawn(
+            Self::prefetch_batches(
+                downloader,
+                parser,
+                chunks,
+                initial,
+                tx,
+                prefetch_concurrency,
+                memory_budget,
+            )
+            .with_current_subscriber(),
+        );
 
         Ok(Box::new(Self {
             schema,
             batch_rx: rx,
+            current: None,
             phantom: PhantomData,
         }))
     }
@@ -76,57 +99,90 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         parser: P,
         mut chunks: VecDeque<ChunkDownloadData>,
         initial: Vec<RecordBatch>,
-        tx: tokio::sync::mpsc::Sender<Result<RecordBatch, ArrowError>>,
+        tx: tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
         prefetch_concurrency: usize,
-    ) -> Result<(), SendError<Result<RecordBatch, ArrowError>>> {
-        let send_result = |result: Result<RecordBatch, ArrowError>| async {
-            if let Err(e) = tx.send(result).await {
-                tracing::error!("Failed to send result to channel for: {e:?}");
-                return Err(e);
+        memory_budget: MemoryBudget,
+    ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
+        let send = |msg: Result<Chunk, ArrowError>| {
+            let tx = &tx;
+            async move {
+                if let Err(e) = tx.send(msg).await {
+                    tracing::error!("Failed to send result to channel: {e:?}");
+                    return Err(e);
+                }
+                Ok(())
             }
-            Ok(())
         };
-        let mut chunk_tasks = VecDeque::new();
+
+        if !initial.is_empty() {
+            send(Ok(Chunk {
+                batches: VecDeque::from(initial),
+                ticket: MemoryTicket::empty(),
+            }))
+            .await?;
+        }
+
+        let mut chunk_tasks: VecDeque<tokio::task::JoinHandle<Result<Chunk, ArrowError>>> =
+            VecDeque::new();
+
         for _ in 0..prefetch_concurrency {
-            let downloader = downloader.clone();
-            let parser = parser.clone();
             if let Some(data) = chunks.pop_front() {
-                chunk_tasks.push_back(tokio::task::spawn(async move {
-                    let bytes = downloader.download_chunk(data).await?;
-                    parser.parse_chunk(bytes)
-                }));
+                let estimate = data.estimated_memory_mb();
+                let ticket = memory_budget.acquire(estimate).await;
+
+                let d = downloader.clone();
+                let p = parser.clone();
+                chunk_tasks.push_back(tokio::task::spawn(
+                    get_chunk(d, p, data, ticket).with_current_subscriber(),
+                ));
             }
         }
-        for chunk in initial {
-            send_result(Ok(chunk)).await?;
-        }
+
         while let Some(task) = chunk_tasks.pop_front() {
-            let prefetch_batch_result = task.await;
-            if let Err(e) = prefetch_batch_result {
-                return send_result(Err(ArrowError::ExternalError(Box::new(e)))).await;
-            }
-            let batches = prefetch_batch_result.unwrap();
-            let downloader_ = downloader.clone();
-            let parser_ = parser.clone();
-            if let Some(data) = chunks.pop_front() {
-                chunk_tasks.push_back(tokio::task::spawn(async move {
-                    let bytes = downloader_.download_chunk(data).await?;
-                    parser_.parse_chunk(bytes)
-                }));
-            }
-            match batches {
-                Ok(batches) => {
-                    for batch in batches {
-                        send_result(Ok(batch)).await?;
-                    }
-                }
+            match task.await {
                 Err(e) => {
-                    return send_result(Err(e)).await;
+                    return send(Err(ArrowError::ExternalError(Box::new(e)))).await;
                 }
+                Ok(Err(e)) => {
+                    return send(Err(e)).await;
+                }
+                Ok(Ok(chunk)) => {
+                    send(Ok(chunk)).await?;
+                }
+            }
+
+            if let Some(data) = chunks.pop_front() {
+                let next_estimate = data.estimated_memory_mb();
+                let ticket = memory_budget.acquire(next_estimate).await;
+
+                let d = downloader.clone();
+                let p = parser.clone();
+                chunk_tasks.push_back(tokio::task::spawn(
+                    get_chunk(d, p, data, ticket).with_current_subscriber(),
+                ));
             }
         }
+
         Ok(())
     }
+}
+
+async fn get_chunk(
+    downloader: impl DownloadChunk,
+    parser: impl ParseChunk,
+    data: ChunkDownloadData,
+    ticket: MemoryTicket,
+) -> Result<Chunk, ArrowError> {
+    let bytes = downloader.download_chunk(data).await?;
+    // Arrow IPC / JSON→Arrow decode is CPU-bound; run it on the blocking pool so
+    // it doesn't occupy this runtime worker (result chunks are routinely multi-MB).
+    let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
+        .await
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)))??;
+    Ok(Chunk {
+        batches: batches.into(),
+        ticket,
+    })
 }
 
 impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchChunkReader<D, P> {
@@ -139,7 +195,22 @@ impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchC
         skip_all
     )]
     fn next(&mut self) -> Option<Self::Item> {
-        self.batch_rx.blocking_recv()
+        loop {
+            if let Some(ref mut chunk) = self.current {
+                if let Some(batch) = chunk.batches.pop_front() {
+                    return Some(Ok(batch));
+                }
+                self.current = None;
+            }
+
+            match self.batch_rx.blocking_recv() {
+                Some(Ok(chunk)) => {
+                    self.current = Some(chunk);
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => return None,
+            }
+        }
     }
 }
 

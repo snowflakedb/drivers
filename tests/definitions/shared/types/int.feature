@@ -97,7 +97,7 @@ Feature: INT type support
     And Query "SELECT * FROM <table>" is executed
     Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
 
-  @python_e2e @odbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should insert and select integers from table using batch parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists

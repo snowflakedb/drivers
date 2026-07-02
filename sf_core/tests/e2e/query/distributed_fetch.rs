@@ -1,4 +1,4 @@
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_rs_handle};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use sf_core::protobuf::generated::database_driver_v1::*;
 
@@ -19,10 +19,11 @@ fn distributed_fetch_simple_query() {
     // When Query "SELECT 42 AS answer, 'hello' AS greeting" is executed
     let stmt = client.new_statement();
     client.set_sql_query(&stmt, "SELECT 42 AS answer, 'hello' AS greeting");
-    let _execute_result = client.execute_statement_query(&stmt);
+    let execute_result = client.execute_statement_query(&stmt);
+    let rs_handle = unwrap_single_rs_handle(&execute_result);
 
     // Then result chunks should contain at least one inline chunk
-    let chunks_result = client.result_chunks(&stmt);
+    let chunks_result = client.result_set_get_chunks(&rs_handle);
     assert!(
         !chunks_result.chunks.is_empty(),
         "Should have at least one chunk"
@@ -42,7 +43,8 @@ fn distributed_fetch_simple_query() {
     assert_eq!(total_rows, 1);
     assert_eq!(batches[0].num_columns(), 2);
 
-    // And Statement should be released
+    // And resources should be released
+    client.result_set_release(&rs_handle);
     client.release_statement(&stmt);
 }
 
@@ -58,10 +60,11 @@ fn distributed_fetch_large_result_produces_multiple_chunks() {
         "SELECT seq8() AS id, RANDSTR(100, RANDOM()) AS payload \
          FROM TABLE(GENERATOR(ROWCOUNT => 500000)) v ORDER BY id",
     );
-    let _execute_result = client.execute_statement_query(&stmt);
+    let execute_result = client.execute_statement_query(&stmt);
+    let rs_handle = unwrap_single_rs_handle(&execute_result);
 
     // Then result chunks should contain at least 2 chunks
-    let chunks_result = client.result_chunks(&stmt);
+    let chunks_result = client.result_set_get_chunks(&rs_handle);
     assert!(
         chunks_result.chunks.len() >= 2,
         "Large result should produce at least 2 chunks, got {}",
@@ -90,6 +93,7 @@ fn distributed_fetch_large_result_produces_multiple_chunks() {
     }
     assert_eq!(total_rows, 500000);
 
-    // And Statement should be released
+    // And resources should be released
+    client.result_set_release(&rs_handle);
     client.release_statement(&stmt);
 }

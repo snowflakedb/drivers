@@ -1,0 +1,67 @@
+# Routing-accuracy eval set for: test-coverage-mapper
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "map old ODBC test TC_AUTH_001_BasicLogin to a UD test"
+    notes: "Direct add-mapping request with explicit driver and test name — canonical trigger phrase 'map old tests'."
+
+  - prompt: "show me the coverage gaps for ODBC"
+    notes: "Direct coverage-gap-report request with explicit driver — 'coverage gap' is a listed trigger phrase."
+
+  - prompt: "which old ODBC tests are still unmapped?"
+    notes: "Direct request using 'which old tests are missing' trigger phrase variant."
+
+  - prompt: "add a test mapping for the external browser auth test in the odbc yaml"
+    notes: "Direct 'add test mapping' trigger phrase with enough context to identify driver and scope."
+
+  - prompt: "we're migrating ODBC to universal driver — how do I track which old tests already have UD equivalents?"
+    notes: "Indirect/contextual — describes the cross-driver mapping problem without using an explicit trigger phrase. Should infer add-mapping or coverage-gap mode."
+
+  - prompt: "TC_AUTH_017 shows unmapped in odbc.yaml but I think we have a UD test for it — can you check?"
+    notes: "Incident/error scenario — user spots a discrepancy in the YAML and needs assertion-level verification. Should trigger add-mapping mode."
+
+  - prompt: "the odbc coverage file has like 200 unmapped entries, where do I even start?"
+    notes: "Incident framing — user is overwhelmed by coverage debt. Should trigger coverage-gap-report mode to cluster and prioritize."
+
+  - prompt: "reverse lookup tests::auth::test_basic_login — which old odbc tests does it cover?"
+    notes: "Direct 'reverse lookup' trigger phrase with UD test identifier."
+
+  - prompt: "sync test mappings for jdbc"
+    notes: "Direct 'sync test mappings' trigger phrase. Borderline because driver is not ODBC (pilot set) — skill should still trigger but may warn about JDBC being non-piloted."
+
+  - prompt: "coverage gap odbc"
+    notes: "Terse/abbreviated — three words, no context. Should still trigger coverage-gap mode."
+
+  - prompt: "which UD tests cover the python connector's authentication tests?"
+    notes: "Borderline — phrased as 'which UD tests cover' which is a reverse-lookup variant. Should trigger, not confused with a Jira search."
+
+  - prompt: "I updated the odbc yaml but now the summary counts look wrong — can you reconcile?"
+    notes: "Borderline sync scenario — user notices YAML inconsistency after manual edits. Should trigger sync-test-lists mode."
+
+should_not_trigger:
+  - prompt: "review this JDBC test for flakiness and tell me if it'll cause CI failures"
+    reason: "jdbc-test-reviewer — user wants quality/flakiness analysis of a specific Java test, not cross-driver coverage mapping."
+
+  - prompt: "is this java test going to be flaky? it uses Thread.sleep and connects to a real server"
+    reason: "jdbc-test-reviewer — asking about test quality characteristics (flakiness indicators), not about mapping old tests to UD equivalents."
+
+  - prompt: "what's our overall test coverage percentage for the auth module — did we hit 80%?"
+    reason: "general conversation / no skill — generic CI coverage metric question, not about cross-driver legacy-to-UD mapping."
+
+  - prompt: "write a new UD test for the OAuth browser flow that's currently missing"
+    reason: "no skill — writing new UD tests is explicitly out of scope for test-coverage-mapper. Should decline and explain."
+
+  - prompt: "run the ODBC test suite and show me which tests fail on this branch"
+    reason: "no skill — running CI pipelines is explicitly out of scope. User wants test execution, not coverage mapping."
+
+  - prompt: "before I open this PR, can you review the changes and check for issues?"
+    reason: "end-of-task-self-review — pre-PR quality checklist, not a cross-driver test mapping task."
+
+  - prompt: "check if my new feature has adequate test coverage — did I miss any cases?"
+    reason: "general conversation / no skill — asking about coverage of new code being written, not about mapping legacy driver tests to UD equivalents. Shares 'test coverage' vocabulary but different purpose."
+
+  - prompt: "generate an eval set for the jdbc-test-reviewer skill"
+    reason: "generate-eval-set — user wants to author a routing-accuracy eval, not perform cross-driver test mapping."

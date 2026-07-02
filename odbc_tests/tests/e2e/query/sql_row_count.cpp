@@ -8,17 +8,26 @@
 #include "get_diag_rec.hpp"
 
 TEST_CASE("SQLRowCount returns HY010 when called without executing statement.", "[query]") {
-  // Given Snowflake client is logged in
+  // Given a fresh statement handle on an active connection (no execute yet)
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLRowCount is called without executing any statement first
+  // When SQLRowCount is called without first executing a statement
   SQLLEN rows_affected = 0;
   SQLRETURN ret = SQLRowCount(stmt.getHandle(), &rows_affected);
 
-  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLRowCount returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLRowCount returns HY009 when called with null pointer.", "[query]") {
@@ -460,13 +469,22 @@ TEST_CASE("SQLRowCount returns HY010 after SQLFreeStmt SQL_CLOSE.", "[query]") {
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
   REQUIRE_ODBC(ret, stmt);
 
-  // And SQLRowCount is called
+  // When SQLRowCount is called after SQLFreeStmt(SQL_CLOSE) reset the row count
   SQLLEN rows_affected = 0;
   ret = SQLRowCount(stmt.getHandle(), &rows_affected);
 
-  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLRowCount returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLRowCount returns HY010 after SQLPrepare without execute.", "[query]") {
@@ -481,13 +499,22 @@ TEST_CASE("SQLRowCount returns HY010 after SQLPrepare without execute.", "[query
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS value", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
-  // And SQLRowCount is called
+  // When SQLRowCount is called on a prepared but unexecuted statement
   SQLLEN rows_affected = 0;
   ret = SQLRowCount(stmt.getHandle(), &rows_affected);
 
-  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLRowCount returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 // =============================================================================

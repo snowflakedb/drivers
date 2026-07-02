@@ -1,0 +1,53 @@
+name: Mirror - ODBC unit tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    # Mirror-only: the internal repo runs full CI via test-odbc.yml.
+    if: github.repository_owner == 'snowflakedb'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "mirror-odbc"
+
+      - name: Install unixodbc-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Run ODBC unit tests
+        run: cargo test --package odbc
+        env:
+          # Workaround for Rust 1.89+ linker bug with dylib crates (rust-lang/rust#131292).
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "mirror-odbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

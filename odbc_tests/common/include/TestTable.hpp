@@ -13,7 +13,7 @@ class TestTable {
     conn_.execute("INSERT INTO " + name_ + " VALUES " + values);
   }
 
-  ~TestTable() { conn_.execute("DROP TABLE IF EXISTS " + name_); }
+  ~TestTable() noexcept { conn_.try_execute("DROP TABLE IF EXISTS " + name_); }
 
   TestTable(const TestTable&) = delete;
   TestTable& operator=(const TestTable&) = delete;

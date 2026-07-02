@@ -1,13 +1,11 @@
 id: universal-driver-security-rules
 friendly_name: "Universal Driver Security Rules"
 status: enabled
-percentage_of_prs_reviewed: 100
 allowed_folders:
   - "sf_core/src"
   - "odbc/src"
 excluded_folders:
   - "sf_core/src/bin"
-llm_model: "claude-sonnet-4-5"
 allowed_file_extensions:
   - ".rs"
   - ".toml"

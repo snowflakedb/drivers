@@ -1,0 +1,49 @@
+# Routing-accuracy eval set for: end-of-task-self-review
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "i think i'm done with this feature, can you do a final review before i commit"
+    notes: "Explicit pre-commit review request — core trigger"
+  - prompt: "about to open a PR, anything i should double check first?"
+    notes: "Pre-PR check is the primary use case in the skill description"
+  - prompt: "finished the refactor, run the self-review checklist"
+    notes: "Direct request for the checklist after completing a refactor"
+  - prompt: "just fixed the auth bug, ready to push — do a final pass"
+    notes: "Bug fix completion + push intent matches the skill's stated triggers"
+  - prompt: "check if my commit scope makes sense, i touched a lot of files"
+    notes: "Commit-scope drift is the first checklist item explicitly listed"
+  - prompt: "do my test assertions look strict enough? added some new ones after the refactor"
+    notes: "Assertion strictness is a core checklist item; post-refactor context clinches it"
+  - prompt: "can you look for stale comments after the rename i just did"
+    notes: "Refactor-stale comments is checklist item 3; rename context is a direct match"
+  - prompt: "any dead code helpers that crept in while i was adding the new endpoint?"
+    notes: "Dead-code helpers is checklist item 6, named almost verbatim"
+  - prompt: "make sure i haven't broken any other tests with my fixture changes before i merge"
+    notes: "Test fixtures self-sabotage is checklist item 5; pre-merge framing matches"
+  - prompt: "self review before i write the commit msg"
+    notes: "Terse shorthand for the exact workflow the skill targets; 'self review' + commit message"
+  - prompt: "diff looks good but want a second pair of eyes on test quality"
+    notes: "Borderline — 'test quality' could be general, but pre-commit framing routes here"
+  - prompt: "writing the pr desc now, want to make sure i haven't missed anything obvious in the diff"
+    notes: "Borderline — 'missed anything in the diff' while writing PR description is the skill's sweet spot"
+
+should_not_trigger:
+  - prompt: "run the skill evals to check routing accuracy"
+    reason: "run-skill-evals skill — about executing evals, not reviewing code changes"
+  - prompt: "the description in my SKILL.md seems off, help me rewrite it"
+    reason: "author-skill — modifying a skill's definition, not a pre-commit code review"
+  - prompt: "generate an eval set for my new skill"
+    reason: "generate-eval-set skill — authoring eval YAML, not end-of-task self-review"
+  - prompt: "my test is failing with an assertion error, how do i fix it"
+    reason: "general debugging — no 'done / pre-commit' context; user is still mid-task"
+  - prompt: "review this PR someone else opened and leave comments"
+    reason: "code review of another author's work, not a self-review before declaring done"
+  - prompt: "check my skill frontmatter for disable-model-invocation issues"
+    reason: "configure-skill-settings — auditing SKILL.md config, not code-change review"
+  - prompt: "i want to add a new check to the self-review process"
+    reason: "author-skill — extending a skill's content, not running the checklist"
+  - prompt: "how do i write strict assertions in rust unit tests in general"
+    reason: "general conversation / Rust guidance — no task-completion context; not invoking the checklist"

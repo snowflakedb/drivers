@@ -1,0 +1,32 @@
+{
+  "name": "Login returning tokens that match the session-refresh scenario matchers",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "expired-session-token",
+        "masterToken": "valid-master-token",
+        "sessionId": 12345,
+        "validityInSeconds": 3600,
+        "masterValidityInSeconds": 14400,
+        "sessionInfo": {
+          "databaseName": "",
+          "schemaName": "",
+          "warehouseName": "",
+          "roleName": ""
+        },
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": false}
+        ]
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 # Docker image for CI (and optional local use): build the Snowflake ODBC driver
-# (`cargo build -p odbc`) and package it as an RPM via `scripts/odbc/rpm/package.sh`
+# (`cargo build -p odbc`) and package it as an RPM via `odbc/installer/unix/package.sh`
 # and fpm. Keeps the linked glibc and OpenSSL in line with a single EL generation.
 #
 # Compatibility / follow-ups (TODO):

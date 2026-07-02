@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+	<Package
+		Name="Snowflake ODBC UD $(var.FullVersion) PrPr (x64)"
+		Language="1033"
+		Version="$(var.ProductVersion)"
+		Manufacturer="Snowflake Computing"
+		UpgradeCode="053DF3DF-4EB2-44E2-87BE-D3334ABDE4C6"
+		InstallerVersion="405"
+		Scope="perMachine">
+
+		<SummaryInformation
+			Description="Snowflake ODBC UD $(var.FullVersion) Private Preview (64-bit)"
+			Comments="Installs the Snowflake ODBC Driver (Private Preview) built on Universal Driver." />
+
+		<Media Id="1" Cabinet="odbc64.cab" EmbedCab="yes" />
+		<MajorUpgrade AllowDowngrades="yes" />
+		<Property Id="REBOOT" Value="ReallySuppress" />
+
+		<!-- ================================================================ -->
+		<!-- Branding                                                          -->
+		<!-- ================================================================ -->
+		<WixVariable Id="WixUIDialogBmp" Value="resources\snowflake_msi_background.png" />
+		<WixVariable Id="WixUIBannerBmp" Value="resources\snowflake_msi_banner.png" />
+		<Icon Id="icon.ico" SourceFile="resources\snowflake_msi.ico" />
+		<Property Id="ARPPRODUCTICON" Value="icon.ico" />
+		<Property Id="ARPHELPLINK" Value="https://docs.snowflake.net/manuals/user-guide/odbc.html" />
+		<Property Id="ARPURLINFOABOUT" Value="https://www.snowflake.com/" />
+
+		<!-- ================================================================ -->
+		<!-- Install directory UI                                              -->
+		<!-- ================================================================ -->
+		<ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLDIR" />
+
+		<!-- ================================================================ -->
+		<!-- Driver name selection                                             -->
+		<!-- ================================================================ -->
+		<!--
+		    DRIVER_NAME is the name used to register the driver under
+		    SOFTWARE\ODBC\ODBCINST.INI. Default to the historical name so a
+		    quiet install (msiexec /quiet) without an explicit
+		    DRIVER_NAME=... command-line property produces the same registry
+		    layout this MSI has always produced. The DriverNameDlg below
+		    lets interactive installs choose between the two preset names or
+		    a custom value via a combo box.
+		-->
+		<Property Id="DRIVER_NAME" Value="Snowflake ODBC UD" Secure="yes" />
+		<Property Id="DRIVER_NAME_CHOICE" Value="Snowflake ODBC UD" Secure="yes" />
+		<Property Id="DRIVER_NAME_CUSTOM" Value="Snowflake ODBC UD" Secure="yes" />
+
+		<UI>
+			<Dialog Id="DriverNameDlg" Width="370" Height="270" Title="[ProductName] Setup">
+				<Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Driver name" />
+				<Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose the name used to register this ODBC driver." />
+				<Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+				<Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+				<Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+				<Control Id="ChoiceLabel" Type="Text" X="20" Y="62" Width="290" Height="15" NoPrefix="yes" Text="ODBC driver name (visible to applications via SQLDrivers and used as the section header in odbcinst.ini):" />
+				<Control Id="ChoiceCombo" Type="ComboBox" X="20" Y="92" Width="320" Height="18" Property="DRIVER_NAME_CHOICE" ComboList="yes">
+					<ComboBox Property="DRIVER_NAME_CHOICE">
+						<ListItem Value="Snowflake ODBC UD" />
+						<ListItem Value="SnowflakeDSIIDriverUD" />
+						<ListItem Value="CUSTOM" Text="Other (custom name)..." />
+					</ComboBox>
+				</Control>
+
+				<Control Id="CustomLabel" Type="Text" X="20" Y="125" Width="290" Height="15" NoPrefix="yes" Text="Custom driver name:"
+					ShowCondition='DRIVER_NAME_CHOICE = "CUSTOM"'
+					HideCondition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM"' />
+				<Control Id="CustomEdit" Type="Edit" X="20" Y="140" Width="320" Height="18" Property="DRIVER_NAME_CUSTOM"
+					ShowCondition='DRIVER_NAME_CHOICE = "CUSTOM"'
+					HideCondition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM"' />
+
+				<Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+				<!-- Next is disabled when the user picked "Other..." but left the custom name empty. -->
+				<Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)"
+					DisableCondition='DRIVER_NAME_CHOICE = "CUSTOM" AND (NOT DRIVER_NAME_CUSTOM OR DRIVER_NAME_CUSTOM = "")'
+					EnableCondition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM" OR (DRIVER_NAME_CUSTOM AND DRIVER_NAME_CUSTOM &lt;&gt; "")' />
+				<Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+					<Publish Event="SpawnDialog" Value="CancelDlg" />
+				</Control>
+			</Dialog>
+
+			<!--
+			    Insert DriverNameDlg into the install sequence between the
+			    Welcome and InstallDir dialogs. The publish entries below
+			    replace the two overrides we used to have (WelcomeDlg.Next
+			    -> InstallDirDlg and InstallDirDlg.Back -> WelcomeDlg) and
+			    add the new DriverNameDlg transitions.
+			-->
+			<Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="DriverNameDlg" Order="2" Condition="1" />
+
+			<Publish Dialog="DriverNameDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="1" Condition="1" />
+			<Publish Dialog="DriverNameDlg" Control="Next" Property="DRIVER_NAME" Value="[DRIVER_NAME_CUSTOM]" Order="1" Condition='DRIVER_NAME_CHOICE = "CUSTOM"' />
+			<Publish Dialog="DriverNameDlg" Control="Next" Property="DRIVER_NAME" Value="[DRIVER_NAME_CHOICE]" Order="1" Condition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM"' />
+			<Publish Dialog="DriverNameDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="1" />
+
+			<Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="DriverNameDlg" Order="2" Condition="1" />
+		</UI>
+
+		<!-- ================================================================ -->
+		<!-- VC++ Redistributable detection and optional install                -->
+		<!-- ================================================================ -->
+		<Property Id="VCREDIST2015INSTALLED">
+			<RegistrySearch Id="VCREDIST2015SEARCH"
+				Root="HKLM"
+				Key="Software\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+				Name="Installed"
+				Type="raw" />
+		</Property>
+		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" After="AppSearch"
+			Value="Visual C++ Redistributable for VS 2015-2022 is required. It will be installed on exit. Uncheck the box if you do not want to install it."
+			Condition="NOT VCREDIST2015INSTALLED" />
+		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" After="AppSearch"
+			Value="Install VC++ 2015-2022 Redistributable"
+			Condition="NOT VCREDIST2015INSTALLED" />
+		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1"
+			Condition="NOT VCREDIST2015INSTALLED" />
+		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x64.exe" After="CostFinalize" Sequence="ui" />
+		<CustomAction Id="Install_vc_redist" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
+		<UI>
+			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
+				Value="Install_vc_redist" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1" />
+			<Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog"
+				Value="Return" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 0" />
+		</UI>
+
+		<!-- ================================================================ -->
+		<!-- Directory layout                                                  -->
+		<!-- ================================================================ -->
+		<StandardDirectory Id="ProgramFiles6432Folder">
+			<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
+				<Directory Id="BinDir" Name="Bin" />
+				<Directory Id="IncludeDir" Name="include" />
+				<Directory Id="RedistDir" Name="Redistributable" />
+			</Directory>
+		</StandardDirectory>
+		<StandardDirectory Id="PersonalFolder">
+			<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
+				<Directory Id="LogDir" Name="log">
+					<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD">
+						<CreateFolder />
+						<RemoveFolder Id="LogDir" On="uninstall" />
+						<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
+						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
+							Name="LogDirectory" Value="true" Type="string" KeyPath="yes" />
+					</Component>
+				</Directory>
+			</Directory>
+		</StandardDirectory>
+
+		<!-- ================================================================ -->
+		<!-- Files: driver DLL                                                 -->
+		<!-- ================================================================ -->
+		<DirectoryRef Id="BinDir">
+			<Component Id="sfodbc.dll" Guid="25D9DF06-EB55-469C-8074-4356FD8E281D" Permanent="no">
+			<File Id="sfodbc.dll" KeyPath="yes"
+					Source="$(var.DriverBinDir)\sfodbc.dll" />
+			</Component>
+		</DirectoryRef>
+
+		<!-- ================================================================ -->
+		<!-- Files: public header                                              -->
+		<!-- ================================================================ -->
+		<DirectoryRef Id="IncludeDir">
+			<Component Id="sf_odbc.h" Guid="7E678D91-F506-4CA3-90FA-F7247A2474A4" Permanent="no">
+			<File Id="sf_odbc.h" KeyPath="yes"
+					Source="$(var.SourceDir)\odbc\include\sf_odbc.h" />
+			</Component>
+		</DirectoryRef>
+
+		<!-- ================================================================ -->
+		<!-- Files: VC++ Redistributable                                       -->
+		<!-- ================================================================ -->
+		<DirectoryRef Id="RedistDir">
+			<Component Id="vc_redist.x64.exe" Guid="B55F8416-F349-4EA1-ABBB-46F46AA9E3AA" Permanent="no">
+			<File Id="vc_redist.x64.exe" KeyPath="yes"
+					Source="$(var.VCRedistDir)\vc_redist.x64.exe" />
+			</Component>
+		</DirectoryRef>
+
+		<!-- ================================================================ -->
+		<!-- ODBC driver registration                                          -->
+		<!-- ================================================================ -->
+		<!--
+		    [DRIVER_NAME] is substituted by Windows Installer from the
+		    DRIVER_NAME property at install time (the property is captured
+		    via DriverNameDlg above, or supplied on the msiexec command
+		    line, and defaults to "Snowflake ODBC UD"). Both the
+		    "ODBC Drivers" index entry and the per-driver subkey share the
+		    same value so SQLDrivers() lists the driver under the chosen
+		    name and matches the subkey that follows.
+		-->
+		<Component Id="RegistryEntries" Directory="TARGETDIR" Guid="46CDADA1-59D9-4E4A-9F29-BB1BCD2F3946">
+			<RegistryKey Root="HKLM"
+				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
+				ForceCreateOnInstall="yes">
+				<RegistryValue Type="string" Name="[DRIVER_NAME]" Value="Installed" />
+			</RegistryKey>
+			<RegistryKey Root="HKLM"
+				Key="SOFTWARE\ODBC\ODBCINST.INI\[DRIVER_NAME]"
+				ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc.dll" KeyPath="yes" />
+				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc.dll" />
+				<RegistryValue Type="string" Name="Description" Value="[DRIVER_NAME]" />
+				<RegistryValue Type="string" Name="DriverODBCVer" Value="$(var.OdbcApiVer)" />
+				<RegistryValue Type="string" Name="CompanyName" Value="Snowflake Computing" />
+				<RegistryValue Type="string" Name="ConnectFunctions" Value="YYY" />
+				<RegistryValue Type="string" Name="APILevel" Value="1" />
+				<RegistryValue Type="string" Name="SQLLevel" Value="1" />
+				<RegistryValue Type="string" Name="FileUsage" Value="0" />
+				<RegistryValue Type="string" Name="CPTimeout" Value="60" />
+			</RegistryKey>
+		</Component>
+
+		<!-- ================================================================ -->
+		<!-- Feature tree                                                       -->
+		<!-- ================================================================ -->
+		<Feature Id="MainApplication" Title="Snowflake ODBC UD" Level="1">
+			<ComponentRef Id="sfodbc.dll" />
+			<ComponentRef Id="sf_odbc.h" />
+			<ComponentRef Id="RegistryEntries" />
+			<ComponentRef Id="LogDir" />
+		</Feature>
+
+		<Feature Id="VCRedist" Title="Visual C++ Runtime" AllowAdvertise="yes" Display="expand" Level="1">
+			<ComponentRef Id="vc_redist.x64.exe" />
+		</Feature>
+
+	</Package>
+</Wix>

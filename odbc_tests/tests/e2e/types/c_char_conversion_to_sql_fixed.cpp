@@ -130,13 +130,26 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR decimal string to S
   ret = SQLExecute(stmt.getHandle());
 
   // BD#39 is Linux-only; the old Windows driver already handles this conversion.
-  // Then the old driver rejects WCHAR→DECIMAL, the new driver succeeds
+  // Then the old driver rejects WCHAR→DECIMAL, the new driver succeeds.
 #ifdef _WIN32
   REQUIRE_ODBC(ret, stmt);
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
 #else
-  OLD_DRIVER_ONLY("BD#39") { CHECK(ret == SQL_ERROR); }
+  OLD_DRIVER_ONLY("BD#39") {
+    OLD_IODBC_ONLY("BD#39") {
+      // Under iODBC the SQLWCHAR is 32 bits wide and the old driver's
+      //   SimbaWStringHelper happens to round-trip "6.28" through the
+      //   UTF-32 path successfully - BD#39 only reproduces on unixODBC
+      //   where SQLWCHAR is 16 bits and the helper rejects the input.
+      REQUIRE_ODBC(ret, stmt);
+      auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+      CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
+    }
+    else {
+      CHECK(ret == SQL_ERROR);
+    }
+  }
 
   NEW_DRIVER_ONLY("BD#39") {
     REQUIRE_ODBC(ret, stmt);

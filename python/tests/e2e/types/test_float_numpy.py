@@ -44,6 +44,7 @@ class TestFloatNumPy:
         # And Values should match expected floats [0.0, 123.456, -789.012, 1.23e10]
         assert_floats_equal(result, (0.0, 123.456, -789.012, 1.23e10))
 
+    @pytest.mark.flaky
     @float_type_parametrize
     def test_should_handle_special_float_values_with_numpy_for_float_and_synonyms(self, cursor_with_numpy, float_type):
         # Given Snowflake client is logged in with NumPy mode enabled

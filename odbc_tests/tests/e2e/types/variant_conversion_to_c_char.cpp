@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
@@ -162,7 +163,7 @@ TEST_CASE("VARIANT to SQL_C_WCHAR truncation", "[variant][conversion][c_char][01
 
   // When A VARIANT value is fetched into a WCHAR buffer smaller than the JSON string
   auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"long_key\":\"long_value_string\"}')");
-  char16_t buffer[6] = {};
+  SQLWCHAR buffer[6] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 

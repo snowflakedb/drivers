@@ -167,23 +167,41 @@ fn execute_iteration(rt: &DriverRuntime, stmt_handle: StatementHandle) -> Result
         .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
         .map_err(|e| format!("Query execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();
 
     sf_core::perf_timing::reset_perf_counters();
 
+    let rs_handle = match response.result {
+        Some(execute_query_response::Result::Single(rs)) => rs
+            .result_set_handle
+            .ok_or_else(|| "Missing ResultSet handle".to_string())?,
+        Some(execute_query_response::Result::Multi(_)) => {
+            return Err("Multi-statement results are not supported in performance tests".to_string());
+        }
+        None => {
+            return Err(
+                "Query returned no result set (response.result is None). \
+                 This may indicate a silent async execution timeout or server error."
+                    .to_string(),
+            );
+        }
+    };
+
     let cpu_before = process_cpu_seconds();
     let start_fetch = Instant::now();
-    let row_count = if let Some(result) = response.result {
-        fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {e:?}"))?
-    } else {
-        return Err(
-            "Query returned no result set (response.result is None). \
-             This may indicate a silent async execution timeout or server error."
-                .to_string(),
-        );
-    };
+    let stream_response = rt
+        .client()
+        .result_set_get_stream_blocking(ResultSetGetStreamRequest {
+            result_set_handle: Some(rs_handle.clone()),
+        })
+        .map_err(|e| format!("Failed to get result set stream: {e:?}"))?;
+    let _ = rt.client().result_set_release_blocking(ResultSetReleaseRequest {
+        result_set_handle: Some(rs_handle),
+    });
+    let row_count = fetch_result_rows(stream_response).map_err(|e| format!("Failed to fetch results: {e:?}"))?;
     let fetch_time = start_fetch.elapsed().as_secs_f64();
     let cpu_time_s = process_cpu_seconds() - cpu_before;
     let peak_rss_mb = get_peak_rss_mb();

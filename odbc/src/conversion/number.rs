@@ -1,16 +1,17 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::api::encoding::wchar_byte_size;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, NumericMagnitudeOverflowSnafu,
     UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::interval::read_single_field_interval_i128;
 use crate::conversion::numeric_helpers::{
     check_integer_range, fractional_warning, reject_multi_field_interval, whole_digits_len,
     write_interval_second, write_numeric_as_binary, write_single_field_interval,
@@ -19,13 +20,17 @@ use crate::conversion::param_binding::{
     buffer_data_len, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
-/// Controls how FIXED numeric columns are reported to ODBC applications.
-/// These settings match the Snowflake server-side session parameters
-/// `ODBC_TREAT_DECIMAL_AS_INT` and `ODBC_TREAT_BIG_NUMBER_AS_STRING`.
+/// Controls how FIXED numeric columns are reported to ODBC applications,
+/// plus a small handful of other session-derived settings the converter
+/// pipeline needs to read once per `RecordBatch`. The struct is named for
+/// historical reasons; new fields that are *not* numeric (e.g.
+/// `tz_offset_format`) live here too because every `make_converter` call
+/// already accepts an `&NumericSettings` and threading another parameter
+/// through every type-specific converter would be much more invasive.
 #[derive(Debug, Clone, Copy)]
 pub struct NumericSettings {
     /// When true, FIXED columns with scale=0 are reported as SQL_BIGINT
@@ -39,6 +44,43 @@ pub struct NumericSettings {
     /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Used as the default
     /// `column_size` in auto-populated IPD records for untyped `?` markers.
     pub max_varchar_size: u64,
+    /// Cached `TIMESTAMP_TZ_OUTPUT_FORMAT` for the current session. See
+    /// [`TzOffsetFormatCache`] -- the enum keeps the "not yet loaded",
+    /// "loaded but unset (bare UTC)", and "loaded with an offset token"
+    /// states distinct, and makes the illegal "have a format but marked
+    /// not-loaded" combination unrepresentable. Read it via
+    /// [`NumericSettings::tz_offset_format`].
+    pub tz_offset_format_cache: TzOffsetFormatCache,
+}
+
+/// Cache state for the session's `TIMESTAMP_TZ_OUTPUT_FORMAT` offset token.
+///
+/// Encoded as an enum (rather than `Option<TzOffsetFormat>` plus a
+/// separate `loaded` flag) so the illegal "we have a format but it's
+/// marked not loaded" state is unrepresentable:
+/// - `Unloaded` -- never read from the server on this connection; the
+///   next execute must refresh.
+/// - `Loaded(None)` -- read, and the parameter is unset / carries no
+///   recognised TZ token, so TZ -> CHAR/WCHAR rendering falls through to
+///   bare UTC.
+/// - `Loaded(Some(f))` -- read, and the customer asked for the offset to
+///   be preserved (mirrors what the legacy 3.16.0 driver does).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TzOffsetFormatCache {
+    Unloaded,
+    Loaded(Option<crate::conversion::timestamp::TzOffsetFormat>),
+}
+
+impl NumericSettings {
+    /// The cached offset token to use for TZ -> CHAR/WCHAR rendering.
+    /// `None` until the first successful load and whenever the parameter
+    /// is unset; this is what the fetch path consumes.
+    pub fn tz_offset_format(&self) -> Option<crate::conversion::timestamp::TzOffsetFormat> {
+        match self.tz_offset_format_cache {
+            TzOffsetFormatCache::Loaded(format) => format,
+            TzOffsetFormatCache::Unloaded => None,
+        }
+    }
 }
 
 /// Snowflake default max VARCHAR size (16 MB). Overridden by the server's
@@ -51,6 +93,7 @@ impl Default for NumericSettings {
             treat_decimal_as_int: false,
             treat_big_number_as_string: false,
             max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
+            tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
         }
     }
 }
@@ -395,7 +438,7 @@ impl WriteODBCType for SnowflakeNumber {
                 let mut num_buf = [0u8; 48];
                 let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf)?;
                 let warnings = binding.write_wchar_string(num_str, get_data_offset);
-                let wchar_capacity = (binding.buffer_length / 2) as usize;
+                let wchar_capacity = (binding.buffer_length as usize) / wchar_byte_size();
                 if warnings
                     .iter()
                     .any(|w| matches!(w, Warning::StringDataTruncated))
@@ -493,7 +536,7 @@ impl ReadODBC for SnowflakeNumber {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let value = match binding.value_type {
             CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as i128,
             CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as i128,
@@ -624,6 +667,23 @@ impl ReadODBC for SnowflakeNumber {
                     _ => unreachable!(),
                 }
             }
+            // Single-field SQL_C_INTERVAL_* sources resolve to the integer
+            // count of the leading interval field per ODBC Appendix D
+            // ("C to SQL Data Types: Interval"). For SQL_C_INTERVAL_SECOND
+            // any sub-second `fraction` is truncated toward zero — exact
+            // numeric SQL targets are integer-valued, and the server
+            // surfaces 22015 ("interval field overflow") if the receiving
+            // column actually rejects the loss of precision. Compound
+            // interval C types (YEAR_TO_MONTH, DAY_TO_*, HOUR_TO_*,
+            // MINUTE_TO_SECOND) carry more than one field and have no
+            // single-integer mapping; they fall through to the unsupported
+            // arm below and surface SQLSTATE 07006, matching the spec.
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond => read_single_field_interval_i128(binding),
             _ => {
                 return UnsupportedCDataTypeSnafu {
                     c_type: binding.value_type,
@@ -635,9 +695,9 @@ impl ReadODBC for SnowflakeNumber {
     }
 }
 
-impl WriteJson for SnowflakeNumber {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.to_string()))
+impl WriteWire for SnowflakeNumber {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(value.to_string())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

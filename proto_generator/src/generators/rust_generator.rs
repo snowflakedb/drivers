@@ -230,7 +230,7 @@ use prost::Message;
 					Ok(input) => input,
 					Err(e) => return Err(ProtoError::Transport(e.to_string())),
 				}};
-				let result = self.{name}(input).await;
+				let result = Box::pin(self.{name}(input)).await;
 				match result {{
 				Ok(output) => Ok(output.encode_to_vec()),
 				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),

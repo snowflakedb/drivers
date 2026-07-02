@@ -44,7 +44,7 @@ impl EnvironmentInfo {
     }
 }
 
-fn detect_os_version() -> String {
+pub fn detect_os_version() -> String {
     let info = os_info::get();
     let version = info.version().to_string();
     if version.is_empty() || version == "Unknown" {

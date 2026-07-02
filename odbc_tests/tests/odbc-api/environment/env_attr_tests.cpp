@@ -26,15 +26,32 @@ TEST_CASE("should set and get SQL_ATTR_ODBC_VERSION with valid values", "[odbc-a
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // When SQL_ATTR_ODBC_VERSION is set to a valid value
+  // When SQL_ATTR_ODBC_VERSION is set on that env
   ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(version), 0);
-  REQUIRE(ret == SQL_SUCCESS);
 
-  // Then Getting the attribute should return the same value
-  SQLINTEGER got = 0;
-  ret = SQLGetEnvAttr(env, SQL_ATTR_ODBC_VERSION, &got, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
-  CHECK(got == version);
+  if (version == SQL_OV_ODBC3_80) {
+    NON_IODBC {
+      // Then the value is accepted and round-trips
+      REQUIRE(ret == SQL_SUCCESS);
+      SQLINTEGER got = 0;
+      ret = SQLGetEnvAttr(env, SQL_ATTR_ODBC_VERSION, &got, 0, nullptr);
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(got == version);
+    }
+    IODBC_ONLY {
+      // Then the call is rejected with SQLSTATE HY024 (invalid attribute value)
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(SQL_HANDLE_ENV, env);
+      REQUIRE(!records.empty());
+      CHECK(records[0].sqlState == "HY024");
+    }
+  } else {
+    REQUIRE(ret == SQL_SUCCESS);
+    SQLINTEGER got = 0;
+    ret = SQLGetEnvAttr(env, SQL_ATTR_ODBC_VERSION, &got, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(got == version);
+  }
 
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }

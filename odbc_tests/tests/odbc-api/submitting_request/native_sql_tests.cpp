@@ -19,8 +19,6 @@
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Plain SQL passes through unchanged",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -36,8 +34,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Plain SQL passes through u
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Explicit TextLength1 instead of SQL_NTS",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -53,8 +49,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Explicit TextLength1 inste
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Zero TextLength1 returns empty string",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -62,22 +56,40 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Zero TextLength1 returns e
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), 0, out, sizeof(out), &outLen);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(outLen == 0);
-  REQUIRE(std::string(reinterpret_cast<char*>(out)).empty());
+  IODBC_ONLY {
+    // iODBC's DM ignores TextLength1=0 and forwards the NUL-terminated input
+    //   verbatim, so the driver sees "SELECT 1" and reports outLen=8. This is a
+    //   DM-level transformation that happens before either driver is invoked,
+    //   so it holds for both the old and new drivers. unixODBC and the Windows
+    //   DM forward the explicit length, so the driver returns an empty string.
+    REQUIRE(outLen == 8);
+    REQUIRE(std::string(reinterpret_cast<char*>(out)) == "SELECT 1");
+  }
+  else {
+    REQUIRE(outLen == 0);
+    REQUIRE(std::string(reinterpret_cast<char*>(out)).empty());
+  }
 
   SQLDisconnect(dbc_handle());
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL OutStatementText returns length without writing output",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 12345"), SQL_NTS, nullptr, 0, &outLen);
-  REQUIRE(ret == SQL_SUCCESS);
+  IODBC_ONLY {
+    // iODBC's DM flags the NULL output buffer as an implicit truncation and
+    //   surfaces SQL_SUCCESS_WITH_INFO before the driver runs, for both the old
+    //   and new drivers. unixODBC and the Windows DM forward the length-only
+    //   request, so the driver returns plain SQL_SUCCESS.
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
   REQUIRE(outLen == 12);
 
   SQLDisconnect(dbc_handle());
@@ -85,8 +97,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL OutStatementText retu
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Truncation returns SQL_SUCCESS_WITH_INFO and 01004",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -106,8 +116,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Truncation returns SQL_SUC
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL TextLength2Ptr succeeds without crash",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -123,8 +131,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL TextLength2Ptr succee
 // This is not invoked by SQLNativeSql. Therefore, all escape sequences are wrongly passed through unchanged.
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Escape sequences pass through unchanged",
                  "[odbc-api][nativesql][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -164,8 +170,6 @@ TEST_CASE("SQLNativeSql: SQL_INVALID_HANDLE for null connection handle",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY009 for null InStatementText",
                  "[odbc-api][nativesql][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -179,30 +183,44 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY009 for null InStatement
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative TextLength1",
                  "[odbc-api][nativesql][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR out[256] = {};
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), -5, out, sizeof(out), &outLen);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM validates TextLength1 itself and surfaces the ODBC 2.x
+    //   alias "S1090" before forwarding to the old driver; the new driver
+    //   maps the same condition to the ODBC 3.x "HY090".
+    REQUIRE_EXPECTED_ERROR(ret, "S1090", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  }
 
   SQLDisconnect(dbc_handle());
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative BufferLength",
                  "[odbc-api][nativesql][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR out[256] = {};
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), SQL_NTS, out, -1, &outLen);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver doesn't pre-validate the negative output BufferLength
+    //   and reaches the SimbaWStringHelper, which raises a vendor "HY000
+    //   [Snowflake][Support] (30020) Invalid argument" diagnostic; the new
+    //   driver short-circuits on the negative length and returns "HY090"
+    //   itself before any string conversion happens.
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  }
 
   SQLDisconnect(dbc_handle());
 }

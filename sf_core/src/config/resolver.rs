@@ -6,6 +6,75 @@ use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 
+/// If `account` is not explicitly set but `host` is available,
+/// derive the account identifier from the hostname — matching the legacy
+/// `snowflake-odbc` driver behavior.
+///
+/// The algorithm is:
+///   1. Take everything before the first `.` in the host.
+///   2. If the host contains `.global.`, strip the external-ID suffix after the
+///      last `-` in that first token.
+///
+/// Must be called **before** underscore normalization so that
+/// `normalize_host_underscores` can see the derived account.
+pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
+    if store.get_string(param_names::ACCOUNT).is_some() {
+        return;
+    }
+
+    let host_opt = store.get(param_names::HOST).and_then(|h| h.as_string());
+
+    let Some(host) = host_opt else {
+        return;
+    };
+
+    let first_label = host.split('.').next().unwrap_or(host);
+    if first_label.is_empty() {
+        return;
+    }
+
+    let account = if host.contains(".global.") {
+        first_label
+            .rfind('-')
+            .map_or(first_label, |i| &first_label[..i])
+    } else {
+        first_label
+    };
+
+    tracing::debug!(derived_account = %account, host = %host, "Derived account from host");
+    store.insert(
+        param_names::ACCOUNT.into(),
+        Setting::String(account.to_owned()),
+    );
+}
+
+/// If neither `host` nor `server_url` is explicitly set but `account` is,
+/// derive the hostname from the account identifier — matching the legacy
+/// `snowflake-connector-python` driver behavior where `account="myaccount"`
+/// yields host `"myaccount.snowflakecomputing.com"`.
+///
+/// Account identifiers that already encode a region (e.g. `"myaccount.us-east-1"`)
+/// are passed through unchanged, producing `"myaccount.us-east-1.snowflakecomputing.com"`.
+pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
+    if store.get_string(param_names::HOST).is_some()
+        || store.get_string(param_names::SERVER_URL).is_some()
+    {
+        return;
+    }
+
+    let Some(account) = store.get_string(param_names::ACCOUNT) else {
+        return;
+    };
+
+    // SECURITY (SNOW-3663586, CWE-918): `account` is interpolated into the host
+    // verbatim, so its character set is restricted to a safe allow-list in
+    // `connection_config::validate_settings`, which runs in
+    // `ConnectionConfig::build` before any network I/O.
+    let host = format!("{account}.snowflakecomputing.com");
+    tracing::debug!(derived_host = %host, account = %account, "Derived host from account");
+    store.insert(param_names::HOST.into(), Setting::String(host));
+}
+
 /// Resolve final settings by merging explicit settings with file-based
 /// config and registry defaults.
 ///
@@ -18,17 +87,28 @@ use crate::config::settings::Setting;
 /// `explicit` contains values set via the programmatic API (already
 /// alias-resolved and type-checked by `connection_set_options`).
 ///
-/// If `connection_name` is present in `explicit`, file-based config is
-/// loaded and merged underneath.
-pub fn resolve(explicit: &ParamStore) -> Result<ParamStore, ConfigError> {
+/// When `no_connection_details` is `true`, the caller supplied no
+/// connection-identifying options (a bare `connect()`), so the default
+/// connection profile from `connections.toml` is loaded and merged
+/// underneath — honoring `SNOWFLAKE_DEFAULT_CONNECTION_NAME` and
+/// `config.toml`'s `default_connection_name`. This mirrors the legacy Python
+/// driver's `is_kwargs_empty` contract. The signal is computed by each
+/// language wrapper (which alone can see the raw caller input before
+/// bookkeeping params are injected) and carried as a typed field on
+/// `ConnectionSetOptionsRequest`, not inferred from the merged params here.
+pub fn resolve(
+    explicit: &ParamStore,
+    no_connection_details: bool,
+) -> Result<ParamStore, ConfigError> {
     let paths = crate::config::path_resolver::get_config_paths()?;
-    resolve_with_paths(explicit, &paths)
+    resolve_with_paths(explicit, &paths, no_connection_details)
 }
 
 /// Same as [`resolve`] but accepts explicit config file paths (for testing).
 pub fn resolve_with_paths(
     explicit: &ParamStore,
     paths: &ConfigPaths,
+    no_connection_details: bool,
 ) -> Result<ParamStore, ConfigError> {
     let mut merged = ParamStore::new();
 
@@ -39,8 +119,34 @@ pub fn resolve_with_paths(
         }
     }
 
-    // Layer 3+2: TOML files (if connection_name is set)
-    if let Some(Setting::String(name)) = explicit.get(param_names::CONNECTION_NAME) {
+    // Layer 3+2: TOML files.
+    //
+    // Load file-based config if:
+    //   a) caller explicitly named a connection (`connection_name` param), OR
+    //   b) `no_connection_details` is `true` — a bare connect() that should
+    //      fall back to the default profile, honoring
+    //      `SNOWFLAKE_DEFAULT_CONNECTION_NAME` and `config.toml`'s
+    //      `default_connection_name`.
+    //
+    // `no_connection_details` is the authoritative signal from the wrapper: it
+    // is `true` only when the caller supplied no connection options at all.
+    // The core does not re-derive this from the presence/absence of locator
+    // params, because wrappers always inject bookkeeping params (application,
+    // client_app_id, …) even on a bare call — so the merged `explicit` store
+    // can never look "empty" here, and a locator heuristic would diverge from
+    // the legacy `is_kwargs_empty` contract (e.g. `connect(user="alice")`).
+    let connection_name: Option<String> =
+        if let Some(Setting::String(name)) = explicit.get(param_names::CONNECTION_NAME) {
+            Some(name.clone())
+        } else if no_connection_details {
+            Some(config_manager::get_default_connection_name_with_paths(
+                paths,
+            )?)
+        } else {
+            None
+        };
+
+    if let Some(ref name) = connection_name {
         let file_settings = config_manager::load_connection_config_with_paths(name, paths)?;
         for (k, v) in file_settings {
             merged.insert(k, v);
@@ -49,6 +155,9 @@ pub fn resolve_with_paths(
 
     // Layer 1: Explicit programmatic settings (highest priority)
     merged.extend_from(explicit);
+
+    derive_account_from_host(&mut merged);
+    derive_host_from_account(&mut merged);
 
     Ok(merged)
 }
@@ -61,6 +170,134 @@ mod tests {
     use crate::config::settings::Setting;
     use std::fs;
     use tempfile::TempDir;
+    use test_case::test_case;
+
+    #[test_case("myaccount.snowflakecomputing.com", "myaccount" ; "standard host")]
+    #[test_case("myaccount.us-east-1.snowflakecomputing.com", "myaccount" ; "host with region")]
+    #[test_case("myaccount.privatelink.snowflakecomputing.com", "myaccount" ; "privatelink host")]
+    #[test_case("myaccount", "myaccount" ; "bare account no dots")]
+    fn derive_account_from_host_extracts_first_label(host: &str, expected: &str) {
+        let mut store = ParamStore::new();
+        store.insert(param_names::HOST.into(), Setting::String(host.to_owned()));
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String(expected.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_strips_global_external_id() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("myaccount-extid.global.snowflake.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("myaccount".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_skips_when_account_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("explicit".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("other.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("explicit".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_noop_when_no_host() {
+        let mut store = ParamStore::new();
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(store.get(param_names::ACCOUNT), None);
+    }
+
+    // --- derive_host_from_account tests ---
+
+    #[test_case("myaccount", "myaccount.snowflakecomputing.com" ; "simple account")]
+    #[test_case("myaccount.us-east-1", "myaccount.us-east-1.snowflakecomputing.com" ; "account with region")]
+    #[test_case("myorg-myaccount", "myorg-myaccount.snowflakecomputing.com" ; "org-account format")]
+    fn derive_host_from_account_constructs_host(account: &str, expected_host: &str) {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String(account.to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String(expected_host.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_host_from_account_skips_when_host_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("myaccount".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("custom.host.com".to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String("custom.host.com".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_host_from_account_skips_when_server_url_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("myaccount".to_owned()),
+        );
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://custom.url".to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(store.get(param_names::HOST), None);
+    }
+
+    #[test]
+    fn derive_host_from_account_noop_when_no_account() {
+        let mut store = ParamStore::new();
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(store.get(param_names::HOST), None);
+    }
 
     fn make_paths(dir: &TempDir) -> ConfigPaths {
         ConfigPaths {
@@ -103,7 +340,7 @@ user = "file_user"
             Setting::String("explicit_account".to_owned()),
         );
 
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
 
         if let Some(Setting::String(account)) = resolved.get(param_names::ACCOUNT) {
             assert_eq!(account, "explicit_account");
@@ -138,7 +375,7 @@ protocol = "http"
             Setting::String("testconn".to_owned()),
         );
 
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
 
         if let Some(Setting::String(protocol)) = resolved.get(param_names::PROTOCOL) {
             assert_eq!(protocol, "http");
@@ -175,7 +412,7 @@ account = "connections_account"
             Setting::String("testconn".to_owned()),
         );
 
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
 
         if let Some(Setting::String(account)) = resolved.get(param_names::ACCOUNT) {
             assert_eq!(account, "connections_account");
@@ -209,7 +446,7 @@ account = "file_account"
             Setting::String("explicit_account".to_owned()),
         );
 
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
 
         if let Some(Setting::String(account)) = resolved.get(param_names::ACCOUNT) {
             assert_eq!(account, "explicit_account");
@@ -217,12 +454,8 @@ account = "file_account"
             panic!("Expected account setting");
         }
 
-        // Registry default for protocol should be present
-        if let Some(Setting::String(protocol)) = resolved.get(param_names::PROTOCOL) {
-            assert_eq!(protocol, "https");
-        } else {
-            panic!("Expected default protocol setting");
-        }
+        // protocol has no registry default (handled by consumption code)
+        assert_eq!(resolved.get(param_names::PROTOCOL), None);
     }
 
     fn get_str(map: &ParamStore, key: crate::config::param_registry::ParamKey) -> Option<String> {
@@ -266,7 +499,7 @@ database = "conn_db"
             Setting::String("explicit_acct".to_owned()),
         );
 
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
 
         assert_eq!(
             get_str(&resolved, param_names::ACCOUNT),
@@ -284,9 +517,196 @@ database = "conn_db"
             get_str(&resolved, param_names::WAREHOUSE),
             Some("config_wh".to_owned())
         );
+        // protocol has no registry default
+        assert_eq!(get_str(&resolved, param_names::PROTOCOL), None);
+    }
+
+    // --- Default-profile fallback tests (SNOW-3647714) ---
+
+    #[test]
+    fn bare_connect_loads_default_profile() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[default]
+account = "default_acct"
+user = "default_user"
+"#,
+        );
+
+        let explicit = ParamStore::new();
+        let resolved = resolve_with_paths(&explicit, &paths, true).unwrap();
+
         assert_eq!(
-            get_str(&resolved, param_names::PROTOCOL),
-            Some("https".to_owned())
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("default_acct".to_owned())
+        );
+        assert_eq!(
+            get_str(&resolved, param_names::USER),
+            Some("default_user".to_owned())
+        );
+    }
+
+    #[test]
+    fn bare_connect_honors_default_connection_name_from_env_via_config_manager() {
+        // The env-var branch is tested directly in config_manager unit tests.
+        // Here we verify resolver wires it end-to-end via config.toml so the
+        // test stays free of process-global env mutation (which races in
+        // parallel test execution).
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "alt""#,
+        );
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[default]
+account = "should_not_be_used"
+user = "wrong_user"
+
+[alt]
+account = "alt_acct"
+user = "alt_user"
+"#,
+        );
+
+        let explicit = ParamStore::new();
+        let resolved = resolve_with_paths(&explicit, &paths, true).unwrap();
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("alt_acct".to_owned())
+        );
+        assert_eq!(
+            get_str(&resolved, param_names::USER),
+            Some("alt_user".to_owned())
+        );
+    }
+
+    #[test]
+    fn bare_connect_honors_default_connection_name_in_config_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
+default_connection_name = "alt"
+"#,
+        );
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[default]
+account = "should_not_be_used"
+
+[alt]
+account = "alt_acct"
+user = "alt_user"
+"#,
+        );
+
+        let explicit = ParamStore::new();
+        let resolved = resolve_with_paths(&explicit, &paths, true).unwrap();
+
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("alt_acct".to_owned())
+        );
+    }
+
+    #[test]
+    fn explicit_params_do_not_trigger_default_profile_load() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[default]
+account = "default_acct"
+user = "profile_user"
+password = "profile_pwd"
+"#,
+        );
+
+        // Caller passes explicit account without bare_connect — must NOT merge [default]
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            "account".to_owned(),
+            Setting::String("explicit_acct".to_owned()),
+        );
+
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("explicit_acct".to_owned())
+        );
+        // user must NOT have leaked in from [default]
+        assert_eq!(get_str(&resolved, param_names::USER), None);
+    }
+
+    #[test]
+    fn non_locator_user_params_do_not_trigger_default_profile_load() {
+        // connect(user="alice") supplied an option, so the wrapper sets
+        // no_connection_details=false. Even though no locator (account/host) is
+        // present, the resolver must NOT load the default profile — legacy
+        // `is_kwargs_empty` parity. The connect then fails on missing account.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[default]
+account = "default_acct"
+user = "profile_user"
+password = "profile_pwd"
+"#,
+        );
+
+        let mut explicit = ParamStore::new();
+        explicit.insert("user".to_owned(), Setting::String("alice".to_owned()));
+
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+
+        // account must NOT have been loaded from [default]
+        assert_eq!(get_str(&resolved, param_names::ACCOUNT), None);
+        // user comes from explicit, not from [default]
+        assert_eq!(
+            get_str(&resolved, param_names::USER),
+            Some("alice".to_owned())
+        );
+    }
+
+    #[test]
+    fn bare_connect_with_no_default_profile_errors() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[other]
+account = "other_acct"
+"#,
+        );
+
+        let explicit = ParamStore::new();
+        let result = resolve_with_paths(&explicit, &paths, true);
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::ConnectionNotFound { name, .. } if name == "default"),
+            "Expected ConnectionNotFound for 'default', got: {err}"
         );
     }
 }

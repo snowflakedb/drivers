@@ -19,6 +19,7 @@ pub fn load_connection_config_with_paths(
 ) -> Result<HashMap<String, Setting>, ConfigError> {
     let mut settings = HashMap::new();
     let empty_toml = toml::Value::Table(toml::map::Map::new());
+    let registry = super::param_registry::registry();
 
     let config_toml = match &paths.config_file {
         Some(p) => load_toml_file(p)?,
@@ -32,7 +33,11 @@ pub fn load_connection_config_with_paths(
     {
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
-                settings.insert(key.clone(), setting);
+                let canonical = registry
+                    .resolve(key)
+                    .map(|def| def.canonical_name.to_owned())
+                    .unwrap_or_else(|| key.clone());
+                settings.insert(canonical, setting);
             }
         }
     }
@@ -48,7 +53,11 @@ pub fn load_connection_config_with_paths(
     {
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
-                settings.insert(key.clone(), setting);
+                let canonical = registry
+                    .resolve(key)
+                    .map(|def| def.canonical_name.to_owned())
+                    .unwrap_or_else(|| key.clone());
+                settings.insert(canonical, setting);
             }
         }
     }
@@ -61,6 +70,51 @@ pub fn load_connection_config_with_paths(
     }
 
     Ok(settings)
+}
+
+/// Determine the default connection name to use for bare `connect()` calls.
+///
+/// Resolution order (matches legacy `snowflake-connector-python`):
+///   1. `SNOWFLAKE_DEFAULT_CONNECTION_NAME` environment variable.
+///   2. `default_connection_name` root scalar in `config.toml`.
+///   3. Literal `"default"`.
+///
+/// Note: an empty `SNOWFLAKE_DEFAULT_CONNECTION_NAME` is treated as absent,
+/// which differs from the legacy Python driver (which would look up a profile
+/// named `""`).  The universal driver's behavior is intentional: an empty env
+/// var is almost certainly a misconfiguration, and treating it as absent lets
+/// the next resolution step apply rather than immediately erroring.
+pub(crate) fn get_default_connection_name_with_paths(
+    paths: &ConfigPaths,
+) -> Result<String, ConfigError> {
+    let env_override = std::env::var("SNOWFLAKE_DEFAULT_CONNECTION_NAME").ok();
+    resolve_default_connection_name(paths, env_override)
+}
+
+/// Inner helper that takes the env value as a parameter for testability,
+/// mirroring `path_resolver::resolve_snowflake_home`.
+fn resolve_default_connection_name(
+    paths: &ConfigPaths,
+    env_override: Option<String>,
+) -> Result<String, ConfigError> {
+    if let Some(name) = env_override
+        && !name.is_empty()
+    {
+        return Ok(name);
+    }
+
+    if let Some(config_path) = &paths.config_file {
+        let config_toml = load_toml_file(config_path)?;
+        if let Some(name) = config_toml
+            .get("default_connection_name")
+            .and_then(|v| v.as_str())
+            && !name.is_empty()
+        {
+            return Ok(name.to_owned());
+        }
+    }
+
+    Ok("default".to_owned())
 }
 
 /// Load all connections from config files
@@ -178,93 +232,58 @@ pub fn load_config_section_with_paths(
     Ok(None)
 }
 
-/// Load all sections from config files (including connections)
+/// Load and merge every config source into a single TOML document.
 ///
-/// Returns a map of section names to their settings.
-/// Connections are included under "connections.<name>" keys.
-pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError>
-{
+/// Resolves the platform default config paths, then delegates to
+/// [`load_all_config_merged_toml_with_paths`].
+pub fn load_all_config_merged_toml() -> Result<toml::Value, ConfigError> {
     let paths = get_config_paths()?;
-    load_all_config_sections_with_paths(&paths)
+    load_all_config_merged_toml_with_paths(&paths)
 }
 
-/// Load all sections from config files using explicit config paths.
+/// Load and merge every config source using explicit config paths.
+///
+/// Returns the full `config.toml` document with **all nesting preserved**, so
+/// arbitrarily deep tables such as `[cli.plugins.<name>]` survive intact (the
+/// caller serializes the result to JSON). This is deliberately not flattened
+/// into a section→key→scalar map: that representation silently drops nested
+/// sub-tables, which is exactly the kind of config the CLI stores under `cli`.
 ///
 /// Only reads files for which a path is provided (`Some`). When a path is
 /// `None`, that file is skipped entirely — no fallback to platform defaults.
 ///
 /// When a `connections_file` is present and contains at least one connection,
-/// it **replaces** all connections from `config_file` rather than merging.
-/// Root-level scalar values are returned under the empty-string key `""`.
-pub fn load_all_config_sections_with_paths(
+/// its contents **replace** the `connections` table from `config_file` rather
+/// than merging, matching the precedence used elsewhere in the driver.
+pub fn load_all_config_merged_toml_with_paths(
     paths: &ConfigPaths,
-) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
-    let empty_toml = toml::Value::Table(toml::map::Map::new());
-    let config_toml = match &paths.config_file {
+) -> Result<toml::Value, ConfigError> {
+    let empty_table = || toml::Value::Table(toml::map::Map::new());
+
+    let mut merged = match &paths.config_file {
         Some(p) => load_toml_file(p)?,
-        None => empty_toml.clone(),
+        None => empty_table(),
     };
-    let mut all_sections = HashMap::new();
 
-    if let Some(table) = config_toml.as_table() {
-        for (section_name, section_value) in table {
-            if section_name == "connections" {
-                if let Some(connections_table) = section_value.as_table() {
-                    for (conn_name, conn_value) in connections_table {
-                        if let Some(conn_table) = conn_value.as_table() {
-                            let mut settings = HashMap::new();
-                            for (key, value) in conn_table {
-                                if let Some(setting) = toml_value_to_setting(value) {
-                                    settings.insert(key.clone(), setting);
-                                }
-                            }
-                            all_sections.insert(format!("connections.{conn_name}"), settings);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let Some(section_table) = section_value.as_table() {
-                let mut settings = HashMap::new();
-                for (key, value) in section_table {
-                    if let Some(setting) = toml_value_to_setting(value) {
-                        settings.insert(key.clone(), setting);
-                    }
-                }
-                all_sections.insert(section_name.clone(), settings);
-            } else if let Some(setting) = toml_value_to_setting(section_value) {
-                all_sections
-                    .entry(String::new())
-                    .or_insert_with(HashMap::new)
-                    .insert(section_name.clone(), setting);
-            }
-        }
+    // Guarantee a table at the root so callers always receive an object.
+    if !merged.is_table() {
+        merged = empty_table();
     }
 
     let connections_toml = match &paths.connections_file {
         Some(p) => load_toml_file(p)?,
-        None => empty_toml,
+        None => empty_table(),
     };
-    if let Some(table) = connections_toml.as_table() {
-        if !table.is_empty() {
-            // connections.toml replaces config.toml connections entirely.
-            all_sections.retain(|k, _| !k.starts_with("connections."));
-        }
-        for (conn_name, conn_config) in table {
-            if let Some(config_table) = conn_config.as_table() {
-                let mut settings = HashMap::new();
-                for (k, value) in config_table {
-                    if let Some(setting) = toml_value_to_setting(value) {
-                        settings.insert(k.clone(), setting);
-                    }
-                }
-                all_sections.insert(format!("connections.{conn_name}"), settings);
-            }
-        }
+
+    // connections.toml replaces config.toml's connections entirely when non-empty.
+    if let Some(conn_table) = connections_toml.as_table()
+        && !conn_table.is_empty()
+        && let Some(root_table) = merged.as_table_mut()
+    {
+        root_table.insert("connections".to_string(), connections_toml.clone());
     }
 
-    Ok(all_sections)
+    Ok(merged)
 }
 
 #[cfg(test)]
@@ -480,7 +499,7 @@ account = "myaccount"
     }
 
     #[test]
-    fn test_load_all_config_sections() {
+    fn test_load_all_config_merged_toml() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -500,32 +519,53 @@ account = "myaccount"
 "#,
         );
 
-        let result = load_all_config_sections_with_paths(&paths);
-        assert!(result.is_ok());
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let table = merged.as_table().expect("root must be a table");
 
-        let sections = result.unwrap();
-        assert_eq!(sections.len(), 3);
-        assert!(sections.contains_key("log"));
-        assert!(sections.contains_key("proxy"));
-        assert!(sections.contains_key("connections.testconn"));
+        assert_eq!(table["log"]["level"].as_str(), Some("debug"));
+        assert_eq!(table["proxy"]["host"].as_str(), Some("proxy.example.com"));
+        assert_eq!(table["proxy"]["port"].as_integer(), Some(8080));
+        assert_eq!(
+            table["connections"]["testconn"]["account"].as_str(),
+            Some("myaccount")
+        );
+    }
 
-        let log_settings = sections.get("log").unwrap();
-        assert!(matches!(
-            log_settings.get("level"),
-            Some(Setting::String(_))
-        ));
+    #[test]
+    fn test_merged_toml_preserves_deeply_nested_sections() {
+        // Regression: `[cli.plugins.<name>]` must survive intact. A scalar-only
+        // flattening dropped the `plugins` sub-table, leaving `cli` empty and
+        // breaking CLI plugin discovery.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
+[cli.plugins.broken_plugin]
+enabled = true
 
-        let proxy_settings = sections.get("proxy").unwrap();
-        assert!(matches!(
-            proxy_settings.get("host"),
-            Some(Setting::String(_))
-        ));
+[cli.plugins.snowpark_hello.config]
+greeting = "hello"
 
-        let conn_settings = sections.get("connections.testconn").unwrap();
-        assert!(matches!(
-            conn_settings.get("account"),
-            Some(Setting::String(_))
-        ));
+[connections.test]
+account = "test"
+"#,
+        );
+
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let table = merged.as_table().expect("root must be a table");
+
+        assert_eq!(
+            table["cli"]["plugins"]["broken_plugin"]["enabled"].as_bool(),
+            Some(true),
+            "nested plugin enablement must be preserved"
+        );
+        assert_eq!(
+            table["cli"]["plugins"]["snowpark_hello"]["config"]["greeting"].as_str(),
+            Some("hello"),
+            "arbitrarily deep plugin config must be preserved"
+        );
     }
 
     #[test]
@@ -673,7 +713,7 @@ level = "debug"
     }
 
     #[test]
-    fn test_connections_toml_replaces_config_toml_connections() {
+    fn test_merged_toml_connections_toml_replaces_config_toml_connections() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -702,35 +742,39 @@ database = "overridden_database"
 "#,
         );
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let connections = merged["connections"]
+            .as_table()
+            .expect("connections must be a table");
 
-        // Only the connections.toml connection should survive
+        // Only the connections.toml connection should survive.
         assert!(
-            result.contains_key("connections.default"),
+            connections.contains_key("default"),
             "connections.toml connection must be present"
         );
         assert!(
-            !result.contains_key("connections.full"),
+            !connections.contains_key("full"),
             "config.toml-only connection must be removed"
         );
-
-        let default_conn = result.get("connections.default").unwrap();
-        assert!(matches!(
-            default_conn.get("database"),
-            Some(Setting::String(s)) if s == "overridden_database"
-        ));
-        // config.toml settings for the same connection are NOT merged
+        assert_eq!(
+            connections["default"]["database"].as_str(),
+            Some("overridden_database")
+        );
+        // config.toml settings for the same connection are NOT merged.
         assert!(
-            !default_conn.contains_key("schema"),
+            !connections["default"]
+                .as_table()
+                .unwrap()
+                .contains_key("schema"),
             "config.toml settings must not leak into connections.toml connection"
         );
 
-        // Non-connection sections from config.toml are preserved
-        assert!(result.contains_key("log"));
+        // Non-connection sections from config.toml are preserved.
+        assert_eq!(merged["log"]["level"].as_str(), Some("debug"));
     }
 
     #[test]
-    fn test_root_level_values_use_empty_key() {
+    fn test_merged_toml_keeps_root_level_values() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -744,21 +788,14 @@ account = "acct"
 "#,
         );
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
 
-        // Root-level scalars should be under the empty-string key
-        let root = result
-            .get("")
-            .expect("root values must use empty-string key");
-        assert!(matches!(
-            root.get("default_connection_name"),
-            Some(Setting::String(s)) if s == "default"
-        ));
-        assert!(!result.contains_key("_root"), "_root key must not appear");
+        // Root-level scalars are top-level keys.
+        assert_eq!(merged["default_connection_name"].as_str(), Some("default"));
     }
 
     #[test]
-    fn test_empty_connections_toml_does_not_remove_config_connections() {
+    fn test_merged_toml_empty_connections_toml_keeps_config_connections() {
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
         write_config(
@@ -771,15 +808,18 @@ account = "acct"
         );
         write_config(&temp_dir, "connections.toml", "");
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
         assert!(
-            result.contains_key("connections.myconn"),
+            merged["connections"]
+                .as_table()
+                .unwrap()
+                .contains_key("myconn"),
             "config.toml connections should remain when connections.toml is empty"
         );
     }
 
     #[test]
-    fn test_nonexistent_connections_toml_keeps_config_connections() {
+    fn test_merged_toml_nonexistent_connections_toml_keeps_config_connections() {
         let temp_dir = TempDir::new().unwrap();
         let paths = ConfigPaths {
             config_file: Some(temp_dir.path().join("config.toml")),
@@ -795,10 +835,177 @@ account = "acct"
         );
         // connections.toml does not exist on disk
 
-        let result = load_all_config_sections_with_paths(&paths).unwrap();
+        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
         assert!(
-            result.contains_key("connections.myconn"),
+            merged["connections"]
+                .as_table()
+                .unwrap()
+                .contains_key("myconn"),
             "config.toml connections should remain when connections.toml does not exist"
+        );
+    }
+
+    // --- resolve_default_connection_name tests ---
+
+    #[test]
+    fn default_connection_name_env_override_wins() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let name = resolve_default_connection_name(&paths, Some("from_env".to_owned())).unwrap();
+        assert_eq!(name, "from_env");
+    }
+
+    #[test]
+    fn default_connection_name_falls_back_to_config_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let name = resolve_default_connection_name(&paths, None).unwrap();
+        assert_eq!(name, "from_file");
+    }
+
+    #[test]
+    fn default_connection_name_falls_back_to_literal_default() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        // No config.toml written
+
+        let name = resolve_default_connection_name(&paths, None).unwrap();
+        assert_eq!(name, "default");
+    }
+
+    #[test]
+    fn empty_env_override_is_ignored() {
+        // Deliberately diverges from the legacy Python driver, which would
+        // look up a profile named "" and emit "Default connection with name ''
+        // cannot be found".  Treating an empty value as absent is intentional:
+        // an empty env var is almost certainly a misconfiguration, and falling
+        // through to the next resolution step (config.toml → "default") is
+        // more helpful than an inscrutable "profile '' not found" error.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let name = resolve_default_connection_name(&paths, Some(String::new())).unwrap();
+        assert_eq!(name, "from_file");
+    }
+
+    /// Serialises env-mutating tests within this module to avoid data races.
+    ///
+    /// `std::env::set_var` / `remove_var` are global, so concurrent tests that
+    /// both touch `SNOWFLAKE_DEFAULT_CONNECTION_NAME` can interfere.  The mutex
+    /// does not protect against *other* parallel tests outside this module that
+    /// happen to read the same env var, but it makes the within-module tests
+    /// deterministic when run with the default multi-thread executor.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn get_default_connection_name_with_paths_reads_env_var() {
+        // Exercises the `std::env::var` read in the public wrapper (not just
+        // the inner helper).  Guards against regressions where the wrapper
+        // is refactored and the env-read path becomes dead code.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"default_connection_name = "from_file""#,
+        );
+
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by ENV_MUTEX.
+        unsafe { std::env::set_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "from_env_var") };
+        let result = get_default_connection_name_with_paths(&paths);
+        // SAFETY: test-only; serialised by ENV_MUTEX.
+        unsafe { std::env::remove_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME") };
+        drop(_lock);
+
+        assert_eq!(result.unwrap(), "from_env_var");
+    }
+
+    #[test]
+    fn test_toml_alias_resolves_to_canonical_name() {
+        // Regression: `private_key_file_pwd` (legacy alias) written in connections.toml
+        // must be stored under the canonical name `private_key_password` so that
+        // downstream ParamStore lookups succeed.  Before the fix, verbatim key insertion
+        // meant the passphrase was never found and OpenSSL prompted interactively.
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[test]
+account = "myaccount"
+user = "myuser"
+private_key_file = "/path/to/key.p8"
+private_key_file_pwd = "supersecret"
+"#,
+        );
+
+        let result = load_connection_config_with_paths("test", &paths);
+        assert!(result.is_ok(), "load failed: {:?}", result.err());
+
+        let settings = result.unwrap();
+        // The alias `private_key_file_pwd` must be stored under the canonical name.
+        assert!(
+            settings.contains_key("private_key_password"),
+            "canonical key `private_key_password` must be present; got keys: {:?}",
+            settings.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !settings.contains_key("private_key_file_pwd"),
+            "alias key `private_key_file_pwd` must not be stored verbatim"
+        );
+        assert!(
+            matches!(settings.get("private_key_password"), Some(Setting::String(s)) if s == "supersecret")
+        );
+    }
+
+    #[test]
+    fn test_toml_canonical_keys_pass_through_unchanged() {
+        // Canonical keys written directly in connections.toml must not be mangled
+        // by the alias-resolution step (regression guard for the resolve() call).
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[test]
+account = "myaccount"
+user = "myuser"
+private_key_file = "/path/to/key.p8"
+private_key_password = "supersecret"
+"#,
+        );
+
+        let result = load_connection_config_with_paths("test", &paths);
+        assert!(result.is_ok(), "load failed: {:?}", result.err());
+
+        let settings = result.unwrap();
+        assert!(
+            matches!(settings.get("private_key_password"), Some(Setting::String(s)) if s == "supersecret"),
+            "canonical key `private_key_password` must be preserved as-is"
+        );
+        assert!(
+            matches!(settings.get("account"), Some(Setting::String(s)) if s == "myaccount"),
+            "other canonical keys must be preserved unchanged"
         );
     }
 }

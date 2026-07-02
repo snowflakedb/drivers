@@ -1,22 +1,27 @@
 use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::sync::Mutex;
+use tracing::Instrument;
 
-use super::connection::{Connection, RefreshContext};
+use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
-use super::query::process_query_response;
+use super::multistatement;
+use super::query::{StageInfoRefreshContext, perform_put_get_transfer};
+use super::result_set::{
+    ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
+    response_to_descriptor,
+};
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
     validate_statement_option_write,
 };
-use crate::chunks::ChunkDownloadData;
 use crate::config::ParamStore;
+use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::query_response::{Data, Stats};
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, snowflake_abort_query, snowflake_get_query_result,
+    QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
     snowflake_query_with_client,
 };
 
@@ -25,8 +30,9 @@ use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::async_exec::submit_statement_async;
 #[cfg(test)]
 use crate::rest::snowflake::query_request;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow::array::RecordBatchReader;
 use serde_json::value::RawValue;
+use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -80,85 +86,6 @@ pub enum BindingType<'a> {
 /// Result returned from async query submission (non-blocking).
 pub struct AsyncExecuteResult {
     pub query_id: String,
-}
-
-/// Column names whose values are summed to compute DML rows-affected (exact match).
-const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
-    "number of rows updated",
-    "number of multi-joined rows updated",
-    "number of rows deleted",
-];
-
-/// Column name prefixes whose values are summed to compute DML rows-affected.
-const DML_AFFECTED_ROWS_COLUMN_PREFIXES: &[&str] = &["number of rows inserted"];
-
-// Statement type ID constants for DML detection
-const STATEMENT_TYPE_ID_DML: i64 = 0x3000;
-const STATEMENT_TYPE_ID_INSERT: i64 = 0x3100;
-const STATEMENT_TYPE_ID_UPDATE: i64 = 0x3200;
-const STATEMENT_TYPE_ID_DELETE: i64 = 0x3300;
-const STATEMENT_TYPE_ID_MERGE: i64 = 0x3400;
-const STATEMENT_TYPE_ID_MULTI_TABLE_INSERT: i64 = 0x3500;
-
-/// Check if a statement type ID represents a DML operation
-fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
-    if let Some(type_id) = statement_type_id {
-        matches!(
-            type_id,
-            STATEMENT_TYPE_ID_DML
-                | STATEMENT_TYPE_ID_INSERT
-                | STATEMENT_TYPE_ID_UPDATE
-                | STATEMENT_TYPE_ID_DELETE
-                | STATEMENT_TYPE_ID_MERGE
-                | STATEMENT_TYPE_ID_MULTI_TABLE_INSERT
-        )
-    } else {
-        false
-    }
-}
-
-/// Calculate rows affected based on statement type.
-///
-/// Returns `Some(count)` when rows affected is known, `None` when it is not
-/// (when the statement type is unknown).
-///
-/// - For DML: Parse rowset columns to sum affected rows
-/// - For SELECT and other queries: Use total field
-/// - For unknown: Return None
-pub(crate) fn calculate_rows_affected(data: &Data) -> Option<i64> {
-    // Check if this is a DML statement
-    if is_dml_statement(data.statement_type_id) {
-        // For DML, parse the rowset to get affected rows
-        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type)
-            && !rowset.is_empty()
-            && !rowset[0].is_empty()
-        {
-            let mut affected_rows = 0i64;
-
-            // Look for specific column names that indicate affected rows
-            for (idx, col) in row_types.iter().enumerate() {
-                let col_name = col.name.to_lowercase();
-
-                if (DML_AFFECTED_ROWS_COLUMNS.contains(&col_name.as_str())
-                    || DML_AFFECTED_ROWS_COLUMN_PREFIXES
-                        .iter()
-                        .any(|p| col_name.starts_with(p)))
-                    && let Some(Some(value)) = rowset[0].get(idx)
-                    && let Ok(count) = value.parse::<i64>()
-                {
-                    affected_rows += count;
-                }
-            }
-
-            return Some(affected_rows);
-        }
-        // DML with no affected rows
-        return Some(0);
-    }
-
-    // For SELECT and other queries, use total field.
-    // Return None if total is not available.
-    data.total
 }
 
 impl DatabaseDriverV1 {
@@ -266,51 +193,59 @@ impl DatabaseDriverV1 {
 }
 
 pub struct PrepareResult {
-    pub stream: Box<FFI_ArrowArrayStream>,
+    pub stream: Box<dyn RecordBatchReader + Send>,
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
     pub number_of_binds: i32,
     pub query: String,
     pub sql_state: Option<String>,
+    pub array_bind_supported: bool,
+    pub binds: Vec<ColumnMetadata>,
 }
 
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-        let result = self
-            .execute_query_internal(stmt_handle, None, Some(true))
-            .await?;
-        Ok(PrepareResult {
-            stream: result.stream,
-            query_id: result.query_id,
-            columns: result.columns,
-            number_of_binds: result.number_of_binds,
-            query: result.query,
-            sql_state: result.sql_state,
-        })
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
+        async {
+            let result = self
+                .execute_query_internal(stmt_handle, None, Some(true), None)
+                .await?;
+
+            // Multi-statement query prepare is not supported.
+            let ExecuteQueryResult::Single(rs_info) = result else {
+                return Err(InvalidArgumentSnafu {
+                    argument: "Multi-statement queries cannot be prepared".to_string(),
+                }
+                .build());
+            };
+            let stream = self.result_set_get_stream(rs_info.handle).await?;
+            self.result_set_release(rs_info.handle)?;
+
+            let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                }
+                .build()
+            })?;
+            // TODO: re-lock the statement to just copy the query
+            //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
+            let stmt = stmt_ptr.lock().await;
+            let query = stmt.query.clone().unwrap_or_default();
+
+            Ok(PrepareResult {
+                stream,
+                query_id: rs_info.descriptor.query_id,
+                columns: rs_info.descriptor.columns,
+                number_of_binds: rs_info.descriptor.number_of_binds,
+                query,
+                sql_state: rs_info.descriptor.sql_state,
+                array_bind_supported: rs_info.descriptor.array_bind_supported,
+                binds: rs_info.descriptor.binds,
+            })
+        }
+        .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
+        .await
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ColumnMetadata {
-    pub name: String,
-    pub r#type: String,
-    pub precision: Option<i64>,
-    pub scale: Option<i64>,
-    pub length: Option<i64>,
-    pub byte_length: Option<i64>,
-    pub nullable: bool,
-}
-
-pub struct ExecuteResult {
-    pub stream: Box<FFI_ArrowArrayStream>,
-    pub rows_affected: Option<i64>,
-    pub query_id: String,
-    pub columns: Vec<ColumnMetadata>,
-    pub statement_type_id: Option<i64>,
-    pub query: String,
-    pub sql_state: Option<String>,
-    pub stats: Option<Stats>,
-    pub number_of_binds: i32,
 }
 
 impl DatabaseDriverV1 {
@@ -318,9 +253,48 @@ impl DatabaseDriverV1 {
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
-    ) -> Result<ExecuteResult, ApiError> {
-        self.execute_query_internal(stmt_handle, bindings, None)
+        timeout_seconds: Option<u32>,
+    ) -> Result<ExecuteQueryResult, ApiError> {
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
+        self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
+            .instrument(crate::snowflake_op_span!(
+                "statement_execute_query",
+                session_id
+            ))
             .await
+    }
+
+    async fn upload_csv_bindings_to_stage(
+        &self,
+        conn_arc: &Arc<Mutex<super::connection::Connection>>,
+        http_client: &reqwest::Client,
+        query_parameters: &QueryParameters,
+        retry_policy: &RetryPolicy,
+        csv_bytes: &[u8],
+    ) -> Result<String, ApiError> {
+        let (use_s3_regional_url_session_param, flags) = {
+            let conn = conn_arc.lock().await;
+            let regional = conn.use_s3_regional_url_session_param().await;
+            let flags = crate::stage_binding::StageBindingFlags {
+                stage_state: conn.stage_state.clone(),
+            };
+            (regional, flags)
+        };
+
+        let mut upload_refresh = RefreshContext::from_arc(conn_arc).await?;
+        let session_token = upload_refresh.refresh_token(None).await?;
+
+        let stage_ctx = crate::stage_binding::StageBindingContext {
+            client: http_client,
+            query_parameters,
+            session_token: &session_token,
+            retry_policy,
+            use_s3_regional_url_session_param,
+        };
+        let request_id = uuid::Uuid::new_v4();
+        crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
+            .await
+            .context(StageBindingFailedSnafu)
     }
 
     async fn execute_query_internal<'a>(
@@ -328,7 +302,8 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
-    ) -> Result<ExecuteResult, ApiError> {
+        timeout_seconds: Option<u32>,
+    ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Statement handle not found".to_string(),
@@ -336,20 +311,47 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let mut stmt = stmt_ptr.lock().await;
+        let stmt = stmt_ptr.lock().await;
 
         let query = extract_query(&stmt)?;
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
+
         let execution_mode = stmt.execution_mode(Some(&query));
-        let query_bindings = resolve_query_bindings(&bindings)?;
+
+        let mut query_parameter_map =
+            build_query_parameters_with_timeout(&stmt.settings, timeout_seconds);
+
+        let conn_arc = stmt.conn.clone();
+        drop(stmt);
+
+        let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
+
+        let bind_stage_path = if let Some(bytes) = csv_bytes {
+            let path = self
+                .upload_csv_bindings_to_stage(
+                    &conn_arc,
+                    &http_client,
+                    &query_parameters,
+                    &retry_policy,
+                    bytes,
+                )
+                .await?;
+            inject_timestamp_input_format_auto(&mut query_parameter_map);
+            Some(path)
+        } else {
+            None
+        };
+
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
+            bind_stage: bind_stage_path,
             describe_only,
+            query_parameters: query_parameter_map,
         };
 
         let response = {
-            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
+            let mut ctx = RefreshContext::from_arc(&conn_arc).await?;
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
@@ -370,7 +372,7 @@ impl DatabaseDriverV1 {
         }?;
 
         if response.success {
-            let conn = stmt.conn.lock().await;
+            let conn = conn_arc.lock().await;
             conn.update_session_params_cache(
                 &query,
                 response.data.parameters.as_ref(),
@@ -384,18 +386,79 @@ impl DatabaseDriverV1 {
             .await;
         }
 
-        let chunks = response.data.to_chunk_download_data().unwrap_or_default();
-        let total = response.data.total.unwrap_or(0);
-        let remote_row_count: i64 = chunks.iter().map(|c| c.row_count as i64).sum();
-        stmt.chunk_info = Some(StoredChunkInfo {
-            initial_chunk_base64: response.data.to_initial_base64_opt().map(String::from),
-            initial_chunk_row_count: total - remote_row_count,
-            chunks,
-        });
-
-        let result = response_to_execute_result(response.data, &http_client, query).await?;
+        // Re-acquire lock to set the state
+        let mut stmt = stmt_ptr.lock().await;
         stmt.state = StatementState::Executed;
-        Ok(result)
+        let skip_upload_on_content_match = stmt
+            .settings
+            .get_bool(param_names::SKIP_UPLOAD_ON_CONTENT_MATCH)
+            .unwrap_or(false);
+        drop(stmt);
+
+        let data = response.data;
+        let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
+        if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+            return Ok(multi);
+        }
+        let rowset_data = self
+            .extract_rowset_data(
+                &conn_arc,
+                data,
+                Some((query, query_parameters)),
+                skip_upload_on_content_match,
+            )
+            .await?;
+        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+    }
+
+    /// Decodes the row data from a query response, dispatching PUT/GET when
+    /// `data.command` is set. `refresh_sql` (the original SQL + parameters)
+    /// lets the file manager re-issue the PUT/GET to refresh stage
+    /// credentials mid-transfer. Callers pass `Some` when they can supply the
+    /// originating SQL (the sync execute path always can; the async
+    /// result-fetch path only when the response carries `sqlText`) and `None`
+    /// otherwise, which disables stage-info refresh for that transfer.
+    async fn extract_rowset_data(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        data: query_response::Data,
+        refresh_sql: Option<(String, QueryParameters)>,
+        skip_upload_on_content_match: bool,
+    ) -> Result<query_response::RowsetData, ApiError> {
+        match data.command.as_deref() {
+            Some(command) => {
+                // PUT/GET refresh context: lets the file manager re-issue
+                // this SQL when stage credentials expire mid-transfer.
+                let stage_info_refresh_context =
+                    refresh_sql.map(|(sql, query_parameters)| StageInfoRefreshContext {
+                        sql,
+                        query_parameters,
+                        conn: conn.clone(),
+                    });
+                // Late-bind `put_get_max_attempts` so post-init `set_option`
+                // overrides take effect (mirrors `LogoutConfig`).
+                let (put_get_max_attempts, use_s3_regional_url_session_param) = {
+                    let conn = conn.lock().await;
+                    (
+                        conn.put_get_max_attempts(),
+                        conn.use_s3_regional_url_session_param().await,
+                    )
+                };
+                perform_put_get_transfer(
+                    command,
+                    &data,
+                    &self.wrapper_presets,
+                    put_get_max_attempts,
+                    stage_info_refresh_context,
+                    use_s3_regional_url_session_param,
+                    skip_upload_on_content_match,
+                )
+                .await
+                .context(QueryResponseProcessingSnafu)
+            }
+            None => Ok(data.into_rowset_data()),
+        }
     }
 
     /// Execute query asynchronously (non-blocking) — returns immediately with query_id.
@@ -415,11 +478,33 @@ impl DatabaseDriverV1 {
 
         let query = extract_query(&stmt)?;
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
-        let query_bindings = resolve_query_bindings(&bindings)?;
+        let mut query_parameter_map = build_query_parameters(&stmt.settings);
+        let conn_arc = stmt.conn.clone();
+
+        let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
+
+        let bind_stage_path = if let Some(bytes) = csv_bytes {
+            let path = self
+                .upload_csv_bindings_to_stage(
+                    &conn_arc,
+                    &http_client,
+                    &query_parameters,
+                    &retry_policy,
+                    bytes,
+                )
+                .await?;
+            inject_timestamp_input_format_auto(&mut query_parameter_map);
+            Some(path)
+        } else {
+            None
+        };
+
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
+            bind_stage: bind_stage_path,
             describe_only: None,
+            query_parameters: query_parameter_map,
         };
         let request_id = uuid::Uuid::new_v4();
 
@@ -442,6 +527,8 @@ impl DatabaseDriverV1 {
                     Err(e) => {
                         last_error = Some(RestError::AsyncQuery {
                             source: e,
+                            request_id: Some(request_id),
+                            query_id: None,
                             location: snafu::Location::new(file!(), line!(), 0),
                         });
                     }
@@ -461,82 +548,61 @@ impl DatabaseDriverV1 {
         Ok(AsyncExecuteResult { query_id })
     }
 
-    pub async fn statement_result_chunks(
-        &self,
-        stmt_handle: Handle,
-    ) -> Result<StoredChunkInfo, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        let stmt = stmt_ptr.lock().await;
-        let chunk_info = stmt.chunk_info.as_ref().ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "No chunk info available; execute a query first".to_string(),
-            }
-            .build()
-        })?;
-
-        Ok(StoredChunkInfo {
-            initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
-            initial_chunk_row_count: chunk_info.initial_chunk_row_count,
-            chunks: chunk_info.chunks.clone(),
-        })
-    }
-
     pub async fn connection_get_query_result(
         &self,
         conn_handle: Handle,
         query_id: String,
-    ) -> Result<ExecuteResult, ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
-
-        let response = {
-            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_get_query_result(
-                    &http_client,
-                    &query_parameters,
-                    session_token.reveal(),
-                    &query_id,
-                    &retry_policy,
-                )
-                .await
-                {
-                    Ok(result) => break Ok(result),
-                    Err(e) => last_error = Some(e),
+    ) -> Result<ExecuteQueryResult, ApiError> {
+        let session_id = self.session_id_for_conn(conn_handle).await;
+        async {
+            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
                 }
+                .build()
+            })?;
+
+            let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
+            let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
+            if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+                return Ok(multi);
             }
-        }?;
 
-        if response.success {
-            let conn = conn_ptr.lock().await;
-            conn.update_session_params_cache(
-                "",
-                response.data.parameters.as_ref(),
-                &super::connection::FinalSessionNames {
-                    database: response.data.final_database_name.clone(),
-                    schema: response.data.final_schema_name.clone(),
-                    warehouse: response.data.final_warehouse_name.clone(),
-                    role: response.data.final_role_name.clone(),
-                },
-            )
-            .await;
+            // Build a refresh context when the response carries the original
+            // SQL (`sqlText`). Async PUT/GET retrieval goes through
+            // `monitoring/queries/{queryId}/result` which populates `sqlText`;
+            // without it we cannot re-issue the command, so stage-info refresh
+            // is disabled for this path.
+            let refresh_sql = match data.command.as_deref() {
+                Some(_) => {
+                    let (query_parameters, _http_client, _retry_policy) =
+                        query_context(&conn_ptr).await?;
+                    match data.sql_text.clone() {
+                        Some(sql) => Some((sql, query_parameters)),
+                        None => {
+                            tracing::debug!(
+                                "async PUT/GET response missing sqlText; stage-info refresh disabled"
+                            );
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+            // PUT/GET is routed to Blocking dispatch by `is_file_transfer`, so
+            // this async result-fetch path is not normally reached for file
+            // transfers; pass skip_upload_on_content_match=false defensively.
+            let rowset_data = self
+                .extract_rowset_data(&conn_ptr, data, refresh_sql, false)
+                .await?;
+            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
         }
-
-        response_to_execute_result(response.data, &http_client, String::new()).await
+        .instrument(crate::snowflake_op_span!(
+            "connection_get_query_result",
+            session_id
+        ))
+        .await
     }
 
     pub async fn connection_abort_query(
@@ -544,42 +610,48 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<(), ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
-
-        {
-            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_abort_query(
-                    &http_client,
-                    &query_parameters,
-                    session_token.reveal(),
-                    &query_id,
-                )
-                .await
-                {
-                    Ok(()) => break Ok(()),
-                    Err(e) => last_error = Some(e),
+        let session_id = self.session_id_for_conn(conn_handle).await;
+        async {
+            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
                 }
-            }
+                .build()
+            })?;
+
+            let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
+
+            with_valid_session(&conn_ptr, |token| {
+                let http_client = &http_client;
+                let query_parameters = &query_parameters;
+                let query_id = &query_id;
+                async move {
+                    snowflake_abort_query(http_client, query_parameters, token.reveal(), query_id)
+                        .await
+                }
+            })
+            .await
         }
+        .instrument(crate::snowflake_op_span!(
+            "connection_abort_query",
+            session_id
+        ))
+        .await
     }
 }
 
 /// Lock the connection and extract the transport parameters, HTTP client, and retry policy
 /// needed to issue a query.
+///
+/// Also rejects query execution if close() has already been called on the connection.
 async fn query_context(
     conn: &Arc<Mutex<Connection>>,
 ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
     let conn = conn.lock().await;
+    // Reject query execution if close() has been called
+    if conn.is_closed.load(Ordering::SeqCst) {
+        return Err(ConnectionClosedSnafu {}.build());
+    }
     Ok((
         conn.query_transport_parameters()?,
         conn.http_client
@@ -599,68 +671,11 @@ fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
     })
 }
 
-/// Convert a Snowflake query response into an `ExecuteResult` by processing
-/// the Arrow data, extracting column metadata, and assembling all fields.
-///
-/// Async because `process_query_response` may download additional Arrow
-/// chunks over HTTP for large result sets.
-async fn response_to_execute_result(
-    data: Data,
-    http_client: &reqwest::Client,
-    query: String,
-) -> Result<ExecuteResult, ApiError> {
-    let query_result = process_query_response(&data, http_client)
-        .await
-        .context(QueryResponseProcessingSnafu)?;
-
-    let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
-    let query_id = data.query_id.clone().unwrap_or_default();
-    let rows_affected = calculate_rows_affected(&data);
-    let statement_type_id = data.statement_type_id;
-
-    let columns = query_result.columns.unwrap_or_else(|| {
-        data.row_type
-            .unwrap_or_default()
-            .iter()
-            .map(|rt| ColumnMetadata {
-                name: rt.name.clone(),
-                r#type: rt.type_.clone(),
-                precision: rt.precision.map(|v| v as i64),
-                scale: rt.scale.map(|v| v as i64),
-                length: rt.length.map(|v| v as i64),
-                byte_length: rt.byte_length.map(|v| v as i64),
-                nullable: rt.nullable,
-            })
-            .collect()
-    });
-
-    let number_of_binds = data.number_of_binds.unwrap_or(0);
-
-    Ok(ExecuteResult {
-        stream,
-        rows_affected,
-        query_id,
-        columns,
-        statement_type_id,
-        query,
-        sql_state: data.sql_state,
-        stats: data.stats,
-        number_of_binds,
-    })
-}
-
-pub struct StoredChunkInfo {
-    pub initial_chunk_base64: Option<String>,
-    pub initial_chunk_row_count: i64,
-    pub chunks: Vec<ChunkDownloadData>,
-}
-
 pub struct Statement {
     pub state: StatementState,
     pub(crate) settings: ParamStore,
     pub query: Option<String>,
     pub conn: Arc<Mutex<Connection>>,
-    pub(crate) chunk_info: Option<StoredChunkInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -676,7 +691,6 @@ impl Statement {
             state: StatementState::Initialized,
             query: None,
             conn,
-            chunk_info: None,
         }
     }
 
@@ -691,6 +705,53 @@ impl Statement {
             return QueryExecutionMode::Async;
         }
         QueryExecutionMode::Blocking
+    }
+}
+
+fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
+    match setting {
+        Setting::String(s) => serde_json::Value::String(s.clone()),
+        Setting::Int(i) => serde_json::json!(i),
+        Setting::Double(d) => serde_json::json!(d),
+        Setting::Bool(b) => serde_json::Value::Bool(*b),
+        Setting::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(b).into_owned()),
+    }
+}
+
+/// Server-side parameter names forwarded in the query request.
+/// Each entry maps a local `ParamKey` to the Snowflake server-side parameter name.
+const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] =
+    &[(param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT")];
+
+fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde_json::Value>> {
+    let mut params = HashMap::new();
+    for (key, server_name) in QUERY_PARAMETER_NAMES {
+        if let Some(setting) = settings.get(*key) {
+            params.insert(server_name.to_string(), setting_to_json_value(setting));
+        }
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(params)
+    }
+}
+
+fn build_query_parameters_with_timeout(
+    settings: &ParamStore,
+    timeout_seconds: Option<u32>,
+) -> Option<HashMap<String, serde_json::Value>> {
+    let mut params = build_query_parameters(settings).unwrap_or_default();
+    if let Some(t) = timeout_seconds.filter(|&t| t > 0) {
+        params.insert(
+            "STATEMENT_TIMEOUT_IN_SECONDS".to_string(),
+            serde_json::Value::Number(t.into()),
+        );
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(params)
     }
 }
 
@@ -830,32 +891,59 @@ pub(crate) fn parse_json_bindings<'a>(
     Ok(raw)
 }
 
-/// Resolve `BindingType` into a borrowed `&RawValue` suitable for query submission.
+/// Splits an optional `BindingType` into its two mutually-exclusive components:
+/// - `query_bindings`: parsed JSON `RawValue` for inline JSON bindings.
+/// - `csv_bytes`: raw CSV byte slice for stage-based CSV bindings.
 ///
-/// Zero-copy for JSON bindings; returns `Err` for unsupported CSV bindings.
-fn resolve_query_bindings<'a>(
+/// Exactly one of the two is `Some` when `bindings` is `Some`; both are `None`
+/// when `bindings` is `None`. The two fields being separate is load-bearing:
+/// the `QueryInput` struct requires them as distinct optional fields.
+fn split_bindings<'a>(
     bindings: &'a Option<BindingType<'a>>,
-) -> Result<Option<&'a RawValue>, ApiError> {
-    match bindings {
-        Some(BindingType::Json(data_ptr)) => {
-            Ok(Some(parse_json_bindings(data_ptr).context(StatementSnafu)?))
-        }
-        Some(BindingType::Csv(_)) => Err(InvalidArgumentSnafu {
-            argument: "CSV bindings are not yet implemented".to_string(),
-        }
-        .build()),
-        None => Ok(None),
-    }
+) -> Result<(Option<&'a RawValue>, Option<&'a [u8]>), ApiError> {
+    Ok(match bindings {
+        None => (None, None),
+        Some(BindingType::Json(ptr)) => (
+            Some(parse_json_bindings(ptr).context(StatementSnafu)?),
+            None,
+        ),
+        Some(BindingType::Csv(ptr)) => (None, Some(ptr.slice())),
+    })
+}
+
+const TIMESTAMP_INPUT_FORMAT_KEY: &str = "TIMESTAMP_INPUT_FORMAT";
+const TIMESTAMP_INPUT_FORMAT_VALUE_AUTO: &str = "AUTO";
+
+fn inject_timestamp_input_format_auto(
+    query_parameters: &mut Option<HashMap<String, serde_json::Value>>,
+) {
+    let map = query_parameters.get_or_insert_with(HashMap::new);
+    map.insert(
+        TIMESTAMP_INPUT_FORMAT_KEY.to_string(),
+        serde_json::Value::String(TIMESTAMP_INPUT_FORMAT_VALUE_AUTO.to_string()),
+    );
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::result_set;
     use super::*;
+    use crate::rest::snowflake::query_response::Data;
 
     #[test]
     fn parse_bool_setting_accepts_native_bool_values() {
         assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
         assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    /// `skip_upload_on_content_match` is the first Statement-scoped param that
+    /// must stay client-only. Adding it to `QUERY_PARAMETER_NAMES` would forward
+    /// it to GS where it has no meaning.
+    #[test]
+    fn skip_upload_on_content_match_is_not_forwarded_to_gs() {
+        for (key, _server_name) in QUERY_PARAMETER_NAMES {
+            assert_ne!(key.as_str(), "skip_upload_on_content_match");
+        }
     }
 
     #[test]
@@ -1327,6 +1415,123 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_request_serialization_with_bind_stage_emits_bindstage_field() {
+        // When the CSV stage uploader has written a path into
+        // `QueryInput::bind_stage`, the serialized request must carry
+        // the `bindStage` field.
+        let request = query_request::Request {
+            sql_text: "INSERT INTO t VALUES (?, ?)".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: None,
+            bind_stage: Some("@SYSTEM$BIND/abc-123".to_string()),
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(
+            serialized.contains(r#""bindStage":"@SYSTEM$BIND/abc-123""#),
+            "serialized request must carry bindStage:\n{serialized}"
+        );
+        assert!(
+            !serialized.contains(r#""bindings""#),
+            "bindings must be omitted when bind_stage is set:\n{serialized}"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_without_bind_stage_omits_bindstage_field() {
+        // Symmetric to the previous test: the inline-JSON path must not
+        // leak `bindStage` onto the wire. `skip_serializing_if` on the
+        // field is what enforces this; the test is a regression guard.
+        let request = query_request::Request {
+            sql_text: "SELECT 1".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: None,
+            bind_stage: None,
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(
+            !serialized.contains("bindStage"),
+            "bindStage must be omitted when None:\n{serialized}"
+        );
+    }
+
+    #[test]
+    fn inject_timestamp_input_format_auto_allocates_map_when_none() {
+        // The inline-bindings path keeps `query_parameters: None` when
+        // no other server-side parameter is needed. The CSV path must
+        // therefore be able to lazily allocate the map.
+        let mut params = None;
+        inject_timestamp_input_format_auto(&mut params);
+        let map = params.expect("map must be allocated");
+        assert_eq!(
+            map.get("TIMESTAMP_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("AUTO".to_string()))
+        );
+        assert_eq!(map.len(), 1, "no other keys should be added");
+    }
+
+    #[test]
+    fn inject_timestamp_input_format_auto_preserves_other_keys() {
+        // Pre-existing entries (e.g. MULTI_STATEMENT_COUNT,
+        // STATEMENT_TIMEOUT_IN_SECONDS) must survive the injection.
+        let mut params = Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "MULTI_STATEMENT_COUNT".to_string(),
+                serde_json::Value::Number(3.into()),
+            );
+            m
+        });
+        inject_timestamp_input_format_auto(&mut params);
+        let map = params.unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get("TIMESTAMP_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("AUTO".to_string()))
+        );
+        assert_eq!(
+            map.get("MULTI_STATEMENT_COUNT"),
+            Some(&serde_json::Value::Number(3.into()))
+        );
+    }
+
+    #[test]
+    fn inject_timestamp_input_format_auto_overrides_existing_value() {
+        // If the user has set their own
+        // TIMESTAMP_INPUT_FORMAT in session params and *also* requested
+        // stage binding, the stage path wins for that query so the
+        // server can parse staged timestamps. A user who needs a
+        // specific session-level format must `ALTER SESSION SET` after
+        // the binding completes.
+        let mut params = Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "TIMESTAMP_INPUT_FORMAT".to_string(),
+                serde_json::Value::String("YYYY-MM-DD HH:MI:SS".to_string()),
+            );
+            m
+        });
+        inject_timestamp_input_format_auto(&mut params);
+        assert_eq!(
+            params.unwrap().get("TIMESTAMP_INPUT_FORMAT"),
+            Some(&serde_json::Value::String("AUTO".to_string()))
+        );
+    }
+
     fn deserialize_query_response(json: &str) -> Data {
         serde_json::from_str(json).expect("test JSON must be valid query response Data")
     }
@@ -1343,7 +1548,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(13));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(13));
     }
 
     #[test]
@@ -1358,7 +1563,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(5));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(5));
     }
 
     #[test]
@@ -1372,7 +1577,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(0));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(0));
     }
 
     #[test]
@@ -1382,7 +1587,7 @@ mod tests {
                 "total": 42
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(42));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(42));
     }
 
     #[test]

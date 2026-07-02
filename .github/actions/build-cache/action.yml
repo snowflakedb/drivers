@@ -1,0 +1,149 @@
+name: ODBC build cache
+description: >
+  Restore or save one of the four caches used by the ODBC test/build jobs:
+  test-deps (CMake FetchContent _deps), ccache, vcpkg binary cache, or
+  Homebrew bottles. Mode-driven like cargo-cache: call with mode=restore
+  after checkout and mode=save at the end of the job (gated on the restore's
+  cache-hit). Composite steps cannot use timeout-minutes — wrap the save
+  invocation in the caller with `timeout-minutes: 10` to enforce a wall-clock
+  ceiling on the tar+zstd save.
+
+inputs:
+  mode:
+    description: '"restore" or "save".'
+    required: true
+  kind:
+    description: '"test-deps" | "ccache" | "vcpkg" | "brew".'
+    required: true
+  key-suffix:
+    description: >
+      For "test-deps" and "ccache": optional discriminator inserted between
+      runner.os and the kind prefix (e.g. matrix.msvc_arch). For "vcpkg":
+      required triplet segment (e.g. "x64-windows", "x86-windows",
+      "arm64-windows"). Ignored for "brew".
+    required: false
+    default: ''
+  cache-hit:
+    description: >
+      Restore step's cache-hit value, plumbed back on save. When 'true',
+      save is skipped — mirrors the cargo-cache pattern and avoids
+      reservation races on identical keys.
+    required: false
+    default: ''
+
+outputs:
+  cache-hit:
+    description: '"true" when the restore step found an exact key match.'
+    value: >-
+      ${{ steps.r-test-deps.outputs.cache-hit
+         || steps.r-ccache.outputs.cache-hit
+         || steps.r-vcpkg.outputs.cache-hit
+         || steps.r-brew.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore test-deps cache
+      id: r-test-deps
+      if: inputs.mode == 'restore' && inputs.kind == 'test-deps'
+      continue-on-error: true
+      uses: actions/cache/restore@v5
+      with:
+        path: odbc_tests/cmake-build/_deps
+        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-test-deps-
+
+    - name: Restore ccache
+      id: r-ccache
+      if: inputs.mode == 'restore' && inputs.kind == 'ccache'
+      continue-on-error: true
+      uses: actions/cache/restore@v5
+      with:
+        path: .ccache
+        # Include run_id in key so save always creates a new entry (GHA cache
+        # is immutable — same key = no overwrite). Restore-keys prefix ensures
+        # we still get the most recent match from a prior run.
+        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-
+          ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-
+
+    # vcpkg's binary cache stores prebuilt packages keyed by an ABI hash that
+    # depends on the vcpkg version. When the runner image bumps vcpkg the ABI
+    # hashes change, the cached binaries become unusable, and vcpkg rebuilds
+    # zlib/openssl from source (~7-8 min). Including env.VCPKG_VER in the key
+    # invalidates stale entries on vcpkg version changes so we always either
+    # get a usable cache or build fresh, never both. The two restore-keys
+    # levels (with VCPKG_VER, without) let an older-VCPKG_VER cache satisfy
+    # the restore as a fallback before a from-scratch rebuild.
+    - name: Restore vcpkg binary cache
+      id: r-vcpkg
+      if: inputs.mode == 'restore' && inputs.kind == 'vcpkg'
+      continue-on-error: true
+      uses: actions/cache/restore@v5
+      with:
+        path: .vcpkg-binary-cache
+        key: ${{ runner.os }}-vcpkg-${{ inputs.key-suffix }}-${{ env.VCPKG_VER }}-v3
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-${{ inputs.key-suffix }}-${{ env.VCPKG_VER }}-
+          ${{ runner.os }}-vcpkg-${{ inputs.key-suffix }}-
+
+    # Fixed key — Homebrew bottles are versioned inside the cache content
+    # and brew auto-resolves updates on `brew install`, so the cache version
+    # only needs to bump when we change WHAT we install. macOS-only by nature
+    # of the path; callers gate on runner.os == 'macOS'.
+    - name: Restore Homebrew cache
+      id: r-brew
+      if: inputs.mode == 'restore' && inputs.kind == 'brew'
+      continue-on-error: true
+      uses: actions/cache/restore@v5
+      with:
+        path: ~/Library/Caches/Homebrew
+        key: macos-brew-odbc-tests-v1
+        restore-keys: |
+          macos-brew-odbc-tests-
+
+    # ZSTD_NBTHREADS=2 defends against tar+zstdmt hangs.
+    # timeout-minutes is intentionally NOT set here.
+    # GHA disallows it on composite steps; callers wrap the `uses:` step with `timeout-minutes`.
+    - name: Save test-deps cache
+      if: inputs.mode == 'save' && inputs.kind == 'test-deps' && inputs.cache-hit != 'true'
+      continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
+      uses: actions/cache/save@v5
+      with:
+        path: odbc_tests/cmake-build/_deps
+        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+
+    - name: Save ccache
+      # Always save — key includes run_id so it's always unique.
+      if: inputs.mode == 'save' && inputs.kind == 'ccache'
+      continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
+      uses: actions/cache/save@v5
+      with:
+        path: .ccache
+        key: ${{ runner.os }}${{ inputs.key-suffix != '' && format('-{0}', inputs.key-suffix) || '' }}-ccache-odbc-v3-${{ hashFiles('odbc_tests/CMakeLists.txt') }}-${{ github.run_id }}
+
+    - name: Save vcpkg binary cache
+      if: inputs.mode == 'save' && inputs.kind == 'vcpkg' && inputs.cache-hit != 'true'
+      continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
+      uses: actions/cache/save@v5
+      with:
+        path: .vcpkg-binary-cache
+        key: ${{ runner.os }}-vcpkg-${{ inputs.key-suffix }}-${{ env.VCPKG_VER }}-v3
+
+    - name: Save Homebrew cache
+      if: inputs.mode == 'save' && inputs.kind == 'brew' && inputs.cache-hit != 'true'
+      continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
+      uses: actions/cache/save@v5
+      with:
+        path: ~/Library/Caches/Homebrew
+        key: macos-brew-odbc-tests-v1

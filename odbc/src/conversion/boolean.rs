@@ -1,10 +1,9 @@
 use arrow::array::{Array, BooleanArray};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::JsonBindingError;
+use crate::conversion::error::BindingError;
 use crate::conversion::error::{
     InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
@@ -16,7 +15,7 @@ use crate::conversion::param_binding::{
     buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -160,7 +159,7 @@ impl WriteODBCType for SnowflakeBoolean {
 /// Parse a string value to a boolean per ODBC spec: the string is first
 /// converted to a numeric value, then 0 → false, nonzero → true.
 /// Also accepts "true"/"false" literals for Snowflake compatibility.
-fn parse_str_to_bool(s: &str) -> Result<bool, JsonBindingError> {
+fn parse_str_to_bool(s: &str) -> Result<bool, BindingError> {
     let trimmed = s.trim();
     if let Ok(i) = trimmed.parse::<i64>() {
         return Ok(i != 0);
@@ -188,7 +187,7 @@ impl ReadODBC for SnowflakeBoolean {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         match binding.value_type {
             CDataType::Default | CDataType::Bit | CDataType::UTinyInt => {
                 Ok(read_unaligned::<u8>(binding) != 0)
@@ -253,9 +252,9 @@ impl ReadODBC for SnowflakeBoolean {
     }
 }
 
-impl WriteJson for SnowflakeBoolean {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.to_string()))
+impl WriteWire for SnowflakeBoolean {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        Ok(value.to_string())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

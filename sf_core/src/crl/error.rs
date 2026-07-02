@@ -93,6 +93,12 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("CRL verification task did not complete"))]
+    VerificationTaskFailed {
+        source: tokio::task::JoinError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to build HTTP client for CRL requests"))]
     HttpClientBuild {
         source: reqwest::Error,
@@ -114,6 +120,17 @@ pub enum CrlError {
     #[snafu(display("Failed to parse certificate using x509-cert"))]
     CertificateParse {
         source: x509_cert::der::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// Wrapper that adds CRL distribution-point URL context to any other CrlError
+    /// raised while verifying a specific CRL. Propagated from the multi-DP loop in
+    /// CrlCache::check_revocation so callers can identify which URL failed without
+    /// parsing log output. The inner error is boxed to keep the enum size small.
+    #[snafu(display("CRL verification failed for distribution point {url}: {source}"))]
+    CrlDistributionPointFailed {
+        url: String,
+        source: Box<CrlError>,
         #[snafu(implicit)]
         location: Location,
     },

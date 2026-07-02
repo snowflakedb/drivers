@@ -53,6 +53,24 @@ cargo run -p odbc_trace_tool -- generate \
 
 This produces `test.cpp` and `queries.yaml` (auto-created on first run) in each directory.
 
+### Capturing obscured SQLGetData values (optional, author-time)
+
+WinODBC traces do not record buffer contents for non-string C types (`SQL_C_DOUBLE`, `SQL_C_BINARY`, date/time, etc.). `generate` is **offline by default** and only emits value assertions when `captured` fields are already present in `ir.yaml`.
+
+To populate `captured` from a live OLD-driver replay:
+
+```bash
+odbc_trace_tool/capture_reference.sh <output_dir>/<name>
+```
+
+This orchestrates:
+1. `cargo run -p odbc_trace_tool -- generate --emit-capture-harness` (host)
+2. Build + run the capture harness in a separate Docker container (`DRIVER_TYPE=OLD`, `BUILD_CAPTURE_HARNESS=ON`)
+3. `cargo run -p odbc_trace_tool -- apply-capture` (host) — only if `ctest` exits 0
+4. `cargo run -p odbc_trace_tool -- generate` for the final `test.cpp` (host)
+
+Requires Docker, `parameters.json`, and any fixture DB the trace queries against to be provisioned out-of-band.
+
 Create `<output_dir>/CMakeLists.txt` with one `add_odbc_test(replay_<tag>_<name> <name>/test.cpp)` entry per test. Add `add_subdirectory(...)` to the parent `CMakeLists.txt` if needed.
 
 ## Phase 4: Validate and report

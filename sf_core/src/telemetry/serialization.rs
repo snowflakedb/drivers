@@ -1,5 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use opentelemetry::KeyValue;
+use opentelemetry::trace::Status;
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 use opentelemetry_sdk::trace::SpanData;
 use serde_json::{Value, json};
@@ -8,45 +10,71 @@ use serde_json::{Value, json};
 ///
 /// Format: `{"logs": [{"message": {...}, "timestamp": "..."}]}`
 pub fn spans_to_snowflake_payload(spans: &[SpanData]) -> Value {
-    let logs: Vec<Value> = spans.iter().map(span_to_log_entry).collect();
+    let logs: Vec<Value> = spans.iter().flat_map(span_to_log_entries).collect();
     json!({ "logs": logs })
 }
 
-fn span_to_log_entry(span: &SpanData) -> Value {
+fn span_to_log_entries(span: &SpanData) -> Vec<Value> {
+    let mut entries = Vec::new();
+
+    // Events on the span (wrapper api_call, exception, session_init) —
+    // each becomes its own log entry, inheriting span attributes. We override
+    // `event_kind` to "event" so downstream consumers can distinguish event
+    // records from span records that happen to share the same payload shape.
+    for event in span.events.iter() {
+        let mut attrs: Vec<KeyValue> = span
+            .attributes
+            .iter()
+            .filter(|kv| kv.key.as_str() != "event_kind")
+            .cloned()
+            .collect();
+        attrs.push(KeyValue::new("event_kind", "event"));
+        for kv in &event.attributes {
+            attrs.push(kv.clone());
+        }
+        entries.push(attrs_to_log_entry(&event.name, &attrs, event.timestamp));
+    }
+
+    // Operation spans (sf_core entry-points like execute_query, heartbeat)
+    // have no events — emit the span itself as a log entry with duration
+    // and status. The span's `event_kind="span"` attribute carries through.
+    if span.events.is_empty() {
+        let mut attrs = span.attributes.clone();
+        if let Ok(duration) = span.end_time.duration_since(span.start_time) {
+            attrs.push(KeyValue::new("duration_ms", duration.as_millis() as i64));
+        }
+        if let Status::Error { description } = &span.status {
+            attrs.push(KeyValue::new("status", "ERROR"));
+            if !description.is_empty() {
+                attrs.push(KeyValue::new("status_description", description.to_string()));
+            }
+        }
+        entries.push(attrs_to_log_entry(&span.name, &attrs, span.start_time));
+    }
+
+    entries
+}
+
+fn attrs_to_log_entry(
+    name: &str,
+    attributes: &[opentelemetry::KeyValue],
+    timestamp: SystemTime,
+) -> Value {
     let mut message = serde_json::Map::new();
+    message.insert("type".to_string(), Value::String(name.to_string()));
 
-    message.insert("type".to_string(), Value::String(span.name.to_string()));
-
-    for kv in &span.attributes {
+    for kv in attributes {
         let key = kv.key.as_str();
         if key == "type" {
-            tracing::warn!("Span attribute key 'type' conflicts with span name field, skipping");
             continue;
         }
         message.insert(key.to_string(), otel_value_to_json(&kv.value));
     }
 
-    // Flatten span events (e.g., exception events) into the message.
-    // Event attributes are prefixed with "exception." to avoid overwriting span attributes.
-    for event in span.events.iter() {
-        if event.name.as_ref() == "exception" {
-            for kv in &event.attributes {
-                let key = kv.key.as_str();
-                let prefixed = if key.starts_with("exception.") {
-                    key.to_string()
-                } else {
-                    format!("exception.{key}")
-                };
-                message.insert(prefixed, otel_value_to_json(&kv.value));
-            }
-        }
-    }
-
-    let timestamp = system_time_to_epoch_millis(span.start_time);
-
+    let ts = system_time_to_epoch_millis(timestamp);
     json!({
         "message": message,
-        "timestamp": timestamp.to_string()
+        "timestamp": ts.to_string()
     })
 }
 
@@ -194,5 +222,59 @@ mod tests {
 
         let payload = spans_to_snowflake_payload(&[span]);
         assert_eq!(payload["logs"][0]["message"]["login_timeout"], 30);
+    }
+
+    #[test]
+    fn child_span_includes_duration_ms() {
+        // Child span: no events, 1 second duration (end - start = 1000ms)
+        let span = make_test_span("statement_execute_query", vec![]);
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let entry = &payload["logs"][0];
+        assert_eq!(entry["message"]["type"], "statement_execute_query");
+        assert_eq!(entry["message"]["duration_ms"], 1000);
+    }
+
+    #[test]
+    fn child_span_ok_status_has_no_error_fields() {
+        let span = make_test_span("connection_heartbeat", vec![]);
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let msg = &payload["logs"][0]["message"];
+        assert!(
+            msg.get("status").is_none(),
+            "OK span should not have status field"
+        );
+    }
+
+    #[test]
+    fn child_span_error_status_includes_description() {
+        let mut span = make_test_span("statement_execute_query", vec![]);
+        span.status = Status::Error {
+            description: "SQL compilation error".into(),
+        };
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let msg = &payload["logs"][0]["message"];
+        assert_eq!(msg["status"], "ERROR");
+        assert_eq!(msg["status_description"], "SQL compilation error");
+        // duration_ms still present
+        assert_eq!(msg["duration_ms"], 1000);
+    }
+
+    #[test]
+    fn child_span_error_empty_description() {
+        let mut span = make_test_span("statement_execute_query", vec![]);
+        span.status = Status::Error {
+            description: "".into(),
+        };
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let msg = &payload["logs"][0]["message"];
+        assert_eq!(msg["status"], "ERROR");
+        assert!(
+            msg.get("status_description").is_none(),
+            "empty description should be omitted"
+        );
     }
 }

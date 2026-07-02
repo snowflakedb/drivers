@@ -1,0 +1,533 @@
+"""Unit tests for api_telemetry decorator and api_usage tracking."""
+
+import asyncio
+import inspect
+
+from io import StringIO
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from snowflake.connector._internal.decorators import _TRACKING
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionHandle,
+    ConnectionIsClosedResponse,
+    DatabaseHandle,
+    ExecuteQueryResponse,
+    ResultSetDescriptor,
+    ResultSetHandle,
+    ResultSetResponse,
+    StatementHandle,
+    TelemetrySendResponse,
+)
+
+
+def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
+    """Return an ExecuteQueryResponse with a single-statement ResultSetResponse."""
+    return ExecuteQueryResponse(
+        single=ResultSetResponse(
+            result_set_handle=ResultSetHandle(id=1),
+            result_descriptor=ResultSetDescriptor(query_id=query_id),
+        )
+    )
+
+
+@pytest.fixture
+def mock_db_api():
+    """Create a mock DatabaseDriverClient patched into core_driver."""
+    from snowflake.connector._internal.api_client.client_api import core_driver
+
+    db_api = MagicMock()
+    db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
+    db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
+    db_api.connection_get_parameter.return_value = MagicMock(value="")
+
+    def _connection_is_closed(request):
+        return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
+
+    db_api.connection_is_closed.side_effect = _connection_is_closed
+    db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+    db_api.statement_execute_query.return_value = _make_execute_response()
+    db_api.connection_get_result_set.return_value = MagicMock(
+        result_descriptor=ResultSetDescriptor(query_id="fake-qid"),
+    )
+
+    old_client = core_driver._client
+    core_driver.client = db_api
+    yield db_api
+    core_driver.client = old_client
+
+
+@pytest.fixture
+def connection(mock_db_api):
+    """Create a Connection with a mocked db_api."""
+    from snowflake.connector.connection import Connection
+
+    with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
+        conn = Connection(user="test_user", account="test_account")
+        yield conn
+
+
+@pytest.fixture
+def cursor(connection, mock_db_api):
+    """Create a cursor from the mocked connection."""
+    # Reset telemetry calls from connection setup
+    mock_db_api.telemetry_send_api_usage.reset_mock()
+    return connection.cursor()
+
+
+@pytest.fixture(autouse=True)
+def reset_tracking():
+    """Ensure _TRACKING ContextVar is reset before each test."""
+    token = _TRACKING.set(True)
+    yield
+    _TRACKING.reset(token)
+
+
+def _get_api_methods(mock_db_api):
+    """Extract api_method strings from all telemetry_send_api_usage calls."""
+    return [call[0][0].api_method for call in mock_db_api.telemetry_send_api_usage.call_args_list]
+
+
+def _passed_arguments_for(mock_db_api, api_method):
+    """Return the passed_arguments list recorded for the given api_method.
+
+    Asserts exactly one matching call so callers get a single unambiguous list.
+    """
+    matches = [
+        list(call[0][0].passed_arguments)
+        for call in mock_db_api.telemetry_send_api_usage.call_args_list
+        if call[0][0].api_method == api_method
+    ]
+    assert len(matches) == 1, f"expected exactly one {api_method} call, got {len(matches)}"
+    return matches[0]
+
+
+def _run_async(coro):
+    """Run a coroutine in a fresh event loop (no pytest-asyncio dependency)."""
+    return asyncio.run(coro)
+
+
+@pytest.fixture
+def mock_async_db_api():
+    """Create a mock AsyncDatabaseDriverClient patched into async_core_driver."""
+    from snowflake.connector._internal.api_client.client_api import async_core_driver
+
+    db_api = MagicMock()
+    db_api.database_new = AsyncMock(return_value=MagicMock(db_handle=DatabaseHandle(id=1)))
+    db_api.database_init = AsyncMock()
+    db_api.connection_new = AsyncMock(return_value=MagicMock(conn_handle=ConnectionHandle(id=42)))
+    db_api.connection_set_options = AsyncMock(return_value=MagicMock(warnings=[]))
+    db_api.connection_set_session_parameters = AsyncMock()
+    db_api.connection_init = AsyncMock()
+    db_api.connection_get_parameter = AsyncMock(return_value=MagicMock(value=""))
+
+    def _connection_is_closed(request):
+        return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
+
+    db_api.connection_is_closed = AsyncMock(side_effect=_connection_is_closed)
+    db_api.connection_close = AsyncMock()
+    db_api.connection_release = AsyncMock()
+    db_api.database_release = AsyncMock()
+    db_api.connection_get_all_parameters = AsyncMock(return_value=MagicMock(parameters={}))
+    db_api.connection_get_info = AsyncMock(return_value=MagicMock(ListFields=lambda: []))
+    db_api.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
+    db_api.statement_set_sql_query = AsyncMock()
+    db_api.statement_execute_query = AsyncMock(return_value=_make_execute_response())
+    db_api.statement_release = AsyncMock()
+    db_api.connection_get_result_set = AsyncMock(
+        return_value=MagicMock(result_descriptor=ResultSetDescriptor(query_id="fake-qid")),
+    )
+    db_api.telemetry_send_api_usage = AsyncMock(return_value=TelemetrySendResponse())
+
+    old_client = async_core_driver._client
+    async_core_driver.client = db_api
+    yield db_api
+    async_core_driver.client = old_client
+
+
+@pytest.fixture
+def async_connection(mock_async_db_api):
+    """Create an async Connection with a mocked async db_api."""
+    from snowflake.connector.aio.connection._connection import Connection
+
+    with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
+
+        async def _make():
+            conn = Connection(user="test_user", account="test_account")
+            await conn.connect()
+            return conn
+
+        return _run_async(_make())
+
+
+@pytest.fixture
+def async_cursor(async_connection, mock_async_db_api):
+    """Create an async cursor from the mocked async connection."""
+    mock_async_db_api.telemetry_send_api_usage.reset_mock()
+    return _run_async(async_connection.cursor())
+
+
+class TestConnectionApiTelemetry:
+    """Tests that Connection public methods send api_usage telemetry."""
+
+    def test_cursor_sends_telemetry(self, connection, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.cursor" in methods
+
+    def test_close_sends_telemetry(self, connection, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.close()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.close" in methods
+
+    def test_get_autocommit_sends_telemetry(self, connection, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.get_autocommit()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.get_autocommit" in methods
+
+    def test_commit_suppresses_inner_calls(self, connection, mock_db_api):
+        """commit() calls cursor(), execute(), close() internally — only commit should be tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.commit()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.commit" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+        assert "SnowflakeCursor.close" not in methods
+
+    def test_rollback_suppresses_inner_calls(self, connection, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.rollback()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.rollback" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+
+    def test_execute_string_suppresses_inner_calls(self, connection, mock_db_api):
+        """execute_string calls execute_stream which calls cursor() + execute() — only outermost tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.execute_string("SELECT 1; SELECT 2")
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_string" in methods
+        assert "Connection.execute_stream" not in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+
+    def test_execute_stream_suppresses_during_iteration(self, connection, mock_db_api):
+        """execute_stream is a generator — nested calls during iteration must be suppressed."""
+        from io import StringIO
+
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        # Iterate the generator so the body actually runs
+        cursors = list(connection.execute_stream(StringIO("SELECT 1; SELECT 2")))
+        assert len(cursors) == 2
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+
+    def test_api_method_uses_runtime_class_name(self, connection, mock_db_api):
+        """api_method should be derived from type(self).__name__, not hardcoded."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.close()
+
+        req = mock_db_api.telemetry_send_api_usage.call_args[0][0]
+        assert req.api_method == "Connection.close"
+
+
+class TestCursorApiTelemetry:
+    """Tests that Cursor public methods send api_usage telemetry."""
+
+    def test_execute_sends_telemetry(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1")
+
+        methods = _get_api_methods(mock_db_api)
+        assert "SnowflakeCursor.execute" in methods
+
+    def test_close_sends_telemetry(self, cursor, mock_db_api):
+        cursor.close()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "SnowflakeCursor.close" in methods
+
+    def test_fetchone_sends_telemetry(self, cursor, mock_db_api):
+        # fetchone requires a prior execute — mock the iterator
+        cursor._execute_result = MagicMock()
+        cursor._iterator = iter([])
+        cursor.fetchone()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "SnowflakeCursor.fetchone" in methods
+
+    def test_fetchmany_sends_telemetry(self, cursor, mock_db_api):
+        """fetchmany() should send its own telemetry event."""
+        mock_iterator = MagicMock()
+        mock_iterator.fetch_many.return_value = [(1,), (2,)]
+        cursor._execute_result = MagicMock()
+        cursor._iterator = mock_iterator
+        cursor.fetchmany(2)
+
+        methods = _get_api_methods(mock_db_api)
+        assert "SnowflakeCursor.fetchmany" in methods
+
+    def test_dict_cursor_fetchone_uses_correct_class_name(self, connection, mock_db_api):
+        from snowflake.connector.cursor import DictCursor
+
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        cur = connection.cursor(DictCursor)
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        cur._execute_result = MagicMock()
+        cur._iterator = iter([])
+        cur.fetchone()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "DictCursor.fetchone" in methods
+
+
+class TestApiTelemetryResetBehavior:
+    """Tests that tracking is properly reset after each call."""
+
+    def test_tracking_resets_after_method_returns(self, connection, mock_db_api):
+        """After a tracked method returns, subsequent calls should also be tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.close()
+        connection.get_autocommit()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.close" in methods
+        assert "Connection.get_autocommit" in methods
+        assert mock_db_api.telemetry_send_api_usage.call_count == 2
+
+    def test_tracking_resets_after_exception(self, cursor, mock_db_api):
+        """If a method raises, tracking should still reset for the next call."""
+        mock_db_api.statement_execute_query.side_effect = RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            cursor.execute("SELECT 1")
+
+        # Tracking should be re-enabled
+        mock_db_api.statement_execute_query.side_effect = None
+        mock_db_api.statement_execute_query.return_value = _make_execute_response()
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        cursor.execute("SELECT 2")
+
+        methods = _get_api_methods(mock_db_api)
+        assert "SnowflakeCursor.execute" in methods
+
+    def test_unconsumed_generator_does_not_leak_tracking(self, connection, mock_db_api):
+        """A never-iterated generator must not suppress subsequent telemetry."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        gen = connection.execute_stream(StringIO("SELECT 1"))
+        del gen
+
+        connection.cursor()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.cursor" in methods
+
+    def test_tracking_true_between_generator_yields(self, connection, mock_db_api):
+        """Between yields, _TRACKING is True so independent calls are tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        gen = connection.execute_stream(StringIO("SELECT 1; SELECT 2"))
+        next(gen)
+
+        connection.get_query_status("")
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.get_query_status" in methods
+
+    def test_telemetry_works_after_abandoned_generator(self, connection, mock_db_api):
+        """cursor() + close() send telemetry even after an abandoned generator."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        gen = connection.execute_stream(StringIO("SELECT 1"))
+        del gen
+
+        cur = connection.cursor()
+        cur.close()
+        connection.close()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.cursor" in methods
+        assert "SnowflakeCursor.close" in methods
+        assert "Connection.close" in methods
+
+
+class TestApiTelemetryFailureIsolation:
+    """Tests that telemetry failures don't break the actual method."""
+
+    def test_telemetry_rpc_failure_does_not_break_method(self, connection, mock_db_api):
+        """If send_api_usage raises, the decorated method should still execute."""
+        mock_db_api.telemetry_send_api_usage.side_effect = RuntimeError("telemetry down")
+
+        # close() should still work despite telemetry failure
+        # (send_api_usage swallows exceptions internally)
+        connection.close()
+        assert connection.is_closed()
+
+
+class TestAsyncConnectionApiTelemetry:
+    """Tests that aio Connection public methods send api_usage telemetry."""
+
+    def test_cursor_sends_telemetry(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        _run_async(async_connection.cursor())
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "Connection.cursor" in methods
+
+    def test_close_sends_telemetry(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        _run_async(async_connection.close())
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "Connection.close" in methods
+
+    def test_commit_suppresses_inner_calls(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        _run_async(async_connection.commit())
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "Connection.commit" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+        assert "SnowflakeCursor.close" not in methods
+
+    def test_rollback_suppresses_inner_calls(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        _run_async(async_connection.rollback())
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "Connection.rollback" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+
+    def test_api_method_uses_runtime_class_name(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        _run_async(async_connection.close())
+
+        req = mock_async_db_api.telemetry_send_api_usage.call_args[0][0]
+        assert req.api_method == "Connection.close"
+
+
+class TestAsyncCursorApiTelemetry:
+    """Tests that aio SnowflakeCursor public methods send api_usage telemetry."""
+
+    def test_execute_sends_telemetry(self, async_cursor, mock_async_db_api):
+        _run_async(async_cursor.execute("SELECT 1"))
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "SnowflakeCursor.execute" in methods
+
+    def test_close_sends_telemetry(self, async_cursor, mock_async_db_api):
+        _run_async(async_cursor.close())
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "SnowflakeCursor.close" in methods
+
+
+class TestAsyncApiTelemetryFailureIsolation:
+    """Tests that async telemetry failures don't break the decorated method."""
+
+    def test_telemetry_rpc_failure_does_not_break_method(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_api_usage.side_effect = RuntimeError("telemetry down")
+
+        _run_async(async_connection.close())
+        assert _run_async(async_connection.is_closed())
+
+
+class TestPassedArgumentNames:
+    """Unit tests for _passed_argument_names: names only, no values, no defaults."""
+
+    @staticmethod
+    def _names(func, *args, **kwargs):
+        from snowflake.connector._internal.decorators import _passed_argument_names
+
+        sig = inspect.signature(func)
+        # The decorator binds the receiver first; mirror that by treating the
+        # first positional as ``self``.
+        self_obj, rest = args[0], args[1:]
+        return _passed_argument_names(sig, self_obj, rest, kwargs)
+
+    def test_only_passed_positional_and_keyword_named(self):
+        def fn(self, command, parameters=None, num_statements=None): ...
+
+        assert self._names(fn, object(), "SELECT 1") == ["command"]
+        assert self._names(fn, object(), "SELECT 1", num_statements=2) == ["command", "num_statements"]
+
+    def test_defaults_are_excluded(self):
+        def fn(self, a, b=1, c=2): ...
+
+        # b and c are left at their defaults -> omitted.
+        assert self._names(fn, object(), "x") == ["a"]
+
+    def test_explicitly_passed_value_equal_to_default_is_kept(self):
+        def fn(self, a, b=None): ...
+
+        # Caller supplied b explicitly (even though it equals the default).
+        assert self._names(fn, object(), "x", b=None) == ["a", "b"]
+
+    def test_self_is_dropped(self):
+        def fn(self): ...
+
+        assert self._names(fn, object()) == []
+
+    def test_var_keyword_keys_are_expanded(self):
+        def fn(self, **kwargs): ...
+
+        # The var-keyword param name ("kwargs") carries no signal; expand to keys.
+        names = self._names(fn, object(), account="a", user="u")
+        assert "kwargs" not in names
+        assert set(names) == {"account", "user"}
+
+    def test_no_argument_values_are_captured(self):
+        secret = "super-secret-password"
+
+        def fn(self, password=None): ...
+
+        names = self._names(fn, object(), password=secret)
+        assert names == ["password"]
+        assert secret not in names
+
+    def test_binding_failure_returns_empty(self):
+        def fn(self, a): ...
+
+        # Too many positional args -> bind raises TypeError -> defensive [].
+        assert self._names(fn, object(), "x", "y", "z") == []
+
+
+class TestPassedArgumentsThroughStack:
+    """End-to-end: argument names reach the TelemetrySendApiUsageRequest."""
+
+    def test_execute_records_only_passed_arguments(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1")
+        assert _passed_arguments_for(mock_db_api, "SnowflakeCursor.execute") == ["operation"]
+
+    def test_execute_records_extra_keyword(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1", num_statements=1)
+        assert _passed_arguments_for(mock_db_api, "SnowflakeCursor.execute") == [
+            "operation",
+            "num_statements",
+        ]
+
+    def test_cursor_no_args_records_empty(self, connection, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+        assert _passed_arguments_for(mock_db_api, "Connection.cursor") == []

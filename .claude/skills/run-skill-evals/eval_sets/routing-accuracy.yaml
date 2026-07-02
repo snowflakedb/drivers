@@ -1,0 +1,63 @@
+# Routing-accuracy eval set for: run-skill-evals
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "run skill evals"
+    notes: "Exact trigger phrase from description."
+
+  - prompt: "eval my skills"
+    notes: "Exact trigger phrase from description."
+
+  - prompt: "run evals on the kubectl-diagnose skill"
+    notes: "Exact trigger pattern 'run evals on <skill>' from description."
+
+  - prompt: "test skill routing"
+    notes: "Exact trigger phrase from description."
+
+  - prompt: "check if my merge-pr skill triggers correctly"
+    notes: "Matches 'check if my skill triggers' trigger phrase with a real skill name."
+
+  - prompt: "can you run the routing accuracy evals and show me which skills are failing?"
+    notes: "Contextual — describes the output (which skills are failing) implying a run, not authoring."
+
+  - prompt: "I updated my skill description, now I want to verify routing is still correct"
+    notes: "Indirect — post-edit verification scenario; the action needed is running evals."
+
+  - prompt: "show me the eval scores across all skills in this repo"
+    notes: "Contextual, implies running the full-repo eval to get scores."
+
+  - prompt: "skills eval pls"
+    notes: "Abbreviated/informal shorthand matching the core keyword pattern."
+
+  - prompt: "run evals on generate-eval-set"
+    notes: "Terse, uses exact 'run evals on <skill>' pattern with a sibling skill name."
+
+  - prompt: "the routing tests are showing 2 failures — what prompts failed?"
+    notes: "Error/incident scenario; user has partial results and wants to parse/show failures."
+
+  - prompt: "can I see which prompts my author-skill is getting wrong in routing?"
+    notes: "Borderline — phrased as curiosity about which prompts fail, implying an eval run is needed."
+
+should_not_trigger:
+  - prompt: "generate an eval set for my kubectl-diagnose skill"
+    reason: "generate-eval-set — user wants to *create* eval prompts, not run existing ones."
+
+  - prompt: "my skill isn't triggering right, can you fix its description?"
+    reason: "author-skill — SKILL.md explicitly redirects 'skill isn't triggering' complaints to author-skill for description fixes."
+
+  - prompt: "write routing-accuracy test prompts for my new skill"
+    reason: "generate-eval-set — user wants to author eval prompts, not execute them."
+
+  - prompt: "update the routing-accuracy.yaml for run-skill-evals with some better should_not_trigger examples"
+    reason: "generate-eval-set — editing the eval set YAML is generation/authoring, not running."
+
+  - prompt: "bootstrap the skills eval infrastructure for this repo"
+    reason: "bootstrap-skills-evals — setting up the eval convention/tooling, not running existing evals."
+
+  - prompt: "audit my skills for frontmatter issues like disable-model-invocation"
+    reason: "configure-skill-settings — inspecting/auditing skill settings, not running routing evals."
+
+  - prompt: "my skill is triggering on prompts it shouldn't — help me rewrite the description to fix it"
+    reason: "author-skill — the remediation action is fixing the description, which is author-skill's domain; run-skill-evals is non-iterative and doesn't fix skills."

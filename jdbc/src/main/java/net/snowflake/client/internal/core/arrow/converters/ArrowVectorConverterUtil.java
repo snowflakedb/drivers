@@ -19,6 +19,12 @@ public final class ArrowVectorConverterUtil {
     return null;
   }
 
+  /** Read the {@code scale} from an Arrow field's metadata, defaulting to 0 when absent. */
+  private static int getScaleFromFieldMetadata(ValueVector vector) {
+    String scaleStr = vector.getField().getMetadata().get("scale");
+    return scaleStr == null ? 0 : Integer.parseInt(scaleStr);
+  }
+
   /**
    * Given an arrow vector (a single column in a single record batch), return an arrow vector
    * converter. Converter is built on top of arrow vector, so arrow data can be converted back to
@@ -51,8 +57,7 @@ public final class ArrowVectorConverterUtil {
           return new DateConverter(vector, idx, context);
 
         case FIXED:
-          String scaleStr = vector.getField().getMetadata().get("scale");
-          int sfScale = Integer.parseInt(scaleStr);
+          int sfScale = getScaleFromFieldMetadata(vector);
           switch (type) {
             case TINYINT:
               if (sfScale == 0) {
@@ -84,6 +89,31 @@ public final class ArrowVectorConverterUtil {
 
         case REAL:
           return new DoubleToRealConverter(vector, idx, context);
+
+        case TIME:
+          int timeScale = getScaleFromFieldMetadata(vector);
+          switch (type) {
+            case INT:
+            case BIGINT:
+              return new TimeConverter(vector, idx, context, timeScale);
+            default:
+              throw new SnowflakeSQLException("Unsupported Arrow physical type for TIME: " + type);
+          }
+
+          // Structured types (MAP/ARRAY/OBJECT) currently fall back to string rendering, matching
+          // legacy snowflake-jdbc's VarCharConverter fallback when the column is not materialized
+          // as
+          // a native complex Arrow vector. Once the universal driver materializes these as complex
+          // vectors, dispatch to a dedicated converter (guarded by the vector type, as legacy
+          // does):
+          //   MAP    -> MapConverter    for MapVector    (else VarCharConverter)
+          //   ARRAY  -> ArrayConverter  for ListVector   (else VarCharConverter)
+          //   OBJECT -> StructConverter for StructVector (else VarCharConverter)
+          // TODO(SNOW-2881790): implement the dedicated MAP/ARRAY/OBJECT converters above.
+        case MAP:
+        case ARRAY:
+        case OBJECT:
+          return new VarCharConverter(vector, idx, context);
 
         default:
           throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());

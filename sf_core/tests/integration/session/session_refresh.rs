@@ -78,6 +78,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
+        master_validity: None,
     };
 
     let mut connection = Connection::new();

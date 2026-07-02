@@ -2,10 +2,26 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+mod external_browser;
 pub mod heartbeat;
+pub mod logout;
 mod native_okta;
+mod oauth;
+pub mod prompt_lock;
+/// Re-export of the browser-launcher closure type so that
+/// `crate::config::rest_parameters::OAuthAuthorizationCodeConfig` can
+/// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory
+/// without reaching into the private `oauth` module hierarchy.
+pub(crate) use oauth::BrowserLaunchFn;
+/// Re-exported under `cfg(any(test, feature = "test-utils"))` so e2e
+/// tests can derive the OAuth token-cache key host without
+/// reimplementing the Python-style `urlparse(token_request_url).hostname`
+/// fallback chain. Production builds do not expose this helper.
+#[cfg(any(test, feature = "test-utils"))]
+pub use oauth::host_from_token_url;
 pub mod query_request;
 pub mod query_response;
+pub mod sql_state;
 pub mod telemetry;
 
 use std::collections::HashMap;
@@ -14,26 +30,72 @@ use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
+use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{
-    AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
+    AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
+    AuthResponse, authenticator,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::external_browser::{
+    DefaultBrowserOpener, external_browser_authenticate,
+};
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
-use crate::tls::client::create_tls_client_with_config;
+use crate::tls::client::create_tls_client_with_proxy;
 use crate::tls::error::TlsError;
 use crate::token_cache::{TokenCache, TokenType};
-use reqwest::{self, Method, header};
+use reqwest::{self, Method, StatusCode, header};
 use serde_json;
 use serde_json::value::RawValue;
-use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
+use uuid::Uuid;
 
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
+
+/// Send an HTTP request with retry and return `(StatusCode, body_text)`.
+///
+/// Shared by `native_okta` and `external_browser` authentication flows.
+async fn request_text_with_retry(
+    build: impl Fn() -> reqwest::RequestBuilder,
+    ctx: &HttpContext,
+    policy: &RetryPolicy,
+) -> Result<(StatusCode, String), HttpError> {
+    execute_with_retry(build, ctx, policy, |resp| async move {
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| HttpError::Transport {
+            source: e,
+            location: Location::new(file!(), line!(), column!()),
+        })?;
+        Ok((status, text))
+    })
+    .await
+}
+
+// ─── Snowflake GS protocol error codes ───────────────────────────────────────
+/// GS error code returned when a session no longer exists on the server.
+/// Logout callers treat this as success — the goal (an invalidated session) is achieved.
+pub const SESSION_GONE: i32 = 390111;
+/// GS error code returned when the session token has expired.
+/// The caller must use the master token to obtain a fresh session token and retry.
+pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the OAuth access token presented at login is
+/// invalid. Treated cross-driver as a signal to evict the cached access
+/// token and replay the OAuth flow.
+pub const OAUTH_ACCESS_TOKEN_INVALID: i32 = 390303;
+/// GS error code returned when the OAuth access token presented at login has
+/// expired. Same eviction-and-retry behavior as
+/// [`OAUTH_ACCESS_TOKEN_INVALID`].
+pub const OAUTH_ACCESS_TOKEN_EXPIRED: i32 = 390318;
+/// GS error codes that indicate the cached OAuth access token (and any
+/// DPoP-bundled cache entry) must be evicted, after which the login is
+/// retried once. Mirrors JDBC/Go's `refreshOAuthTokenErrorCodes` set.
+const OAUTH_REFRESH_ERROR_CODES: [i32; 2] =
+    [OAUTH_ACCESS_TOKEN_INVALID, OAUTH_ACCESS_TOKEN_EXPIRED];
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -48,6 +110,10 @@ pub struct SessionTokens {
     pub session_expires_at: Option<std::time::Instant>,
     /// When the master token expires (after this, full re-auth is needed)
     pub master_expires_at: Option<std::time::Instant>,
+    /// Configured master-token TTL as returned by the server (`masterValidityInSeconds`).
+    /// Unlike the remaining time derived from `master_expires_at`, this does not shrink
+    /// as the token ages, so it is the right input for heartbeat-cadence computation.
+    pub master_validity: Option<std::time::Duration>,
 }
 
 /// Result of a successful login to Snowflake
@@ -65,6 +131,8 @@ pub struct LoginResult {
     pub warehouse_name: Option<String>,
     /// Server-echoed role name from sessionInfo
     pub role_name: Option<String>,
+    /// Snowflake server version reported
+    pub server_version: Option<String>,
 }
 
 impl SessionTokens {
@@ -153,44 +221,155 @@ pub enum QueryExecutionMode {
 pub struct QueryInput<'a> {
     pub sql: String,
     pub bindings: Option<&'a RawValue>,
+    pub bind_stage: Option<String>,
     pub describe_only: Option<bool>,
+    pub query_parameters: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl<'a> QueryInput<'a> {
+    pub fn new(sql: impl Into<String>) -> Self {
+        QueryInput {
+            sql: sql.into(),
+            bindings: None,
+            bind_stage: None,
+            describe_only: None,
+            query_parameters: None,
+        }
+    }
+}
+
+/// Build the optional `sql` and `bindings` fields used in query log lines,
+/// honoring the `log_query_text` / `log_query_parameters` opt-ins and the
+/// existing `log_max_query_length` truncation.
+///
+/// - `(None, None)` when `log_query_text` is `false`.
+/// - `(Some(prefix), None)` when only `log_query_text` is `true`.
+/// - `(Some(prefix), Some(bindings_prefix))` when both flags are `true`;
+///   `bindings_prefix` is the empty string when no bindings are attached.
+///
+/// Returning `None` lets callers pass the result straight to `tracing` macros
+/// where `Option::None` fields are skipped automatically.
+pub(crate) fn query_log_fields(
+    params: &QueryParameters,
+    input: &QueryInput<'_>,
+) -> (Option<String>, Option<String>) {
+    if !params.log_query_text {
+        return (None, None);
+    }
+    let sql = input
+        .sql
+        .chars()
+        .take(params.log_max_query_length)
+        .collect::<String>();
+    let bindings = params.log_query_parameters.then(|| {
+        input
+            .bindings
+            .map(|raw| {
+                raw.get()
+                    .chars()
+                    .take(params.log_max_query_length)
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    });
+    (Some(sql), bindings)
 }
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
-    format!(
-        "{}/{} ({}) CPython/3.11.6",
-        client_info.application,
-        client_info.version.clone(),
-        client_info.os.clone()
-    )
+    let base = format!(
+        "{}/{} ({}-{})",
+        client_info.client_app_id,
+        client_info.version,
+        client_info.os,
+        std::env::consts::ARCH
+    );
+    match (&client_info.runtime_name, &client_info.runtime_version) {
+        (Some(name), Some(ver)) => {
+            // Sanitize runtime name: replace spaces with underscores so the
+            // User-Agent token is safe for parsers that split on whitespace
+            // (e.g. Java's `java.vm.name` = "OpenJDK 64-Bit Server VM").
+            let safe_name = name.replace(' ', "_");
+            format!("{base} {safe_name}/{ver}")
+        }
+        _ => base,
+    }
+}
+
+/// Strip non-numeric suffixes from a version string so the server accepts it.
+///
+/// `CLIENT_APP_VERSION` must be a dotted numeric version for feature gates to
+/// remain enabled, so this helper removes alphabetic suffixes like `"dev"` or
+/// `"rc1"` from each dot-separated segment while preserving existing numeric
+/// segments. Examples: `"5.0.0dev"` → `"5.0.0"`, `"4.0.0"` → `"4.0.0"`,
+/// `"2.21.8.1"` → `"2.21.8.1"`.
+fn strip_version_suffix(version: &str) -> String {
+    version
+        .split('.')
+        .map(|seg| {
+            let numeric: String = seg.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if numeric.is_empty() {
+                "0".to_owned()
+            } else {
+                numeric
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
     AuthRequestData {
         account_name: login_parameters.account_name.clone(),
-        client_app_id: login_parameters.client_info.application.clone(),
-        client_app_version: login_parameters.client_info.version.clone(),
+        client_app_id: login_parameters.client_info.client_app_id.clone(),
+        client_app_version: strip_version_suffix(&login_parameters.client_info.version),
+        client_app_version_full: login_parameters.client_info.version.clone(),
+        client_capabilities: AuthRequestClientCapabilities {
+            smk_id_as_string: true,
+        },
         client_environment: AuthRequestClientEnvironment {
             application: login_parameters.client_info.application.clone(),
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
             platforms: login_parameters.client_info.platforms.clone(),
-            python_version: Some("3.11.6".to_string()),
-            python_runtime: Some("CPython".to_string()),
-            python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+            runtime_version: login_parameters.client_info.runtime_version.clone(),
+            runtime_name: login_parameters.client_info.runtime_name.clone(),
+            compiler: login_parameters.client_info.compiler.clone(),
+            os_details: login_parameters.client_info.os_details.clone(),
         },
         ..Default::default()
     }
 }
 
-const EXT_AUTHN_ERROR_CODES: [i32; 5] = [
+const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390120, // EXT_AUTHN_DENIED
+    390122, // EXT_AUTHN_NOT_ENROLLED
     390123, // EXT_AUTHN_LOCKED
     390126, // EXT_AUTHN_TIMEOUT
     390127, // EXT_AUTHN_INVALID
     390129, // EXT_AUTHN_EXCEPTION
+    390132, // EXT_AUTHN_DUO_PUSH_DISABLED
+    390195, // ID_TOKEN_INVALID
 ];
+
+/// Sets the DUO second-factor fields on the login request.
+/// Matches the behavior of the old JDBC, .NET, and ODBC drivers:
+/// always sends `EXT_AUTHN_DUO_METHOD`, defaulting to `"push"` when
+/// no passcode is provided.
+fn set_duo_authn_fields(
+    data: &mut AuthRequestData,
+    passcode_in_password: bool,
+    passcode: Option<SensitiveString>,
+) {
+    data.ext_authn_duo_method = Some(if passcode.is_some() || passcode_in_password {
+        "passcode".to_string()
+    } else {
+        "push".to_string()
+    });
+    if !passcode_in_password {
+        data.passcode = passcode;
+    }
+}
 
 fn extract_host_from_url(server_url: &str) -> Option<String> {
     Url::parse(server_url)
@@ -199,65 +378,101 @@ fn extract_host_from_url(server_url: &str) -> Option<String> {
         .map(|h| h.to_string())
 }
 
-fn try_get_cached_mfa_token(
+fn try_get_cached_token(
     server_url: &str,
     username: &str,
+    token_type: TokenType,
     token_cache: Option<&dyn TokenCache>,
 ) -> Option<SensitiveString> {
     let host = extract_host_from_url(server_url)?;
     let cache = token_cache?;
-    match cache.get_token(&host, username, TokenType::MfaToken) {
+    match cache.get_token(&host, username, token_type) {
         Ok(Some(token)) if !token.is_empty() => {
-            tracing::info!("Found cached MFA token");
+            tracing::info!(%token_type, "Found cached token");
             Some(token.into())
         }
         Ok(_) => None,
         Err(e) => {
-            tracing::warn!(error = %e, "Failed to retrieve cached MFA token");
+            tracing::warn!(%token_type, error = %e, "Failed to retrieve cached token");
             None
         }
     }
 }
 
-fn store_mfa_token_in_cache(
+fn store_token_in_cache(
     server_url: &str,
     username: &str,
-    mfa_token: &str,
+    token_type: TokenType,
+    token_value: &str,
     token_cache: Option<&dyn TokenCache>,
 ) {
     let Some(host) = extract_host_from_url(server_url) else {
-        tracing::warn!("Cannot cache MFA token: unable to extract host from server URL");
+        tracing::warn!(%token_type, "Cannot cache token: unable to extract host from server URL");
         return;
     };
     let Some(cache) = token_cache else {
-        tracing::debug!("No token cache available for MFA token storage");
+        tracing::debug!(%token_type, "No token cache available");
         return;
     };
-    if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
-        tracing::warn!(error = %e, "Failed to cache MFA token");
+    if let Err(e) = cache.add_token(&host, username, token_type, token_value) {
+        tracing::warn!(%token_type, error = %e, "Failed to cache token");
     } else {
-        tracing::info!("Cached MFA token for future use");
+        tracing::info!(%token_type, "Cached token for future use");
     }
 }
 
-fn remove_mfa_token_from_cache(
+fn remove_token_from_cache(
     server_url: &str,
     username: &str,
+    token_type: TokenType,
     token_cache: Option<&dyn TokenCache>,
 ) {
     let Some(host) = extract_host_from_url(server_url) else {
-        tracing::warn!("Cannot remove cached MFA token: unable to extract host from server URL");
+        tracing::warn!(%token_type, "Cannot remove cached token: unable to extract host");
         return;
     };
     let Some(cache) = token_cache else {
-        tracing::debug!("No token cache available for MFA token removal");
         return;
     };
-    if let Err(e) = cache.remove_token(&host, username, TokenType::MfaToken) {
-        tracing::warn!(error = %e, "Failed to remove cached MFA token");
+    if let Err(e) = cache.remove_token(&host, username, token_type) {
+        tracing::warn!(%token_type, error = %e, "Failed to remove cached token");
     } else {
-        tracing::info!("Removed cached MFA token due to authentication error");
+        tracing::info!(%token_type, "Removed cached token");
     }
+}
+
+/// Evict the cached OAuth access token (and DPoP-bundled entry, when
+/// present) for an Authorization Code login. Used by the
+/// `390303 / 390318` retry block in [`snowflake_login_with_client`]:
+/// after eviction the next call to `auth_request_data` will run the
+/// refresh-token leg or, if that also fails, the full interactive flow.
+///
+/// The cache key host follows the cross-driver convention
+/// (JDBC/Python/.NET/Node): prefer the IdP token URL host, otherwise
+/// fall back to the Snowflake server host. The synthetic `https://{host}`
+/// URL string
+/// passed to the eviction helpers parses cleanly into the same host the
+/// AC flow used when storing the token.
+fn evict_oauth_access_token_for_authorization_code(
+    cfg: &crate::config::rest_parameters::OAuthAuthorizationCodeConfig,
+    server_url: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let token_url_str = cfg
+        .token_url
+        .as_ref()
+        .map(|u| u.as_str().to_string())
+        .unwrap_or_default();
+    let Some(host) = oauth::host_from_token_url(&token_url_str, server_url) else {
+        tracing::warn!(
+            "Cannot evict cached OAuth access token: unable to derive IdP host from token_url or server_url"
+        );
+        return;
+    };
+    let synthetic_host_url = format!("https://{host}");
+    tracing::debug!(host = %host, "Evicting cached OAuth access token for IdP host");
+    oauth::remove_oauth_access_token(&synthetic_host_url, &cfg.username, token_cache);
+    oauth::remove_oauth_dpop_bundled(&synthetic_host_url, &cfg.username, token_cache);
 }
 
 pub async fn auth_request_data(
@@ -265,6 +480,7 @@ pub async fn auth_request_data(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<&dyn TokenCache>,
+    prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -289,20 +505,143 @@ pub async fn auth_request_data(
             data.authenticator = Some(okta_config.okta_url.to_string());
             data.raw_saml_response = Some(saml_html.into());
         }
+        LoginMethod::ExternalBrowser {
+            username,
+            authentication_timeout_secs,
+            client_store_temporary_credential,
+        } => {
+            data.login_name = Some(username.clone());
+            data.authenticator = Some(authenticator::EXTERNAL_BROWSER.to_string());
+
+            if *client_store_temporary_credential {
+                data.session_parameters
+                    .get_or_insert_with(HashMap::new)
+                    .insert(
+                        "CLIENT_STORE_TEMPORARY_CREDENTIAL".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+            }
+
+            let cached_id_token = if *client_store_temporary_credential {
+                try_get_cached_token(
+                    &login_parameters.server_url,
+                    username,
+                    TokenType::IdToken,
+                    token_cache,
+                )
+            } else {
+                None
+            };
+
+            if let Some(cached_token) = cached_id_token {
+                tracing::info!("Using cached SSO ID token for external browser login");
+                data.authenticator = Some(authenticator::ID_TOKEN.to_string());
+                data.token = Some(cached_token);
+                data.token_from_cache_used = true;
+            } else {
+                let result = external_browser_authenticate(
+                    client,
+                    login_parameters,
+                    username,
+                    *authentication_timeout_secs,
+                    &DefaultBrowserOpener,
+                )
+                .await
+                .context(ExternalBrowserSnafu)?;
+
+                data.token = Some(result.token);
+                data.proof_key = Some(result.proof_key);
+                data.consent_cache_id_token = result.consent_cache_id_token;
+            }
+        }
+        // Authorization Code orchestration runs the PKCE/state/loopback flow
+        // (and any cache hits / refresh-token exchange) before forwarding the
+        // resulting access token to Snowflake under AUTHENTICATOR=OAUTH.
+        // The body always uses uppercase OAUTH — never the user-supplied
+        // authenticator string verbatim — and tags the request with
+        // OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so GS knows which flow
+        // produced the token. LOGIN_NAME is always set.
+        LoginMethod::OAuthAuthorizationCode(cfg) => {
+            let server_url = url::Url::parse(&login_parameters.server_url)
+                .context(oauth::EndpointUrlParseSnafu {
+                    url: login_parameters.server_url.clone(),
+                })
+                .context(OAuthFlowSnafu)?;
+            let acquired = oauth::run_oauth_authorization_code(
+                client,
+                &server_url,
+                cfg,
+                token_cache,
+                login_parameters.disable_parallel_user_prompt,
+                prompt_locks,
+            )
+            .await
+            .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some(authenticator::OAUTH.to_string());
+            data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
+            // `dpop_jwk_json` is `Option<String>`: `Some` when DPoP was
+            // enabled, `None` otherwise, so the assignment is implicitly
+            // conditional. The JWK is carried through login data so the
+            // driver can build a DPoP proof header on the Snowflake login
+            // request; the server validates it statelessly against the
+            // thumbprint (`jkt`) already embedded in the access token
+            // (RFC 9449).
+            data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
+        // Client Credentials is external-IdP only and tokens are
+        // intentionally not cached. On Snowflake error codes
+        // 390303/390318 the retry block in `snowflake_login_with_client`
+        // skips the AC eviction step and just replays the flow so the IdP
+        // token endpoint is re-hit.
+        LoginMethod::OAuthClientCredentials(cfg) => {
+            let acquired = oauth::acquire_client_credentials(client, cfg)
+                .await
+                .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some(authenticator::OAUTH.to_string());
+            data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
+            // See AC branch above for why dpop_jwk_json is carried here.
+            data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
-            Credentials::Password { username, password } => {
+            Credentials::Password {
+                username,
+                password,
+                passcode_in_password,
+                passcode,
+            } => {
                 data.login_name = Some(username);
                 data.password = Some(password);
+                set_duo_authn_fields(&mut data, passcode_in_password, passcode);
             }
             Credentials::Jwt { username, token } => {
                 data.login_name = Some(username);
                 data.token = Some(token);
-                data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+                data.authenticator = Some(authenticator::SNOWFLAKE_JWT.to_string());
             }
             Credentials::Pat { username, token } => {
-                data.login_name = Some(username);
+                // PAT encodes the principal; omit LOGIN_NAME when empty so
+                // Snowflake resolves the user from the token itself.
+                if !username.is_empty() {
+                    data.login_name = Some(username);
+                }
                 data.token = Some(token);
-                data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+                data.authenticator = Some(authenticator::PROGRAMMATIC_ACCESS_TOKEN.to_string());
+            }
+            // Legacy pre-acquired access token: forward unchanged (analysis
+            // §6 / §10.1). LOGIN_NAME is always set (§14 #10) — never the
+            // .NET-only `loginName=""` quirk — and OAUTH_TYPE is omitted to
+            // distinguish the legacy flow from AC/CC.
+            Credentials::OAuth {
+                username,
+                access_token,
+            } => {
+                data.login_name = Some(username);
+                data.token = Some(access_token);
+                data.authenticator = Some(authenticator::OAUTH.to_string());
             }
             Credentials::UserPasswordMfa {
                 username,
@@ -319,29 +658,34 @@ pub async fn auth_request_data(
                 );
 
                 let cached_mfa_token = if store_temp_cred {
-                    try_get_cached_mfa_token(&login_parameters.server_url, &username, token_cache)
+                    try_get_cached_token(
+                        &login_parameters.server_url,
+                        &username,
+                        TokenType::MfaToken,
+                        token_cache,
+                    )
                 } else {
                     None
                 };
 
                 data.login_name = Some(username);
                 data.password = Some(password);
-                data.authenticator = Some("USERNAME_PASSWORD_MFA".to_string());
+                data.authenticator = Some(authenticator::USERNAME_PASSWORD_MFA.to_string());
 
                 if let Some(cached_token) = cached_mfa_token {
                     data.token = Some(cached_token);
+                    data.token_from_cache_used = true;
                 } else {
-                    data.ext_authn_duo_method =
-                        Some(if passcode.is_some() || passcode_in_password {
-                            "passcode".to_string()
-                        } else {
-                            "push".to_string()
-                        });
-                    if !passcode_in_password {
-                        data.passcode = passcode.clone();
-                    }
+                    set_duo_authn_fields(&mut data, passcode_in_password, passcode.clone());
                     if store_temp_cred {
-                        data.client_request_mfa_token = Some(store_temp_cred);
+                        // Reference connector sends this inside SESSION_PARAMETERS, not as a
+                        // top-level login field — the server ignores the top-level form.
+                        data.session_parameters
+                            .get_or_insert_with(HashMap::new)
+                            .insert(
+                                "CLIENT_REQUEST_MFA_TOKEN".to_string(),
+                                serde_json::Value::Bool(true),
+                            );
                     }
                 }
             }
@@ -359,7 +703,7 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters, None, None).await
 }
 
 async fn send_login_request(
@@ -374,8 +718,30 @@ async fn send_login_request(
 
     let user_agent = user_agent(&login_parameters.client_info);
 
+    // Drift C.5: when the OAuth flow handed us a DPoP JWK alongside the
+    // access token, sign a DPoP proof JWT for the Snowflake login URL on
+    // every send (including retries — `proof_jwt` includes a fresh `jti`
+    // and `iat` per RFC 9449 §4.2). The key is parsed once up front so a
+    // malformed JWK fails the login fast instead of inside the retry
+    // closure. Snowflake's GS does not issue `use_dpop_nonce` for login,
+    // so we don't replicate the OAuth-token-endpoint nonce retry here
+    // (matches JDBC `SessionUtil.java:746-750`).
+    let dpop_signer: Option<DPoPSigner> =
+        if let Some(jwk_json) = login_request.data.dpop_jwk_json.as_deref() {
+            let key = oauth::dpop::DPoPKey::from_jwk_json(jwk_json).context(OAuthFlowSnafu)?;
+            let url = Url::parse(&login_url).context(UrlJoinSnafu {
+                path: "/session/v1/login-request",
+            })?;
+            Some(DPoPSigner {
+                key: std::sync::Arc::new(key),
+                url: std::sync::Arc::new(url),
+            })
+        } else {
+            None
+        };
+
     let build_request = || {
-        client
+        let mut builder = client
             .post(&login_url)
             .query(&[
                 (
@@ -399,7 +765,16 @@ async fn send_login_request(
             .header("accept", "application/snowflake")
             .header("User-Agent", &user_agent)
             .header("Authorization", "Snowflake Token=\"None\"")
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(30));
+        if let Some(signer) = dpop_signer.as_ref() {
+            // Signing is infallible once `from_jwk_json` succeeded above
+            // (only openssl primitive failures could surface here, which
+            // would have already failed the validation step).
+            let proof = oauth::dpop::proof_jwt(&signer.key, "POST", &signer.url, None)
+                .expect("DPoP proof generation must succeed for a pre-validated key");
+            builder = builder.header("DPoP", proof.reveal());
+        }
+        builder
     };
 
     let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
@@ -411,9 +786,18 @@ async fn send_login_request(
             context: "login request",
         })?;
 
-    read_response_json::<AuthResponse>(response)
+    read_response_json::<auth::AuthResponseMain>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)
+}
+
+/// Drift C.5: per-request DPoP signing context for `send_login_request`.
+/// Holds an `Arc`-shared key and login URL so the `build_request`
+/// closure (called once per retry attempt) can stamp a fresh proof JWT
+/// without moving values out of the surrounding scope.
+struct DPoPSigner {
+    key: std::sync::Arc<oauth::dpop::DPoPKey>,
+    url: std::sync::Arc<Url>,
 }
 
 #[tracing::instrument(
@@ -425,6 +809,7 @@ pub async fn snowflake_login_with_client(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<&dyn TokenCache>,
+    prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -441,14 +826,102 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let login_request_data =
-        auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
+    // Session token bypass: validate the pre-acquired tokens via RENEW, which
+    // also returns the server-assigned session ID needed for telemetry routing.
+    if let LoginMethod::SessionToken {
+        session_token,
+        master_token,
+        master_validity_in_seconds,
+    } = &login_parameters.login_method
+    {
+        tracing::info!("Session token authentication: validating tokens via token-request RENEW");
+        let master_validity = master_validity_in_seconds.map(std::time::Duration::from_secs);
+        let temp_tokens = SessionTokens {
+            session_token: session_token.clone(),
+            master_token: master_token.clone(),
+            session_id: 0, // unknown until refresh_session returns the real id
+            session_expires_at: None,
+            master_expires_at: master_validity.map(|d| std::time::Instant::now() + d),
+            master_validity,
+        };
+        let tokens = refresh_session(
+            client,
+            &login_parameters.server_url,
+            &login_parameters.client_info,
+            &temp_tokens,
+        )
+        .await?;
+        tracing::info!(
+            session_id = tokens.session_id,
+            "Session token authentication succeeded"
+        );
+        return Ok(LoginResult {
+            tokens,
+            session_parameters: None,
+            database_name: None,
+            schema_name: None,
+            warehouse_name: None,
+            role_name: None,
+            server_version: None,
+        });
+    }
+
+    // For interactive auth methods (external browser and MFA) that write a
+    // token to the cache, acquire a per-<user, host> prompt-lock so that only
+    // one connection in a pool drives the interactive step.  Waiters block
+    // here, then re-read the cache inside `auth_request_data` (the existing
+    // cache lookups serve as the post-lock double-check).  The lock is held
+    // across `auth_request_data` + `send_login_request` + the EXT_AUTHN retry
+    // block so the token is fully persisted before waiters proceed.
+    // OAuth Authorization Code is serialized inside `run_oauth_authorization_code`.
+    let _prompt_guard: Option<prompt_lock::PromptGuard> = if let Some(locks) = prompt_locks {
+        match &login_parameters.login_method {
+            LoginMethod::ExternalBrowser {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } if prompt_lock::is_eligible(
+                true,
+                login_parameters.disable_parallel_user_prompt,
+                username,
+            ) =>
+            {
+                let host = extract_host_from_url(&login_parameters.server_url).unwrap_or_default();
+                tracing::debug!(%host, %username, "Acquiring external-browser prompt lock");
+                Some(prompt_lock::acquire(locks, &host, username, TokenType::IdToken).await)
+            }
+            LoginMethod::UserPasswordMfa {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } if prompt_lock::is_eligible(
+                true,
+                login_parameters.disable_parallel_user_prompt,
+                username,
+            ) =>
+            {
+                let host = extract_host_from_url(&login_parameters.server_url).unwrap_or_default();
+                tracing::debug!(%host, %username, "Acquiring MFA prompt lock");
+                Some(prompt_lock::acquire(locks, &host, username, TokenType::MfaToken).await)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    // Build the login request data (handles all auth methods including Okta SAML exchange).
+    // For prompt-locked callers the existing cache lookups inside this function
+    // (lines for ID token / MFA token) serve as the post-lock double-check.
+    let login_request_data = auth_request_data(
+        client,
+        login_parameters,
+        session_parameters,
+        token_cache,
+        prompt_locks,
+    )
+    .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
-    let used_cached_mfa_token = matches!(
-        &login_parameters.login_method,
-        LoginMethod::UserPasswordMfa { .. }
-    ) && login_request_data.token.is_some();
     let login_request = AuthRequest {
         data: login_request_data,
     };
@@ -459,73 +932,178 @@ pub async fn snowflake_login_with_client(
         "Login request prepared (secrets redacted)"
     );
 
+    // Send the actual login request
     let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
 
-    // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
-    // via the normal DUO push/passcode flow.
-    if !auth_response.success && used_cached_mfa_token {
+    // Revoke cached token and retry if cached token caused failure
+    if !auth_response.success {
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
-        if EXT_AUTHN_ERROR_CODES.contains(&code)
-            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
-        {
-            tracing::warn!(
-                code = code,
-                "MFA authentication error detected, removing cached MFA token"
-            );
-            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
-            tracing::info!("Retrying login without cached MFA token");
-            let retry_data =
-                auth_request_data(client, login_parameters, session_parameters, token_cache)
-                    .await?;
-            let retry_request = AuthRequest { data: retry_data };
-            auth_response = send_login_request(client, login_parameters, &retry_request).await?;
+
+        // Cached token (ID token or MFA) rejected with an EXT_AUTHN error:
+        // evict it and retry via the normal interactive flow.
+        if login_request.data.token_from_cache_used && EXT_AUTHN_ERROR_CODES.contains(&code) {
+            if let Some((username, token_type)) = match &login_parameters.login_method {
+                LoginMethod::ExternalBrowser { username, .. } => {
+                    Some((username.as_str(), TokenType::IdToken))
+                }
+                LoginMethod::UserPasswordMfa { username, .. } => {
+                    Some((username.as_str(), TokenType::MfaToken))
+                }
+                _ => None,
+            } {
+                tracing::warn!(
+                    code,
+                    %token_type,
+                    "Cached token rejected, evicting and retrying"
+                );
+                remove_token_from_cache(
+                    &login_parameters.server_url,
+                    username,
+                    token_type,
+                    token_cache,
+                );
+                let retry_data = auth_request_data(
+                    client,
+                    login_parameters,
+                    session_parameters,
+                    token_cache,
+                    prompt_locks,
+                )
+                .await?;
+                let retry_request = AuthRequest { data: retry_data };
+                auth_response =
+                    send_login_request(client, login_parameters, &retry_request).await?;
+            }
+        }
+        // OAuth refresh-on-failure: when GS rejects the OAuth access token
+        // with 390303 / 390318, replay the login once. For Authorization Code
+        // we first evict the cached access token (and any DPoP-bundled entry)
+        // so the replay exercises the refresh-token leg or, failing that, the
+        // interactive flow. For Client Credentials there is no cache to evict
+        // (CC tokens are not persisted), so the replay re-hits the IdP token
+        // endpoint to fetch a fresh access token. Cross-driver consensus:
+        // JDBC, ODBC, .NET, Go all retry both flows. Legacy `OAuthAccessToken`
+        // bubbles the error since the caller supplies the token directly.
+        else if OAUTH_REFRESH_ERROR_CODES.contains(&code) {
+            let mut should_retry = false;
+            match &login_parameters.login_method {
+                LoginMethod::OAuthAuthorizationCode(cfg) => {
+                    tracing::debug!(
+                        code = code,
+                        oauth_type = "OAUTH_AUTHORIZATION_CODE",
+                        "OAuth access token cache eviction triggered by Snowflake error code {code}"
+                    );
+                    evict_oauth_access_token_for_authorization_code(
+                        cfg,
+                        &login_parameters.server_url,
+                        token_cache,
+                    );
+                    should_retry = true;
+                }
+                LoginMethod::OAuthClientCredentials(_) => {
+                    // No cache to evict for CC (tokens are not persisted);
+                    // the replay re-acquires from the IdP token endpoint.
+                    tracing::debug!(
+                        code = code,
+                        oauth_type = "OAUTH_CLIENT_CREDENTIALS",
+                        "Re-acquiring OAuth client-credentials access token after Snowflake error code {code}"
+                    );
+                    should_retry = true;
+                }
+                _ => {}
+            }
+            if should_retry {
+                tracing::debug!("Retrying login after OAuth refresh");
+                let retry_data = auth_request_data(
+                    client,
+                    login_parameters,
+                    session_parameters,
+                    token_cache,
+                    prompt_locks,
+                )
+                .await?;
+                let retry_request = AuthRequest { data: retry_data };
+                auth_response =
+                    send_login_request(client, login_parameters, &retry_request).await?;
+            }
         }
     }
 
+    // If retry failed or unrecoverable, evict tokens from cache and fail
     if !auth_response.success {
         let message = auth_response
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
-        if EXT_AUTHN_ERROR_CODES.contains(&code)
-            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
-        {
-            tracing::warn!(
-                code = code,
-                "MFA authentication error detected, removing cached MFA token"
-            );
-            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+        if EXT_AUTHN_ERROR_CODES.contains(&code) {
+            let evictable = match &login_parameters.login_method {
+                LoginMethod::UserPasswordMfa { username, .. } => {
+                    Some((username.as_str(), TokenType::MfaToken))
+                }
+                LoginMethod::ExternalBrowser { username, .. } => {
+                    Some((username.as_str(), TokenType::IdToken))
+                }
+                _ => None,
+            };
+            if let Some((username, token_type)) = evictable {
+                tracing::warn!(code, %token_type, "Evicting cached token after terminal login failure");
+                remove_token_from_cache(
+                    &login_parameters.server_url,
+                    username,
+                    token_type,
+                    token_cache,
+                );
+            }
         }
         LoginSnafu { message, code }.fail()?;
     }
 
     tracing::debug!("Login successful, extracting session tokens");
 
-    // Cache MFA token from response if caching is enabled
-    if let LoginMethod::UserPasswordMfa {
-        username,
-        client_store_temporary_credential: true,
-        ..
-    } = &login_parameters.login_method
-        && let Some(mfa_token) = &auth_response.data.mfa_token
-    {
-        store_mfa_token_in_cache(
+    // If success - cache response tokens (MFA or ID token) when caching is enabled.
+    // Also, for IdToken, respect IdP consent: skip caching when explicitly denied.
+    let cacheable_token: Option<(&str, TokenType, &SensitiveString)> =
+        match &login_parameters.login_method {
+            LoginMethod::UserPasswordMfa {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } => auth_response
+                .data
+                .mfa_token
+                .as_ref()
+                .map(|t| (username.as_str(), TokenType::MfaToken, t)),
+            LoginMethod::ExternalBrowser {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } if login_request.data.consent_cache_id_token != Some(false) => auth_response
+                .data
+                .id_token
+                .as_ref()
+                .map(|t| (username.as_str(), TokenType::IdToken, t)),
+            _ => None,
+        };
+    if let Some((username, token_type, token)) = cacheable_token {
+        store_token_in_cache(
             &login_parameters.server_url,
             username,
-            mfa_token.reveal(),
+            token_type,
+            token.reveal(),
             token_cache,
         );
     }
 
+    // Extract tokens and session id from response
     let session_token = auth_response
         .data
         .token
@@ -591,11 +1169,14 @@ pub async fn snowflake_login_with_client(
             None => (None, None, None, None),
         };
 
+    let server_version = auth_response.data.server_version.clone();
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
         master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
         session_params_count = session_params.as_ref().map(|p| p.len()),
+        server_version = server_version.as_deref(),
         "Snowflake login completed successfully"
     );
     Ok(LoginResult {
@@ -605,12 +1186,14 @@ pub async fn snowflake_login_with_client(
             session_id,
             session_expires_at,
             master_expires_at,
+            master_validity: auth_response.data.master_validity,
         },
         session_parameters: session_params,
         database_name,
         schema_name,
         warehouse_name,
         role_name,
+        server_version,
     })
 }
 
@@ -710,6 +1293,7 @@ pub async fn refresh_session(
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
+        master_validity: data.master_validity,
     })
 }
 
@@ -913,12 +1497,15 @@ async fn execute_async_with_fallback<'a>(
                 ..
             },
         ) => {
+            let RestError::AsyncQuery { request_id, .. } = &e else {
+                unreachable!()
+            };
+            // guarded with: query_log_text, query_log_parameters
+            let (sql, bindings) = query_log_fields(query_parameters, &query_input);
             tracing::error!(
-                sql_prefix = query_input
-                    .sql
-                    .chars()
-                    .take(query_parameters.log_max_query_length)
-                    .collect::<String>(),
+                request_id = ?request_id,
+                sql = sql,
+                bindings = bindings,
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -958,11 +1545,15 @@ async fn execute_async_with_fallback<'a>(
     Ok(response)
 }
 
-/// Execute query synchronously with requestId-based retry on transport failures.
+/// Execute a sync query with HTTP-level retries for transient transport / 5xx
+/// failures.
 ///
-/// On connection errors (network timeout, connection reset), the query is retried
-/// with the same `requestId` and `retry=true`. Snowflake uses requestId for
-/// idempotency - if the original query completed, the retry returns the existing result.
+/// Retry handling lives in [`execute_sync_query`], which wraps the actual
+/// `POST /queries/v1/query-request` call with [`execute_with_retry`]. The
+/// `requestId` is generated here once and threaded through so that every
+/// HTTP-level replay reuses the same id; the second and subsequent attempts
+/// also carry `retry=true`, giving the server the hint it needs to dedupe
+/// against an already-running/completed query.
 async fn execute_sync_with_retry<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
@@ -970,105 +1561,17 @@ async fn execute_sync_with_retry<'a>(
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
-    // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
 
-    tracing::debug!(
-        request_id = %request_id,
-        sql_prefix = query_input.sql.chars().take(query_parameters.log_max_query_length).collect::<String>(),
-        "Executing sync query"
-    );
-
-    // First attempt
-    match execute_sync_query(
+    execute_sync_query(
         client,
         query_parameters,
         session_token,
         query_input,
         request_id,
-        false, // not a retry
         retry_policy,
     )
     .await
-    {
-        Ok(response) => return Ok(response),
-        Err(RestError::Communication {
-            context, source, ..
-        }) => {
-            // Transport error - retry with same requestId
-            tracing::warn!(
-                request_id = %request_id,
-                error = %source,
-                context,
-                "Transport error on sync query; retrying with same requestId"
-            );
-        }
-        Err(e) => return Err(e),
-    }
-
-    // Retry with retry=true - Snowflake will return existing result if query completed
-    let max_retries = retry_policy.max_attempts.saturating_sub(1).max(1);
-    let mut last_error = None;
-
-    for attempt in 1..=max_retries {
-        let backoff = std::time::Duration::from_millis(
-            (retry_policy.backoff.base.as_millis() as f64
-                * retry_policy.backoff.factor.powi(attempt as i32)) as u64,
-        )
-        .min(retry_policy.backoff.cap);
-
-        tokio::time::sleep(backoff).await;
-
-        tracing::info!(
-            request_id = %request_id,
-            attempt,
-            max_retries,
-            backoff_ms = backoff.as_millis(),
-            "Retrying sync query with retry=true"
-        );
-
-        match execute_sync_query(
-            client,
-            query_parameters,
-            session_token,
-            query_input,
-            request_id,
-            true, // is retry
-            retry_policy,
-        )
-        .await
-        {
-            Ok(response) => {
-                tracing::info!(
-                    request_id = %request_id,
-                    attempt,
-                    query_id = response.data.query_id.as_deref().unwrap_or_default(),
-                    "Sync query retry succeeded"
-                );
-                return Ok(response);
-            }
-            Err(RestError::Communication {
-                context, source, ..
-            }) => {
-                tracing::warn!(
-                    request_id = %request_id,
-                    attempt,
-                    error = %source,
-                    context,
-                    "Transport error on retry; will try again"
-                );
-                last_error = Some(CommunicationSnafu { context }.into_error(source));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    // Exhausted retries - return the last transport error
-    tracing::error!(
-        request_id = %request_id,
-        "Exhausted all retry attempts for sync query"
-    );
-    Err(last_error.expect("last_error must be set after retry loop"))
 }
 
 /// Map a Snowflake query response into a `Result`, converting
@@ -1096,16 +1599,34 @@ fn into_query_result(
     Ok(response)
 }
 
-/// Execute a single sync query request.
+/// Execute a single sync query request with HTTP-level retries.
+///
+/// The `requestId` is stable across every HTTP attempt inside
+/// `execute_with_retry` so that Snowflake can dedupe replays via its usual
+/// request-id machinery. The first attempt is sent as a fresh request; every
+/// replay (attempt ≥ 2) additionally carries `retry=true`, which is the
+/// Snowflake-documented hint for "look up this requestId in the dedup
+/// table". If the retry budget is exhausted the error surfaces as
+/// [`RestError::HttpRetry`].
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
-    is_retry: bool,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
+    // guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(query_parameters, query_input);
+    tracing::info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing sync query"
+    );
+
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
         async_exec: false,
@@ -1116,9 +1637,9 @@ async fn execute_sync_query<'a>(
             .as_millis() as i64,
         is_internal: false,
         describe_only: query_input.describe_only,
-        parameters: None,
+        parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
-        bind_stage: None,
+        bind_stage: query_input.bind_stage.clone(),
         query_context: query_request::QueryContext { entries: None },
     };
 
@@ -1128,31 +1649,41 @@ async fn execute_sync_query<'a>(
             path: QUERY_REQUEST_PATH,
         })?;
 
-    // Build query parameters - include retry=true if this is a retry
-    let mut query_params = vec![
+    // Base query parameters. `retry=true` is added for every HTTP replay
+    // inside `execute_with_retry` below (attempt ≥ 2) — it is always safe
+    // per Snowflake docs, and when the server has already seen this
+    // `requestId` it improves dedupe accuracy.
+    let base_query_params = vec![
         ("requestId", request_id.to_string()),
         ("request_guid", uuid::Uuid::new_v4().to_string()),
     ];
-    if is_retry {
-        query_params.push(("retry", "true".to_string()));
-    }
-
-    let request = apply_json_content_type(apply_query_headers(
-        client.post(query_url),
-        &query_parameters.client_info,
-        session_token,
-    ))
-    .query(&query_params)
-    .json(&query_request)
-    .build()
-    .context(RequestConstructionSnafu { request: "query" })?;
 
     let send_start = Instant::now();
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute query request",
-    })?;
+    let attempt_counter = std::sync::atomic::AtomicU32::new(0);
+    let build_request = || {
+        let n = attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut params = base_query_params.clone();
+        if n >= 1 {
+            params.push(("retry", "true".to_string()));
+        }
+        apply_json_content_type(apply_query_headers(
+            client.post(query_url.clone()),
+            &query_parameters.client_info,
+            session_token,
+        ))
+        .query(&params)
+        .json(&query_request)
+    };
 
-    let query_response = read_response_json::<query_response::Response>(response)
+    let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+
+    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "query request",
+        })?;
+
+    let query_response = read_response_json::<query_response::Data>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1160,7 +1691,6 @@ async fn execute_sync_query<'a>(
     tracing::debug!(
         elapsed_ms,
         request_id = %request_id,
-        is_retry,
         query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
         "Sync query response received"
     );
@@ -1175,7 +1705,14 @@ async fn execute_sync_query<'a>(
             retry_policy,
         )
         .await
-        .context(AsyncQuerySnafu)?
+        .context(AsyncQuerySnafu {
+            request_id: Some(request_id),
+            query_id: query_response
+                .data
+                .query_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+        })?
     } else {
         query_response
     };
@@ -1205,7 +1742,10 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu)
+    .context(AsyncQuerySnafu {
+        request_id: Some(request_id),
+        query_id: None,
+    })
 }
 
 /// Fetch the result of a previously executed query by its Snowflake Query ID.
@@ -1221,10 +1761,13 @@ pub async fn snowflake_get_query_result(
     query_id: &str,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
+    tracing::info!(query_id = query_id, "Fetching query result");
+
     let result_url = format!(
         "{}/queries/{}/result",
         query_parameters.server_url, query_id
     );
+    let uuid = Uuid::parse_str(query_id).expect("Failed to parse query_id");
     let query_response = async_exec::poll_query_status(
         client,
         &query_parameters.client_info,
@@ -1233,7 +1776,10 @@ pub async fn snowflake_get_query_result(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu)?;
+    .context(AsyncQuerySnafu {
+        request_id: None,
+        query_id: Some(uuid),
+    })?;
 
     into_query_result(query_response)
 }
@@ -1244,6 +1790,17 @@ pub struct QueryStatusResult {
     pub status_name: String,
     pub error_code: Option<i32>,
     pub error_message: Option<String>,
+    pub end_time: i64,
+    pub start_time: i64,
+    pub total_duration: i32,
+    pub query_id: String,
+    pub session_id: i64,
+    pub sql_text: String,
+    pub warehouse_id: i64,
+    pub warehouse_name: Option<String>,
+    pub warehouse_external_size: Option<String>,
+    pub warehouse_server_type: Option<String>,
+    pub state: String,
 }
 
 const MONITORING_QUERIES_PATH: &str = "/monitoring/queries/";
@@ -1288,7 +1845,7 @@ pub async fn get_query_status(
             context: "query status",
         })?;
 
-    let body: QueryStatusResponse = read_response_json(response)
+    let body: QueryStatusResponse = read_response_json::<Option<QueryStatusResponseData>>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1332,16 +1889,21 @@ pub async fn get_query_status(
         status_name: query_entry.status,
         error_code,
         error_message,
+        end_time: query_entry.end_time,
+        start_time: query_entry.start_time,
+        total_duration: query_entry.total_duration,
+        query_id: query_entry.id,
+        session_id: query_entry.session_id,
+        sql_text: query_entry.sql_text,
+        warehouse_id: query_entry.warehouse_id,
+        warehouse_name: query_entry.warehouse_name,
+        warehouse_external_size: query_entry.warehouse_external_size,
+        warehouse_server_type: query_entry.warehouse_server_type,
+        state: query_entry.state,
     })
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct QueryStatusResponse {
-    success: bool,
-    message: Option<String>,
-    code: Option<String>,
-    data: Option<QueryStatusResponseData>,
-}
+type QueryStatusResponse = SnowflakeResponse<Option<QueryStatusResponseData>>;
 
 #[derive(Debug, serde::Deserialize)]
 struct QueryStatusResponseData {
@@ -1359,6 +1921,28 @@ struct QueryStatusEntry {
     error_code: Option<String>,
     #[serde(rename = "errorMessage")]
     error_message: Option<String>,
+    #[serde(rename = "endTime", default)]
+    end_time: i64,
+    #[serde(rename = "startTime", default)]
+    start_time: i64,
+    #[serde(rename = "totalDuration", default)]
+    total_duration: i32,
+    #[serde(default)]
+    id: String,
+    #[serde(rename = "sessionId", default)]
+    session_id: i64,
+    #[serde(rename = "sqlText", default)]
+    sql_text: String,
+    #[serde(rename = "warehouseId", default)]
+    warehouse_id: i64,
+    #[serde(rename = "warehouseName")]
+    warehouse_name: Option<String>,
+    #[serde(rename = "warehouseExternalSize")]
+    warehouse_external_size: Option<String>,
+    #[serde(rename = "warehouseServerType")]
+    warehouse_server_type: Option<String>,
+    #[serde(default)]
+    state: String,
 }
 
 /// Snowflake returns `errorCode` as either a JSON string (`"002003"`) or an
@@ -1411,7 +1995,7 @@ pub async fn snowflake_abort_query(
         context: "Failed to execute abort query request",
     })?;
 
-    let abort_response = read_response_json::<query_response::AbortQueryResponse>(response)
+    let abort_response = read_response_json::<serde_json::Value>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1430,11 +2014,30 @@ pub async fn snowflake_abort_query(
     Ok(())
 }
 
+/// Standard Snowflake JSON response envelope: `{success, code, message, data: T}`.
+///
+/// Every REST endpoint parsed by [`read_response_json`] returns this shape; the
+/// generic `T` is the endpoint-specific payload. Keeping the envelope uniform
+/// lets `read_response_json` inspect `success` + `code` centrally and map
+/// body-level `390112` (session-token expired) to `SessionExpired` for the
+/// single-flight `RefreshContext` refresh path — without each caller having
+/// to re-implement that check.
+#[derive(Debug, serde::Deserialize)]
+pub struct SnowflakeResponse<T> {
+    pub success: bool,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub data: T,
+}
+
 pub(crate) async fn read_response_json<T>(
     response: reqwest::Response,
-) -> Result<T, SnowflakeResponseError>
+) -> Result<SnowflakeResponse<T>, SnowflakeResponseError>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + Default,
 {
     let response_status = response.status();
     let response_text = response.text().await;
@@ -1464,14 +2067,28 @@ where
     let response_text = response_text.context(ResponseTextSnafu)?;
 
     tracing::debug!(response_len = response_text.len(), "Received HTTP response");
-    let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
+    let parsed: SnowflakeResponse<T> =
+        serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
-    Ok(response_data)
+    // 2xx with `success:false, code:"390112"` means the session token expired.
+    // Surface it as SessionExpired so the RefreshContext can refresh and retry,
+    // matching the HTTP 401 branch above.
+    if !parsed.success
+        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(SESSION_TOKEN_EXPIRED)
+    {
+        return SessionExpiredSnafu.fail();
+    }
+
+    Ok(parsed)
 }
 
 #[track_caller]
 fn build_tls_http_client(client_info: &ClientInfo) -> Result<reqwest::Client, RestError> {
-    create_tls_client_with_config(client_info.tls_config.clone()).context(CrlValidationSnafu)
+    create_tls_client_with_proxy(
+        client_info.tls_config.clone(),
+        Some(&client_info.proxy_config),
+    )
+    .context(CrlValidationSnafu)
 }
 
 pub(crate) fn authorization_header(session_token: &str) -> header::HeaderValue {
@@ -1512,6 +2129,18 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("External browser SSO failed"))]
+    ExternalBrowser {
+        source: external_browser::ExternalBrowserError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("OAuth flow failed"))]
+    OAuthFlow {
+        source: oauth::OAuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid Snowflake response"))]
     InvalidSnowflakeResponse {
         source: SnowflakeResponseError,
@@ -1548,6 +2177,8 @@ pub enum RestError {
     #[snafu(display("Async Snowflake query failed"))]
     AsyncQuery {
         source: SfError,
+        request_id: Option<Uuid>,
+        query_id: Option<Uuid>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1599,7 +2230,7 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Query failed: {message}"))]
+    #[snafu(display("{message}"))]
     QueryFailed {
         message: String,
         /// Snowflake server error code (e.g. 1003 for syntax error).
@@ -1618,6 +2249,13 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Logout failed: {message} (code: {code})"))]
+    LogoutFailed {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid URL: {url}"))]
     InvalidUrl {
         url: String,
@@ -1633,7 +2271,7 @@ pub enum RestError {
 }
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
-    #[snafu(display("Failed to parse Snowflake response"))]
+    #[snafu(display("Failed to parse Snowflake response {source}"))]
     ResponseFormat {
         source: serde_json::Error,
         #[snafu(implicit)]
@@ -1740,6 +2378,8 @@ mod tests {
             login_method: LoginMethod::Password {
                 username: "testuser".to_string(),
                 password: "testpass".into(),
+                passcode_in_password: false,
+                passcode: None,
             },
             server_url: "https://testaccount.snowflakecomputing.com".to_string(),
             database: None,
@@ -1749,108 +2389,120 @@ mod tests {
             client_info: test_client_info(),
             session_parameters: None,
             spcs_token: None,
+            disable_parallel_user_prompt: false,
         }
     }
 
-    mod try_get_cached_mfa_token_tests {
+    mod token_cache_helpers_tests {
         use super::*;
 
-        #[test]
-        fn returns_cached_token_on_hit() {
-            let cache = StubTokenCache::with_token(
-                "host.example.com",
-                "alice",
-                TokenType::MfaToken,
-                "tok123",
-            );
-            let result =
-                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
-            assert_eq!(result.unwrap().reveal(), "tok123");
-        }
-
-        #[test]
-        fn returns_none_on_cache_miss() {
-            let cache = StubTokenCache::new();
-            let result =
-                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_when_no_cache_provided() {
-            let result = try_get_cached_mfa_token("https://host.example.com", "alice", None);
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_for_invalid_url() {
-            let cache = StubTokenCache::new();
-            let result = try_get_cached_mfa_token("not-a-url", "alice", Some(&cache));
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_for_empty_cached_token() {
+        fn assert_get_store_remove_for(token_type: TokenType) {
+            // try_get: returns cached token on hit
             let cache =
-                StubTokenCache::with_token("host.example.com", "alice", TokenType::MfaToken, "");
-            let result =
-                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
-            assert!(result.is_none());
-        }
-    }
+                StubTokenCache::with_token("host.example.com", "alice", token_type, "tok_val");
+            let result = try_get_cached_token(
+                "https://host.example.com",
+                "alice",
+                token_type,
+                Some(&cache),
+            );
+            assert_eq!(result.unwrap().reveal(), "tok_val");
 
-    mod store_mfa_token_in_cache_tests {
-        use super::*;
+            // try_get: returns None on cache miss
+            let empty = StubTokenCache::new();
+            assert!(
+                try_get_cached_token(
+                    "https://host.example.com",
+                    "alice",
+                    token_type,
+                    Some(&empty),
+                )
+                .is_none()
+            );
 
-        #[test]
-        fn stores_token_successfully() {
+            // try_get: returns None when no cache provided
+            assert!(
+                try_get_cached_token("https://host.example.com", "alice", token_type, None)
+                    .is_none()
+            );
+
+            // try_get: returns None for invalid URL
+            assert!(try_get_cached_token("not-a-url", "alice", token_type, Some(&empty)).is_none());
+
+            // try_get: returns None for empty cached value
+            let empty_val = StubTokenCache::with_token("host.example.com", "alice", token_type, "");
+            assert!(
+                try_get_cached_token(
+                    "https://host.example.com",
+                    "alice",
+                    token_type,
+                    Some(&empty_val),
+                )
+                .is_none()
+            );
+
+            // store + get round-trip
             let cache = StubTokenCache::new();
-            store_mfa_token_in_cache("https://host.example.com", "alice", "new_tok", Some(&cache));
+            store_token_in_cache(
+                "https://host.example.com",
+                "alice",
+                token_type,
+                "new_tok",
+                Some(&cache),
+            );
             let stored = cache
-                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .get_token("host.example.com", "alice", token_type)
                 .unwrap();
             assert_eq!(stored.as_deref(), Some("new_tok"));
-        }
 
-        #[test]
-        fn no_panic_when_no_cache() {
-            store_mfa_token_in_cache("https://host.example.com", "alice", "tok", None);
-        }
+            // store: no panic when no cache
+            store_token_in_cache("https://host.example.com", "alice", token_type, "tok", None);
 
-        #[test]
-        fn no_panic_for_invalid_url() {
-            let cache = StubTokenCache::new();
-            store_mfa_token_in_cache("not-a-url", "alice", "tok", Some(&cache));
-        }
-    }
-
-    mod remove_mfa_token_from_cache_tests {
-        use super::*;
-
-        #[test]
-        fn removes_existing_token() {
-            let cache = StubTokenCache::with_token(
-                "host.example.com",
+            // store: no panic for invalid URL
+            store_token_in_cache(
+                "not-a-url",
                 "alice",
-                TokenType::MfaToken,
-                "tok_to_remove",
+                token_type,
+                "tok",
+                Some(&StubTokenCache::new()),
             );
-            remove_mfa_token_from_cache("https://host.example.com", "alice", Some(&cache));
-            let stored = cache
-                .get_token("host.example.com", "alice", TokenType::MfaToken)
-                .unwrap();
-            assert!(stored.is_none());
+
+            // remove evicts token
+            let cache =
+                StubTokenCache::with_token("host.example.com", "alice", token_type, "to_remove");
+            remove_token_from_cache(
+                "https://host.example.com",
+                "alice",
+                token_type,
+                Some(&cache),
+            );
+            assert!(
+                cache
+                    .get_token("host.example.com", "alice", token_type)
+                    .unwrap()
+                    .is_none()
+            );
+
+            // remove: no panic when no cache
+            remove_token_from_cache("https://host.example.com", "alice", token_type, None);
+
+            // remove: no panic for invalid URL
+            remove_token_from_cache(
+                "not-a-url",
+                "alice",
+                token_type,
+                Some(&StubTokenCache::new()),
+            );
         }
 
         #[test]
-        fn no_panic_when_no_cache() {
-            remove_mfa_token_from_cache("https://host.example.com", "alice", None);
+        fn mfa_token_cache_operations() {
+            assert_get_store_remove_for(TokenType::MfaToken);
         }
 
         #[test]
-        fn no_panic_for_invalid_url() {
-            let cache = StubTokenCache::new();
-            remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
+        fn id_token_cache_operations() {
+            assert_get_store_remove_for(TokenType::IdToken);
         }
     }
 
@@ -2078,7 +2730,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None))
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
@@ -2087,6 +2739,29 @@ mod tests {
             data.authenticator.is_none(),
             "Password auth should NOT include AUTHENTICATOR field (matching old driver behavior)"
         );
+    }
+
+    #[test]
+    fn auth_request_uses_application_for_client_environment_application() {
+        // CLIENT_APP_ID → driver identity (``client_app_id``).
+        // CLIENT_ENVIRONMENT.APPLICATION → user-facing app name
+        // (``application``). They must remain independent.
+        let login_params = LoginParameters {
+            client_info: ClientInfo {
+                client_app_id: "PythonConnector".to_string(),
+                application: "SNOWCLI.STAGE.COPY".to_string(),
+                ..test_client_info()
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .unwrap();
+
+        assert_eq!(data.client_app_id, "PythonConnector");
+        assert_eq!(data.client_environment.application, "SNOWCLI.STAGE.COPY");
     }
 
     #[test]
@@ -2101,10 +2776,36 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None))
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
+        assert_eq!(data.token.as_ref().unwrap().reveal(), "pat_secret");
+        assert_eq!(
+            data.authenticator.as_deref(),
+            Some("PROGRAMMATIC_ACCESS_TOKEN")
+        );
+    }
+
+    #[test]
+    fn pat_auth_without_user_omits_login_name() {
+        let login_params = LoginParameters {
+            login_method: LoginMethod::Pat {
+                username: "".to_string(),
+                token: "pat_secret".into(),
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .unwrap();
+
+        assert_eq!(
+            data.login_name, None,
+            "LOGIN_NAME must be absent when user is empty"
+        );
         assert_eq!(data.token.as_ref().unwrap().reveal(), "pat_secret");
         assert_eq!(
             data.authenticator.as_deref(),
@@ -2170,5 +2871,325 @@ mod tests {
                 attempt.load(Ordering::SeqCst)
             );
         }
+    }
+
+    mod user_agent_tests {
+        use super::*;
+
+        const ARCH: &str = std::env::consts::ARCH;
+
+        #[test]
+        fn user_agent_without_runtime_info() {
+            let info = ClientInfo {
+                client_app_id: "MyApp".to_string(),
+                version: "1.0.0".to_string(),
+                os: "Linux".to_string(),
+                ..test_client_info()
+            };
+            assert_eq!(user_agent(&info), format!("MyApp/1.0.0 (Linux-{ARCH})"));
+        }
+
+        #[test]
+        fn user_agent_with_runtime_info() {
+            let info = ClientInfo {
+                client_app_id: "PythonConnector".to_string(),
+                version: "3.15.0".to_string(),
+                os: "Darwin".to_string(),
+                runtime_name: Some("CPython".to_string()),
+                runtime_version: Some("3.11.6".to_string()),
+                ..test_client_info()
+            };
+            assert_eq!(
+                user_agent(&info),
+                format!("PythonConnector/3.15.0 (Darwin-{ARCH}) CPython/3.11.6")
+            );
+        }
+
+        #[test]
+        fn user_agent_with_only_runtime_name_no_version() {
+            let info = ClientInfo {
+                runtime_name: Some("CPython".to_string()),
+                runtime_version: None,
+                ..test_client_info()
+            };
+            // Only appended when both name and version are present
+            assert!(!user_agent(&info).contains("CPython"));
+        }
+
+        #[test]
+        fn user_agent_sanitizes_spaces_in_runtime_name() {
+            let info = ClientInfo {
+                client_app_id: "JDBC".to_string(),
+                version: "4.0.2".to_string(),
+                os: "Linux".to_string(),
+                runtime_name: Some("OpenJDK 64-Bit Server VM".to_string()),
+                runtime_version: Some("17.0.6".to_string()),
+                ..test_client_info()
+            };
+            assert_eq!(
+                user_agent(&info),
+                format!("JDBC/4.0.2 (Linux-{ARCH}) OpenJDK_64-Bit_Server_VM/17.0.6")
+            );
+        }
+    }
+
+    mod strip_version_suffix_tests {
+        use super::*;
+
+        #[test]
+        fn clean_version_unchanged() {
+            assert_eq!(strip_version_suffix("5.0.0"), "5.0.0");
+        }
+
+        #[test]
+        fn dev_suffix_stripped() {
+            assert_eq!(strip_version_suffix("5.0.0dev"), "5.0.0");
+        }
+
+        #[test]
+        fn rc_suffix_stripped() {
+            assert_eq!(strip_version_suffix("3.12.1rc2"), "3.12.1");
+        }
+
+        #[test]
+        fn four_segment_preserved() {
+            assert_eq!(strip_version_suffix("2.21.8.1"), "2.21.8.1");
+        }
+    }
+
+    mod query_log_fields_tests {
+        use super::*;
+        use serde_json::value::RawValue;
+
+        fn make_params(log_max_query_length: usize, text: bool, params: bool) -> QueryParameters {
+            QueryParameters {
+                server_url: "https://example.test".into(),
+                client_info: test_client_info(),
+                log_max_query_length,
+                log_query_text: text,
+                log_query_parameters: params,
+            }
+        }
+
+        #[test]
+        fn flags_off_returns_none_none() {
+            let params = make_params(80, false, false);
+            let input = QueryInput::new("SELECT 1");
+            assert_eq!(query_log_fields(&params, &input), (None, None));
+        }
+
+        #[test]
+        fn bindings_flag_without_text_flag_is_noop() {
+            let params = make_params(80, false, true);
+            let input = QueryInput::new("SELECT 1");
+            assert_eq!(query_log_fields(&params, &input), (None, None));
+        }
+
+        #[test]
+        fn text_only_returns_full_sql_when_within_limit() {
+            let params = make_params(80, true, false);
+            let input = QueryInput::new("SELECT 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT 1"));
+            assert!(bindings.is_none());
+        }
+
+        #[test]
+        fn text_only_truncates_to_log_max_query_length() {
+            let params = make_params(6, true, false);
+            let input = QueryInput::new("SELECT * FROM t WHERE x = 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT"));
+            assert!(bindings.is_none());
+        }
+
+        #[test]
+        fn text_only_truncates_at_char_boundary_for_multibyte() {
+            // "héllo" — 'é' is 2 bytes in UTF-8 but a single `char`. With limit
+            // 3 we expect "hél" (3 chars), not bytes.
+            let params = make_params(3, true, false);
+            let input = QueryInput::new("héllo world");
+            let (sql, _) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("hél"));
+        }
+
+        #[test]
+        fn text_and_params_includes_bindings_json() {
+            let params = make_params(80, true, true);
+            let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
+                "1": {"type": "TEXT", "value": "hello"}
+            }))
+            .unwrap();
+            let mut input = QueryInput::new("SELECT ?");
+            input.bindings = Some(&raw);
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT ?"));
+            assert!(bindings.is_some());
+            let bindings = bindings.unwrap();
+            assert!(
+                bindings.contains("hello"),
+                "expected bindings JSON to contain the value, got {bindings}"
+            );
+        }
+
+        #[test]
+        fn text_and_params_truncates_bindings_to_log_max_query_length() {
+            let params = make_params(8, true, true);
+            let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
+                "1": {"type": "TEXT", "value": "abcdefghijklmnop"}
+            }))
+            .unwrap();
+            let mut input = QueryInput::new("SELECT ?");
+            input.bindings = Some(&raw);
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref().map(str::len), Some(8));
+            let bindings = bindings.expect("bindings field should be present");
+            assert_eq!(bindings.chars().count(), 8);
+            assert!(
+                raw.get().starts_with(&bindings),
+                "truncated bindings should be the prefix of the raw JSON: {bindings}"
+            );
+        }
+
+        #[test]
+        fn text_and_params_returns_empty_string_when_no_bindings() {
+            let params = make_params(80, true, true);
+            let input = QueryInput::new("SELECT 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT 1"));
+            assert_eq!(bindings.as_deref(), Some(""));
+        }
+    }
+
+    mod execute_sync_query_retry_tests {
+        use super::*;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        #[tokio::test]
+        async fn retries_on_503_then_succeeds_and_sets_retry_flag_on_replays() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+            let captured_urls: Arc<std::sync::Mutex<Vec<String>>> =
+                Arc::new(std::sync::Mutex::new(Vec::new()));
+
+            let attempt_clone = attempt.clone();
+            let captured_clone = captured_urls.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/v1/query-request"))
+                .respond_with(move |req: &Request| {
+                    captured_clone.lock().unwrap().push(req.url.to_string());
+                    let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    if n < 2 {
+                        ResponseTemplate::new(503).set_body_string("Service Unavailable")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "queryId": "01abcdef-0000-0000-0000-000000000000",
+                            }
+                        }))
+                    }
+                })
+                .expect(3)
+                .mount(&server)
+                .await;
+
+            let client = reqwest::Client::new();
+            let query_parameters = QueryParameters {
+                server_url: server.uri(),
+                client_info: test_client_info(),
+                log_max_query_length: 1024,
+                log_query_text: false,
+                log_query_parameters: false,
+            };
+            let query_input = QueryInput::new("SELECT 1");
+
+            let retry_policy = RetryPolicy::default();
+            let result = execute_sync_query(
+                &client,
+                &query_parameters,
+                "mock_session_token",
+                &query_input,
+                uuid::Uuid::new_v4(),
+                &retry_policy,
+            )
+            .await;
+
+            if let Err(e) = &result {
+                panic!("Expected retry to succeed, got error: {e:?}");
+            }
+            assert_eq!(
+                attempt.load(Ordering::SeqCst),
+                3,
+                "Expected exactly 3 attempts (2 failures + 1 success)",
+            );
+
+            let urls = captured_urls.lock().unwrap();
+            assert_eq!(urls.len(), 3, "Should have captured 3 request URLs");
+            assert!(
+                !urls[0].contains("retry=true"),
+                "First attempt must not include retry=true (fresh request): {}",
+                urls[0]
+            );
+            assert!(
+                urls[1].contains("retry=true"),
+                "Second attempt must include retry=true so the server dedupes: {}",
+                urls[1]
+            );
+            assert!(
+                urls[2].contains("retry=true"),
+                "Third attempt must include retry=true so the server dedupes: {}",
+                urls[2]
+            );
+
+            let request_ids: Vec<&str> = urls
+                .iter()
+                .filter_map(|u| {
+                    u.split_once("requestId=")
+                        .map(|(_, rest)| rest.split('&').next().unwrap_or(rest))
+                })
+                .collect();
+            assert_eq!(request_ids.len(), 3);
+            assert!(
+                request_ids[0] == request_ids[1] && request_ids[1] == request_ids[2],
+                "requestId must be stable across HTTP-level retries: {:?}",
+                request_ids
+            );
+        }
+    }
+
+    /// 2xx response carrying `success:false, code:"390112"` must be surfaced as
+    /// `SessionExpired` so the RefreshContext can refresh and retry — the only
+    /// behavior this envelope refactor introduces beyond the existing HTTP 401 path.
+    #[tokio::test]
+    async fn read_response_json_maps_body_390112_to_session_expired() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": false,
+                "code": "390112",
+                "message": "Session token expired",
+            })))
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .post(server.uri())
+            .send()
+            .await
+            .expect("mock request sends");
+
+        let result = read_response_json::<serde_json::Value>(response).await;
+        assert!(
+            matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
+            "expected SessionExpired, got {result:?}"
+        );
     }
 }

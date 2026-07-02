@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar};
     use crate::conversion::WriteODBCType;
     use crate::conversion::boolean::SnowflakeBoolean;
     use crate::conversion::test_utils::helpers::{
@@ -260,26 +261,26 @@ mod tests {
     #[test]
     fn wchar_true() {
         let sn = SnowflakeBoolean;
-        let mut buffer = vec![0u16; 16];
+        let mut buffer = vec![0 as WideChar; 16];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 2);
-        assert_eq!(buffer[0], '1' as u16);
+        assert_eq!(str_len, WIDE_CHAR_SIZE as sql::Len);
+        assert_eq!(buffer[0], '1' as WideChar);
         assert_eq!(buffer[1], 0);
     }
 
     #[test]
     fn wchar_false() {
         let sn = SnowflakeBoolean;
-        let mut buffer = vec![0u16; 16];
+        let mut buffer = vec![0 as WideChar; 16];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn.write_odbc_type(false, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 2);
-        assert_eq!(buffer[0], '0' as u16);
+        assert_eq!(str_len, WIDE_CHAR_SIZE as sql::Len);
+        assert_eq!(buffer[0], '0' as WideChar);
         assert_eq!(buffer[1], 0);
     }
 
@@ -287,7 +288,7 @@ mod tests {
     fn wchar_buffer_too_small_truncates() {
         use crate::conversion::warning::Warning;
         let sn = SnowflakeBoolean;
-        let mut buffer = vec![0u16; 1];
+        let mut buffer = vec![0 as WideChar; 1];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();

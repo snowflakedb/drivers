@@ -1,0 +1,555 @@
+id: universal-driver-python-rules
+friendly_name: "Universal Driver Python Guidelines"
+status: enabled
+allowed_folders:
+  - "python/src/snowflake/connector"
+  - "python/tests"
+excluded_folders:
+  - "python/tests/__pycache__"
+  - "python/src/snowflake/connector/_internal/protobuf_gen"
+  - "python/src/snowflake/connector/_internal/nanoarrow_cpp"
+allowed_file_extensions:
+  - ".py"
+rules:
+  - id: ud-py-deterministic-select-order-by
+    rule: |
+      **OBJECTIVE**: Prevent flaky tests and assertion failures caused by Snowflake's non-deterministic row ordering when no ORDER BY is supplied.
+
+      **REQUIREMENT**: Any `SELECT` query that may return more than one row AND whose results are subsequently asserted on (by index, by element comparison, or by equality with a fixed list) MUST include an `ORDER BY` clause that fully determines row order. This applies to test code and to any production code that consumes results positionally. Single-row queries (`SELECT 1`, `SELECT COUNT(*)`, aggregates without GROUP BY) are exempt. `LIMIT` without `ORDER BY` is also non-deterministic and must include `ORDER BY`.
+
+      ❌ **BAD:**
+      ```python
+      cur.execute("SELECT id, name FROM users WHERE active = TRUE")
+      rows = cur.fetchall()
+      assert rows == [(1, "alice"), (2, "bob")]
+
+      cur.execute("SELECT * FROM events LIMIT 10")
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      cur.execute("SELECT id, name FROM users WHERE active = TRUE ORDER BY id")
+      rows = cur.fetchall()
+      assert rows == [(1, "alice"), (2, "bob")]
+
+      cur.execute("SELECT * FROM events ORDER BY ts, event_id LIMIT 10")
+      ```
+
+  - id: ud-py-public-connection-cursor-api-telemetry
+    rule: |
+      **OBJECTIVE**: Ensure every public surface call on `SnowflakeConnection` and `SnowflakeCursor` is recorded by the API telemetry pipeline so usage can be measured and regressions traced.
+
+      **REQUIREMENT**: Every public method (no leading underscore) defined on a `SnowflakeConnection`, `SnowflakeCursor`, or any subclass thereof MUST be decorated with `@api_telemetry` (imported from `snowflake.connector._internal.decorators`). This includes new methods, overrides of PEP 249 methods, and properties exposed via `@property` whose getter performs non-trivial work. Dunder methods (`__enter__`, `__exit__`, `__iter__`, `__next__`) and pure data properties are exempt. If the method is intentionally not telemetry-tracked, mark it `@internal_api` instead and add a short comment explaining why.
+
+      ❌ **BAD:**
+      ```python
+      class SnowflakeCursor:
+          def execute_async(self, sql: str, params=None) -> Self:
+              ...
+
+          def fetch_pandas_all(self) -> pd.DataFrame:
+              ...
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      from snowflake.connector._internal.decorators import api_telemetry
+
+      class SnowflakeCursor:
+          @api_telemetry
+          def execute_async(self, sql: str, params=None) -> Self:
+              ...
+
+          @api_telemetry
+          def fetch_pandas_all(self) -> pd.DataFrame:
+              ...
+      ```
+
+  - id: ud-py-no-accidental-public-api
+    rule: |
+      **OBJECTIVE**: Keep the public API surface small and intentional. Every newly-public symbol is a forward-compatibility liability.
+
+      **REQUIREMENT**: Implementation details MUST live under `snowflake.connector._internal` (or a sibling `_*` private module) — not as non-underscored symbols on top-level modules like `connection.py`, `cursor/`, or `errors.py`. New helpers, parsers, builders, validators, protocol shims, HTTP clients, and similar internals belong in `_internal/<area>/` and should be imported from there by the public-facing modules that need them. The `_internal` package boundary is the project's contract: anything inside it can be moved, renamed, or rewritten without external breakage; anything outside it cannot.
+
+      Within a public-facing module, a method, class, or function that is not part of the user contract MUST start with a single underscore. New non-underscored names on `SnowflakeConnection`, `SnowflakeCursor`, the `snowflake.connector` package, or any module re-exported from it require a clear, user-facing reason. Do not promote helpers to public solely so a sibling module can import them — move them under `_internal/`, or import them via the underscore name. Re-exports added to `__init__.py` or `__all__` count as making something public.
+
+      Treat these as red flags worth questioning: a new top-level module added to `snowflake/connector/` (rather than `snowflake/connector/_internal/`) for plumbing that no end user should call; helpers named like `parse_*`, `build_*`, `format_*`, `validate_*` placed outside `_internal/`; new entries in `__all__` that mirror internal filenames; methods on connection/cursor named after internal protocols (`build_query_request`, `format_login_payload`).
+
+      ❌ **BAD:**
+      ```python
+      # snowflake/connector/login_payload.py — new top-level module for plumbing
+      def build_login_payload(config) -> dict: ...
+
+      # connection.py — exposing an internal helper on the public class
+      def build_login_payload(self, ...) -> dict: ...
+
+      # __init__.py — re-exporting an internal symbol
+      from ._internal.api_client.routes import resolve_endpoint
+      __all__ = [..., "resolve_endpoint"]
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      # snowflake/connector/_internal/auth/login_payload.py
+      def build_login_payload(config) -> dict: ...
+
+      # connection.py
+      from ._internal.auth.login_payload import build_login_payload
+
+      class SnowflakeConnection:
+          def _build_login_payload(self, ...) -> dict:
+              return build_login_payload(self._config)
+      ```
+
+  - id: ud-py-actionable-exceptions
+    rule: |
+      **OBJECTIVE**: Errors surfaced to users must tell them what went wrong, what was being attempted, and what to do next. Generic messages waste support cycles and erode trust.
+
+      **REQUIREMENT**: When raising any exception (preferably a subclass of `snowflake.connector.errors.Error`), the message MUST include:
+      1. **What** failed (the operation or invariant), in concrete terms (not "an error occurred"),
+      2. **Why** it failed when the cause is known (the offending value, the missing field, the upstream error),
+      3. **What the user can do** when actionable (e.g., "set parameter X", "rotate the key", "retry after N seconds").
+
+      Use the most specific subclass (`ProgrammingError`, `OperationalError`, `IntegrityError`, etc.) — never raise bare `Exception` or `Error` for user-facing failures. When wrapping a lower-level error, preserve the original via `raise ... from err`. Do not include sensitive material (passwords, tokens, full private keys) in the message.
+
+      ❌ **BAD:**
+      ```python
+      if not config.account:
+          raise Exception("invalid config")
+
+      try:
+          token = self._fetch_token()
+      except Exception:
+          raise OperationalError("token error")
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      if not config.account:
+          raise ProgrammingError(
+              "Connection parameter 'account' is required but was empty. "
+              "Set it via the `account=` kwarg or the SNOWFLAKE_ACCOUNT env var."
+          )
+
+      try:
+          token = self._fetch_token()
+      except HTTPError as err:
+          raise OperationalError(
+              f"Failed to fetch OAuth token from {self._token_endpoint}: "
+              f"{err.response.status_code} {err.response.reason}. "
+              "Verify network connectivity and that the OAuth client is enabled."
+          ) from err
+      ```
+
+  - id: ud-py-comment-discipline
+    rule: |
+      **OBJECTIVE**: Keep comments scarce and load-bearing. Comments rot; every line is a maintenance bill.
+
+      **REQUIREMENT**: Comments and docstrings should explain *why* — the non-obvious constraint, the historical reason, the subtle invariant. Do not narrate *what* the code already says, do not echo the function signature in a docstring, and do not preserve TODO/FIXME chatter without a ticket. Prefer one tight sentence over a paragraph. Multi-line block comments above trivial code are a smell.
+
+      Specifically reject:
+      - Docstrings that restate the parameter list and return type when type hints already cover them, with no extra information. Public methods still need a docstring — but it should add information the signature does not (semantics, edge cases, side effects), not duplicate it.
+      - Inline comments that paraphrase the line below (`# increment counter` above `counter += 1`).
+      - Block comments describing what was changed in this PR ("Refactored to use X instead of Y").
+      - Section banners (`# ====== HELPERS ======`) when the module is small enough to scan.
+
+      ❌ **BAD:**
+      ```python
+      def fetch_one(self) -> tuple | None:
+          """Fetch one row.
+
+          Returns:
+              The next row as a tuple, or None if there are no more rows.
+
+          Raises:
+              Error: If the cursor is closed.
+          """
+          # Check if closed
+          if self._closed:
+              # Raise an error
+              raise Error("cursor is closed")
+          # Get the next row
+          return self._next_row()
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      def fetch_one(self) -> tuple | None:
+          """Return the next row, or None once the result set is exhausted.
+
+          Calling after exhaustion keeps returning None; it does not reset
+          or re-execute. Raises InterfaceError if the cursor was closed.
+          """
+          if self._closed:
+              raise InterfaceError("Cursor is closed; call cursor() on the connection to obtain a new one.")
+          return self._next_row()
+      ```
+
+  - id: ud-py-pytest-raises-not-try-except
+    rule: |
+      **OBJECTIVE**: Use the idiomatic, single-purpose pytest construct for asserting that code raises, instead of hand-rolled `try/except` patterns that are easy to get wrong (forgotten `pytest.fail()`, swallowed `AssertionError`, wrong block under test).
+
+      **REQUIREMENT**: In test code (`python/tests`), assertions about raised exceptions MUST use `pytest.raises(...)` (with `match=` for message checks). Do not use `try/except` with a trailing `assert False` or `pytest.fail("did not raise")`. The two anti-patterns to flag:
+      1. `try/except` whose `else`/`pytest.fail` branch exists only to detect the missing exception.
+      2. `try/except` that catches the expected exception, asserts on its attributes, and otherwise has no logic in the `try` block beyond the call under test.
+
+      Real `try/except` blocks are still legitimate when the test exercises a *recovery* path (e.g., catch the failure, then call the SUT again to verify it recovered) — `pytest.raises` is not a fit there. Use judgment: if the entire purpose of the construct is "assert this raised", switch to `pytest.raises`.
+
+      For matching the message, prefer the `match=` parameter (regex) over manual string compares on `excinfo.value`. For inspecting attributes, capture via `as excinfo:` and use `excinfo.value.<attr>` after the block.
+
+      ❌ **BAD:**
+      ```python
+      def test_execute_on_closed_cursor_raises():
+          cur = conn.cursor()
+          cur.close()
+          try:
+              cur.execute("SELECT 1")
+              assert False, "expected InterfaceError"
+          except InterfaceError as e:
+              assert "closed" in str(e)
+
+      def test_invalid_account_rejected():
+          try:
+              connect(account="")
+              pytest.fail("should have raised")
+          except ProgrammingError:
+              pass
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      def test_execute_on_closed_cursor_raises():
+          cur = conn.cursor()
+          cur.close()
+          with pytest.raises(InterfaceError, match="closed"):
+              cur.execute("SELECT 1")
+
+      def test_invalid_account_rejected():
+          with pytest.raises(ProgrammingError, match="account"):
+              connect(account="")
+
+      def test_execute_surfaces_sqlstate():
+          with pytest.raises(ProgrammingError) as excinfo:
+              cur.execute("SELECT * FROM does_not_exist")
+          assert excinfo.value.sqlstate == "42S02"
+      ```
+
+  - id: ud-py-logger-discipline
+    rule: |
+      **OBJECTIVE**: Logging in the driver must be cheap when off, informative when on, and never a leak vector. Production code should use a module-scoped logger with lazy formatting.
+
+      **REQUIREMENT**:
+      1. Every module that logs MUST declare `logger = logging.getLogger(__name__)` at module top. Do NOT call `logging.info(...)` / `logging.warning(...)` (those write to the root logger and bypass any per-module filtering downstream consumers configure).
+      2. Pass message arguments to the logger; do NOT pre-format with f-strings or `.format(...)`. The `logging` module formats lazily, skipping the work entirely when the level is filtered out — f-strings format unconditionally.
+      3. When logging inside an `except` block, include `exc_info=True` (or use `logger.exception(...)`) so the traceback is preserved. The exception object alone in the message is not enough.
+      4. Never use `print(...)` for diagnostics in production code (`python/src/`). It bypasses log levels, structured pipelines, and stderr/stdout policy.
+      5. Do not log the contents of credentials, tokens, private keys, or whole config objects that may carry them — see `ud-py-no-secret-leakage-in-logs-or-errors`.
+
+      ❌ **BAD:**
+      ```python
+      import logging
+
+      class SnowflakeCursor:
+          def execute(self, command: str, params=None):
+              # Root logger; eager f-string; no exc_info on failure.
+              logging.info(f"Executing command: {command} with params: {params}")
+              try:
+                  return self._send(command, params)
+              except OperationalError as e:
+                  logging.warning(f"send failed: {e}")
+                  print("DEBUG: retrying once")  # leftover debug print
+                  raise
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      import logging
+
+      logger = logging.getLogger(__name__)
+
+      class SnowflakeCursor:
+          def execute(self, command: str, params=None):
+              logger.debug("Executing command: %s with %d bind params", command, len(params or ()))
+              try:
+                  return self._send(command, params)
+              except OperationalError:
+                  logger.warning("send failed; will retry", exc_info=True)
+                  raise
+      ```
+
+  - id: ud-py-pep249-error-subclass-selection
+    rule: |
+      **OBJECTIVE**: PEP 249 defines a precise error hierarchy so applications can catch broad categories (`DatabaseError`) or narrow ones (`IntegrityError`). Mis-classified errors break that contract — a `ProgrammingError` raised as `OperationalError` slips past callers who explicitly handle programming bugs and not transient ones, and vice versa.
+
+      **REQUIREMENT**: Every `raise` that surfaces to a user (i.e., not an internal sentinel caught immediately one frame up) MUST use a specific subclass of `snowflake.connector.errors.Error`. Choose by failure category:
+
+      - `ProgrammingError` — invalid input the user gave us: malformed SQL, missing/contradictory connection parameters, calling `executemany` with empty params, passing a non-Snowflake type the binder can't render, server returning a SQL syntax error.
+      - `InterfaceError` — driver-state violations independent of the database: cursor used after close, fetch before execute, connection used after close, double-close.
+      - `OperationalError` — transient or environmental failures the user did nothing wrong to cause: network errors, TLS handshake failures, server timeout, server-side compilation/execution errors that aren't programming errors, retry exhaustion.
+      - `IntegrityError` — server reports a constraint violation (uniqueness, foreign key, NOT NULL).
+      - `DataError` — data-shape or representation errors: encoding/decoding failures, value out of range for the declared type, column count mismatch.
+      - `InternalError` — driver detected its own invariant break ("this should never happen"). Reserved for assertions that survived the cut, not user-visible normal failures.
+      - `NotSupportedError` — the user asked for an optional PEP 249 feature this driver doesn't implement (e.g., `setoutputsize`, scrollable cursors).
+
+      Do NOT raise:
+      - Bare `Exception` or `RuntimeError` for user-facing failures (they bypass the PEP 249 catch hierarchy entirely).
+      - Root `snowflake.connector.errors.Error` directly — pick a subclass.
+      - The wrong category to be "more user-friendly" — `ProgrammingError` for a network blip is a bug, not friendliness.
+
+      For wrapped lower-level errors, preserve the original via `raise ... from err` so callers can inspect `__cause__`.
+
+      ❌ **BAD:**
+      ```python
+      if not config.account:
+          raise Exception("missing account")            # bare Exception
+
+      if cursor._closed:
+          raise OperationalError("cursor is closed")    # state error, not transient
+
+      try:
+          self._http.post(url, json=payload)
+      except requests.Timeout as err:
+          raise ProgrammingError("network timeout") from err   # not the user's fault
+
+      raise Error("constraint violation: PK conflict")  # root class; should be IntegrityError
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      if not config.account:
+          raise ProgrammingError(
+              "Connection parameter 'account' is required but was empty. "
+              "Set it via the `account=` kwarg or the SNOWFLAKE_ACCOUNT env var."
+          )
+
+      if cursor._closed:
+          raise InterfaceError("Cursor is closed; obtain a new one via connection.cursor().")
+
+      try:
+          self._http.post(url, json=payload)
+      except requests.Timeout as err:
+          raise OperationalError(
+              f"Timed out posting to {url} after {timeout}s; check network and retry."
+          ) from err
+
+      raise IntegrityError(
+          "Insert violated PRIMARY KEY constraint on USERS(id); "
+          "the value already exists or was inserted concurrently."
+      )
+      ```
+
+  - id: ud-py-no-secret-leakage-in-logs-or-errors
+    rule: |
+      **OBJECTIVE**: Credentials, tokens, and private keys must never enter log streams, exception messages, `repr()` output, or any string that a user is reasonably likely to copy into a bug report. Once a secret lands in a log file, customer-shared traceback, or APM trail, it has effectively been disclosed.
+
+      **REQUIREMENT**: The following values are **secrets** and must never appear in log records, raised exception messages, `__repr__`, `__str__`, or any output Python emits:
+      - Passwords (`password`, `passcode`, `master_password`).
+      - OAuth access/refresh tokens, PATs, ID tokens, session tokens, MFA codes, JWT bodies.
+      - Private keys (PEM body between `-----BEGIN ... PRIVATE KEY-----` and `-----END ... PRIVATE KEY-----`), key passphrases, encryption keys.
+      - Full `Authorization` / `Cookie` / `X-Snowflake-Authorization-Token-Type` header values.
+
+      When an error or log message must reference one of these (rare), redact: replace the body with `****`, expose only length (`len=64`), or expose only a non-secret suffix (last 4 chars). Do NOT serialize whole `ConnectionConfig`/option dicts that may carry credentials — log a curated subset, or write a `__repr__` that omits sensitive fields and inherit `__str__` from it.
+
+      Specific patterns to flag in review:
+      - `f"... {password}..."`, `f"... {token}..."`, `logger.debug(config)`, `repr(connection_options)` where the dict can carry password/token/private_key.
+      - Wrapping an HTTP error and including the request body or `Authorization` header in the message.
+      - `print(f"connecting with key: {pem_data}")` even in tests — test logs end up in CI artifacts.
+      - `__repr__` on auth/config classes that includes raw secret fields.
+
+      ❌ **BAD:**
+      ```python
+      logger.debug("connecting with config=%s", config)            # config has password
+      raise OperationalError(f"login failed for token={token!r}")  # leaks token
+      print(f"private key loaded: {pem}")                          # leaks PEM body
+
+      class AuthConfig:
+          def __repr__(self) -> str:
+              return f"AuthConfig(user={self.user!r}, password={self.password!r})"
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      logger.debug(
+          "connecting with account=%s user=%s authenticator=%s",
+          config.account, config.user, config.authenticator,
+      )
+      raise OperationalError(
+          f"login failed (token len={len(token)}, ends in …{token[-4:]}); "
+          "verify the token has not expired."
+      )
+      logger.debug("private key loaded (PEM len=%d)", len(pem))
+
+      class AuthConfig:
+          def __repr__(self) -> str:
+              return f"AuthConfig(user={self.user!r}, password=<redacted>)"
+      ```
+
+  - id: ud-py-type-only-imports-under-type-checking
+    rule: |
+      **OBJECTIVE**: Avoid runtime import cost and circular-import landmines for symbols that exist only to satisfy type annotations. Combined with the project-wide `from __future__ import annotations`, names referenced solely inside annotations are never resolved at runtime.
+
+      **REQUIREMENT**: When an imported name is used **only** inside type annotations (parameter types, return types, attribute types, `cast(...)`, `TypeVar` bounds, `Protocol` definitions used purely for typing), move that import inside a `TYPE_CHECKING` block:
+
+      ```python
+      from __future__ import annotations
+      from typing import TYPE_CHECKING
+
+      if TYPE_CHECKING:
+          from snowflake.connector.cursor import SnowflakeCursor
+      ```
+
+      An import used at runtime — instantiation (`SnowflakeCursor(conn)`), `isinstance(...)` / `issubclass(...)` checks, decorator application, attribute access on the imported module, subclassing, `dataclass` field defaults — must remain unconditional.
+
+      Common smells to flag:
+      - `from .connection import SnowflakeConnection` at module top, used only as `def f(conn: SnowflakeConnection) -> None`.
+      - Heavy imports (`pandas`, `pyarrow`, `numpy`) at module top when only their types appear in annotations — these slow startup measurably.
+      - Circular import band-aids using lazy local imports inside functions; if the symbol is type-only, `TYPE_CHECKING` is the correct fix.
+      - Lazy imports inside function bodies (`import X` or `from X import Y` inside a `def`) unless the import is genuinely optional or guarded by an availability check (e.g., an optional dependency). Function-scoped imports hide dependencies, break static analysis, and are almost always a circular-import workaround that should be resolved at the module boundary instead.
+
+      Do not over-apply: if the imported name is used in a default value (`field: Foo = Foo()`), in `isinstance`, in `cast`'s second arg (which IS evaluated), or in any non-annotation runtime expression, it is not type-only and must stay top-level.
+
+      ❌ **BAD:**
+      ```python
+      # foo.py
+      from __future__ import annotations
+      from snowflake.connector.cursor import SnowflakeCursor   # only used in annotations
+      import pandas as pd                                       # only used in annotations
+
+      def with_cursor(conn) -> SnowflakeCursor: ...
+      def to_frame(rows) -> pd.DataFrame: ...
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      from __future__ import annotations
+      from typing import TYPE_CHECKING
+
+      if TYPE_CHECKING:
+          import pandas as pd
+          from snowflake.connector.cursor import SnowflakeCursor
+
+      def with_cursor(conn) -> SnowflakeCursor: ...
+      def to_frame(rows) -> pd.DataFrame: ...
+      ```
+
+  - id: ud-py-resource-cleanup-via-context-managers
+    rule: |
+      **OBJECTIVE**: Connections, cursors, file handles, sockets, and temp files must be released on every code path — including exception paths. Manual `close()` after the call site is a leak waiting to happen.
+
+      **REQUIREMENT**: Acquire and release I/O / lifecycle-managed resources via `with` (or `contextlib.closing`/`contextlib.ExitStack` for objects that lack `__enter__`/`__exit__`). Direct `close()` calls without an enclosing `try/finally` are rejected when an exception between acquire and close would leak the resource.
+
+      Resources this applies to:
+      - `SnowflakeConnection`, `SnowflakeCursor` (both implement the context manager protocol).
+      - `open(...)`, `gzip.open(...)`, `io.BytesIO`, `io.StringIO` when materially large.
+      - `tempfile.NamedTemporaryFile`, `tempfile.TemporaryDirectory` (latter cleans the dir on exit).
+      - `socket.socket`, `urllib.request.urlopen`, `requests.Session` if scoped to a function.
+      - Locks (`threading.Lock`, `asyncio.Lock`) — release via `with`, not manual `acquire()`/`release()` pairs.
+
+      Test code is included: a fixture that opens a connection should yield it inside `with conn:` (or use `contextlib.closing`), and a test that creates a temp file must use `tempfile.NamedTemporaryFile(...)` as a context manager rather than `mkstemp()` followed by deferred cleanup.
+
+      Exceptions to the rule (still allowed without `with`):
+      - Long-lived resources stored on `self` whose lifetime is bound to the owning object — they're cleaned up in the owner's `__exit__` / `close()`.
+      - `tempfile.mkdtemp()` when the cleanup is genuinely deferred to a registered `atexit` or signal handler with a documented reason.
+
+      ❌ **BAD:**
+      ```python
+      def run_query(conn, sql):
+          cur = conn.cursor()
+          cur.execute(sql)             # if execute raises, cur is never closed
+          rows = cur.fetchall()
+          cur.close()
+          return rows
+
+      def write_temp(payload: bytes) -> str:
+          tmp = tempfile.NamedTemporaryFile(delete=False)
+          tmp.write(payload)           # leak on exception
+          tmp.close()
+          return tmp.name
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      def run_query(conn, sql):
+          with conn.cursor() as cur:
+              cur.execute(sql)
+              return cur.fetchall()
+
+      def write_temp(payload: bytes) -> str:
+          with tempfile.NamedTemporaryFile(delete=False) as tmp:
+              tmp.write(payload)
+              return tmp.name
+      ```
+
+  - id: ud-py-sql-identifier-parameterization
+    rule: |
+      **OBJECTIVE**: Prevent SQL injection in identifier positions and ensure correct quoting by using Snowflake's `IDENTIFIER(?)` pseudo-function with server-side binding instead of f-string interpolation for SQL object names.
+
+      **REQUIREMENT**: When a `cursor.execute(...)` call places a database object name — table, schema, stage, file format, view, or column — into a SQL statement by interpolating a variable, use `IDENTIFIER(?)` with `params=` and `_force_qmark_paramstyle=True` instead of an f-string. `_force_qmark_paramstyle=True` is required because the connector's default paramstyle may be `pyformat` (`%s`); `IDENTIFIER()` only works with the `?`/qmark form that routes through server-side binding.
+
+      Apply this rule when:
+      - The identifier comes from user input, configuration, or an earlier query result.
+      - The SQL statement operates on a named database object (`TABLE`, `SCHEMA`, `STAGE`, `FILE FORMAT`, `VIEW`, etc.).
+
+      Exemptions (raw interpolation remains acceptable):
+      - The value is a **hard-coded literal constant** in the same file (e.g. `"PARQUET"`, `"AUTO_DETECT"`).
+      - The position is a **SQL keyword or clause option**, not an identifier (e.g. `AUTO_COMPRESS=FALSE`, or an `on_error` value validated against an allowlist before reaching the query).
+      - DDL clauses whose syntax does not support `IDENTIFIER(?)` (e.g. `PUT`/`COPY INTO @stage` path arguments — use manual escaping there instead).
+
+      Smell to search for: `f"…{` inside a `cursor.execute(` argument where the interpolated token is a table, schema, stage, or column name.
+
+      ❌ **BAD:**
+      ```python
+      cursor.execute(f"ALTER TABLE {target_location} RENAME TO {original}")
+      cursor.execute(f"TRUNCATE TABLE IF EXISTS {target_location}")
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      cursor.execute(
+          "ALTER TABLE IDENTIFIER(?) RENAME TO IDENTIFIER(?)",
+          params=(target_location, original),
+          _force_qmark_paramstyle=True,
+      )
+      cursor.execute(
+          "TRUNCATE TABLE IF EXISTS IDENTIFIER(?)",
+          params=(target_location,),
+          _force_qmark_paramstyle=True,
+      )
+      ```
+
+  - id: ud-py-statement-parameter-name-registry
+    rule: |
+      **OBJECTIVE**: Keep statement-level parameter names centralized and in sync with sf_core's `param_registry`. Ad-hoc string literals for statement parameters drift from the canonical registry, hide new parameters from reviewers, and make it easy to typo a name that the server will reject at runtime.
+
+      **REQUIREMENT**: `snowflake.connector.constants.StatementParameterName` is the single registry of known statement-scoped parameter names (those with `ParamScope::Statement` in `sf_core/src/config/param_registry.rs`). Every statement parameter name used in Python driver code MUST be defined there before use.
+
+      When calling `set_statement_parameter`, `_set_statement_parameter`, or otherwise supplying a statement parameter key (including via `execute(..., num_statements=...)` which forwards to `MULTI_STATEMENT_COUNT`), reference `StatementParameterName.<MEMBER>` — never a raw string literal such as `"MULTI_STATEMENT_COUNT"` or `"ASYNC_EXECUTION"`.
+
+      When adding support for a new statement parameter:
+      1. Confirm it exists in sf_core's `param_registry` with `ParamScope::Statement`.
+      2. Add a matching `StatementParameterName` member in `python/src/snowflake/connector/constants.py` (UPPER_SNAKE_CASE name, string value equal to the canonical server name).
+      3. Use only the registry member at call sites.
+
+      Flag these patterns in review:
+      - `set_statement_parameter("…", …)` or `await set_statement_parameter("…", …)` with a string literal first argument.
+      - `_set_statement_parameter("…", …)` with a string literal.
+      - New string constants or module-level variables duplicating statement parameter names outside `StatementParameterName`.
+      - Docstring examples showing raw string keys instead of `StatementParameterName` members (update examples when touching the code).
+
+      Exempt: generated code under `_internal/protobuf_gen/` and `_internal/nanoarrow_cpp/`.
+
+      ❌ **BAD:**
+      ```python
+      cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+      await cursor.set_statement_parameter("ASYNC_EXECUTION", True)
+      self._set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
+      ```
+
+      ✅ **GOOD:**
+      ```python
+      from snowflake.connector.constants import StatementParameterName
+
+      cursor.set_statement_parameter(StatementParameterName.MULTI_STATEMENT_COUNT, 3)
+      await cursor.set_statement_parameter(StatementParameterName.ASYNC_EXECUTION, True)
+      self._set_statement_parameter(StatementParameterName.MULTI_STATEMENT_COUNT, num_statements)
+      ```

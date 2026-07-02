@@ -11,6 +11,7 @@ from ..errors import (
     DatabaseError,
     DataError,
     Error,
+    IntegrityError,
     InternalError,
     NotSupportedError,
     OperationalError,
@@ -91,6 +92,17 @@ STATUS_TO_EXCEPTION: dict[int, type[Error]] = {
     STATUS_CODE_UNSUPPORTED_COMPRESSION: ProgrammingError,
 }
 
+# Snowflake vendor_code → exception overrides.
+#
+# STATUS_TO_EXCEPTION maps the proto StatusCode (a broad category) to a default PEP 249 class.
+# Some Snowflake server errors share the same StatusCode (e.g. STATUS_CODE_INTERNAL_ERROR)
+# but carry a vendor_code that warrants a more specific exception.
+# Entries here take precedence over STATUS_TO_EXCEPTION when a vendor_code is present.
+VENDOR_CODE_TO_EXCEPTION: dict[int, type[Error]] = {
+    100072: IntegrityError,  # NULL result in a non-nullable column
+}
+
+# Prefer the Snowflake server vendor_code when the core driver provides it, fallback to this mapping if not present.
 STATUS_TO_ERRNO: dict[int, int] = {
     STATUS_CODE_AUTHENTICATION_ERROR: ER_FAILED_TO_CONNECT_TO_DB,
     STATUS_CODE_LOGIN_ERROR: ER_FAILED_TO_CONNECT_TO_DB,

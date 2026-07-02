@@ -1,5 +1,7 @@
 #include <picojson.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -127,6 +129,10 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   }
   config.parameters_["TRACING"] = "0";
 
+  if (auto result_format = test_utils::get_query_result_format(); !result_format.empty()) {
+    config.parameters_["ODBC_QUERY_RESULT_FORMAT"] = result_format;
+  }
+
   return config;
 }
 
@@ -171,7 +177,7 @@ std::string DataSourceConfig::connection_string() const {
 #ifdef _WIN32
     ss << "DSN=" << driver_config_.value()->name() << ";";
 #else
-    ss << "DRIVER={" << driver_config_.value()->get_driver_path() << "};";
+    ss << "DRIVER={" << driver_config_.value()->name() << "};";
 #endif
   }
   for (const auto& [key, value] : parameters_) {
@@ -212,7 +218,20 @@ picojson::object DataSourceConfig::load_parameters(const std::string& connection
     throw std::runtime_error("Connection '" + connection_name + "' is not an object");
   }
 
-  return params.get<picojson::object>();
+  picojson::object result = params.get<picojson::object>();
+  if (connection_name == "testconnection") {
+    const auto& all_connections = connections.get<picojson::object>();
+    if (all_connections.count("testconnection-odbc")) {
+      const picojson::value& overrides = all_connections.at("testconnection-odbc");
+      if (overrides.is<picojson::object>()) {
+        for (const auto& [key, value] : overrides.get<picojson::object>()) {
+          result[key] = value;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 std::string DataSourceConfig::get_string(const picojson::object& obj, const std::string& key,

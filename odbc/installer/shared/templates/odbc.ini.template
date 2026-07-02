@@ -1,0 +1,7 @@
+[snowflake]
+Description=SnowflakeDB
+Driver=__DRIVER_NAME__
+Locale=en-US
+SERVER=__SF_ACCOUNT__.snowflakecomputing.com
+PORT=443
+ACCOUNT=__SF_ACCOUNT__

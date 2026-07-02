@@ -1,3 +1,7 @@
+use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+// Shared zero-backoff Azure test policy, derived from the production
+// `azure_retry_policy` (no drift). Aliased so call sites read `test_policy(..)`.
+use sf_core::file_manager::internal::azure_test_retry_policy as test_policy;
 use sf_core::file_manager::{CloudCredentials, LocationType, StageInfo};
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -19,10 +23,11 @@ fn azure_stage(mock_uri: &str) -> StageInfo {
         creds: CloudCredentials::Azure {
             sas_token: SensitiveString::from("sv=2021-08-06&sig=test-secret-sig&se=2099-01-01"),
         },
-        end_point: Some(mock_uri.to_string()),
+        endpoint: Some(mock_uri.to_string()),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
     }
 }
@@ -63,12 +68,24 @@ async fn azure_download_success_returns_data_and_metadata() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
-    let (data, digest, metadata) = result.expect("download should succeed");
-    assert_eq!(data, b"encrypted-data");
-    assert_eq!(digest, Some("test-digest".to_string()));
-    let metadata = metadata.expect("encryption metadata should be present");
+    let response = result.expect("download should succeed");
+    assert_eq!(response.data, b"encrypted-data");
+    assert_eq!(response.digest, Some("test-digest".to_string()));
+    assert_eq!(
+        response.cloud_byte_count,
+        b"encrypted-data".len() as i64,
+        "cloud_byte_count should equal the body length"
+    );
+    let metadata = response
+        .file_metadata
+        .expect("encryption metadata should be present");
     assert_eq!(metadata.encrypted_key, "dGVzdC1rZXk=");
     assert_eq!(metadata.iv, "dGVzdC1pdg==");
     assert_eq!(metadata.material_desc.query_id, "test-query");
@@ -99,7 +116,12 @@ async fn azure_download_403_is_retried_then_succeeds() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     assert!(result.is_ok(), "403 should be retried and succeed");
     assert_eq!(
@@ -128,7 +150,12 @@ async fn azure_download_404_is_not_retried() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     assert!(result.is_err(), "404 should be a hard failure");
     assert_eq!(attempt.load(Ordering::SeqCst), 1, "should NOT retry 404");
@@ -158,7 +185,12 @@ async fn azure_download_503_is_retried_then_succeeds() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     assert!(
         result.is_ok(),
@@ -187,7 +219,12 @@ async fn azure_error_response_redacts_sas_token() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
@@ -222,14 +259,20 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         creds: CloudCredentials::Azure {
             sas_token: SensitiveString::from("sv=2021-08-06&sig=test-secret-sig&se=2099-01-01"),
         },
-        end_point: Some(format!("http://{addr}")),
+        endpoint: Some(format!("http://{addr}")),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
     };
 
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     let err = result.unwrap_err();
     let err_display = format!("{err}");
@@ -257,7 +300,12 @@ async fn azure_download_with_wrong_creds_type_fails() {
         gcs_access_token: None,
     };
 
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
@@ -273,9 +321,14 @@ async fn azure_download_with_missing_storage_account_fails() {
     let mut stage = azure_stage(&server.uri());
     stage.storage_account = None;
     // Remove scheme so it falls through to the standard URL path
-    stage.end_point = Some("blob.core.windows.net".to_string());
+    stage.endpoint = Some("blob.core.windows.net".to_string());
 
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+    )
+    .await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");

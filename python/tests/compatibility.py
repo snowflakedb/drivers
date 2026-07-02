@@ -1,7 +1,7 @@
 def _check_if_universal():
     try:
         # Import universal driver specific code
-        from snowflake.connector._internal.api_client.client_api import database_driver_client  # noqa
+        from snowflake.connector._internal.api_client.client_api import core_driver  # noqa
 
         return True
     except ImportError:

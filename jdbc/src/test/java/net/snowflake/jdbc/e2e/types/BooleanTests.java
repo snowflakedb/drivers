@@ -7,12 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class BooleanTests extends SnowflakeIntegrationTestBase {
@@ -218,6 +219,37 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
           // Then Result should contain [NULL]
           assertSingleRow(resultSet, Arrays.asList((Boolean) null));
         });
+  }
+
+  @Test
+  public void shouldInsertBooleanUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And Table with BOOLEAN column exists
+    String tableName = createTempTable(connection, "ud_boolean_bind_", "col " + BOOLEAN_TYPE);
+
+    // When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
+    Boolean[] testValues = {true, false, null};
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+      for (Boolean value : testValues) {
+        if (value == null) {
+          preparedStatement.setNull(1, Types.BOOLEAN);
+        } else {
+          preparedStatement.setBoolean(1, value);
+        }
+        preparedStatement.addBatch();
+      }
+      int[] counts = preparedStatement.executeBatch();
+      assertEquals(testValues.length, counts.length, "Expected one count per batched row");
+    }
+
+    // Then SELECT should return the same values in any order
+    withQueryResult(
+        connection,
+        "SELECT col FROM " + tableName,
+        resultSet -> assertBooleanResults(resultSet, 1, 1, 1));
   }
 
   private static List<Boolean> assertBooleanTypes(ResultSet resultSet, int columnCount)

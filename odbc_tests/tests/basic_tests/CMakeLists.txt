@@ -1,3 +1,3 @@
 cmake_minimum_required(VERSION 4.0)
 
-add_odbc_test(basic_tests test.cpp)
+add_odbc_test(basic_tests test.cpp flaky_test.cpp)

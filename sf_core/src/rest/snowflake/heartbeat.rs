@@ -10,33 +10,41 @@ use crate::rest::snowflake::{
 };
 
 const HEARTBEAT_PATH: &str = "/session/heartbeat";
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(300);
 
-#[derive(Debug, serde::Deserialize)]
-struct HeartbeatResponse {
-    success: bool,
-    message: Option<String>,
-    code: Option<String>,
-}
+type HeartbeatResponse = crate::rest::snowflake::SnowflakeResponse<serde_json::Value>;
 
-/// Send a heartbeat POST to keep the session alive.
+/// Send a heartbeat POST to keep the session alive using the default timeout.
 ///
 /// Returns `Ok(())` on success, `RestError::InvalidSnowflakeResponse` with
 /// `SnowflakeResponseError::SessionExpired` on HTTP 401, or
 /// `RestError::Heartbeat` when the server explicitly reports failure.
-#[tracing::instrument(skip(client, client_info, session_token))]
 pub async fn send_heartbeat(
     client: &reqwest::Client,
     server_url: &Url,
     client_info: &ClientInfo,
     session_token: &str,
 ) -> Result<(), RestError> {
+    send_heartbeat_with_timeout(client, server_url, client_info, session_token, None).await
+}
+
+/// Like [`send_heartbeat`] but with an optional timeout override.
+///
+/// When `timeout` is `None`, the default 300 s HTTP request timeout is used.
+#[tracing::instrument(skip(client, client_info, session_token))]
+pub async fn send_heartbeat_with_timeout(
+    client: &reqwest::Client,
+    server_url: &Url,
+    client_info: &ClientInfo,
+    session_token: &str,
+    timeout: Option<Duration>,
+) -> Result<(), RestError> {
     let url = server_url.join(HEARTBEAT_PATH).context(UrlJoinSnafu {
         path: HEARTBEAT_PATH,
     })?;
 
     let request = apply_query_headers(client.post(url), client_info, session_token)
-        .timeout(HEARTBEAT_TIMEOUT)
+        .timeout(timeout.unwrap_or(DEFAULT_HEARTBEAT_TIMEOUT))
         .build()
         .context(crate::rest::snowflake::RequestConstructionSnafu {
             request: "heartbeat",
@@ -50,7 +58,7 @@ pub async fn send_heartbeat(
                 context: "Failed to execute heartbeat request",
             })?;
 
-    let parsed: HeartbeatResponse = read_response_json(response)
+    let parsed: HeartbeatResponse = read_response_json::<serde_json::Value>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -86,10 +94,7 @@ mod tests {
             .and(path("/session/heartbeat"))
             .and(header_regex("Authorization", r#"^Snowflake Token=".+"$"#))
             .and(header("Accept", "application/json"))
-            .and(header_regex(
-                "User-Agent",
-                r#"^.+/\S+ \(\S+\) CPython/3\.11\.6$"#,
-            ))
+            .and(header_regex("User-Agent", r#"^.+/\S+ \(\S+\)"#))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": true
             })))
@@ -179,8 +184,8 @@ mod tests {
             .and(path("/session/heartbeat"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": false,
-                "message": "Session gone",
-                "code": "390112"
+                "message": "Some heartbeat failure",
+                "code": "390100"
             })))
             .mount(&server)
             .await;

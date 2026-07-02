@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::ReadArrowType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::error::ReadArrowError;
@@ -9,7 +10,7 @@ mod tests {
     };
     use crate::conversion::time::SnowflakeTime;
     use arrow::array::PrimitiveArray;
-    use arrow::datatypes::Int64Type;
+    use arrow::datatypes::{Int32Type, Int64Type};
     use chrono::NaiveTime;
     use odbc_sys as sql;
 
@@ -118,6 +119,114 @@ mod tests {
     }
 
     // ========================================================================
+    // ReadArrowType — Int32 backing array. TIME columns with scale ≤ 4
+    // are encoded as Int32 on the wire; the converter must downcast
+    // to PrimitiveArray<Int32Type> in that case rather than Int64Type.
+    // ========================================================================
+
+    #[test]
+    fn read_arrow_int32_scale_0_whole_seconds() {
+        let sn = time(0);
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(45_296)]); // 12:34:56
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveTime::from_hms_opt(12, 34, 56).unwrap());
+    }
+
+    #[test]
+    fn read_arrow_int32_scale_0_max_second_of_day() {
+        let sn = time(0);
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(86_399)]); // 23:59:59
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+    }
+
+    #[test]
+    fn read_arrow_int32_scale_3_milliseconds() {
+        let sn = time(3);
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(45_296_789)]); // 12:34:56.789
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(
+            value,
+            NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap()
+        );
+    }
+
+    #[test]
+    fn read_arrow_int32_scale_4_max_value() {
+        // The largest value Snowflake stores in an Int32 TIME column: scale=4
+        // and time = 23:59:59.9999 → 86_399 * 10_000 + 9_999 = 863_999_999,
+        // which still fits in i32::MAX (2_147_483_647).
+        let sn = time(4);
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(863_999_999)]);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(
+            value,
+            NaiveTime::from_hms_nano_opt(23, 59, 59, 999_900_000).unwrap()
+        );
+    }
+
+    #[test]
+    fn read_arrow_int32_midnight() {
+        let sn = time(4);
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(0)]);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn read_arrow_int32_null_returns_null_error() {
+        let sn = time(0);
+        let array = PrimitiveArray::<Int32Type>::from(vec![None::<i32>]);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(result, Err(ReadArrowError::NullValue { .. })));
+    }
+
+    #[test]
+    fn read_arrow_int32_negative_value_returns_invalid() {
+        let sn = time(0);
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(-1)]);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(
+            result,
+            Err(ReadArrowError::InvalidArrowValue { .. })
+        ));
+    }
+
+    #[test]
+    fn read_arrow_int32_overflow_secs_returns_invalid() {
+        let sn = time(0);
+        // 86400 seconds = 24:00:00, out of valid range 0..86399
+        let array = PrimitiveArray::<Int32Type>::from(vec![Some(86_400)]);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(
+            result,
+            Err(ReadArrowError::InvalidArrowValue { .. })
+        ));
+    }
+
+    #[test]
+    fn read_arrow_int32_picks_correct_row() {
+        let sn = time(0);
+        let array = PrimitiveArray::<Int32Type>::from(vec![
+            Some(0),      // 00:00:00
+            None,         // null
+            Some(45_296), // 12:34:56
+        ]);
+        assert_eq!(
+            sn.read_arrow_type(&array, 0).unwrap(),
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        );
+        assert!(matches!(
+            sn.read_arrow_type(&array, 1),
+            Err(ReadArrowError::NullValue { .. })
+        ));
+        assert_eq!(
+            sn.read_arrow_type(&array, 2).unwrap(),
+            NaiveTime::from_hms_opt(12, 34, 56).unwrap()
+        );
+    }
+
+    // ========================================================================
     // WriteODBCType — SQL_C_TYPE_TIME struct
     // ========================================================================
 
@@ -201,13 +310,13 @@ mod tests {
     #[test]
     fn write_wchar_scale_9_includes_fractional() {
         let sn = time(9);
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let input = NaiveTime::from_hms_nano_opt(12, 34, 56, 123_456_789).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        let expected: Vec<u16> = "12:34:56.123456789".encode_utf16().collect();
+        let expected = encode_wide("12:34:56.123456789");
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
@@ -218,14 +327,14 @@ mod tests {
     #[test]
     fn write_wchar() {
         let sn = time(0);
-        let mut buffer = vec![0u16; 16];
+        let mut buffer = vec![0 as WideChar; 16];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let input = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 16); // 8 UTF-16 code units * 2 bytes
-        let expected: Vec<u16> = "12:00:00".encode_utf16().collect();
+        let expected = encode_wide("12:00:00");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 

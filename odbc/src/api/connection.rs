@@ -1,7 +1,8 @@
 use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::encoding::{
-    OdbcEncoding, read_string_from_pointer, write_string_bytes, write_string_bytes_i32,
+    OdbcEncoding, read_pre_connection_string_attr, read_string_from_pointer, write_string_bytes,
+    write_string_bytes_i32, write_string_chars_i32,
 };
 use crate::api::error::Required;
 use crate::api::error::{
@@ -10,10 +11,26 @@ use crate::api::error::{
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu,
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
+use crate::api::get_info_bitmasks::{
+    AGGREGATE_FUNCTIONS, BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY,
+    CONVERT_BIT, CONVERT_CHAR, CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT,
+    CONVERT_FUNCTIONS, CONVERT_GUID, CONVERT_INTEGER, CONVERT_LONGVARBINARY, CONVERT_LONGVARCHAR,
+    CONVERT_NUMERIC, CONVERT_REAL, CONVERT_SMALLINT, CONVERT_TIME, CONVERT_TIMESTAMP,
+    CONVERT_TINYINT, CONVERT_VARBINARY, CONVERT_VARCHAR, CONVERT_WCHAR, CONVERT_WLONGVARCHAR,
+    CONVERT_WVARCHAR, DYNAMIC_CURSOR_ATTRIBUTES1, FORWARD_ONLY_CURSOR_ATTRIBUTES1,
+    FORWARD_ONLY_CURSOR_ATTRIBUTES2, KEYSET_CURSOR_ATTRIBUTES1, KEYSET_CURSOR_ATTRIBUTES2,
+    LOCK_TYPES, NUMERIC_FUNCTIONS, POS_OPERATIONS, SCHEMA_USAGE, SCROLL_CONCURRENCY,
+    SCROLL_OPTIONS, SQL92_PREDICATES, SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_VALUE_EXPRESSIONS,
+    STATIC_CURSOR_ATTRIBUTES1, STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS,
+    SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, synthesize,
+};
+use crate::api::handle_registry::HandleGuard;
+use crate::api::oauth;
+use crate::api::odbc_installer::resolve_driver_path;
 use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
-    types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
+    types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
 };
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
@@ -26,6 +43,10 @@ const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
 const SQL_CD_FALSE: sql::UInteger = 0;
 const SQL_CD_TRUE: sql::UInteger = 1;
 const SQL_FALSE: sql::UInteger = 0;
+
+const ODBC_DRIVER_NAME: &str = "ODBC";
+const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
@@ -63,8 +84,19 @@ fn normalize_connection_string_option(
         return None;
     }
 
+    // Forward known OAuth keys with their explicit `sf_core` canonical
+    // (lowercase) name instead of relying on the catch-all uppercase
+    // passthrough + alias resolution. Owning the mapping here keeps the
+    // OAuth surface self-documenting on the wrapper side.
+    if let Some(canonical) = oauth::canonical_name(&upper) {
+        return Some((canonical.to_owned(), value.into()));
+    }
+
     match upper.as_str() {
         "PORT" => Some(("port".to_owned(), value.into())),
+        // APPLICATION carries the user-facing app name → CLIENT_ENVIRONMENT.APPLICATION.
+        // CLIENT_APP_ID stays as the wrapper-injected driver name ("ODBC").
+        "APPLICATION" => Some(("application".to_owned(), value.into())),
         "CRL_MODE" => Some(("CRL_MODE".to_owned(), value.to_uppercase().into())),
         "CRL_ENABLED" => Some((
             "CRL_ENABLED".to_owned(),
@@ -73,6 +105,9 @@ fn normalize_connection_string_option(
         "CLIENT_STORE_TEMPORARY_CREDENTIAL" => {
             Some(("client_store_temporary_credential".to_owned(), value.into()))
         }
+        "DISABLE_PARALLEL_USER_PROMPT" => {
+            Some(("disable_parallel_user_prompt".to_owned(), value.into()))
+        }
         "LOGIN_TIMEOUT" => Some(("authentication_timeout".to_owned(), value.into())),
         "PASSCODEINPASSWORD" => Some(("passcodeInPassword".to_owned(), value.into())),
         "PRIV_KEY_FILE" => Some(("private_key_file".to_owned(), value.into())),
@@ -80,7 +115,7 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
-        // Forward other keys (e.g. SERVER, UID) for `sf_core` alias resolution; do not
+        // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
     }
@@ -191,7 +226,12 @@ pub fn driver_connect<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let params = parse_connection_string(&connection_string)?;
-    connect_with_params(connection_handle, params)
+    // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
+    // they get normalised away — they are needed later to resolve the
+    // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+    let driver_section = params.get("DRIVER").cloned();
+    let dsn_name = params.get("DSN").cloned();
+    connect_with_params(connection_handle, params, driver_section, dsn_name)
 }
 
 /// Core connection logic shared by `driver_connect` and `connect`.
@@ -202,25 +242,23 @@ pub fn driver_connect<E: OdbcEncoding>(
 fn connect_with_params(
     connection_handle: sql::Handle,
     params: HashMap<String, String>,
+    driver_section: Option<String>,
+    dsn_name: Option<String>,
 ) -> OdbcResult<()> {
+    tracing::info!(
+        "connect_with_params: params={:?}",
+        oauth::redacted_param_map(&params)
+    );
+
+    // Stash the ini-identity hints on the DBC up front so they are
+    // available to `SQLGetInfo(SQL_DRIVER_NAME)` even if the connection
+    // itself fails partway through. Connection-string parsing has
+    // already validated the strings; we just retain them verbatim.
     {
-        const REDACTED_KEYS: &[&str] = &[
-            "PWD",
-            "TOKEN",
-            "PRIV_KEY_FILE_PWD",
-            "PRIV_KEY_PWD",
-            "PRIV_KEY_BASE64",
-            "PASSCODE",
-        ];
-        let redacted_map: HashMap<&String, &str> = params
-            .iter()
-            .map(|(k, v)| {
-                let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
-                let v = if is_sensitive { "****" } else { v.as_str() };
-                (k, v)
-            })
-            .collect();
-        tracing::info!("connect_with_params: params={:?}", redacted_map);
+        let dbc = conn_from_handle(connection_handle)?;
+        let mut conn = dbc.connection.lock();
+        conn.driver_section = driver_section;
+        conn.dsn_name = dsn_name;
     }
 
     let mut options = normalize_connection_string_options(params);
@@ -234,15 +272,27 @@ fn connect_with_params(
         options.insert("port".to_owned(), port_int.into());
     }
 
-    let connection = conn_from_handle(connection_handle);
-    apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
+    // Legacy ODBC silently swallows all logout errors (destructor catch-all).
+    options
+        .entry("LOGOUT_ERROR_STRATEGY".to_owned())
+        .or_insert_with(|| "best_effort".to_owned().into());
 
-    // Check before moving `options` into the RPC call below.
-    let login_timeout_in_options = options.contains_key("authentication_timeout");
-    let login_timeout_in_attrs = connection
-        .pre_connection_attrs
-        .contains_key(&ConnectionAttribute::LoginTimeout);
-    let pre_connection_attrs = connection.pre_connection_attrs.clone();
+    let dbc = conn_from_handle(connection_handle)?;
+    // Read pre-connection data under lock, then release before the async call.
+    let (pre_connection_attrs, login_timeout_in_options, login_timeout_in_attrs) = {
+        let connection = dbc.connection.lock();
+        apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
+        let login_timeout_in_options = options.contains_key("authentication_timeout");
+        let login_timeout_in_attrs = connection
+            .pre_connection_attrs
+            .contains_key(&ConnectionAttribute::LoginTimeout);
+        let pre_connection_attrs = connection.pre_connection_attrs.clone();
+        (
+            pre_connection_attrs,
+            login_timeout_in_options,
+            login_timeout_in_attrs,
+        )
+    };
 
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let db_handle = c
@@ -260,6 +310,9 @@ fn connect_with_params(
             .connection_set_options(ConnectionSetOptionsRequest {
                 conn_handle: Some(conn_handle),
                 options,
+                // ODBC always connects via a connection string / DSN, so there
+                // is no bare-connect default-profile fallback to trigger.
+                no_connection_details: false,
             })
             .await?;
 
@@ -267,23 +320,22 @@ fn connect_with_params(
             tracing::warn!("connection option warning: {}", warning.message);
         }
 
-        // Wrapper identity and optional default login timeout (Okta SAML budget) use the
-        // same batch setter RPC as the connection string options.
-        let mut follow_up = HashMap::from([("client_app_id".to_owned(), "ODBC".to_owned().into())]);
+        // Optional default login timeout (Okta SAML budget).
         if !login_timeout_in_options && !login_timeout_in_attrs {
-            follow_up.insert(
+            let follow_up = HashMap::from([(
                 "authentication_timeout".to_owned(),
                 DEFAULT_LOGIN_TIMEOUT_SECS.to_owned().into(),
-            );
-        }
-        let response = c
-            .connection_set_options(ConnectionSetOptionsRequest {
-                conn_handle: Some(conn_handle),
-                options: follow_up,
-            })
-            .await?;
-        for warning in &response.warnings {
-            tracing::warn!("connection option warning: {}", warning.message);
+            )]);
+            let response = c
+                .connection_set_options(ConnectionSetOptionsRequest {
+                    conn_handle: Some(conn_handle),
+                    options: follow_up,
+                    no_connection_details: false,
+                })
+                .await?;
+            for warning in &response.warnings {
+                tracing::warn!("connection option warning: {}", warning.message);
+            }
         }
 
         apply_pre_connection_runtime_attrs_async(c, &pre_connection_attrs, conn_handle).await?;
@@ -291,7 +343,14 @@ fn connect_with_params(
         c.connection_init(ConnectionInitRequest {
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
-            ..Default::default()
+            wrapper_identity: Some(WrapperIdentity {
+                driver_name: Some(ODBC_DRIVER_NAME.to_string()),
+                driver_version: Some(ODBC_DRIVER_VERSION.to_string()),
+                // Set at compile time in `build.rs` (`SF_ODBC_*`) from Cargo / rustc.
+                language_runtime: Some(env!("SF_ODBC_WRAPPER_LANGUAGE_RUNTIME").to_string()),
+                language_version: Some(env!("SF_ODBC_BUILD_RUST_SEMVER").to_string()),
+                language_compiler: None,
+            }),
         })
         .await?;
 
@@ -300,7 +359,7 @@ fn connect_with_params(
 
     tracing::info!("connect_with_params: connection_init completed");
 
-    connection.state = ConnectionState::Connected {
+    dbc.connection.lock().state = ConnectionState::Connected {
         db_handle,
         conn_handle,
     };
@@ -309,7 +368,7 @@ fn connect_with_params(
     // already established (state = Connected). Use warn-and-continue rather than `?`
     // to avoid returning an error after the state was set to Connected.
     // ConnectionHandle is Copy, so conn_handle is still accessible after the move above.
-    connection.current_catalog = match global().context(OdbcRuntimeSnafu) {
+    let current_catalog = match global().context(OdbcRuntimeSnafu) {
         Ok(rt) => rt
             .block_on(async |c| {
                 let info = c
@@ -332,6 +391,7 @@ fn connect_with_params(
             None
         }
     };
+    dbc.connection.lock().current_catalog = current_catalog;
 
     Ok(())
 }
@@ -360,7 +420,9 @@ fn apply_pre_connection_overrides(
         options.insert("private_key_password".to_owned(), pwd.clone().into());
     }
 
-    // Application name
+    // SQL_SF_CONN_ATTR_APPLICATION → CLIENT_ENVIRONMENT.APPLICATION via the
+    // canonical ``application`` setting. CLIENT_APP_ID stays as the
+    // wrapper-injected driver name (matches the old ODBC driver).
     if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
         options.insert("application".to_owned(), app.clone().into());
     }
@@ -450,7 +512,11 @@ pub fn connect<E: OdbcEncoding>(
     params
         .retain(|k, _| !k.eq_ignore_ascii_case("Driver") && !k.eq_ignore_ascii_case("Description"));
 
-    connect_with_params(connection_handle, params)
+    // The DSN name is what reaches `SQLGetInfo(SQL_DRIVER_NAME)` for
+    // resolving the driver's installed file path via `odbc.ini` →
+    // `odbcinst.ini`. SQLConnect never carries a `DRIVER=` keyword, so
+    // there is no direct driver section to capture here.
+    connect_with_params(connection_handle, params, None, Some(dsn))
 }
 
 /// Look up DSN parameters.
@@ -487,33 +553,20 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 }
 
 /// Parse an INI-format string and return the key/value pairs from `section`.
+///
+/// Section name matching is case-insensitive; returned keys are uppercased.
 #[cfg(not(windows))]
 fn parse_ini_section(content: &str, section: &str) -> Option<HashMap<String, String>> {
-    let mut in_section = false;
-    let mut params = HashMap::new();
-    let mut found = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') && line.ends_with(']') {
-            let s = &line[1..line.len() - 1];
-            in_section = s.eq_ignore_ascii_case(section);
-            if in_section {
-                found = true;
-            }
-            continue;
-        }
-        if !in_section || line.starts_with('#') || line.starts_with(';') || line.is_empty() {
-            continue;
-        }
-        if let Some(eq_pos) = line.find('=') {
-            let key = line[..eq_pos].trim().to_uppercase();
-            let value = line[eq_pos + 1..].trim().to_string();
-            params.insert(key, value);
-        }
-    }
-
-    if found { Some(params) } else { None }
+    let ini = ini::Ini::load_from_str_noescape(content).ok()?;
+    let props = ini.iter().find_map(|(name, props)| {
+        name.filter(|n| n.eq_ignore_ascii_case(section))
+            .map(|_| props)
+    })?;
+    let params = props
+        .iter()
+        .map(|(k, v)| (k.to_uppercase(), v.to_string()))
+        .collect();
+    Some(params)
 }
 
 /// Look up DSN parameters from the Windows registry.
@@ -557,36 +610,39 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
     .fail()
 }
 
-/// Disconnect from the database
+/// Disconnect from the database, performing logout and releasing sf_core handles.
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
-    let connection = conn_from_handle(connection_handle);
-    if let ConnectionState::Connected {
-        db_handle,
-        conn_handle,
-    } = std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
-    {
-        global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-            if let Err(e) = c
-                .connection_release(ConnectionReleaseRequest {
-                    conn_handle: Some(conn_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release core connection handle: {e:?}");
-            }
-            if let Err(e) = c
-                .database_release(DatabaseReleaseRequest {
-                    db_handle: Some(db_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release core database handle: {e:?}");
-            }
-        });
-    }
+    let dbc = conn_from_handle(connection_handle)?;
+    let mut connection = dbc.connection.lock();
+    let (db_handle, conn_handle) = match &connection.state {
+        ConnectionState::Connected {
+            db_handle,
+            conn_handle,
+        } => (*db_handle, *conn_handle),
+        ConnectionState::Disconnected => {
+            return DisconnectedSnafu.fail();
+        }
+    };
 
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.connection_close(ConnectionCloseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await?;
+        c.connection_release(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await?;
+        c.database_release(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        })
+        .await?;
+        Ok::<_, crate::api::OdbcError>(())
+    })?;
+
+    connection.state = ConnectionState::Disconnected;
     Ok(())
 }
 
@@ -621,8 +677,8 @@ pub fn native_sql<E: OdbcEncoding>(
         .fail();
     }
 
-    let conn = conn_from_handle(connection_handle);
-    if matches!(conn.state, ConnectionState::Disconnected) {
+    let dbc = conn_from_handle(connection_handle)?;
+    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
         return crate::api::error::DisconnectedSnafu.fail();
     }
 
@@ -632,7 +688,7 @@ pub fn native_sql<E: OdbcEncoding>(
         E::read_string(in_statement_text, text_length1)?
     };
 
-    write_string_bytes_i32::<E>(
+    write_string_chars_i32::<E>(
         &sql_text,
         out_statement_text,
         buffer_length,
@@ -665,8 +721,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     string_length: sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let connection = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
     tracing::debug!("set_connect_attr: attribute={attribute}");
+
+    const SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE: sql::Integer = 117;
+    if attribute == SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE {
+        return UnknownAttributeSnafu { attribute }.fail();
+    }
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
@@ -679,6 +740,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         }
     };
 
+    let mut connection = dbc.connection.lock();
     match attr {
         ConnectionAttribute::AccessMode => {
             let mode = AccessMode::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
@@ -701,16 +763,22 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             })?;
             // NOTE: Per ODBC spec, HY011 must be returned if a transaction is currently open.
             // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.
-            match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => {
+            let maybe_conn_handle = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            match maybe_conn_handle {
+                Some(conn_handle) => {
                     let autocommit_on = matches!(val, AutocommitValue::On);
+                    drop(connection);
                     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                         c.connection_set_autocommit(ConnectionSetAutocommitRequest {
-                            conn_handle: Some(*conn_handle),
+                            conn_handle: Some(conn_handle),
                             autocommit: autocommit_on,
                         })
                         .await
                     })?;
+                    let mut connection = dbc.connection.lock();
                     connection.cached_autocommit = val;
                     // Keep pre_connection_attrs in sync so a reconnect on the same handle
                     // re-applies the value set while connected rather than the stale pre-connect value.
@@ -719,7 +787,12 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                         .insert(attr, val.as_raw().to_string());
                     Ok(())
                 }
-                ConnectionState::Disconnected => {
+                // Per the ODBC spec, SQL_ATTR_AUTOCOMMIT may be set before
+                // connecting; cache it and let `apply_pre_connection_runtime_attrs_async`
+                // toggle the server on connect (SNOW-3235550 / SNOW-87908). Only the
+                // live server-toggle path requires an open connection, so we do NOT
+                // return 08003 here.
+                None => {
                     connection.cached_autocommit = val;
                     connection
                         .pre_connection_attrs
@@ -743,11 +816,20 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::TxnIsolation => {
-            // Snowflake supports only READ_COMMITTED. Accept it silently; substitute any
-            // other requested level with READ_COMMITTED and return 01S02 per ODBC spec.
-            // NOTE: HY011 when a transaction is open is deferred to SNOW-3240589.
-            if value_ptr as sql::UInteger != SQL_TXN_READ_COMMITTED {
+            // Snowflake always runs at READ COMMITTED. Full isolation-level support
+            // (HY011 when a transaction is open) is deferred to SNOW-3240589.
+            // Per ODBC spec §SQLSetConnectAttr: emit 01S02 whenever the driver
+            // substitutes the requested value.  READ_COMMITTED is accepted as-is;
+            // every other level is silently substituted so pools / ORMs that
+            // read-then-restore the isolation level see the expected warning.
+            let requested = value_ptr as sql::UInteger;
+            if requested != SQL_TXN_READ_COMMITTED {
+                tracing::debug!(
+                    "set_connect_attr: TxnIsolation={requested} substituted with READ_COMMITTED"
+                );
                 warnings.push(Warning::OptionValueChanged);
+            } else {
+                tracing::debug!("set_connect_attr: TxnIsolation=READ_COMMITTED accepted");
             }
             Ok(())
         }
@@ -756,30 +838,23 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 ConnectionState::Connected { conn_handle, .. } => *conn_handle,
                 ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
             };
+            let g = global().context(OdbcRuntimeSnafu)?;
             // Return 24000 if any statement has an open cursor.
-            for (weak, raw_ptr) in &connection.child_statements {
-                // Use strong_count to check liveness without constructing Arc<Statement>
-                // (i.e., &Statement), which would coexist with the outer &mut Connection
-                // and create an aliasing hazard via Statement::conn: *mut Connection.
-                if weak.strong_count() == 0 {
-                    continue;
-                }
-                // SAFETY: strong_count > 0 guarantees the Arc allocation (and the Statement
-                // it points to) is still alive. We project to `state` via addr_of! rather than
-                // forming &Statement to avoid aliasing conn: *mut Connection with &mut Connection.
-                let is_cursor_open = unsafe {
-                    let state_ptr = std::ptr::addr_of!((*(*raw_ptr)).state);
-                    matches!(
-                        (*state_ptr).as_ref(),
+            for &child_id in &connection.child_statements {
+                if let Ok(stmt_guard) = g.stmt_registry.get(child_id) {
+                    let inner = stmt_guard.inner.lock();
+                    let is_cursor_open = matches!(
+                        inner.state.as_ref(),
                         StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
-                    )
-                };
-                if is_cursor_open {
-                    return InvalidCursorStateSnafu.fail();
+                    );
+                    if is_cursor_open {
+                        return InvalidCursorStateSnafu.fail();
+                    }
                 }
             }
             let catalog = read_string_from_pointer::<E>(value_ptr, string_length)?;
             let catalog = catalog.trim().to_string();
+            drop(connection);
             global()
                 .context(OdbcRuntimeSnafu)?
                 .block_on(async |c| {
@@ -802,7 +877,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                         _ => e.into(),
                     }
                 })?;
-            connection.current_catalog = Some(catalog);
+            dbc.connection.lock().current_catalog = Some(catalog);
             Ok(())
         }
         ConnectionAttribute::QuietMode => {
@@ -824,8 +899,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::MetadataId => {
-            let val = value_ptr as sql::ULen;
-            connection.metadata_id = val != 0;
+            connection.metadata_id = value_ptr as sql::ULen != 0;
             Ok(())
         }
         ConnectionAttribute::ConnectionDead | ConnectionAttribute::AutoIpd => {
@@ -855,7 +929,11 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
-            let value = read_string_from_pointer::<E>(value_ptr, string_length)?;
+            // These are Snowflake-custom attribute IDs; iODBC's narrow→wide
+            // bridge does not transcode them, so the W variant of the
+            // driver may receive a narrow buffer. `read_pre_connection_string_attr`
+            // sniffs the leading bytes and reads narrow-or-wide as needed.
+            let value = read_pre_connection_string_attr::<E>(value_ptr, string_length)?;
             tracing::debug!("set_connect_attr: {attr:?} (set)");
             connection.pre_connection_attrs.insert(attr, value);
             Ok(())
@@ -872,22 +950,32 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     string_length_ptr: *mut sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let connection = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
     tracing::debug!("get_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
+        // Per ODBC, a get of a valid-but-unsupported attribute returns HYC00,
+        // while an identifier outside the ODBC-defined range returns HY092
+        // (SNOW-3235557).
+        None if ConnectionAttribute::is_known_odbc(attribute) => {
+            tracing::warn!("get_connect_attr: unsupported ODBC attribute {attribute}");
+            return UnsupportedAttributeSnafu { attribute }.fail();
+        }
         None => {
             tracing::warn!("get_connect_attr: unknown attribute {attribute}");
             return UnknownAttributeSnafu { attribute }.fail();
         }
     };
 
+    let connection = dbc.connection.lock();
     match attr {
         ConnectionAttribute::AccessMode => {
+            let access_mode = connection.access_mode;
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::UInteger) = connection.access_mode.as_raw();
+                    *(value_ptr as *mut sql::UInteger) = access_mode.as_raw();
                 }
             }
             if !string_length_ptr.is_null() {
@@ -901,34 +989,38 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             // Per spec: query the server for the actual autocommit state when connected;
             // fall back to the cached value if the RPC fails or the parameter is absent.
             // The cache is the authoritative source when disconnected.
-            let val: sql::UInteger = match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => {
-                    match get_session_parameter(conn_handle, "AUTOCOMMIT") {
-                        Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
-                            connection.cached_autocommit = AutocommitValue::On;
-                            AutocommitValue::On.as_raw()
-                        }
-                        Ok(Some(_)) => {
-                            connection.cached_autocommit = AutocommitValue::Off;
-                            AutocommitValue::Off.as_raw()
-                        }
-                        Ok(None) => {
-                            tracing::warn!(
-                                "get_connect_attr: AUTOCOMMIT session parameter missing, \
-                                 falling back to cached value"
-                            );
-                            connection.cached_autocommit.as_raw()
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "get_connect_attr: failed to read AUTOCOMMIT session parameter \
-                                 ({e}), falling back to cached value"
-                            );
-                            connection.cached_autocommit.as_raw()
-                        }
+            let maybe_conn_handle = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            let cached = connection.cached_autocommit;
+            drop(connection);
+            let val: sql::UInteger = match maybe_conn_handle {
+                Some(conn_handle) => match get_session_parameter(&conn_handle, "AUTOCOMMIT") {
+                    Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
+                        dbc.connection.lock().cached_autocommit = AutocommitValue::On;
+                        AutocommitValue::On.as_raw()
                     }
-                }
-                ConnectionState::Disconnected => connection.cached_autocommit.as_raw(),
+                    Ok(Some(_)) => {
+                        dbc.connection.lock().cached_autocommit = AutocommitValue::Off;
+                        AutocommitValue::Off.as_raw()
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "get_connect_attr: AUTOCOMMIT session parameter missing, \
+                                 falling back to cached value"
+                        );
+                        cached.as_raw()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "get_connect_attr: failed to read AUTOCOMMIT session parameter \
+                                 ({e}), falling back to cached value"
+                        );
+                        cached.as_raw()
+                    }
+                },
+                None => cached.as_raw(),
             };
             if !value_ptr.is_null() {
                 unsafe {
@@ -953,6 +1045,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }),
                 None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
             };
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::UInteger) = timeout;
@@ -966,6 +1059,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::TxnIsolation => {
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::UInteger) = SQL_TXN_READ_COMMITTED;
@@ -985,40 +1079,14 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
-            let database = match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => {
-                    let conn_handle = *conn_handle;
-                    match global().context(OdbcRuntimeSnafu).and_then(|rt| {
-                        rt.block_on(async |c| {
-                            let info = c
-                                .connection_get_info(ConnectionGetInfoRequest {
-                                    conn_handle: Some(conn_handle),
-                                    info_codes: vec![],
-                                    include_master_token: false,
-                                })
-                                .await?;
-                            Ok::<Option<String>, crate::api::OdbcError>(info.database)
-                        })
-                    }) {
-                        Ok(db) => {
-                            connection.current_catalog = db.clone();
-                            db
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "get_connect_attr: failed to fetch current catalog from server: \
-                                 {e:?}; falling back to cached value"
-                            );
-                            connection.current_catalog.clone()
-                        }
-                    }
-                }
-                // When disconnected, return the cached catalog (or empty string).
-                // Per ODBC spec the catalog is indeterminate before connecting;
-                // returning an error would break applications that probe this attribute
-                // before calling SQLConnect.
-                ConnectionState::Disconnected => connection.current_catalog.clone(),
-            };
+            // The current catalog is a server-side session property, so it is
+            // indeterminate without an open connection: return 08003 when
+            // disconnected (SNOW-3235557) rather than a stale/empty cached value.
+            if matches!(connection.state, ConnectionState::Disconnected) {
+                return DisconnectedSnafu.fail();
+            }
+            drop(connection);
+            let database = current_database(&dbc)?;
             let database_str = database.as_deref().unwrap_or("");
             write_string_bytes_i32::<E>(
                 database_str,
@@ -1030,17 +1098,21 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::QuietMode => {
+            let quiet_mode = connection.quiet_mode;
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::Pointer) = connection.quiet_mode;
+                    *(value_ptr as *mut sql::Pointer) = quiet_mode;
                 }
             }
             Ok(())
         }
         ConnectionAttribute::PacketSize => {
+            let packet_size = connection.packet_size;
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::UInteger) = connection.packet_size;
+                    *(value_ptr as *mut sql::UInteger) = packet_size;
                 }
             }
             if !string_length_ptr.is_null() {
@@ -1051,6 +1123,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::ConnectionTimeout => {
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::UInteger) = 0;
@@ -1064,10 +1137,11 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::ConnectionDead => {
-            let dead = match &connection.state {
+            let dead = match connection.state {
                 ConnectionState::Connected { .. } => SQL_CD_FALSE,
                 ConnectionState::Disconnected => SQL_CD_TRUE,
             };
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::UInteger) = dead;
@@ -1081,6 +1155,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::AutoIpd => {
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::UInteger) = SQL_FALSE;
@@ -1094,9 +1169,11 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::MetadataId => {
+            let metadata_id = connection.metadata_id;
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = connection.metadata_id as sql::ULen;
+                    *(value_ptr as *mut sql::ULen) = metadata_id as sql::ULen;
                 }
             }
             if !string_length_ptr.is_null() {
@@ -1114,9 +1191,11 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 .pre_connection_attrs
                 .get(&attr)
                 .map(|s| s.as_str())
-                .unwrap_or("");
+                .unwrap_or("")
+                .to_owned();
+            drop(connection);
             write_string_bytes_i32::<E>(
-                value,
+                &value,
                 value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,
@@ -1124,10 +1203,111 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             );
             Ok(())
         }
-        ConnectionAttribute::PrivKey => UnsupportedAttributeSnafu {
-            attribute: attr.as_raw(),
+        ConnectionAttribute::PrivKey => {
+            drop(connection);
+            UnsupportedAttributeSnafu {
+                attribute: attr.as_raw(),
+            }
+            .fail()
         }
-        .fail(),
+    }
+}
+
+/// Write an ODBC string value into the `SQLGetInfo` output buffers.
+/// Both pointers are individually null-guarded — the Driver Manager passes
+/// null for either side when it only wants the other.
+fn write_get_info_string<E: OdbcEncoding>(
+    value: &str,
+    info_value_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    write_string_bytes::<E>(
+        value,
+        info_value_ptr as *mut E::Char,
+        buffer_length,
+        string_length_ptr,
+        None,
+    );
+}
+
+/// Write a `SQLUSMALLINT` info value (used by InfoTypes whose return type is
+/// `SQLUSMALLINT`, e.g. `SQL_CONCAT_NULL_BEHAVIOR`).
+fn write_get_info_u16(
+    value: u16,
+    info_value_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    if !info_value_ptr.is_null() {
+        unsafe {
+            *(info_value_ptr as *mut u16) = value;
+        }
+    }
+    if !string_length_ptr.is_null() {
+        unsafe {
+            *string_length_ptr = std::mem::size_of::<u16>() as sql::SmallInt;
+        }
+    }
+}
+
+/// Write a `SQLUINTEGER` info value (used by all bitmask InfoTypes and the
+/// `SQLUINTEGER`-typed numeric InfoTypes).
+fn write_get_info_u32(
+    value: u32,
+    info_value_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    if !info_value_ptr.is_null() {
+        unsafe {
+            *(info_value_ptr as *mut u32) = value;
+        }
+    }
+    if !string_length_ptr.is_null() {
+        unsafe {
+            *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+        }
+    }
+}
+
+/// Current database (catalog) for this connection.
+///
+/// Reads sf_core's authoritative, continuously-updated session state via
+/// `connection_get_info` — an in-process lock read, not a Snowflake round
+/// trip — so it reflects server-side `USE DATABASE` issued as queries, which
+/// the odbc-layer `current_catalog` cache does not track. The cache is
+/// refreshed as a side-effect on success.
+///
+/// Failure policy (matches `SQL_DBMS_VER` in `get_info`):
+///
+/// * Disconnected: returns `Ok(cached value)`. Catalog is indeterminate
+///   pre-connect; erroring would break apps that probe before `SQLConnect`.
+/// * Connected, RPC ok: returns `Ok(database)`, cache refreshed.
+/// * Connected, RPC err: propagates (missing handle / poisoned lock only).
+fn current_database(dbc: &HandleGuard<Dbc>) -> OdbcResult<Option<String>> {
+    let (conn_handle, cached) = {
+        let conn = dbc.connection.lock();
+        let ch = match conn.state {
+            ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+            ConnectionState::Disconnected => None,
+        };
+        (ch, conn.current_catalog.clone())
+    };
+    match conn_handle {
+        Some(handle) => {
+            let db = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                let info = c
+                    .connection_get_info(ConnectionGetInfoRequest {
+                        conn_handle: Some(handle),
+                        info_codes: vec![],
+                        include_master_token: false,
+                    })
+                    .await?;
+                Ok::<Option<String>, crate::api::OdbcError>(info.database)
+            })?;
+            dbc.connection.lock().current_catalog = db.clone();
+            Ok(db)
+        }
+        None => Ok(cached),
     }
 }
 
@@ -1142,55 +1322,193 @@ pub fn get_info<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
-    let _conn = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
 
     let info_type = InfoType::try_from(info_type)?;
     tracing::debug!("get_info: info_type={info_type:?}");
 
+    // Local aliases to keep each match arm a single readable line.
+    let write_str =
+        |s: &str| write_get_info_string::<E>(s, info_value_ptr, buffer_length, string_length_ptr);
+    let write_u16 = |v: u16| write_get_info_u16(v, info_value_ptr, string_length_ptr);
+    let write_u32 = |v: u32| write_get_info_u32(v, info_value_ptr, string_length_ptr);
+
     match info_type {
-        InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => {
-            let cb_close: u16 = 1;
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u16) = cb_close;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u16>() as sql::SmallInt;
-                }
-            }
-            Ok(())
+        // ----- Strings -----------------------------------------------------
+        InfoType::DriverName => {
+            // Per ODBC spec, `SQL_DRIVER_NAME` returns "a character string
+            // with the file name of the driver used to access the data
+            // source" — i.e. the on-disk path of the shared library the
+            // Driver Manager loaded. We resolve it via the DM's installer
+            // API (`SQLGetPrivateProfileString`) using whichever lookup
+            // hints we captured at connect time; see
+            // [`odbc_installer::resolve_driver_path`] for the layering.
+            let (driver_section, dsn_name) = {
+                let conn = dbc.connection.lock();
+                (conn.driver_section.clone(), conn.dsn_name.clone())
+            };
+            let path = resolve_driver_path(driver_section.as_deref(), dsn_name.as_deref());
+            write_str(&path);
+        }
+        InfoType::DriverVer => write_str(ODBC_DRIVER_VERSION),
+        InfoType::DbmsName => write_str("Snowflake"),
+        InfoType::DatabaseName => {
+            let db = current_database(&dbc)?;
+            write_str(db.as_deref().unwrap_or(""))
+        }
+        InfoType::DbmsVer => {
+            // Sourced from `serverVersion` in the login response (parsed in
+            // [`sf_core::rest::snowflake::auth::AuthResponseMain`]). Matches
+            // the legacy driver and avoids the extra `SELECT CURRENT_VERSION()`
+            // round trip that JDBC currently performs.
+            //
+            // Uses the dedicated `connection_get_server_version` getter
+            // rather than `connection_get_info` — Excel polls this attribute
+            // during `SQLDriverConnect` and the full info aggregation is
+            // wasteful when only the version is needed.
+            //
+            // Before the connection is established, sf_core has no
+            // `server_version` yet — return an empty string instead of
+            // surfacing an error so callers that probe this attribute during
+            // `SQLDriverConnect` (Excel does) still succeed.
+            let conn_handle = match dbc.connection.lock().state {
+                ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            let version = match conn_handle {
+                Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                    let resp = c
+                        .connection_get_server_version(ConnectionGetServerVersionRequest {
+                            conn_handle: Some(handle),
+                        })
+                        .await?;
+                    Ok::<Option<String>, crate::api::OdbcError>(resp.server_version)
+                })?,
+                None => None,
+            };
+            write_str(version.as_deref().unwrap_or(""));
         }
         InfoType::DriverOdbcVer => {
-            write_string_bytes::<E>(
-                "03.00",
-                info_value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                None,
-            );
-            Ok(())
+            // ODBC 3.80 — matches the level the legacy Snowflake ODBC
+            // driver advertises (`DriverODBCVer=03.52` in the .ini and
+            // `03.80` in the SQLGetInfoValues fixture). Critically, the
+            // Microsoft Windows ODBC Driver Manager refuses to forward
+            // `SQLBindParameter(SQL_C_GUID, …)` with `HYC00` when the
+            // driver advertises `<03.50`, because `SQL_C_GUID` is an
+            // ODBC 3.5+ C type. Returning `03.80` is also a superset
+            // claim: every API the driver currently implements is
+            // available at that level.
+            write_str(ODBC_API_VERSION);
         }
-        InfoType::GetDataExtensions => {
-            let extensions = [
+        InfoType::SearchPatternEscape => write_str("\\"),
+        InfoType::IdentifierQuoteChar => write_str("\""),
+        InfoType::SchemaTerm => write_str("schema"),
+        InfoType::CatalogNameSeparator => write_str("."),
+        InfoType::CatalogTerm => write_str("database"),
+        InfoType::DataSourceReadOnly => write_str("N"),
+        InfoType::MultResultSets => write_str("N"),
+        InfoType::TableTerm => write_str("table"),
+        InfoType::ColumnAlias => write_str("Y"),
+        InfoType::OrderByColumnsInSelect => write_str("N"),
+        InfoType::SpecialCharacters => write_str(""),
+        InfoType::NeedLongDataLen => write_str("N"),
+        InfoType::CatalogName => write_str("Y"),
+
+        // ----- Scalar `SQLUSMALLINT` --------------------------------------
+        InfoType::ActiveStatements => write_u16(0),
+        InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => write_u16(1), // SQL_CB_CLOSE
+        InfoType::ConcatNullBehavior => write_u16(0), // SQL_CB_NULL
+        InfoType::GroupBy => write_u16(2),            // SQL_GB_GROUP_BY_CONTAINS_SELECT
+        InfoType::MaxSchemaNameLen => write_u16(255),
+        InfoType::MaxColumnsInGroupBy => write_u16(65535),
+        InfoType::MaxColumnsInOrderBy => write_u16(65535),
+        InfoType::MaxColumnsInSelect => write_u16(65535),
+        InfoType::CatalogLocation => write_u16(1), // SQL_CL_START
+        InfoType::MaxIdentifierLen => write_u16(255),
+        InfoType::TxnCapable => write_u16(3), // SQL_TC_DDL_COMMIT
+        InfoType::CorrelationName => write_u16(2), // SQL_CN_ANY
+        InfoType::NonNullableColumns => write_u16(0), // SQL_NNC_NULL
+        InfoType::FileUsage => write_u16(0),  // SQL_FILE_NOT_SUPPORTED
+
+        // ----- Scalar `SQLUINTEGER` ---------------------------------------
+        InfoType::DefaultTxnIsolation => write_u32(SQL_TXN_READ_COMMITTED),
+        InfoType::SqlConformance => write_u32(1), // SQL_SC_SQL92_ENTRY
+        InfoType::OdbcInterfaceConformance => write_u32(1), // SQL_OIC_CORE
+        InfoType::AsyncMode => write_u32(2),      // SQL_AM_STATEMENT
+        InfoType::MaxAsyncConcurrentStatements => write_u32(0),
+        InfoType::AsyncDbcFunctions => write_u32(1), // SQL_ASYNC_DBC_CAPABLE
+        InfoType::AsyncNotification => write_u32(0), // SQL_ASYNC_NOTIFICATION_NOT_CAPABLE
+
+        // ----- Bitmask `SQLUINTEGER` (with-slice families) -----------------
+        InfoType::GetDataExtensions => write_u32(
+            [
                 GetDataExtensions::AnyColumn,
                 GetDataExtensions::AnyOrder,
                 GetDataExtensions::Bound,
-            ];
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = extensions.bitmask();
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
-            Ok(())
+            ]
+            .bitmask(),
+        ),
+        InfoType::AggregateFunctions => write_u32(synthesize(AGGREGATE_FUNCTIONS)),
+        InfoType::CatalogUsage => write_u32(synthesize(CATALOG_USAGE)),
+        InfoType::SchemaUsage => write_u32(synthesize(SCHEMA_USAGE)),
+        InfoType::ConvertFunctions => write_u32(synthesize(CONVERT_FUNCTIONS)),
+        InfoType::NumericFunctions => write_u32(synthesize(NUMERIC_FUNCTIONS)),
+        InfoType::StringFunctions => write_u32(synthesize(STRING_FUNCTIONS)),
+        InfoType::SystemFunctions => write_u32(synthesize(SYSTEM_FUNCTIONS)),
+        InfoType::TimedateFunctions => write_u32(synthesize(TIMEDATE_FUNCTIONS)),
+        InfoType::TimedateAddIntervals => write_u32(synthesize(TIMEDATE_TSI_INTERVALS)),
+        InfoType::TimedateDiffIntervals => write_u32(synthesize(TIMEDATE_TSI_INTERVALS)),
+        InfoType::Sql92Predicates => write_u32(synthesize(SQL92_PREDICATES)),
+        InfoType::Sql92RelationalJoinOperators => {
+            write_u32(synthesize(SQL92_RELATIONAL_JOIN_OPERATORS))
         }
+        InfoType::Sql92ValueExpressions => write_u32(synthesize(SQL92_VALUE_EXPRESSIONS)),
+        InfoType::ScrollConcurrency => write_u32(synthesize(SCROLL_CONCURRENCY)),
+        InfoType::ScrollOptions => write_u32(synthesize(SCROLL_OPTIONS)),
+        InfoType::TxnIsolationOption => write_u32(synthesize(TXN_ISOLATION_OPTION)),
+        InfoType::LockTypes => write_u32(synthesize(LOCK_TYPES)),
+        InfoType::PosOperations => write_u32(synthesize(POS_OPERATIONS)),
+        InfoType::BookmarkPersistence => write_u32(synthesize(BOOKMARK_PERSISTENCE)),
+        InfoType::StaticSensitivity => write_u32(synthesize(STATIC_SENSITIVITY)),
+        InfoType::ForwardOnlyCursorAttributes1 => {
+            write_u32(synthesize(FORWARD_ONLY_CURSOR_ATTRIBUTES1))
+        }
+        InfoType::ForwardOnlyCursorAttributes2 => {
+            write_u32(synthesize(FORWARD_ONLY_CURSOR_ATTRIBUTES2))
+        }
+        InfoType::KeysetCursorAttributes1 => write_u32(synthesize(KEYSET_CURSOR_ATTRIBUTES1)),
+        InfoType::KeysetCursorAttributes2 => write_u32(synthesize(KEYSET_CURSOR_ATTRIBUTES2)),
+        InfoType::StaticCursorAttributes1 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES1)),
+        InfoType::StaticCursorAttributes2 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES2)),
+        InfoType::DynamicCursorAttributes1 => write_u32(synthesize(DYNAMIC_CURSOR_ATTRIBUTES1)),
+
+        // ----- `SQL_CONVERT_<source>` bitmasks (per-source-type) ----------
+        InfoType::ConvertBigint => write_u32(synthesize(CONVERT_BIGINT)),
+        InfoType::ConvertBinary => write_u32(synthesize(CONVERT_BINARY)),
+        InfoType::ConvertBit => write_u32(synthesize(CONVERT_BIT)),
+        InfoType::ConvertChar => write_u32(synthesize(CONVERT_CHAR)),
+        InfoType::ConvertDate => write_u32(synthesize(CONVERT_DATE)),
+        InfoType::ConvertDecimal => write_u32(synthesize(CONVERT_DECIMAL)),
+        InfoType::ConvertDouble => write_u32(synthesize(CONVERT_DOUBLE)),
+        InfoType::ConvertFloat => write_u32(synthesize(CONVERT_FLOAT)),
+        InfoType::ConvertGuid => write_u32(synthesize(CONVERT_GUID)),
+        InfoType::ConvertInteger => write_u32(synthesize(CONVERT_INTEGER)),
+        InfoType::ConvertLongVarbinary => write_u32(synthesize(CONVERT_LONGVARBINARY)),
+        InfoType::ConvertLongVarchar => write_u32(synthesize(CONVERT_LONGVARCHAR)),
+        InfoType::ConvertNumeric => write_u32(synthesize(CONVERT_NUMERIC)),
+        InfoType::ConvertReal => write_u32(synthesize(CONVERT_REAL)),
+        InfoType::ConvertSmallint => write_u32(synthesize(CONVERT_SMALLINT)),
+        InfoType::ConvertTime => write_u32(synthesize(CONVERT_TIME)),
+        InfoType::ConvertTimestamp => write_u32(synthesize(CONVERT_TIMESTAMP)),
+        InfoType::ConvertTinyint => write_u32(synthesize(CONVERT_TINYINT)),
+        InfoType::ConvertVarbinary => write_u32(synthesize(CONVERT_VARBINARY)),
+        InfoType::ConvertVarchar => write_u32(synthesize(CONVERT_VARCHAR)),
+        InfoType::ConvertWchar => write_u32(synthesize(CONVERT_WCHAR)),
+        InfoType::ConvertWlongVarchar => write_u32(synthesize(CONVERT_WLONGVARCHAR)),
+        InfoType::ConvertWvarchar => write_u32(synthesize(CONVERT_WVARCHAR)),
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1282,6 +1600,63 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_forwards_proxy_keys_for_core_aliases() {
+        // Proxy keys are forwarded UPPERCASE; sf_core's param registry resolves
+        // them to canonical lowercase names via the registered aliases.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PROXY_HOST".to_owned(), "p.example.com".to_owned()),
+            ("PROXY_PORT".to_owned(), "8080".to_owned()),
+            ("PROXY_USER".to_owned(), "puser".to_owned()),
+            ("PROXY_PASSWORD".to_owned(), "ppass".to_owned()),
+            ("NO_PROXY".to_owned(), "internal,*.local".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "PROXY_HOST"), Some("p.example.com"));
+        assert_eq!(config_string(&options, "PROXY_PORT"), Some("8080"));
+        assert_eq!(config_string(&options, "PROXY_USER"), Some("puser"));
+        assert_eq!(config_string(&options, "PROXY_PASSWORD"), Some("ppass"));
+        assert_eq!(
+            config_string(&options, "NO_PROXY"),
+            Some("internal,*.local")
+        );
+        // Pre-canonicalisation is the registry's job; ODBC layer does not
+        // emit lowercase canonical keys.
+        assert!(!options.contains_key("proxy_host"));
+        assert!(!options.contains_key("no_proxy"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_passes_through_legacy_proxy_url_form() {
+        // Legacy ODBC DSNs use `PROXY=[scheme://][user:pass@]host[:port]`.
+        // sf_core's `ProxyConfig::from_settings` parses the URL.  The ODBC
+        // layer just forwards the value unchanged.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "PROXY".to_owned(),
+            "http://user:pass@p.example.com:8080".to_owned(),
+        )]));
+
+        assert_eq!(
+            config_string(&options, "PROXY"),
+            Some("http://user:pass@p.example.com:8080")
+        );
+    }
+
+    #[test]
+    fn normalize_connection_string_options_passes_through_legacy_odbc_proxy_aliases() {
+        // Legacy ODBC also accepts NOPROXY / PROXYWITHENV / ALLOWEMPTYPROXY.
+        // These flow through as UPPERCASE and sf_core's registry resolves
+        // them to canonical names.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("NOPROXY".to_owned(), "*.corp".to_owned()),
+            ("PROXYWITHENV".to_owned(), "true".to_owned()),
+            ("ALLOWEMPTYPROXY".to_owned(), "false".to_owned()),
+        ]));
+        assert_eq!(config_string(&options, "NOPROXY"), Some("*.corp"));
+        assert_eq!(config_string(&options, "PROXYWITHENV"), Some("true"));
+        assert_eq!(config_string(&options, "ALLOWEMPTYPROXY"), Some("false"));
+    }
+
+    #[test]
     fn normalize_connection_string_options_maps_passcodeinpassword() {
         let options = normalize_connection_string_options(HashMap::from([(
             "PASSCODEINPASSWORD".to_owned(),
@@ -1307,6 +1682,359 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_maps_disable_parallel_user_prompt() {
+        for input_value in ["true", "false", "1", "0"] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                "DISABLE_PARALLEL_USER_PROMPT".to_owned(),
+                input_value.to_owned(),
+            )]));
+
+            assert_eq!(
+                config_string(&options, "disable_parallel_user_prompt"),
+                Some(input_value),
+                "value {input_value:?} should pass through unchanged"
+            );
+            // The original upper-case key must not survive normalization.
+            assert!(
+                !options.contains_key("DISABLE_PARALLEL_USER_PROMPT"),
+                "upper-case key must be consumed by normalize"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_connection_string_options_forwards_oauth_keys_with_canonical_names() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("OAUTH_CLIENT_ID".to_owned(), "client-123".to_owned()),
+            ("OAUTH_CLIENT_SECRET".to_owned(), "shhh".to_owned()),
+            (
+                "OAUTH_REDIRECT_URI".to_owned(),
+                "http://127.0.0.1:0".to_owned(),
+            ),
+            ("oauth_scope".to_owned(), "session:role:R".to_owned()),
+        ]));
+
+        // OAuth keys must be forwarded with their lowercase `sf_core`
+        // canonical name (not the original SCREAMING_SNAKE form).
+        assert_eq!(
+            config_string(&options, "oauth_client_id"),
+            Some("client-123")
+        );
+        assert_eq!(config_string(&options, "oauth_client_secret"), Some("shhh"));
+        assert_eq!(
+            config_string(&options, "oauth_redirect_uri"),
+            Some("http://127.0.0.1:0")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_scope"),
+            Some("session:role:R")
+        );
+        for upper in [
+            "OAUTH_CLIENT_ID",
+            "OAUTH_CLIENT_SECRET",
+            "OAUTH_REDIRECT_URI",
+            "OAUTH_SCOPE",
+        ] {
+            assert!(
+                !options.contains_key(upper),
+                "{upper} must not be forwarded as the uppercase passthrough form"
+            );
+        }
+    }
+
+    #[test]
+    fn redacted_param_map_hides_oauth_client_secret_in_logs() {
+        // Wiring guard: the connection-string log line must never
+        // expose the OAUTH_CLIENT_SECRET value, regardless of the
+        // case the caller used.
+        let params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("oauth_client_secret".to_owned(), "do-not-log".to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&params);
+        let rendered = format!("{redacted:?}");
+        assert!(
+            !rendered.contains("do-not-log"),
+            "redacted param map leaked the OAuth client secret: {rendered}"
+        );
+    }
+
+    /// Belt-and-braces: every OAuth key declared in `oauth::ALL_OAUTH_KEYS`
+    /// must round-trip through `normalize_connection_string_options` to its
+    /// `sf_core` canonical lowercase name. Picks a plausible
+    /// non-secret string value for every key so the assertion is uniform.
+    #[test]
+    fn normalize_connection_string_options_canonicalizes_every_oauth_key() {
+        let mut input: HashMap<String, String> = HashMap::new();
+        for &key in oauth::ALL_OAUTH_KEYS {
+            // Use the key name itself as the value: makes any leak
+            // immediately greppable, and keeps every key distinct in
+            // the resulting options map.
+            input.insert(key.to_owned(), format!("v-for-{key}"));
+        }
+        let options = normalize_connection_string_options(input);
+
+        for &key in oauth::ALL_OAUTH_KEYS {
+            let canonical = oauth::canonical_name(key)
+                .unwrap_or_else(|| panic!("missing canonical name for {key}"));
+            assert_eq!(
+                config_string(&options, canonical),
+                Some(format!("v-for-{key}").as_str()),
+                "{key} did not round-trip to {canonical}"
+            );
+            assert!(
+                !options.contains_key(key),
+                "{key} should not survive as the SCREAMING_SNAKE form"
+            );
+        }
+    }
+
+    /// Mixed-case variants of OAuth keys (e.g. as a user would type
+    /// them in a DSN file) must canonicalize to the same lowercase
+    /// `sf_core` parameter name as the SCREAMING_SNAKE form.
+    #[test]
+    fn normalize_connection_string_options_oauth_keys_are_case_insensitive() {
+        for &key in oauth::ALL_OAUTH_KEYS {
+            let canonical = oauth::canonical_name(key).unwrap();
+            for variant in [
+                key.to_owned(),
+                key.to_lowercase(),
+                key.chars()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if i.is_multiple_of(2) {
+                            c.to_ascii_lowercase()
+                        } else {
+                            c.to_ascii_uppercase()
+                        }
+                    })
+                    .collect::<String>(),
+            ] {
+                let options = normalize_connection_string_options(HashMap::from([(
+                    variant.clone(),
+                    "v".to_owned(),
+                )]));
+                assert_eq!(
+                    config_string(&options, canonical),
+                    Some("v"),
+                    "variant {variant:?} of {key} did not canonicalize to {canonical}"
+                );
+            }
+        }
+    }
+
+    /// Wiring guard: the OAuth canonical-name forwarding must not
+    /// shadow the existing explicit special-key arms (PORT,
+    /// CRL_ENABLED, CLIENT_STORE_TEMPORARY_CREDENTIAL, etc.). Mixing
+    /// OAuth keys with these in one map must canonicalize each key
+    /// according to its own arm, with no cross-contamination.
+    #[test]
+    fn normalize_connection_string_options_does_not_shadow_existing_special_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PORT".to_owned(), "9000".to_owned()),
+            ("CRL_ENABLED".to_owned(), "1".to_owned()),
+            ("OAUTH_CLIENT_ID".to_owned(), "abc".to_owned()),
+            (
+                "CLIENT_STORE_TEMPORARY_CREDENTIAL".to_owned(),
+                "true".to_owned(),
+            ),
+            ("OAUTH_DISABLE_PKCE".to_owned(), "true".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "port"), Some("9000"));
+        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("ENABLED"));
+        assert_eq!(config_string(&options, "oauth_client_id"), Some("abc"));
+        assert_eq!(
+            config_string(&options, "client_store_temporary_credential"),
+            Some("true")
+        );
+        assert_eq!(config_string(&options, "oauth_disable_pkce"), Some("true"));
+    }
+
+    /// Wiring guard: every OAuth key forwarded by the wrapper must be
+    /// resolvable by `sf_core::config::param_registry` to its
+    /// canonical lowercase name. Catches accidental drift between the
+    /// ODBC-side `oauth::canonical_name` map and the sf_core
+    /// `param_registry` aliases.
+    #[test]
+    fn every_oauth_canonical_name_is_known_to_sf_core_param_registry() {
+        let registry = sf_core::config::param_registry::registry();
+        for &key in oauth::ALL_OAUTH_KEYS {
+            let canonical = oauth::canonical_name(key).unwrap();
+            assert!(
+                registry.is_known(canonical),
+                "sf_core param_registry does not know {canonical} (from ODBC key {key}); \
+                 ODBC and sf_core OAuth canonicals are out of sync"
+            );
+        }
+    }
+
+    /// Wiring guard for `connect_with_params` redaction: building the
+    /// redacted map for params that contain every sensitive key the
+    /// wrapper recognises (legacy + OAuth) must produce `"****"` for
+    /// each sensitive value AND must NOT contain any of the original
+    /// values verbatim in its `Debug` rendering. This is the
+    /// single-source-of-truth check the connection-string log relies
+    /// on.
+    #[test]
+    fn redacted_param_map_redacts_all_sensitive_keys() {
+        let unique_marker = "DO_NOT_LEAK_THIS_TOKEN_42";
+        let params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("PWD".to_owned(), unique_marker.to_owned()),
+            ("PRIV_KEY_FILE_PWD".to_owned(), unique_marker.to_owned()),
+            ("PRIV_KEY_PWD".to_owned(), unique_marker.to_owned()),
+            ("PRIV_KEY_BASE64".to_owned(), unique_marker.to_owned()),
+            ("PASSCODE".to_owned(), unique_marker.to_owned()),
+            ("OAUTH_CLIENT_SECRET".to_owned(), unique_marker.to_owned()),
+            ("TOKEN".to_owned(), unique_marker.to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&params);
+        let rendered = format!("{redacted:?}");
+        assert!(
+            !rendered.contains(unique_marker),
+            "redacted map leaked sensitive value: {rendered}"
+        );
+        // Spot-check a few keys still produce the redaction marker.
+        for sensitive in ["PWD", "OAUTH_CLIENT_SECRET", "TOKEN"] {
+            assert_eq!(
+                redacted.get(&sensitive.to_owned()).map(|v| v.as_ref()),
+                Some("****"),
+                "{sensitive} should render as ****"
+            );
+        }
+        // Non-sensitive UID is preserved verbatim.
+        assert_eq!(
+            redacted.get(&"UID".to_owned()).map(|v| v.as_ref()),
+            Some("joe")
+        );
+    }
+
+    /// End-to-end parse → normalize for the canonical OAuth
+    /// authorization-code connection string. The
+    /// resulting options map must contain every OAuth field as its
+    /// `sf_core` lowercase canonical name AND must not have any
+    /// SCREAMING_SNAKE residue.
+    #[test]
+    fn parse_connection_string_oauth_authorization_code_then_normalize() {
+        let conn_str = "DRIVER={SnowflakeUD};SERVER=acct.snowflakecomputing.com;UID=joe;\
+                        AUTHENTICATOR=OAUTH_AUTHORIZATION_CODE;OAUTH_CLIENT_ID=cid-1;\
+                        OAUTH_CLIENT_SECRET=secret-shhh;\
+                        OAUTH_AUTHORIZATION_URL=https://idp.example.com/oauth/authorize;\
+                        OAUTH_TOKEN_REQUEST_URL=https://idp.example.com/oauth/token;\
+                        OAUTH_REDIRECT_URI=http://127.0.0.1:0/cb;\
+                        OAUTH_SCOPE=session:role:R;OAUTH_DISABLE_PKCE=false;\
+                        OAUTH_ENABLE_DPOP=false;OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS=true";
+        let parsed = parse_connection_string(conn_str).expect("parse OK");
+        let options = normalize_connection_string_options(parsed);
+
+        assert_eq!(
+            config_string(&options, "AUTHENTICATOR"),
+            Some("OAUTH_AUTHORIZATION_CODE")
+        );
+        assert_eq!(config_string(&options, "oauth_client_id"), Some("cid-1"));
+        assert_eq!(
+            config_string(&options, "oauth_client_secret"),
+            Some("secret-shhh")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_authorization_url"),
+            Some("https://idp.example.com/oauth/authorize")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_token_request_url"),
+            Some("https://idp.example.com/oauth/token")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_redirect_uri"),
+            Some("http://127.0.0.1:0/cb")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_scope"),
+            Some("session:role:R")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_enable_single_use_refresh_tokens"),
+            Some("true")
+        );
+        for upper in [
+            "OAUTH_CLIENT_ID",
+            "OAUTH_CLIENT_SECRET",
+            "OAUTH_AUTHORIZATION_URL",
+            "OAUTH_TOKEN_REQUEST_URL",
+            "OAUTH_REDIRECT_URI",
+            "OAUTH_SCOPE",
+            "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+            "OAUTH_DISABLE_PKCE",
+            "OAUTH_ENABLE_DPOP",
+        ] {
+            assert!(
+                !options.contains_key(upper),
+                "{upper} leaked through as the SCREAMING_SNAKE form"
+            );
+        }
+    }
+
+    /// Brace-quoted OAuth values (e.g. token URLs containing `;`)
+    /// must round-trip safely through `parse_connection_string` and
+    /// land as the canonical lowercase key without losing the
+    /// embedded delimiter — important because IdP token URLs in the
+    /// wild often carry `?api-version=...;client=...` query strings.
+    #[test]
+    fn parse_connection_string_oauth_brace_quoted_token_url() {
+        let conn_str = "DRIVER={SF};AUTHENTICATOR=OAUTH_CLIENT_CREDENTIALS;\
+                        OAUTH_CLIENT_ID=cid;OAUTH_CLIENT_SECRET=cs;\
+                        OAUTH_TOKEN_REQUEST_URL={https://idp/token?a=1;b=2}";
+        let parsed = parse_connection_string(conn_str).expect("parse OK");
+        let options = normalize_connection_string_options(parsed);
+        assert_eq!(
+            config_string(&options, "oauth_token_request_url"),
+            Some("https://idp/token?a=1;b=2")
+        );
+    }
+
+    /// Wiring guard: connection strings that omit OAuth params still
+    /// round-trip cleanly — the OAuth canonical-name forwarding must
+    /// not interfere with non-OAuth parameter handling.
+    #[test]
+    fn parse_connection_string_without_oauth_keys_is_unaffected() {
+        let conn_str = "DRIVER={SF};SERVER=h;UID=joe;PWD=p;AUTHENTICATOR=SNOWFLAKE_JWT";
+        let parsed = parse_connection_string(conn_str).expect("parse OK");
+        let options = normalize_connection_string_options(parsed);
+
+        assert_eq!(config_string(&options, "SERVER"), Some("h"));
+        assert_eq!(config_string(&options, "UID"), Some("joe"));
+        assert_eq!(config_string(&options, "PWD"), Some("p"));
+        assert_eq!(
+            config_string(&options, "AUTHENTICATOR"),
+            Some("SNOWFLAKE_JWT")
+        );
+    }
+
+    /// Wiring guard: the legacy `AUTHENTICATOR=OAUTH` (pre-acquired
+    /// access token) flow forwards the `TOKEN` parameter unchanged
+    /// to `sf_core`. The token value is sensitive and MUST be
+    /// redacted in `redacted_param_map`, but it must NOT be dropped
+    /// from the options map (otherwise the login request would have
+    /// no token to send).
+    #[test]
+    fn legacy_oauth_token_passthrough_redacts_in_logs_but_preserves_value() {
+        let raw_params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("AUTHENTICATOR".to_owned(), "OAUTH".to_owned()),
+            ("TOKEN".to_owned(), "header.payload.sig".to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&raw_params);
+        assert_eq!(
+            redacted.get(&"TOKEN".to_owned()).map(|v| v.as_ref()),
+            Some("****")
+        );
+        let options = normalize_connection_string_options(raw_params);
+        assert_eq!(config_string(&options, "TOKEN"), Some("header.payload.sig"));
+        assert_eq!(config_string(&options, "AUTHENTICATOR"), Some("OAUTH"));
+    }
+
+    #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
         let options = normalize_connection_string_options(HashMap::from([(
             "QUERY_TAG".to_owned(),
@@ -1314,6 +2042,71 @@ mod tests {
         )]));
 
         assert_eq!(config_string(&options, "QUERY_TAG"), Some("from-odbc"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_forwards_session_keep_alive_params() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("CLIENT_SESSION_KEEP_ALIVE".to_owned(), "true".to_owned()),
+            (
+                "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY".to_owned(),
+                "1800".to_owned(),
+            ),
+        ]));
+
+        assert_eq!(
+            config_string(&options, "CLIENT_SESSION_KEEP_ALIVE"),
+            Some("true")
+        );
+        assert_eq!(
+            config_string(&options, "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"),
+            Some("1800")
+        );
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_application_key() {
+        // APPLICATION on the connection string is the user-facing app name —
+        // it must land in the canonical ``application`` setting
+        // (CLIENT_ENVIRONMENT.APPLICATION on the wire), never in client_app_id
+        // (CLIENT_APP_ID stays as the wrapper-injected driver name "ODBC").
+        // Mirrors the old ODBC driver's behaviour.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "APPLICATION".to_owned(),
+            "Tableau".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "application"), Some("Tableau"));
+        assert!(!options.contains_key("APPLICATION"));
+        assert!(!options.contains_key("client_app_id"));
+    }
+
+    #[test]
+    fn apply_pre_connection_overrides_routes_application_attr() {
+        // SQL_SF_CONN_ATTR_APPLICATION (programmatic) follows the same routing
+        // as the connection-string APPLICATION key.
+        let mut options = HashMap::new();
+        let attrs = HashMap::from([(ConnectionAttribute::Application, "PowerBI".to_owned())]);
+
+        apply_pre_connection_overrides(&attrs, &mut options);
+
+        assert_eq!(config_string(&options, "application"), Some("PowerBI"));
+        assert!(!options.contains_key("client_app_id"));
+    }
+
+    #[test]
+    fn apply_pre_connection_overrides_application_attr_overrides_connection_string() {
+        // The override layer wins, matching the established pattern for
+        // private-key attributes.
+        let mut options = normalize_connection_string_options(HashMap::from([(
+            "APPLICATION".to_owned(),
+            "FromDsn".to_owned(),
+        )]));
+        let attrs = HashMap::from([(ConnectionAttribute::Application, "FromAttr".to_owned())]);
+
+        apply_pre_connection_overrides(&attrs, &mut options);
+
+        assert_eq!(config_string(&options, "application"), Some("FromAttr"));
     }
 
     #[test]

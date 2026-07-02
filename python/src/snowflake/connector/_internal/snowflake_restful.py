@@ -5,12 +5,11 @@ import json
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from snowflake.connector._internal.api_client.client_api import core_driver
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     TOKEN_REQUEST_TYPE_ISSUE,
     TOKEN_REQUEST_TYPE_RENEW,
     ConnectionGetInfoResponse,
-    ConnectionSendHttpRequest,
-    ConnectionTokenRequest,
 )
 from snowflake.connector.errors import OperationalError
 
@@ -42,11 +41,23 @@ class SnowflakeRestful:
     def _connection_info(self) -> ConnectionGetInfoResponse:
         return self._connection._get_connection_info()
 
+    def get_user_agent(self) -> str | None:
+        """User-Agent string built by the driver core (None before connect).
+
+        The Rust core constructs the User-Agent from the client app id, version
+        and platform; consumers building REST requests should use this rather
+        than reconstructing the value themselves.
+        """
+        user_agent: str | None = self._connection_info.user_agent
+        return user_agent if user_agent else None
+
     @property
     def token(self) -> str | None:
-        """Required by Python API"""
+        """Required by Python API. Returns None after close (handle released)."""
+        if self._connection.is_closed():
+            return None
         session_token: str | None = self._connection_info.session_token
-        return session_token
+        return session_token if session_token else None
 
     @property
     def _host(self) -> str | None:
@@ -87,6 +98,9 @@ class SnowflakeRestful:
 
     @property
     def master_token(self) -> str | None:
+        """Returns None after close (handle released)."""
+        if self._connection.is_closed():
+            return None
         info = self._connection._get_connection_info(include_master_token=True)
         master_token: str = info.master_token
         return master_token if master_token else None
@@ -122,16 +136,13 @@ class SnowflakeRestful:
         else:
             encoded_body = None
 
-        request = ConnectionSendHttpRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_send_http(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             method=method,
             url=url,
             headers=headers or {},
+            body=encoded_body,
         )
-        if encoded_body is not None:
-            request.body = encoded_body
-
-        response = self._connection.db_api.connection_send_http(request)
         return response.status_code, dict(response.headers), response.body
 
     _SUPPORTED_REQUEST_METHODS = {"get", "post"}
@@ -168,8 +179,7 @@ class SnowflakeRestful:
         )
 
         if status_code >= 400:
-            # Truncate body to avoid flooding error messages with large response payloads
-            raise OperationalError(msg=f"HTTP {status_code}: {response_body[:200]!r}")
+            raise OperationalError.from_http_response(status_code, response_body)
 
         return json.loads(response_body) if response_body else {}
 
@@ -193,8 +203,7 @@ class SnowflakeRestful:
         )
 
         if raise_raw_http_failure and status_code >= 400:
-            # Truncate body to avoid flooding error messages with large response payloads
-            raise OperationalError(msg=f"HTTP {status_code}: {response_body[:200]!r}")
+            raise OperationalError.from_http_response(status_code, response_body)
 
         return json.loads(response_body) if response_body else {}
 
@@ -203,11 +212,10 @@ class SnowflakeRestful:
         if proto_type is None:
             raise ValueError(f"Unknown token request type: {request_type!r}. Must be 'ISSUE' or 'RENEW'.")
 
-        request = ConnectionTokenRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_request_token(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             request_type=proto_type,
         )
-        response = self._connection.db_api.connection_request_token(request)
         data: dict = {"sessionToken": response.session_token}
         if response.HasField("validity_in_seconds"):
             data["validityInSecondsST"] = response.validity_in_seconds

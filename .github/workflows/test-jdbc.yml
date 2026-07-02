@@ -1,15 +1,19 @@
 name: JDBC CI
 
 on:
+  schedule:
+    - cron: '0 4 * * *'  # Nightly at 04:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
   merge_group:
     types: [ checks_requested ]
+  # Lets the mirror (snowflakedb) run on demand — see the detect-changes gate.
+  workflow_dispatch:
 
 concurrency:
-  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
-  # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
+  # Group by PR number for PRs; fall back to run ID for push-to-main and
+  # merge_group runs (each run is unique so they won't cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
@@ -18,18 +22,37 @@ env:
 
 jobs:
   detect-changes:
+    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch
+    # or release/* pushes; gating this root job skips the whole workflow there.
+    # Internal repo (repository_owner != 'snowflakedb') unchanged.
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
     uses: ./.github/workflows/detect-changes.yml
 
   jdbc_tests:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
-    name: JDBC Tests (full suite)
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        java-version: ['8']
+        include:
+          - os: ubuntu-latest
+            java-version: '8'
+            result_format: default
+          - os: ubuntu-latest
+            java-version: '8'
+            result_format: json
+          # Java 21 row exercises wiremock-based tests in net.snowflake.jdbc.wiremock.*
+          # (the vendored WireMock 3.x JAR requires JRE 11+ to launch). Java 8 rows skip
+          # those tests cleanly via assumeTrue(WiremockClient.requiresJava11OrHigher()).
+          - os: ubuntu-latest
+            java-version: '21'
+            result_format: default
     runs-on: ${{ matrix.os }}
+    name: JDBC Tests (Java ${{ matrix.java-version }}, ${{ matrix.result_format }} format)
+    timeout-minutes: 35
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,6 +65,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -49,6 +74,8 @@ jobs:
 
       - name: Restore Gradle cache
         id: gradle-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: |
@@ -79,17 +106,20 @@ jobs:
           ls -l target/debug/
           export PARAMETER_PATH=$(pwd)/parameters.json
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+          export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           cd jdbc
-          ./gradlew test jacocoTestReport --stacktrace
+          ./gradlew test jacocoTestReport
         env:
           # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
       - name: Upload NEW driver test artifacts
-        if: always()
+        if: always() && matrix.result_format == 'default'
         uses: actions/upload-artifact@v4
         with:
-          name: jdbc-tests-artifacts
+          # Disambiguate per Java version — actions/upload-artifact@v4 requires unique names
+          # within a single workflow run.
+          name: jdbc-tests-artifacts-java${{ matrix.java-version }}
           path: |
             jdbc/build/test-results/test/**/*.xml
             jdbc/build/jacoco/test.exec
@@ -101,12 +131,17 @@ jobs:
         run: |
           python3 jdbc/ci/reference_tests/extract_coverage.py \
             --report jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
-            --label "NEW JDBC" \
+            --label "NEW JDBC (Java ${{ matrix.java-version }})" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -116,6 +151,12 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: |
@@ -123,11 +164,32 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
+  cleanup_jdbc:
+    needs: [detect-changes, jdbc_tests]
+    if: always() && needs.jdbc_tests.result != 'skipped'
+    runs-on: ubuntu-latest
+    name: cleanup_jdbc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Cleanup test PATs
+        continue-on-error: true
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_env.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
+
   jdbc_tests_reference:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc_reference == 'true'
     name: JDBC Old Driver Reference Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -140,6 +202,8 @@ jobs:
 
       - name: Restore Gradle cache
         id: gradle-cache-ref
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: |
@@ -162,7 +226,7 @@ jobs:
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cd jdbc
-          ./gradlew referenceTest jacocoReferenceReport --stacktrace
+          ./gradlew referenceTest jacocoReferenceReport
         env:
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
@@ -188,6 +252,12 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache-ref.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: |
@@ -195,8 +265,98 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
+  jdbc_parity_tests:
+    needs: detect-changes
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
+    name: JDBC Date,Time,Timestamp Parity Tests (informational, non-blocking)
+    # Informational job: runs DateTimeParityTest, the single-JVM oracle that diffs
+    # universal-driver against snowflake-jdbc 4.0.1. New parity gaps are expected while the
+    # driver is still being built out, so failures here must NOT block PRs. Kept out of
+    # jdbc-status's `needs` and continue-on-error: true so the workflow stays green even
+    # when this job fails. Promote to required once the matrix is consistently clean.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # parityTest requires HotSpot — universal-driver's jdbc_bridge::sflogger_layer overflows
+      # the stack on OpenJ9 (see build.gradle comment on the parityTest task). Temurin is
+      # HotSpot-based.
+      - name: Set up Java 8 (Temurin/HotSpot)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
+
+      - name: Restore Gradle cache
+        id: gradle-cache-parity
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-jdbc-
+            ${{ runner.os }}-gradle-
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Build Rust components
+        run: cargo build --package jdbc_bridge
+
+      - name: Make gradlew executable
+        run: chmod +x jdbc/gradlew
+
+      - name: Run JDBC parity tests
+        # Step-level continue-on-error so the check reports success regardless
+        # of test outcome — failures stay visible in the step log and the
+        # uploaded artifacts. Job-level continue-on-error alone keeps the
+        # workflow green but the check still renders red, which prompts
+        # reviewers to ask whether the job is flaky.
+        continue-on-error: true
+        run: |
+          cd jdbc
+          ./gradlew parityTest
+
+      - name: Upload parity test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-parity-artifacts
+          path: |
+            jdbc/build/test-results/parityTest/**/*.xml
+            jdbc/build/reports/tests/parityTest/**
+          if-no-files-found: warn
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "jdbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   jdbc-status:
-    needs: [detect-changes, jdbc_tests, jdbc_tests_reference]
+    needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -1,4 +1,4 @@
-use crate::logging::error::LogError;
+use super::error::{InitSnafu, LogError};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::WithExportConfig;
@@ -25,7 +25,12 @@ pub fn _init_meter_provider() -> Result<SdkMeterProvider, LogError> {
         .with_temporality(opentelemetry_sdk::metrics::Temporality::default())
         .with_endpoint("http://localhost:8318")
         .build()
-        .map_err(|e| LogError::InitError(e.to_string()))?;
+        .map_err(|e| {
+            InitSnafu {
+                message: e.to_string(),
+            }
+            .build()
+        })?;
 
     let reader = PeriodicReader::builder(exporter)
         .with_interval(std::time::Duration::from_secs(30))
@@ -48,14 +53,17 @@ pub fn init_tracer() -> Result<Tracer, LogError> {
         .with_endpoint("http://localhost:8318/v1/traces")
         .with_protocol(opentelemetry_otlp::Protocol::HttpJson)
         .build()
-        .map_err(|e| LogError::InitError(e.to_string()))?;
+        .map_err(|e| {
+            InitSnafu {
+                message: e.to_string(),
+            }
+            .build()
+        })?;
 
     let tracer_provider = SdkTracerProvider::builder()
-        // Customize sampling strategy
         .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
             1.0,
         ))))
-        // If export trace to AWS X-Ray, you can use XrayIdGenerator
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(resource())
         .with_batch_exporter(exporter)

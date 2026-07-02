@@ -1,5 +1,9 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static java.lang.Integer.MAX_VALUE;
+import static java.sql.Types.CLOB;
+import static net.snowflake.client.internal.util.StringUtil.isNullOrEmpty;
+
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
@@ -22,14 +26,27 @@ import java.sql.SQLXML;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TimeZone;
 import java.util.function.Function;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
+import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
+import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.PrepareResult;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.util.HexUtil;
 
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
@@ -40,35 +57,71 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private final String sql;
   private final SqlPlaceholderMetadata placeholderMetadata;
   private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
+  private final PreparedBatch batch = new PreparedBatch();
 
-  public SnowflakePreparedStatementImpl(SnowflakeConnectionImpl connection, String sql) {
-    super(connection);
+  /** Cached prepare result from the server, populated lazily on the first metadata request. */
+  // TODO(SNOW-3695645): should we replace proto message with POJO?
+  private PrepareResult prepareResult;
+
+  /** Lazily resolved session conversion context, used for TIME binding semantics. */
+  private DataConversionContext conversionContext;
+
+  public SnowflakePreparedStatementImpl(
+      InternalSnowflakeConnection connection, String sql, CoreDriverApi coreDriverApi) {
+    super(connection, coreDriverApi);
     this.sql = sql;
     this.placeholderMetadata = SqlPlaceholderMetadata.analyze(sql);
     this.parameterValues = new HashMap<>();
   }
 
+  /** Prepares the statement on the server once and caches the result. */
+  private PrepareResult getPrepareResult() throws SQLException {
+    checkClosed();
+    if (prepareResult == null) {
+      try {
+        coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+        StatementPrepareResponse response = coreDriverApi.statementPrepare(statementHandle);
+        prepareResult = response.getResult();
+      } catch (SnowflakeSQLException e) {
+        // Mirror snowflake-jdbc: some describe failures (DDL, unset bind variables, etc.) are
+        // expected and fall back to empty metadata instead of re-issuing describe on every call.
+        if (!ERROR_CODES_IGNORED_IN_DESCRIBE_MODE.contains(e.getErrorCode())) {
+          throw e;
+        }
+        PrepareResult.Builder builder = PrepareResult.newBuilder();
+        if (!isNullOrEmpty(e.getQueryId())) {
+          builder.setQueryId(e.getQueryId());
+        }
+        prepareResult = builder.build();
+      }
+    }
+    return prepareResult;
+  }
+
   @Override
   public ResultSet executeQuery() throws SQLException {
     checkClosed();
+    invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      return executeQueryWithBindings(sql, nativeBindings.bindings());
+      return executeQueryWithBindings(sql, nativeBindings);
     }
   }
 
   @Override
   public int executeUpdate() throws SQLException {
     checkClosed();
+    invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      return executeUpdateWithBindings(sql, nativeBindings.bindings());
+      return executeUpdateWithBindings(sql, nativeBindings);
     }
   }
 
   @Override
   public void setNull(int parameterIndex, int sqlType) throws SQLException {
     checkClosed();
+    // ANY is the sentinel; addBatch promotes the column to a real type on first non-null.
     setParameter(parameterIndex, "ANY", null);
   }
 
@@ -137,14 +190,46 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void setDate(int parameterIndex, Date x) throws SQLException {
     checkClosed();
-    setNullableParameter(
-        parameterIndex, Types.DATE, "TEXT", x, date -> date.toLocalDate().toString());
+    setDate(parameterIndex, x, TimeZone.getDefault());
   }
 
   @Override
   public void setTime(int parameterIndex, Time x) throws SQLException {
     checkClosed();
-    throw new SQLFeatureNotSupportedException("setTime not supported");
+    DataConversionContext context = conversionContext();
+    setNullableParameter(
+        parameterIndex,
+        Types.TIME,
+        "TIME",
+        x,
+        time -> String.valueOf(context.timeToNanosOfDay(time)));
+  }
+
+  /**
+   * Returns this statement's session conversion context, lazily fetching (and caching) the session
+   * parameters on first use. The cache is dropped at every execute boundary (see {@link
+   * #invalidateConversionContext()}) so a reused statement picks up session-parameter changes,
+   * while a single bind cycle of N values still costs only one fetch.
+   */
+  private DataConversionContext conversionContext() {
+    if (conversionContext == null) {
+      conversionContext =
+          SessionDataConversionContext.fromConnection(coreDriverApi, connection.getHandle());
+    }
+    return conversionContext;
+  }
+
+  /**
+   * Drops the cached conversion context so the next bind cycle re-reads session parameters,
+   * matching the old driver's refresh-at-execution granularity.
+   *
+   * <p>TODO(SNOW-2872484): conversion is currently eager in the typed setters, so we have to
+   * invalidate in every execute entry point. The cleaner shape is to store the raw value and
+   * convert once inside {@link PreparedStatementBindingSerializer#serialize} (the single bind
+   * chokepoint), which would remove the need for these explicit invalidations.
+   */
+  private void invalidateConversionContext() {
+    conversionContext = null;
   }
 
   @Override
@@ -267,6 +352,14 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       setBytes(parameterIndex, (byte[]) x);
       return;
     }
+    if (x instanceof Date) {
+      setDate(parameterIndex, (Date) x);
+      return;
+    }
+    if (x instanceof Time) {
+      setTime(parameterIndex, (Time) x);
+      return;
+    }
     logger.warn(
         "Unsupported prepared parameter value type: index={}, type={}",
         parameterIndex,
@@ -281,15 +374,49 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public boolean execute() throws SQLException {
     checkClosed();
+    invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      return executeWithBindings(sql, nativeBindings.bindings());
+      return executeWithBindings(sql, nativeBindings);
     }
   }
 
   @Override
   public void addBatch() throws SQLException {
-    throw new SQLFeatureNotSupportedException("addBatch not supported");
+    checkClosed();
+    batch.addRow(placeholderMetadata, parameterValues);
+  }
+
+  @Override
+  public void clearBatch() throws SQLException {
+    super.clearBatch();
+    batch.clear();
+  }
+
+  @Override
+  public void addBatch(String sql) throws SQLException {
+    checkClosed();
+    throw new SQLFeatureNotSupportedException(
+        "addBatch(String) is not allowed on PreparedStatement");
+  }
+
+  @Override
+  public int[] executeBatch() throws SQLException {
+    checkClosed();
+    invalidateConversionContext();
+    long[] expanded = batch.executeAll(this, sql, placeholderMetadata);
+    int[] result = new int[expanded.length];
+    for (int i = 0; i < expanded.length; i++) {
+      result[i] = toBatchInt(expanded[i]);
+    }
+    return result;
+  }
+
+  @Override
+  public long[] executeLargeBatch() throws SQLException {
+    checkClosed();
+    invalidateConversionContext();
+    return batch.executeAll(this, sql, placeholderMetadata);
   }
 
   @Override
@@ -310,7 +437,17 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public void setClob(int parameterIndex, Clob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setClob not supported");
+    if (x == null) {
+      setNull(parameterIndex, CLOB);
+    } else {
+      long length = x.length();
+      if (length > MAX_VALUE) {
+        throw new SQLException("CLOB length " + length + " exceeds the maximum supported size.");
+      }
+      // SerialClob (and most Clob impls) reject getSubString(1, 0) on an empty CLOB, so bind an
+      // empty string directly instead of calling getSubString for a zero-length value.
+      setString(parameterIndex, length == 0 ? "" : x.getSubString(1, (int) length));
+    }
   }
 
   @Override
@@ -320,12 +457,29 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getMetaData not supported");
+    PrepareResult result = getPrepareResult();
+    return SnowflakeResultSetMetaDataImpl.from(result.getQueryId(), result.getColumnsList());
   }
 
   @Override
   public void setDate(int parameterIndex, Date x, Calendar cal) throws SQLException {
-    setDate(parameterIndex, x);
+    checkClosed();
+    setDate(parameterIndex, x, cal == null ? TimeZone.getDefault() : cal.getTimeZone());
+  }
+
+  /**
+   * Binds a DATE value, mirroring snowflake-jdbc's {@code setDate}: the server receives sfType
+   * {@code "DATE"} with the value being milliseconds-since-epoch in {@code tz}, after applying the
+   * Julian→Gregorian correction for pre-1582-10-05 dates. {@code tz} is the JVM default for {@code
+   * setDate(int, Date)} and the Calendar's timezone for {@code setDate(int, Date, Calendar)}.
+   */
+  private void setDate(int parameterIndex, Date x, TimeZone tz) throws SQLException {
+    setNullableParameter(
+        parameterIndex,
+        Types.DATE,
+        "DATE",
+        x,
+        date -> String.valueOf(ArrowDateUtil.dateToBindMillis(date, tz)));
   }
 
   @Override
@@ -350,7 +504,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ParameterMetaData getParameterMetaData() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getParameterMetaData not supported");
+    PrepareResult prepareResult = getPrepareResult();
+    return SnowflakeParameterMetadataImpl.from(prepareResult.getBindsList());
   }
 
   @Override
@@ -470,8 +625,12 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
           placeholderMetadata.placeholderCount());
       return;
     }
+    // Boxed primitives passed through setObject must be stringified before they reach the
+    // serializer (which rejects non-String values).
+    String normalized = Objects.toString(value, null);
     parameterValues.put(
-        parameterIndex, new PreparedStatementBindingSerializer.ParameterValue(bindType, value));
+        parameterIndex,
+        new PreparedStatementBindingSerializer.ParameterValue(bindType, normalized));
     logger.debug(
         "Prepared parameter set: index={}, bindType={}, isNull={}, placeholders={}",
         parameterIndex,
@@ -484,7 +643,11 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       int parameterIndex, int sqlType, String bindType, T value, Function<T, String> serializer)
       throws SQLException {
     if (value == null) {
-      setNull(parameterIndex, sqlType);
+      // Preserve the typed bind type for the typed setX-with-null path. The generic
+      // setNull(idx, sqlType) entry point still maps to "ANY" (matches reference); this avoids
+      // silently widening every typed null to ANY when the user clearly intended a typed
+      // column.
+      setParameter(parameterIndex, bindType, null);
       return;
     }
     setParameter(parameterIndex, bindType, serializer.apply(value));
@@ -518,11 +681,17 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ResultSet executeAsyncQuery() throws SQLException {
-    throw new SQLFeatureNotSupportedException("executeAsyncQuery not supported");
+    checkClosed();
+    invalidateConversionContext();
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+      return executeAsyncQueryWithBindings(sql, nativeBindings.bindings());
+    }
   }
 
   @Override
   public void setBigInteger(int parameterIndex, BigInteger x) throws SQLException {
+    checkClosed();
     throw new SQLFeatureNotSupportedException("setBigInteger not supported");
   }
 
@@ -530,4 +699,29 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   public <T> void setMap(int parameterIndex, Map<String, T> map, int type) throws SQLException {
     throw new SQLFeatureNotSupportedException("setMap not supported");
   }
+
+  // =========================================================================
+  // Constants ported from snowflake-jdbc
+  // =========================================================================
+
+  /** Error code returned when describing a statement that is binding table name */
+  private static final int ERROR_CODE_TABLE_BIND_VARIABLE_NOT_SET = 2128;
+
+  /** Error code when preparing statement with binding object names */
+  private static final int ERROR_CODE_OBJECT_BIND_NOT_SET = 2129;
+
+  /** Error code returned when describing a ddl command */
+  private static final int ERROR_CODE_STATEMENT_CANNOT_BE_PREPARED = 7;
+
+  /** snow-44393 Workaround for compiler cannot prepare to_timestamp(?, 3) */
+  private static final int ERROR_CODE_FORMAT_ARGUMENT_NOT_STRING = 1026;
+
+  /** Error codes that should not lead to an exception in describe mode. */
+  private static final Set<Integer> ERROR_CODES_IGNORED_IN_DESCRIBE_MODE =
+      new HashSet<>(
+          Arrays.asList(
+              ERROR_CODE_TABLE_BIND_VARIABLE_NOT_SET,
+              ERROR_CODE_STATEMENT_CANNOT_BE_PREPARED,
+              ERROR_CODE_OBJECT_BIND_NOT_SET,
+              ERROR_CODE_FORMAT_ARGUMENT_NOT_STRING));
 }

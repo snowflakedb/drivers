@@ -6,11 +6,14 @@
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLRowCount: HY010 during SQL_NEED_DATA",
                  "[odbc-api][rowcount][retrieving_results][error]") {
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -22,9 +25,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLRowCount: HY010 during SQL_NEED_DATA
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLRowCount is called while the statement is in the SQL_NEED_DATA state
   SQLLEN count = 0;
   ret = SQLRowCount(stmt_handle(), &count);
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }

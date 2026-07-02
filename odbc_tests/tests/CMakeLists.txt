@@ -5,6 +5,9 @@ if(BUILD_SETUP_TOOLS)
   add_subdirectory(setup)
 endif()
 
+option(BUILD_CAPTURE_HARNESS "Build SQLGetData capture harness (author-time only)" OFF)
+
+add_subdirectory(capture_harness)
 add_subdirectory(e2e)
 add_subdirectory(integration)
 add_subdirectory(basic_tests)

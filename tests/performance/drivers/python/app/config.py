@@ -79,6 +79,7 @@ class TestConfig:
             connection_params["private_key_file"] = private_key_file
 
         _disable_ocsp_for_wiremock(connection_params, self.driver_type)
+        _enable_proxy_env_for_wiremock(connection_params, self.driver_type)
 
         return connection_params
     
@@ -92,4 +93,18 @@ def _disable_ocsp_for_wiremock(connection_params, driver_type):
     since WireMock-generated certs have no OCSP responder."""
     if driver_type == "old" and os.getenv("HTTPS_PROXY"):
         connection_params["insecure_mode"] = True
+
+
+def _enable_proxy_env_for_wiremock(connection_params, driver_type):
+    """Opt universal driver into HTTP(S)_PROXY env detection for WireMock.
+
+    The WireMock perf harness routes traffic via proxy env vars, not explicit
+    proxy_host/proxy_port kwargs. Universal driver defaults to ignoring env
+    vars unless use_proxy_env=True (see ODBC perf harness USE_PROXY_ENV=true).
+    """
+    if driver_type != "universal":
+        return
+    if os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY"):
+        connection_params["use_proxy_env"] = True
+        print("Universal driver: use_proxy_env=True (WireMock proxy env detected)")
 

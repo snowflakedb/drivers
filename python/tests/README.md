@@ -3,7 +3,7 @@
 ## Setup
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [Hatch](https://hatch.pypa.io/) build tool
 - Rust toolchain (core library is built automatically during the build process)
@@ -71,8 +71,8 @@ hatch run test.py3.12:all
 # Run universal tests
 hatch run test:all --json-report --json-report-file=reports/universal.json
 
-# Run reference tests
-REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:run --json-report --json-report-file=reports/reference.json
+# Run reference tests (installs latest v4.x by default)
+hatch run reference:run --json-report --json-report-file=reports/reference.json
 
 # Compare results
 hatch run reference:compare --py 3.13 --os ubuntu-latest --universal reports/universal.json --reference reports/reference.json --fail-on-regressions 0
@@ -95,11 +95,11 @@ hatch run reference:compare --py 3.13 --os ubuntu-latest --universal reports/uni
 
 Run tests across all supported Python versions:
 ```bash
-hatch run test.py3.9:all
 hatch run test.py3.10:all
 hatch run test.py3.11:all
 hatch run test.py3.12:all
 hatch run test.py3.13:all
+hatch run test.py3.14:all
 ```
 
 ### Code Quality
@@ -163,7 +163,7 @@ def test_custom_db(connection_factory):
 - `PARAMETER_PATH`: Auto-detects `../parameters.json`
 
 ### Configurable
-- `REFERENCE_DRIVER_VERSION`: Reference driver version (default: `3.17.2`)
+- `PYTHON_REFERENCE_DRIVER_VERSION`: Reference driver version constraint (default: `>=4,<5`; e.g. `==4.3.0` to pin)
 - `CORE_PATH`: Override core library path
 - `PARAMETER_PATH`: Override parameters file path
 

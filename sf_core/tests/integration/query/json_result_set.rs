@@ -1,8 +1,9 @@
 use crate::common::arrow_result_helper::{
     ArrowResultHelper, assert_record_batches_match, assert_schemas_match,
 };
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
+use sf_core::protobuf::generated::database_driver_v1::execute_query_response;
 
 #[test]
 fn should_return_arrow_even_if_json_result_set_is_returned_for_various_types() {
@@ -159,6 +160,76 @@ fn should_return_array_as_arrow_even_if_json_result_set_is_returned() {
 }
 
 #[test]
+fn should_return_interval_year_to_month_family_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_ytm (\
+            year_col INTERVAL YEAR, \
+            month_col INTERVAL MONTH, \
+            ytm_col INTERVAL YEAR TO MONTH)",
+        "INSERT INTO json_result_set_interval_ytm VALUES \
+            ('0', '0', '0-0'), \
+            ('1', '1', '1-2'), \
+            ('-5', '-14', '-1-3'), \
+            ('9999', '9999', '9999-11'), \
+            ('-9999', '-9999', '-9999-11'), \
+            (NULL, NULL, NULL)",
+        "SELECT * FROM json_result_set_interval_ytm",
+    )
+}
+
+#[test]
+fn should_return_interval_simple_day_to_second_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_simple (\
+            day_col INTERVAL DAY, \
+            hour_col INTERVAL HOUR, \
+            minute_col INTERVAL MINUTE, \
+            second_col INTERVAL SECOND)",
+        "INSERT INTO json_result_set_interval_simple VALUES \
+            ('0', '0', '0', '0'), \
+            ('1', '1', '1', '1.5'), \
+            ('-1', '-1', '-1', '-1.5'), \
+            ('99999', '99999', '99999', '99999.999999'), \
+            ('-99999', '-99999', '-99999', '-99999.999999'), \
+            (NULL, NULL, NULL, NULL)",
+        "SELECT * FROM json_result_set_interval_simple",
+    )
+}
+
+#[test]
+fn should_return_interval_compound_day_to_second_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_compound (\
+            d2h_col INTERVAL DAY TO HOUR, \
+            d2m_col INTERVAL DAY TO MINUTE, \
+            d2s_col INTERVAL DAY TO SECOND, \
+            h2m_col INTERVAL HOUR TO MINUTE, \
+            h2s_col INTERVAL HOUR TO SECOND, \
+            m2s_col INTERVAL MINUTE TO SECOND)",
+        "INSERT INTO json_result_set_interval_compound VALUES \
+            ('0 0', '0 0:0', '0 0:0:0.0', '0:0', '0:0:0.0', '0:0.0'), \
+            ('1 2', '1 2:30', '12 3:4:5.678', '1:30', '1:30:45.123', '30:45.123'), \
+            ('-1 2', '-1 2:30', '-1 2:3:4.567', '-1:30', '-1:30:45.123', '-30:45.123'), \
+            ('99999 23', '99999 23:59', '99999 23:59:59.999999', '99999:59', '99999:59:59.999999', '99999:59.999999'), \
+            (NULL, NULL, '-99999 23:59:59.999999', '-99999:59', '-99999:59:59.999999', '-99999:59.999999'), \
+            (NULL, NULL, NULL, NULL, NULL, NULL)",
+        "SELECT * FROM json_result_set_interval_compound",
+    )
+}
+
+#[test]
+fn should_return_large_interval_day_to_second_as_decimal128_for_arrow_and_json() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_large_interval (\
+            large_day INTERVAL DAY, \
+            large_hour INTERVAL HOUR)",
+        "INSERT INTO json_result_set_large_interval VALUES \
+            ('120000', '3000000')",
+        "SELECT * FROM json_result_set_large_interval",
+    )
+}
+
+#[test]
 fn should_handle_empty_result_set_for_arrow_and_json() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
@@ -167,19 +238,31 @@ fn should_handle_empty_result_set_for_arrow_and_json() {
 
     client.set_sql_query(&stmt, select_query);
     let arrow_result = client.execute_statement_query(&stmt);
+    let arrow_query_id = unwrap_single_query_id(&arrow_result);
+    let arrow_rs = client.get_result_set(&stmt, &arrow_query_id);
 
     client.set_sql_query(
         &stmt,
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
     );
     let result = client.execute_statement_query(&stmt);
-    assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
+    let desc = match result {
+        execute_query_response::Result::Single(d) => d,
+        _ => panic!("expected single"),
+    };
+    assert_eq!(
+        desc.result_descriptor.as_ref().unwrap().rows_affected,
+        Some(1),
+        "Cannot force JSON result set"
+    );
 
     client.set_sql_query(&stmt, select_query);
     let json_result = client.execute_statement_query(&stmt);
+    let json_query_id = unwrap_single_query_id(&json_result);
+    let json_rs = client.get_result_set(&stmt, &json_query_id);
 
-    let mut arrow_helper = ArrowResultHelper::from_result(arrow_result);
-    let mut json_helper = ArrowResultHelper::from_result(json_result);
+    let mut arrow_helper = ArrowResultHelper::from_result(arrow_rs);
+    let mut json_helper = ArrowResultHelper::from_result(json_rs);
 
     let arrow_schema = arrow_helper.schema();
     let json_schema = json_helper.schema();
@@ -239,19 +322,31 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
 
     client.set_sql_query(&stmt, &select_query);
     let arrow_result = client.execute_statement_query(&stmt);
+    let arrow_query_id = unwrap_single_query_id(&arrow_result);
+    let arrow_rs = client.get_result_set(&stmt, &arrow_query_id);
 
     client.set_sql_query(
         &stmt,
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
     );
     let result = client.execute_statement_query(&stmt);
-    assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
+    let desc = match result {
+        execute_query_response::Result::Single(d) => d,
+        _ => panic!("expected single"),
+    };
+    assert_eq!(
+        desc.result_descriptor.as_ref().unwrap().rows_affected,
+        Some(1),
+        "Cannot force JSON result set"
+    );
 
     client.set_sql_query(&stmt, &select_query);
     let json_result = client.execute_statement_query(&stmt);
+    let json_query_id = unwrap_single_query_id(&json_result);
+    let json_rs = client.get_result_set(&stmt, &json_query_id);
 
-    let mut arrow_result_helper = ArrowResultHelper::from_result(arrow_result);
-    let mut json_result_helper = ArrowResultHelper::from_result(json_result);
+    let mut arrow_result_helper = ArrowResultHelper::from_result(arrow_rs);
+    let mut json_result_helper = ArrowResultHelper::from_result(json_rs);
 
     let arrow_schema = arrow_result_helper.schema();
     let json_schema = json_result_helper.schema();

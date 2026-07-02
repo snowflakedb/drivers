@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
 use tracing::warn;
 
+use crate::sensitive::SensitiveString;
+
 use super::{
     CacheDirectoryResolutionSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
     TokenRetrievalSnafu, TokenStorageSnafu,
@@ -28,7 +30,7 @@ const DEFAULT_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheFileContent {
-    tokens: HashMap<String, String>,
+    tokens: HashMap<String, SensitiveString>,
 }
 
 /// Creates a single directory with mode `0o700` on Unix, ignoring `AlreadyExists`.
@@ -503,7 +505,9 @@ impl FileTokenCache {
             Some(hc) => hc,
             None => self.create_empty_cache()?,
         };
-        cache.tokens.insert(hash_cache_key(key), value);
+        cache
+            .tokens
+            .insert(hash_cache_key(key), SensitiveString::from(value));
         self.write_cache(&mut handle, &cache)
     }
 
@@ -515,7 +519,10 @@ impl FileTokenCache {
             Some(c) => c,
             None => return Ok(None),
         };
-        Ok(cache.tokens.get(&hashed_key).map(|v| v.as_bytes().to_vec()))
+        Ok(cache
+            .tokens
+            .get(&hashed_key)
+            .map(|v| v.reveal().as_bytes().to_vec()))
     }
 
     /// Deletes a credential by key. Returns `true` if the key existed.
@@ -661,7 +668,7 @@ mod tests {
 
             let expected_key = hash_cache_key("my_raw_key");
             assert!(parsed.tokens.contains_key(&expected_key));
-            assert_eq!(parsed.tokens.get(&expected_key).unwrap(), "val");
+            assert_eq!(parsed.tokens.get(&expected_key).unwrap().reveal(), "val");
         }
 
         #[cfg(unix)]
@@ -979,7 +986,10 @@ mod tests {
         /// Run with:
         ///   cargo test -p sf_core -- stress_concurrent_lock --ignored --nocapture
         #[test]
-        #[ignore] // slow — run manually to validate locking reliability
+        // Slow — run manually to validate locking reliability. Deliberately NOT
+        // prefixed with `vpn_` so the Jenkins VPN-tests pipeline (which filters
+        // `--ignored vpn_`) does not pick it up. See sf_core/README.md.
+        #[ignore]
         fn stress_concurrent_lock() {
             const ITERATIONS: usize = 20;
             const STRESS_THREADS: usize = 100;

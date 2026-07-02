@@ -2,13 +2,13 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, Float64Array};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::api::encoding::wchar_byte_size;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
-    UnsupportedCDataTypeSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, InvalidNumericLiteralSnafu,
+    NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -23,7 +23,7 @@ use crate::conversion::param_binding::{
     read_wchar_str,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -135,6 +135,65 @@ fn fractional_warning(value: f64) -> Warnings {
         vec![Warning::NumericValueTruncated]
     } else {
         vec![]
+    }
+}
+
+/// Returns `true` iff `s` (already trimmed of surrounding whitespace) is one
+/// of the explicit non-finite tokens that Rust's `f64::from_str` accepts but
+/// the ODBC "numeric-literal" grammar does not (MS ODBC spec, Appendix C).
+///
+/// We need this to disambiguate two distinct paths that both end up with
+/// `!v.is_finite()` after `parse::<f64>()`:
+///
+///   1. The user *typed* a non-finite token (e.g. `"Infinity"`, `"NaN"`,
+///      `"inf"`, with optional leading sign and any case). The literal is
+///      not in the ODBC grammar at all, so the spec-aligned SQLSTATE is
+///      22018 (`InvalidNumericLiteral`).
+///
+///   2. The user typed a *well-formed* decimal/scientific literal whose
+///      magnitude exceeds `f64::MAX` (e.g. `"1e309"`, `"-1.0e309"`). Rust's
+///      parser overflows these silently to `+/-inf`. The literal IS in the
+///      ODBC grammar; it just doesn't fit the target type. The spec-aligned
+///      SQLSTATE here is 22003 (`NumericMagnitudeOverflow`).
+///
+/// Treating both cases the same regresses out-of-range reporting from 22003
+/// to 22018, which is why we discriminate on the input token rather than on
+/// `is_finite()` alone.
+///
+/// Rust's `f64::from_str` is documented to accept (case-insensitive)
+/// `nan`, `inf`, `infinity`, each with an optional leading `+` or `-` sign,
+/// and nothing else maps to a non-finite result without overflowing. This
+/// helper mirrors exactly that token set.
+fn is_explicit_non_finite_token(s: &str) -> bool {
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    unsigned.eq_ignore_ascii_case("nan")
+        || unsigned.eq_ignore_ascii_case("inf")
+        || unsigned.eq_ignore_ascii_case("infinity")
+}
+
+/// Map a parsed-but-non-finite `f64` from a SQL_C_CHAR / SQL_C_WCHAR bind to
+/// the spec-aligned `BindingError`, distinguishing explicit non-finite
+/// tokens (22018) from numeric overflow (22003). Returns `Ok(())` for any
+/// finite value; the caller continues with `v` unchanged.
+///
+/// `trimmed` is the (already whitespace-trimmed) source literal as the user
+/// typed it; `v` is the result of `trimmed.parse::<f64>()`. See
+/// `is_explicit_non_finite_token` for the rationale behind discriminating on
+/// the input token rather than on `is_finite()` alone.
+fn reject_non_finite_real_literal(trimmed: &str, v: f64) -> Result<(), BindingError> {
+    if v.is_finite() {
+        return Ok(());
+    }
+    if is_explicit_non_finite_token(trimmed) {
+        InvalidNumericLiteralSnafu {
+            reason: format!("non-finite literal {trimmed:?} is not a valid ODBC numeric literal"),
+        }
+        .fail()
+    } else {
+        NumericMagnitudeOverflowSnafu {
+            reason: format!("literal {trimmed:?} overflows f64 range (parses to non-finite value)"),
+        }
+        .fail()
     }
 }
 
@@ -305,7 +364,7 @@ impl WriteODBCType for SnowflakeReal {
                     .any(|w| matches!(w, Warning::StringDataTruncated))
                 {
                     let whole_len = whole_digits_len(num_str);
-                    let wchar_capacity = (binding.buffer_length / 2) as usize;
+                    let wchar_capacity = (binding.buffer_length as usize) / wchar_byte_size();
                     if whole_len >= wchar_capacity {
                         *get_data_offset = None;
                         return NumericValueOutOfRangeSnafu {
@@ -391,7 +450,7 @@ impl ReadODBC for SnowflakeReal {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         let value = match binding.value_type {
             CDataType::Float => read_unaligned::<f32>(binding) as f64,
             CDataType::Default | CDataType::Double => read_unaligned::<f64>(binding),
@@ -416,38 +475,26 @@ impl ReadODBC for SnowflakeReal {
             }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
-                let v = s.trim().parse::<f64>().map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                let trimmed = s.trim();
+                let v = trimmed.parse::<f64>().map_err(|_| {
+                    InvalidNumericLiteralSnafu {
+                        reason: format!("literal {trimmed:?} is not a valid ODBC numeric literal"),
                     }
                     .build()
                 })?;
-                if !v.is_finite() {
-                    return NumericMagnitudeOverflowSnafu {
-                        reason: format!(
-                            "non-finite f64 value {v} cannot be bound to real SQL type"
-                        ),
-                    }
-                    .fail();
-                }
+                reject_non_finite_real_literal(trimmed, v)?;
                 v
             }
             CDataType::WChar => {
                 let s = read_wchar_str(binding)?;
-                let v = s.trim().parse::<f64>().map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                let trimmed = s.trim();
+                let v = trimmed.parse::<f64>().map_err(|_| {
+                    InvalidNumericLiteralSnafu {
+                        reason: format!("literal {trimmed:?} is not a valid ODBC numeric literal"),
                     }
                     .build()
                 })?;
-                if !v.is_finite() {
-                    return NumericMagnitudeOverflowSnafu {
-                        reason: format!(
-                            "non-finite f64 value {v} cannot be bound to real SQL type"
-                        ),
-                    }
-                    .fail();
-                }
+                reject_non_finite_real_literal(trimmed, v)?;
                 v
             }
             CDataType::Binary => {
@@ -474,20 +521,17 @@ impl ReadODBC for SnowflakeReal {
                     }
                     .fail();
                 }
-                let v = if expected == 4 {
+                // Per MS ODBC "C to SQL: Binary" spec, the only validation on
+                // SQL_C_BINARY -> SQL_REAL/DOUBLE is the length-equals check
+                // above; the bytes are then interpreted as IEEE-754 and passed
+                // through to the server. NaN and +/-Infinity are valid IEEE-754
+                // values that Snowflake FLOAT columns accept, so we do not
+                // reject them here.
+                if expected == 4 {
                     read_unaligned::<f32>(binding) as f64
                 } else {
                     read_unaligned::<f64>(binding)
-                };
-                if !v.is_finite() {
-                    return NumericMagnitudeOverflowSnafu {
-                        reason: format!(
-                            "non-finite value {v} from SQL_C_BINARY cannot be bound to real SQL type"
-                        ),
-                    }
-                    .fail();
                 }
-                v
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {
@@ -500,8 +544,8 @@ impl ReadODBC for SnowflakeReal {
     }
 }
 
-impl WriteJson for SnowflakeReal {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+impl WriteWire for SnowflakeReal {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
         // Snowflake's JSON parameter-binding parser is stricter than its
         // SQL `TO_DOUBLE()` text parser. The SQL parser accepts any of
         // `nan`, `inf`, `infinity` (case-insensitive), but the JSON bind
@@ -521,7 +565,7 @@ impl WriteJson for SnowflakeReal {
         } else {
             value.to_string()
         };
-        Ok(Value::String(s))
+        Ok(s)
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

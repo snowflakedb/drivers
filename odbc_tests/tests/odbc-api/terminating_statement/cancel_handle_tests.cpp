@@ -31,6 +31,10 @@ constexpr int kMaxPollIterations = 300;
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on idle statement",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt_handle());
@@ -50,6 +54,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on idle stateme
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after query execution",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -73,6 +81,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after query exe
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after fetch",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -99,6 +111,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after fetch",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on prepared but not executed statement",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
@@ -125,6 +141,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on prepared but
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: After cancel on executed prepared statement",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -151,6 +171,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: After cancel on execut
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Statement recoverable via SQLFreeStmt SQL_CLOSE after cancel",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -179,6 +203,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Statement recoverable 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: SQLCloseCursor fails after cancel",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -199,6 +227,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: SQLCloseCursor fails a
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after error recovery and re-execution",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT * FROM nonexistent_table_xyz_999"), SQL_NTS);
@@ -238,6 +270,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after error rec
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on never-executed statement then use and free",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLHSTMT fresh_stmt = SQL_NULL_HSTMT;
@@ -264,6 +300,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on never-execut
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Multiple cancels on idle statement",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   for (int i = 0; i < 3; i++) {
@@ -289,6 +329,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Multiple cancels on id
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Preserves bound columns after cancel",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLINTEGER col_val = 0;
@@ -315,6 +359,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Preserves bound column
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Preserves bound parameters after cancel",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -349,6 +397,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Preserves bound parame
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Parameter bindings preserved after cancel with open cursor",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -395,6 +447,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Parameter bindings pre
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancels data-at-execution operation",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -429,6 +485,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancels data-at-execut
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Re-execute immediately after canceling data-at-execution",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -459,6 +519,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Re-execute immediately
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after all rows fetched",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -490,6 +554,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after all rows 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after DDL execution",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   Schema::use_temp_session_schema(dbc_handle());
@@ -518,6 +586,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after DDL execu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on statement in Error state",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   Schema::use_temp_session_schema(dbc_handle());
@@ -535,6 +607,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on statement in
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cursor remains usable after cancel on multi-row result",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT column1 FROM VALUES (1),(2),(3) ORDER BY 1"), SQL_NTS);
@@ -582,6 +658,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cursor remains usable 
 
 TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "SQLCancelHandle: Does not affect other statements on same connection",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -608,6 +688,10 @@ TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "SQLCancelHandle: Does not affect oth
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Preserves statement attributes after cancel",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLULEN max_length = 1024;
@@ -637,6 +721,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Preserves statement at
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Diagnostics after cancel error state",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -651,6 +739,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Diagnostics after canc
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Does not post diagnostic records on no-op cancel",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
@@ -740,6 +832,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Async cancel clears di
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cross-thread cancel interrupts execution with HY008",
                  "[odbc-api][cancelhandle][terminating_statement][cross_thread]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLHSTMT stmt = stmt_handle();
@@ -747,7 +843,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cross-thread cancel in
   ctx.run(stmt, "SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 60))", std::chrono::seconds(5),
           [](SQLHSTMT s) { return SQLCancelHandle(SQL_HANDLE_STMT, s); });
 
-  REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  OLD_DRIVER_ONLY("BD#47") {
+    REQUIRE((ctx.cancel_result == SQL_SUCCESS || ctx.cancel_result == SQL_ERROR));
+    if (ctx.cancel_result == SQL_ERROR && !ctx.cancel_diag_records.empty()) {
+      REQUIRE(ctx.cancel_diag_records[0].sqlState == "HY008");
+    }
+  }
+  NEW_DRIVER_ONLY("BD#47") {
+    REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  }
 
   SQLRETURN exec_ret = ctx.exec_result.load();
   REQUIRE_EXPECTED_ERROR(exec_ret, "HY008", stmt, SQL_HANDLE_STMT);
@@ -768,6 +872,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cross-thread cancel in
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on idle connection",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLCancelHandle(SQL_HANDLE_DBC, dbc_handle());
@@ -787,6 +895,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on idle connect
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel connection with open cursor on statement",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
@@ -806,6 +918,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel connection with
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel connection between prepare and execute",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
@@ -828,6 +944,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel connection betw
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Multiple cancels on idle connection",
                  "[odbc-api][cancelhandle][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC's libiodbc.dylib does not export SQLCancelHandle "
+      "(ODBC 3.8 addition); the test's compat stub returns "
+      "SQL_INVALID_HANDLE before either driver is reached");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   for (int i = 0; i < 3; i++) {
@@ -891,7 +1011,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: SQL_ERROR with HY092 f
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(ard != SQL_NULL_HDESC);
 
-  ret = SQLCancelHandle(SQL_HANDLE_DESC, static_cast<SQLHANDLE>(ard));
+  ret = SQLCancelHandle(SQL_HANDLE_DESC, ard);
   // The DM typically intercepts this before reaching the driver.
   // Windows DM returns SQL_ERROR with HY092 (per spec).
   // Unix DM (unixODBC) may return SQL_INVALID_HANDLE instead.

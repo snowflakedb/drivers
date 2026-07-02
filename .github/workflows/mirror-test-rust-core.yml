@@ -1,0 +1,47 @@
+name: Mirror - Rust Core unit tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit-tests:
+    # Mirror-only: the internal repo runs full CI via test-rust-core.yml.
+    if: github.repository_owner == 'snowflakedb'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "mirror-rust-core"
+
+      - name: Run sf_core unit tests
+        # --lib runs only the inline #[cfg(test)] tests in src/; excludes the
+        # tests/ integration harness which requires a live Snowflake connection.
+        run: cargo test --lib --package sf_core
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "mirror-rust-core"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

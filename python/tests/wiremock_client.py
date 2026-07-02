@@ -4,7 +4,6 @@ import subprocess
 import time
 
 from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -19,10 +18,10 @@ WIREMOCK_MAPPINGS_SUBDIR = "mappings"
 
 class WiremockClient:
     def __init__(self):
-        self.process: Optional[subprocess.Popen] = None
-        self.http_port: Optional[int] = None
+        self.process: subprocess.Popen | None = None
+        self.http_port: int | None = None
         self.host: str = "localhost"
-        self.workspace_root: Optional[Path] = None
+        self.workspace_root: Path | None = None
 
     def start(self) -> "WiremockClient":
         """Start a new Wiremock instance.
@@ -40,6 +39,10 @@ class WiremockClient:
 
         self.http_port = self._find_free_port()
 
+        # Discard JVM stdout/stderr — nothing reads these pipes, and Windows pipe
+        # buffers are small (4–8 KB), so a chatty Wiremock log can fill the buffer
+        # and stall the JVM's logging thread (and via it, the HTTP server thread).
+        # See investigation note in SNOW-3487070.
         self.process = subprocess.Popen(
             [
                 "java",
@@ -53,8 +56,8 @@ class WiremockClient:
                 "--port",
                 str(self.http_port),
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         self._wait_for_health()
@@ -68,7 +71,7 @@ class WiremockClient:
         """
         return f"http://{self.host}:{self.http_port}"
 
-    def add_mapping(self, mapping_path: str, placeholders: Optional[dict[str, str]] = None) -> None:
+    def add_mapping(self, mapping_path: str, placeholders: dict[str, str] | None = None) -> None:
         """Add a mapping to Wiremock with optional placeholder replacement.
         Args:
             mapping_path: Relative path to mapping file from wiremock/mappings/ directory
@@ -118,6 +121,31 @@ class WiremockClient:
 
             if response.status_code not in (200, 201):
                 raise RuntimeError(f"Failed to add mapping: {response.status_code} {response.text}")
+
+    def reset(self) -> None:
+        """Clear all mappings and captured requests via the admin API.
+
+        Equivalent to restarting the JVM but far cheaper — use this between
+        tests sharing a session-scoped Wiremock instance.
+        """
+        response = requests.post(f"{self.http_url()}/__admin/reset", timeout=5)
+        if response.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to reset Wiremock: {response.status_code} {response.text}")
+
+    def get_all_requests(self) -> list:
+        """Query admin API for all captured requests."""
+        response = requests.get(f"{self.http_url()}/__admin/requests")
+        return response.json().get("requests", [])
+
+    def get_logout_requests(self) -> list:
+        """Filter captured requests to logout requests (POST /session?delete=true)."""
+        return [
+            r
+            for r in self.get_all_requests()
+            if r.get("request", {}).get("method") == "POST"
+            and "/session" in r.get("request", {}).get("url", "")
+            and "delete=true" in r.get("request", {}).get("url", "")
+        ]
 
     def get_requests(self, url_path_pattern: str) -> list[dict]:
         """Get all requests received by Wiremock matching a URL path pattern.

@@ -48,6 +48,7 @@ pub mod param_names {
     pub const HOST: ParamKey = ParamKey("host");
     pub const PORT: ParamKey = ParamKey("port");
     pub const PROTOCOL: ParamKey = ParamKey("protocol");
+    pub const SSL: ParamKey = ParamKey("ssl");
     pub const SERVER_URL: ParamKey = ParamKey("server_url");
     pub const PRESERVE_UNDERSCORES_IN_HOSTNAME: ParamKey =
         ParamKey("preserve_underscores_in_hostname");
@@ -80,12 +81,92 @@ pub mod param_names {
     pub const CRL_HTTP_TIMEOUT: ParamKey = ParamKey("crl_http_timeout");
     pub const CRL_CONNECTION_TIMEOUT: ParamKey = ParamKey("crl_connection_timeout");
     pub const ASYNC_EXECUTION: ParamKey = ParamKey("async_execution");
+    pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
+    pub const SKIP_UPLOAD_ON_CONTENT_MATCH: ParamKey = ParamKey("skip_upload_on_content_match");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
+    pub const DISABLE_PARALLEL_USER_PROMPT: ParamKey = ParamKey("disable_parallel_user_prompt");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
+    pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
+    pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
+    pub const CLIENT_SESSION_KEEP_ALIVE: ParamKey = ParamKey("CLIENT_SESSION_KEEP_ALIVE");
+    pub const CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY: ParamKey =
+        ParamKey("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY");
+    // ── OAuth (cross-driver configuration matrix) ─────────────────────────
+    pub const OAUTH_CLIENT_ID: ParamKey = ParamKey("oauth_client_id");
+    pub const OAUTH_CLIENT_SECRET: ParamKey = ParamKey("oauth_client_secret");
+    pub const OAUTH_AUTHORIZATION_URL: ParamKey = ParamKey("oauth_authorization_url");
+    pub const OAUTH_TOKEN_REQUEST_URL: ParamKey = ParamKey("oauth_token_request_url");
+    pub const OAUTH_REDIRECT_URI: ParamKey = ParamKey("oauth_redirect_uri");
+    pub const OAUTH_SCOPE: ParamKey = ParamKey("oauth_scope");
+    pub const OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS: ParamKey =
+        ParamKey("oauth_enable_single_use_refresh_tokens");
+    pub const OAUTH_DISABLE_PKCE: ParamKey = ParamKey("oauth_disable_pkce");
+    pub const OAUTH_ENABLE_DPOP: ParamKey = ParamKey("oauth_enable_dpop");
+    pub const OAUTH_CREDENTIALS_IN_BODY: ParamKey = ParamKey("oauth_credentials_in_body");
+    pub const OAUTH_DISABLE_CONSOLE_LOGIN: ParamKey = ParamKey("oauth_disable_console_login");
+    // Logout configuration
+    pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
+    pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
+        ParamKey("enable_server_session_keep_alive_auto_detection");
+    pub const LOGOUT_ERROR_STRATEGY: ParamKey = ParamKey("logout_error_strategy");
+    pub const LOGOUT_TOTAL_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_total_timeout_seconds");
+    pub const LOGOUT_MAX_ATTEMPTS: ParamKey = ParamKey("logout_max_attempts");
+    pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
+    // PUT/GET file transfer configuration
+    pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
+    // Application identity
+    pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
+    pub const CLIENT_APP_VERSION: ParamKey = ParamKey("client_app_version");
+    pub const APPLICATION: ParamKey = ParamKey("application");
+    // Prefetch configuration
+    pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
+    pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
+    // PUT/GET — S3 regional endpoint override. Server pushes this as the
+    // session parameter `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1`; the
+    // canonical name matches the field on `StageInfo` (and libsfclient's
+    // `use_s3_regional_url` connection attribute).
+    pub const USE_S3_REGIONAL_URL: ParamKey = ParamKey("use_s3_regional_url");
+    pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
+    // Proxy configuration
+    pub const PROXY_HOST: ParamKey = ParamKey("proxy_host");
+    pub const PROXY_PORT: ParamKey = ParamKey("proxy_port");
+    pub const PROXY_USER: ParamKey = ParamKey("proxy_user");
+    pub const PROXY_PASSWORD: ParamKey = ParamKey("proxy_password");
+    pub const NO_PROXY: ParamKey = ParamKey("no_proxy");
+    /// Full proxy URL `[scheme://][user:pass@]host[:port]`, accepted as the
+    /// legacy ODBC `PROXY` connection string key.  Parsed in
+    /// `build_proxy_config` and merged with the individual `proxy_*` fields,
+    /// which override URL components when both are set.
+    pub const PROXY: ParamKey = ParamKey("proxy");
+    /// Whether to fall back to `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`
+    /// environment variables when no explicit proxy is configured.
+    /// Default `false`: env detection is suppressed.
+    pub const USE_PROXY_ENV: ParamKey = ParamKey("use_proxy_env");
+    /// When `true` (default), an empty `PROXY` value explicitly disables the
+    /// proxy and overrides config/env settings, mirroring legacy ODBC
+    /// `AllowEmptyProxy=true`. When `false`, an empty value is ignored.
+    pub const ALLOW_EMPTY_PROXY: ParamKey = ParamKey("allow_empty_proxy");
+
+    /// When `true`, run connectivity diagnostics during connect.
+    /// Default `false`.
+    pub const ENABLE_CONNECTION_DIAG: ParamKey = ParamKey("enable_connection_diag");
+    /// Directory path where the diagnostic report file is written.
+    /// Only used when `ENABLE_CONNECTION_DIAG` is `true`.
+    pub const CONNECTION_DIAG_LOG_PATH: ParamKey = ParamKey("connection_diag_log_path");
+    /// Path to a pre-fetched `allowlist.json` file used during diagnostics.
+    /// When absent, the driver fetches the allowlist live via `system$allowlist()`.
+    pub const CONNECTION_DIAG_ALLOWLIST_PATH: ParamKey = ParamKey("connection_diag_allowlist_path");
+    // ── Session token authentication ────────────────────────────────────
+    pub const SESSION_TOKEN: ParamKey = ParamKey("session_token");
+    pub const MASTER_TOKEN: ParamKey = ParamKey("master_token");
+    pub const MASTER_VALIDITY_IN_SECONDS: ParamKey = ParamKey("master_validity_in_seconds");
 }
+
+/// Default `put_get_max_attempts` (mirrors the `ParamDef`).
+pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
 
 /// Which API layer owns writes for a parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,10 +291,24 @@ static PARAM_DEFS: &[ParamDef] = &[
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::String("https".to_string())),
+        default: None,
         sensitive: false,
         description: "Connection protocol (http or https)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::SSL.as_str(),
+        aliases: &["SSL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Enable or disable SSL/TLS (sets protocol to https or http)",
+        deprecated_by: Some("protocol"),
         scope: ParamScope::Connection,
         used_at_connect: true,
         mutable_after_connect: false,
@@ -283,7 +378,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: None,
         sensitive: false,
-        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)",
+        description: "Authenticator type for the connection",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -291,7 +386,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY.as_str(),
-        aliases: &["PRIV_KEY_BASE64"],
+        aliases: &["PRIV_KEY_BASE64", "PRIVATE_KEY_BASE64"],
         value_type: ValueType::String,
         additional_value_type: Some(ValueType::Bytes),
         required: Required::WhenAuthMethod("SNOWFLAKE_JWT"),
@@ -319,7 +414,12 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_PASSWORD.as_str(),
-        aliases: &["PRIV_KEY_FILE_PWD", "PRIV_KEY_PWD"],
+        aliases: &[
+            "PRIV_KEY_FILE_PWD",
+            "PRIV_KEY_PWD",
+            "PRIVATE_KEY_PWD",
+            "PRIVATE_KEY_FILE_PWD",
+        ],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -339,7 +439,49 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
         default: None,
         sensitive: true,
-        description: "Programmatic access token",
+        description: "Pre-acquired bearer token (PAT or legacy OAUTH)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::SESSION_TOKEN.as_str(),
+        aliases: &["SESSION_TOKEN"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Pre-acquired session token for session token authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::MASTER_TOKEN.as_str(),
+        aliases: &["MASTER_TOKEN"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Pre-acquired master token for session token authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::MASTER_VALIDITY_IN_SECONDS.as_str(),
+        aliases: &["MASTER_VALIDITY_IN_SECONDS"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Remaining validity in seconds for the master token (session token auth)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -388,6 +530,23 @@ static PARAM_DEFS: &[ParamDef] = &[
         mutable_after_connect: false,
     },
     ParamDef {
+        canonical_name: param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(),
+        aliases: &["DISABLE_PARALLEL_USER_PROMPT"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(true)),
+        sensitive: false,
+        description: "When true (default), enables process-global serialization of interactive auth \
+                      prompts (external browser, MFA, OAuth) so that only one prompt is shown per \
+                      <user, host> when clientStoreTemporaryCredential is enabled. Set to false to \
+                      allow each concurrent connection to show its own prompt.",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
         canonical_name: param_names::AUTHENTICATION_TIMEOUT.as_str(),
         aliases: &[],
         value_type: ValueType::Int,
@@ -424,6 +583,171 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
         description: "Skip the Okta SAML URL host-match safety check",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // ── OAuth ───────────────────────────────────────────────────────────
+    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`.
+    // All OAuth params are connect-time and immutable for the life of the
+    // connection.
+    ParamDef {
+        canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
+        aliases: &["OAUTH_CLIENT_ID", "oauthClientId"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
+        aliases: &["OAUTH_CLIENT_SECRET", "oauthClientSecret"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "OAuth client secret (redacted from logs)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
+        aliases: &["OAUTH_AUTHORIZATION_URL", "oauthAuthorizationUrl"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "IdP authorization endpoint (defaults to https://{host}/oauth/authorize)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
+        aliases: &[
+            "OAUTH_TOKEN_REQUEST_URL",
+            "OAUTH_TOKEN_URL",
+            "oauthTokenRequestUrl",
+        ],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
+        default: None,
+        sensitive: false,
+        description: "IdP token endpoint (CC only; defaults to https://{host}/oauth/token-request for AC)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
+        aliases: &["OAUTH_REDIRECT_URI", "oauthRedirectUri"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_SCOPE.as_str(),
+        aliases: &["OAUTH_SCOPE", "oauthScope"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "OAuth scope (space-separated; defaults to session:role:<role>)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
+        aliases: &[
+            "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+            "oauthEnableSingleUseRefreshTokens",
+        ],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Request single-use refresh-token rotation (Snowflake-IdP only)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_DISABLE_PKCE.as_str(),
+        aliases: &["OAUTH_DISABLE_PKCE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_ENABLE_DPOP.as_str(),
+        aliases: &["OAUTH_ENABLE_DPOP"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_CREDENTIALS_IN_BODY.as_str(),
+        aliases: &["OAUTH_CREDENTIALS_IN_BODY"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Send client_id/client_secret in the OAUTH_CLIENT_CREDENTIALS token request body (client_secret_post) instead of the HTTP Basic header",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str(),
+        aliases: &["OAUTH_DISABLE_CONSOLE_LOGIN"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -671,6 +995,175 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: false,
         mutable_after_connect: false,
     },
+    ParamDef {
+        canonical_name: param_names::LOG_QUERY_TEXT.as_str(),
+        aliases: &["LOG_QUERY_TEXT"],
+        value_type: ValueType::Bool,
+        additional_value_type: Some(ValueType::String),
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Include the (truncated) SQL text in INFO query logs",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOG_QUERY_PARAMETERS.as_str(),
+        aliases: &["LOG_QUERY_PARAMETERS"],
+        value_type: ValueType::Bool,
+        additional_value_type: Some(ValueType::String),
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Include the (truncated) JSON bindings in INFO query logs (requires log_query_text)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    // ── Logout ────────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::SERVER_SESSION_KEEP_ALIVE.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Enable auto-detection of async queries before logout (SNOW-2314152)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_ERROR_STRATEGY.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Error handling strategy for logout: 'best_effort' or 'strict'",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Total timeout budget for logout operation including retries",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_MAX_ATTEMPTS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Maximum total attempts for logout (1 = no retry, 3 = 2 retries)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Per-request socket timeout for individual logout attempts",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_PUT_GET_MAX_ATTEMPTS as i64)),
+        sensitive: false,
+        description: "Maximum total attempts for a single PUT/GET file transfer (1 = no retry)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_APP_ID.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_APP_VERSION.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Driver version sent as CLIENT_APP_VERSION in the login request",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::APPLICATION.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
     // ── Statement ──────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::ASYNC_EXECUTION.as_str(),
@@ -685,6 +1178,290 @@ static PARAM_DEFS: &[ParamDef] = &[
         scope: ParamScope::Statement,
         used_at_connect: false,
         mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::MULTI_STATEMENT_COUNT.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Exact number of statements in a multi-statement query",
+        deprecated_by: None,
+        scope: ParamScope::Statement,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::SKIP_UPLOAD_ON_CONTENT_MATCH.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Skip re-uploading a PUT blob when the remote x-ms-meta-sfcdigest header equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        deprecated_by: None,
+        scope: ParamScope::Statement,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    // ── Prefetch ───────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::CLIENT_PREFETCH_THREADS.as_str(),
+        aliases: &["CLIENT_PREFETCH_THREADS"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(4)),
+        sensitive: false,
+        description: "Number of concurrent chunk prefetch threads for result set downloading",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_MEMORY_LIMIT.as_str(),
+        aliases: &["CLIENT_MEMORY_LIMIT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(1536)),
+        sensitive: false,
+        description: "Memory budget in MB for chunk prefetch buffer (0 = unlimited)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    // ── Session keep-alive ─────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Keep the session alive with periodic heartbeat requests",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // ── PUT/GET — S3 regional endpoint ─────────────────────────────────
+    //
+    // Forces the regional S3 endpoint (`s3.<region>.amazonaws.com[.cn]`) for
+    // PUT/GET. Mirrors the OR-with-stage-info-flags semantics that the
+    // Python connector, snowflake-jdbc, and libsnowflakeclient all implement.
+    //
+    // `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` is the server-pushed
+    // session-parameter key. `enable_stage_s3_privatelink_for_us_east_1` is
+    // the legacy Python kwarg name (kept as a deprecated alias via the
+    // Python wrapper's `_DEPRECATED_REWRITES`).
+    ParamDef {
+        canonical_name: param_names::USE_S3_REGIONAL_URL.as_str(),
+        aliases: &["ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Force the S3 regional endpoint for PUT/GET (PrivateLink-to-S3)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::VALIDATE_DEFAULT_PARAMETERS.as_str(),
+        aliases: &["VALIDATE_DEFAULT_PARAMETERS"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Validate that the default database, schema, and warehouse exist on the server at connect time",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // ── Proxy ──────────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::PROXY_HOST.as_str(),
+        // The legacy ODBC `PROXY` DSN key uses a different *format* (full URL
+        // with embedded creds), so it is registered as a distinct canonical
+        // param `proxy` rather than aliased here. `build_proxy_config` parses
+        // the URL and merges it with the fields below.
+        aliases: &["PROXY_HOST"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Proxy server hostname",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::PROXY_PORT.as_str(),
+        aliases: &["PROXY_PORT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Proxy server port",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::PROXY_USER.as_str(),
+        aliases: &["PROXY_USER"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Proxy server username for Basic auth",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::PROXY_PASSWORD.as_str(),
+        aliases: &["PROXY_PASSWORD"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Proxy server password for Basic auth",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::NO_PROXY.as_str(),
+        aliases: &["NO_PROXY", "NOPROXY"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Comma-separated list of hosts to bypass the proxy for",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
+    ParamDef {
+        canonical_name: param_names::PROXY.as_str(),
+        aliases: &["PROXY"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Proxy URL ([scheme://][user:pass@]host[:port]); legacy ODBC `PROXY` form",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::USE_PROXY_ENV.as_str(),
+        aliases: &["USE_PROXY_ENV", "PROXYWITHENV"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ALLOW_EMPTY_PROXY.as_str(),
+        aliases: &["ALLOW_EMPTY_PROXY", "ALLOWEMPTYPROXY"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(true)),
+        sensitive: false,
+        description: "Empty PROXY value explicitly disables proxy (overrides env)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ENABLE_CONNECTION_DIAG.as_str(),
+        aliases: &["ENABLE_CONNECTION_DIAG"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Run connectivity diagnostics during connect and write a report",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CONNECTION_DIAG_LOG_PATH.as_str(),
+        aliases: &["CONNECTION_DIAG_LOG_PATH"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Directory where the diagnostic report file is written (defaults to system tmpdir)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str(),
+        aliases: &["CONNECTION_DIAG_ALLOWLIST_PATH"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
 ];
 
@@ -775,11 +1552,39 @@ mod tests {
             ("AUTHENTICATOR", "authenticator"),
             ("PRIV_KEY_FILE", "private_key_file"),
             ("PRIV_KEY_BASE64", "private_key"),
+            ("PRIVATE_KEY_BASE64", "private_key"),
             ("PRIV_KEY_FILE_PWD", "private_key_password"),
             ("PRIV_KEY_PWD", "private_key_password"),
+            ("PRIVATE_KEY_PWD", "private_key_password"),
+            ("PRIVATE_KEY_FILE_PWD", "private_key_password"),
             ("TOKEN", "token"),
             ("PASSCODE", "passcode"),
             ("PASSCODE_IN_PASSWORD", "passcodeInPassword"),
+            // OAuth: both SCREAMING_SNAKE (universal-driver canonical) and
+            // camelCase (legacy JDBC `SFSessionProperty` keys) aliases must
+            // resolve so applications migrating from snowflake-jdbc keep
+            // working without renaming their Properties keys.
+            ("OAUTH_CLIENT_ID", "oauth_client_id"),
+            ("oauthClientId", "oauth_client_id"),
+            ("OAUTH_CLIENT_SECRET", "oauth_client_secret"),
+            ("oauthClientSecret", "oauth_client_secret"),
+            ("OAUTH_AUTHORIZATION_URL", "oauth_authorization_url"),
+            ("oauthAuthorizationUrl", "oauth_authorization_url"),
+            ("OAUTH_TOKEN_REQUEST_URL", "oauth_token_request_url"),
+            ("OAUTH_TOKEN_URL", "oauth_token_request_url"),
+            ("oauthTokenRequestUrl", "oauth_token_request_url"),
+            ("OAUTH_REDIRECT_URI", "oauth_redirect_uri"),
+            ("oauthRedirectUri", "oauth_redirect_uri"),
+            ("OAUTH_SCOPE", "oauth_scope"),
+            ("oauthScope", "oauth_scope"),
+            (
+                "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+                "oauth_enable_single_use_refresh_tokens",
+            ),
+            (
+                "oauthEnableSingleUseRefreshTokens",
+                "oauth_enable_single_use_refresh_tokens",
+            ),
             (
                 "clientStoreTemporaryCredential",
                 "client_store_temporary_credential",
@@ -790,6 +1595,17 @@ mod tests {
             ("CRL_MODE", "crl_check_mode"),
             ("CRL_ENABLED", "crl_check_mode"),
             ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
+            ("PROXY_HOST", "proxy_host"),
+            ("PROXY_PORT", "proxy_port"),
+            ("PROXY_USER", "proxy_user"),
+            ("PROXY_PASSWORD", "proxy_password"),
+            ("NO_PROXY", "no_proxy"),
+            ("NOPROXY", "no_proxy"),
+            ("PROXY", "proxy"),
+            ("USE_PROXY_ENV", "use_proxy_env"),
+            ("PROXYWITHENV", "use_proxy_env"),
+            ("ALLOW_EMPTY_PROXY", "allow_empty_proxy"),
+            ("ALLOWEMPTYPROXY", "allow_empty_proxy"),
         ];
         for (alias, expected_canonical) in cases {
             let def = r
@@ -813,6 +1629,44 @@ mod tests {
                 param.canonical_name
             );
         }
+    }
+
+    #[test]
+    fn disable_parallel_user_prompt_registered_with_correct_defaults() {
+        let r = registry();
+
+        let def = r
+            .resolve("DISABLE_PARALLEL_USER_PROMPT")
+            .expect("DISABLE_PARALLEL_USER_PROMPT alias should resolve");
+        assert_eq!(def.canonical_name, "disable_parallel_user_prompt");
+        assert_eq!(def.value_type, ValueType::Bool);
+        // Default is true: locking is ON by default.
+        let default_val = def.default.expect("param must have a default")();
+        assert_eq!(default_val, Setting::Bool(true));
+        assert!(def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+
+        // Canonical name also resolves.
+        assert!(r.resolve("disable_parallel_user_prompt").is_some());
+    }
+
+    #[test]
+    fn client_session_keep_alive_params_registered() {
+        let r = registry();
+        let keep_alive = r
+            .resolve("CLIENT_SESSION_KEEP_ALIVE")
+            .expect("CLIENT_SESSION_KEEP_ALIVE should resolve");
+        assert_eq!(keep_alive.value_type, ValueType::Bool);
+        assert_eq!(keep_alive.scope, ParamScope::Session);
+        assert!(keep_alive.used_at_connect);
+
+        let freq = r
+            .resolve("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY")
+            .expect("heartbeat frequency param should resolve");
+        assert_eq!(freq.value_type, ValueType::Int);
+        assert_eq!(freq.scope, ParamScope::Session);
+        assert!(freq.used_at_connect);
     }
 
     #[test]
@@ -894,6 +1748,56 @@ mod tests {
     }
 
     #[test]
+    fn log_query_text_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_query_text")
+            .expect("log_query_text should be registered");
+        assert_eq!(def.canonical_name, "log_query_text");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert_eq!(def.additional_value_type, Some(ValueType::String));
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+        assert_eq!(def.default.unwrap()(), Setting::Bool(false));
+    }
+
+    #[test]
+    fn log_query_parameters_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_query_parameters")
+            .expect("log_query_parameters should be registered");
+        assert_eq!(def.canonical_name, "log_query_parameters");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert_eq!(def.additional_value_type, Some(ValueType::String));
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+        assert_eq!(def.default.unwrap()(), Setting::Bool(false));
+    }
+
+    #[test]
+    fn log_query_text_resolves_uppercase_alias() {
+        let r = registry();
+        let def = r
+            .resolve("LOG_QUERY_TEXT")
+            .expect("LOG_QUERY_TEXT alias should resolve");
+        assert_eq!(def.canonical_name, "log_query_text");
+    }
+
+    #[test]
+    fn log_query_parameters_resolves_uppercase_alias() {
+        let r = registry();
+        let def = r
+            .resolve("LOG_QUERY_PARAMETERS")
+            .expect("LOG_QUERY_PARAMETERS alias should resolve");
+        assert_eq!(def.canonical_name, "log_query_parameters");
+    }
+
+    #[test]
     fn statement_scope_params_are_never_used_at_connect() {
         let r = registry();
         for p in r.all_params() {
@@ -919,5 +1823,40 @@ mod tests {
             assert!(d.used_at_connect, "key {key}");
             assert!(d.mutable_after_connect, "key {key}");
         }
+    }
+
+    #[test]
+    fn proxy_params_have_correct_metadata() {
+        let r = registry();
+        for key in [
+            "proxy_host",
+            "proxy_port",
+            "proxy_user",
+            "proxy_password",
+            "no_proxy",
+            "proxy",
+            "use_proxy_env",
+            "allow_empty_proxy",
+        ] {
+            let d = r
+                .resolve(key)
+                .unwrap_or_else(|| panic!("expected registry entry for {key}"));
+            assert_eq!(d.scope, ParamScope::Connection, "key {key}");
+            assert!(d.used_at_connect, "key {key}");
+            assert!(!d.mutable_after_connect, "key {key}");
+        }
+        let port = r.resolve("proxy_port").unwrap();
+        assert_eq!(port.value_type, ValueType::Int);
+        let pw = r.resolve("proxy_password").unwrap();
+        assert!(pw.sensitive, "proxy_password must be marked sensitive");
+        let proxy = r.resolve("proxy").unwrap();
+        assert!(
+            proxy.sensitive,
+            "proxy URL must be sensitive (may contain creds)"
+        );
+        let host = r.resolve("proxy_host").unwrap();
+        assert!(!host.sensitive);
+        // PROXY must NOT alias proxy_host: their formats differ (URL vs hostname).
+        assert_eq!(r.resolve("PROXY").unwrap().canonical_name, "proxy");
     }
 }

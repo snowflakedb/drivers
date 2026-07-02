@@ -7,6 +7,8 @@ Conversion logic is verified against the reference snowflake-connector-python's
 SnowflakeConverter.to_snowflake_bindings behavior.
 """
 
+import csv
+import io
 import json
 import time as time_module
 
@@ -16,7 +18,14 @@ from decimal import Decimal
 import numpy as np
 import pytest
 
-from snowflake.connector._internal.binding_converters import ClientSideBindingConverter, JsonBindingConverter
+from snowflake.connector._internal.binding_converters import (
+    BindingConverterBase,
+    ClientSideBindingConverter,
+    CsvBindingConverter,
+    JsonBindingConverter,
+    parse_stage_binding_threshold,
+)
+from snowflake.connector.errors import ProgrammingError
 
 
 class TestTypeMapping:
@@ -1206,6 +1215,42 @@ class TestInterpolateQuery:
         )
         assert result == "SELECT * FROM t WHERE id = 42 AND name = 'Alice' AND active = TRUE"
 
+    def test_empty_dict_preserves_doubled_percents_by_default(self):
+        result = ClientSideBindingConverter.interpolate_query("SELECT 1600 %% 400 AS a", {})
+        assert result == "SELECT 1600 %% 400 AS a"
+
+    def test_empty_list_preserves_doubled_percents_by_default(self):
+        result = ClientSideBindingConverter.interpolate_query("SELECT 1600 %% 400 AS a", [])
+        assert result == "SELECT 1600 %% 400 AS a"
+
+    def test_empty_dict_unescapes_doubled_percents_when_flag_set(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "SELECT 1600 %% 400 AS a, 1599 %% 400 AS b", {}, interpolate_empty_sequences=True
+        )
+        assert result == "SELECT 1600 % 400 AS a, 1599 % 400 AS b"
+
+    def test_empty_list_unescapes_doubled_percents_when_flag_set(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "SELECT 1600 %% 400 AS a", [], interpolate_empty_sequences=True
+        )
+        assert result == "SELECT 1600 % 400 AS a"
+
+    def test_empty_dict_no_percents_unchanged(self):
+        query = "SELECT * FROM t"
+        assert ClientSideBindingConverter.interpolate_query(query, {}) == query
+
+    def test_stage_path_unescapes_when_flag_set(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "PUT file:///tmp/data.txt @%%users", {}, interpolate_empty_sequences=True
+        )
+        assert result == "PUT file:///tmp/data.txt @%users"
+
+    def test_nonempty_params_always_interpolate_regardless_of_flag(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "SELECT %s, 100 %% 3", [42], interpolate_empty_sequences=False
+        )
+        assert result == "SELECT 42, 100 % 3"
+
 
 class TestJsonBindingConverterNumpy:
     """Test that JsonBindingConverter handles numpy types via _is_numeric."""
@@ -1287,3 +1332,123 @@ class TestClientSideBindingConverterNumpy:
         query = "SELECT * FROM t WHERE x = %s"
         result = ClientSideBindingConverter.interpolate_query(query, [np.float64(3.14)])
         assert result == "SELECT * FROM t WHERE x = 3.14"
+
+
+class TestCsvBindingConverter:
+    @staticmethod
+    def _rows(csv_bytes: bytes) -> list[list[str]]:
+        return list(csv.reader(io.StringIO(csv_bytes.decode("utf-8"))))
+
+    def test_effective_binding_cells_for_scalar_params(self):
+        assert BindingConverterBase.effective_binding_cells((42, "hello")) == 2
+
+    def test_effective_binding_cells_for_array_params(self):
+        assert BindingConverterBase.effective_binding_cells(([1, 2, 3], ["a", "b", "c"])) == 6
+
+    def test_parse_stage_binding_threshold_defaults_on_invalid_values(self):
+        assert parse_stage_binding_threshold(None) == 65280
+        assert parse_stage_binding_threshold("not-a-number") == 65280
+
+    def test_csv_two_int_columns_one_row(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([42], [-7]))
+        assert self._rows(csv_bytes) == [["42", "-7"]]
+
+    def test_csv_null_and_string_hazards(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(
+            (
+                [0, 1, 2, 3, 4, 5, 6],
+                ["val,0", 'say"1"', "a\nb", "C:\\dir\\3", "", None, "日本語"],
+            )
+        )
+        assert self._rows(csv_bytes) == [
+            ["0", "val,0"],
+            ["1", 'say"1"'],
+            ["2", "a\nb"],
+            ["3", "C:\\dir\\3"],
+            ["4", ""],
+            ["5", ""],
+            ["6", "日本語"],
+        ]
+
+    def test_csv_distinguishes_null_from_empty_string_at_byte_level(self):
+        # csv.reader normalizes both unquoted-empty (NULL) and "" (empty string)
+        # to "", so assert on the raw bytes: an empty string must be quoted ("")
+        # while NULL must be an unquoted empty field. This distinction is the
+        # whole point of unconditional cell quoting under
+        # field_optionally_enclosed_by='"'.
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([0, 1], ["", None]))
+        assert csv_bytes == b'"0",""\n"1",\n'
+
+    def test_csv_binary_is_lowercase_hex(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([bytes.fromhex("deadbeef")],))
+        assert self._rows(csv_bytes) == [["deadbeef"]]
+
+    def test_csv_boolean_is_lowercase(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([True, False],))
+        assert self._rows(csv_bytes) == [["true"], ["false"]]
+
+    def test_csv_serializes_datetime_date_time_timedelta(self):
+        dt = datetime(2024, 1, 15, 12, 0, 0, 123456)
+        d = date(2024, 1, 15)
+        t = time(1, 2, 3, 456)
+        td = timedelta(hours=2, minutes=3, seconds=4, microseconds=500)
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([dt], [d], [t], [td]))
+        rows = self._rows(csv_bytes)
+
+        assert rows == [
+            [
+                JsonBindingConverter._convert_datetime_to_epoch_nanoseconds(dt),
+                JsonBindingConverter._convert_date_to_epoch_milliseconds(d),
+                JsonBindingConverter._convert_time_to_nanoseconds(t),
+                JsonBindingConverter._convert_timedelta_to_nanoseconds(td),
+            ]
+        ]
+
+    def test_csv_far_future_date_switches_to_nanoseconds(self):
+        # A date whose epoch-millisecond value reaches the server's overflow bound
+        # (dates after ~year 2969) must be staged as nanoseconds, not milliseconds,
+        # so the value round-trips correctly. Mirrors the reference connector's
+        # _date_to_snowflake_bindings_in_bulk_insertion. A normal date stays in ms.
+        normal = date(2024, 1, 15)
+        far_future = date(3000, 6, 23)
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([normal, far_future],))
+
+        assert self._rows(csv_bytes) == [
+            [BindingConverterBase._convert_date_to_epoch_milliseconds(normal)],
+            [BindingConverterBase._convert_date_to_epoch_nanoseconds(far_future)],
+        ]
+        # The naive millisecond encoding would overflow server-side; guard against
+        # a regression that silently drops back to it for the far-future date.
+        assert BindingConverterBase._convert_date_to_epoch_milliseconds(
+            far_future
+        ) != BindingConverterBase._convert_date_to_epoch_nanoseconds(far_future)
+
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(
+            (
+                [Decimal("123.45")],
+                [np.int64(7)],
+                [("DECFLOAT", Decimal("1.25"))],
+                [np.float64(3.5)],
+            )
+        )
+        assert self._rows(csv_bytes) == [["123.45", "7", "1.25", "3.5"]]
+
+    def test_csv_allows_scalar_column_with_array_columns(self):
+        csv_bytes = CsvBindingConverter.serialize_parameters_to_csv(([1, 2], ["x", "y"], 99))
+        assert self._rows(csv_bytes) == [["1", "x", "99"], ["2", "y", "99"]]
+
+    def test_csv_returns_none_for_empty_params(self):
+        assert CsvBindingConverter.serialize_parameters_to_csv(()) is None
+
+    def test_csv_mismatched_array_width_raises_programming_error(self):
+        with pytest.raises(ProgrammingError, match="column 1 has 2 rows"):
+            CsvBindingConverter.serialize_parameters_to_csv(([1], ["a", "b"]))
+
+    def test_csv_explicit_timestamp_tz_naive_datetime_treated_as_utc(self):
+        # A naive datetime passed as ("TIMESTAMP_TZ", dt) should serialize
+        # identically to a UTC-aware datetime — naive is treated as already UTC.
+        naive = datetime(2024, 3, 15, 10, 0, 0)
+        aware = datetime(2024, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
+        csv_naive = CsvBindingConverter.serialize_parameters_to_csv(([("TIMESTAMP_TZ", naive)],))
+        csv_aware = CsvBindingConverter.serialize_parameters_to_csv(([("TIMESTAMP_TZ", aware)],))
+        assert csv_naive == csv_aware

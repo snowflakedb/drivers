@@ -1,0 +1,64 @@
+name: Free disk space (Linux)
+description: >
+  Reclaim disk space on GitHub-hosted ubuntu-latest runners by removing
+  pre-installed tooling we don't use. Inline replacement for
+  jlumbroso/free-disk-space, which is blocked by the org's actions allowlist
+  (external repos require enterprise approval). Targets ~21 GB recovered in
+  ~25 s while preserving swap — enough to unblock coverage-instrumented Rust
+  builds that link AWS SDK + rustls + aws-lc-fips + arrow + hyper into many
+  integration test binaries and otherwise hit ENOSPC during link with only
+  ~14 GB free on `/`.
+#
+# WHY pre-installed software exists in the first place:
+#   GitHub's ubuntu-latest image (actions/runner-images) bakes in Android
+#   SDK, multiple .NET SDKs, GHC/cabal, several JDKs, pre-pulled Docker
+#   images, a 4 GB swapfile, CodeQL bundles, PowerShell, Boost, PyPy, and
+#   more — collectively ~30 GB on a ~75 GB root disk, leaving callers with
+#   ~14 GB. None of this is useful for our Rust workspace; reclaiming the
+#   space is a standard pattern in the ecosystem.
+#
+# WHY we don't gate this with `if: runner.os == 'Linux'` here:
+#   The action is named -linux and uses bash + sudo + Linux paths. Callers
+#   that might run on macOS/Windows must gate at the step level. macOS hosted
+#   runners have ample disk and no equivalent bloat; Windows uses different
+#   paths and would need its own action.
+#
+# SAFE to remove: each path below holds pre-installed tooling that this repo
+# does not consume in any CI job. If a future job adds a dependency on Android
+# / .NET / Haskell, narrow the action or stop calling it from that job.
+
+runs:
+  using: composite
+  steps:
+    - name: Show disk space before cleanup
+      shell: bash
+      run: df -h /
+
+    # Each rm is wrapped in `|| true` so an unexpected layout change in a
+    # future runner image (path moved, already missing) degrades to a no-op
+    # rather than failing the job. `sudo` is required: these paths are owned
+    # by root and the runner user has only read access.
+    - name: Remove pre-installed Android SDK
+      shell: bash
+      run: sudo rm -rf /usr/local/lib/android || true
+
+    - name: Remove pre-installed .NET SDK
+      shell: bash
+      run: sudo rm -rf /usr/share/dotnet || true
+
+    - name: Remove pre-installed Haskell toolchain
+      shell: bash
+      run: |
+        sudo rm -rf /opt/ghc || true
+        sudo rm -rf /usr/local/.ghcup || true
+
+    # Pre-pulled images (ubuntu, alpine, node, …) baked into the runner.
+    # `docker image prune` is safe — we don't run any docker workloads in
+    # the jobs that call this action.
+    - name: Remove pre-pulled Docker images
+      shell: bash
+      run: docker image prune --all --force 2>/dev/null || true
+
+    - name: Show disk space after cleanup
+      shell: bash
+      run: df -h /

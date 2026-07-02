@@ -2,8 +2,6 @@ name: Validate generated data
 
 on:
   pull_request:
-  push:
-    branches: [ main ]
   merge_group:
     types: [ checks_requested ]
 
@@ -58,6 +56,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -71,6 +71,12 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save
+        # (~13 min normal, 20 min hard ceiling for outliers).
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -80,7 +86,26 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
+  test-matrix:
+    if: github.repository_owner != 'snowflakedb'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run ci/test_matrix unit tests
+        run: python -m unittest ci/test_matrix/test_generate_matrix.py
+
   test-coverage-report:
+    if: >-
+      github.repository_owner != 'snowflakedb' &&
+      !contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') &&
+      github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -88,6 +113,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -109,6 +136,12 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save
+        # (~13 min normal, 20 min hard ceiling for outliers).
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -127,7 +160,7 @@ jobs:
           retention-days: 30
 
   validations-status:
-    needs: [test-data, tests-format-validator, test-coverage-report]
+    needs: [test-data, tests-format-validator, test-matrix, test-coverage-report]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -138,10 +171,12 @@ jobs:
           # Check if any validation failed or was cancelled
           if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test-matrix.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test-coverage-report.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Validations FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
             echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+            echo "  - test-matrix: ${{ needs.test-matrix.result }}"
             echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
             exit 1
           fi
@@ -149,5 +184,6 @@ jobs:
           echo "✓ Validations PASSED"
           echo "  - test-data: ${{ needs.test-data.result }}"
           echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+          echo "  - test-matrix: ${{ needs.test-matrix.result }}"
           echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
           exit 0

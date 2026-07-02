@@ -5,13 +5,15 @@ This module provides an empty implementation of the Python Database API Specific
 as defined in PEP 249.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from . import util_text  # noqa: F401 - backward compatibility re-exports
-from ._internal.api_client.c_api import register_default_logger_callback
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
-from .constants import QueryStatus
+from .connection_config import ConnectionConfig
+from .constants import QueryStatus, StatementParameterName
 from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
@@ -47,11 +49,15 @@ apilevel = "2.0"
 threadsafety = 2  # Threads may share the module and connections, but not cursors
 paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
-register_default_logger_callback()
-
 
 @pep249
-def connect(**kwargs: Any) -> Connection:
+def connect(
+    *,
+    connection_name: str | None = None,
+    connections_file_path: str | None = None,
+    config: ConnectionConfig | None = None,
+    **kwargs: Any,
+) -> Connection:
     """
     Create a connection to the database.
 
@@ -66,7 +72,12 @@ def connect(**kwargs: Any) -> Connection:
     Returns:
         Connection: A Connection object
     """
-    return Connection(**kwargs)
+    return Connection(
+        connection_name=connection_name,
+        connections_file_path=connections_file_path,
+        config=config,
+        **kwargs,
+    )
 
 
 # Export all public symbols
@@ -80,9 +91,11 @@ __all__ = [
     # Connection function
     "connect",
     # Classes
+    "ConnectionConfig",
     "Connection",
     "SnowflakeConnection",
     "QueryStatus",
+    "StatementParameterName",
     "DictCursor",
     "SnowflakeCursor",
     # Exceptions

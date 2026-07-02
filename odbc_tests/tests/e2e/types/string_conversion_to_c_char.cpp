@@ -15,6 +15,7 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
@@ -70,12 +71,14 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // Then the function should return SQL_SUCCESS_WITH_INFO (truncation occurred)
   CHECK(ret == SQL_SUCCESS_WITH_INFO);
 
-  std::u16string expected_truncated = u"This is a very long";
-  CHECK(std::u16string((char16_t*)buffer, sizeof(buffer) / sizeof(char16_t) - 1) == expected_truncated);
-  CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == 0);
+  std::u32string expected_truncated = U"This is a very long";
+  // Buffer holds (capacity - 1) code units of payload plus a NUL terminator.
+  CHECK(sf::wide::decode_wide(buffer, sizeof(buffer) / sizeof(SQLWCHAR) - 1) == expected_truncated);
+  CHECK(buffer[sizeof(buffer) / sizeof(SQLWCHAR) - 1] == 0);
 
-  // And the indicator should show the actual byte length of the original string in wide char format
-  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == 98); }
+  // And the indicator reports the original payload length in DM-side bytes
+  // (49 source chars * `sizeof(SQLWCHAR)`).
+  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == 49 * static_cast<SQLLEN>(sizeof(SQLWCHAR))); }
   OLD_DRIVER_ONLY("BD#23") { CHECK((indicator == 98 || indicator == SQL_NO_TOTAL)); }
 }
 
@@ -95,14 +98,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-16 to ASCII with 0x1a su
 
   // When Query selecting strings with non-ASCII Unicode characters is executed
   auto stmt = conn.executew_fetch(
-      u"SELECT "
-      u"'日本語' AS japanese, "
-      u"'Hello日World' AS mixed, "
-      u"'⛄🚀🎉' AS emojis, "
-      u"'αβγδ' AS greek, "
-      u"'Hello' AS ascii_only, "
-      u"'y̆es' AS combined, "
-      u"'𝄞' AS surrogate_pair");
+      U"SELECT "
+      U"'日本語' AS japanese, "
+      U"'Hello日World' AS mixed, "
+      U"'⛄🚀🎉' AS emojis, "
+      U"'αβγδ' AS greek, "
+      U"'Hello' AS ascii_only, "
+      U"'y̆es' AS combined, "
+      U"'𝄞' AS surrogate_pair");
 
   // And Pure ASCII string should remain unchanged
   auto ascii_only = get_data<SQL_C_CHAR>(stmt, 5);

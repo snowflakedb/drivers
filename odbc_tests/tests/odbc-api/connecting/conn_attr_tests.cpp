@@ -80,15 +80,22 @@ TEST_CASE("should return SQL_CD_TRUE after disconnect", "[odbc-api][conn_attr][c
   // SQLGetConnectAttr after SQLDisconnect and return SQL_ERROR (HY010 or 08003)
   // instead of forwarding the call to our driver. We accept either outcome.
   if (SQL_SUCCEEDED(ret)) {
-    CHECK(dead == SQL_CD_TRUE);
+    OLD_IODBC_ONLY("BD#64") {
+      // The old driver caches the connection state lazily and continues to
+      //   report SQL_CD_FALSE after SQLDisconnect under iODBC (it only flips
+      //   on the next failed roundtrip). The new driver flips synchronously.
+      CHECK(dead == SQL_CD_FALSE);
+    }
+    else {
+      CHECK(dead == SQL_CD_TRUE);
+    }
   } else {
     // Validate that the failure is for an expected reason: HY010 (function sequence error)
     // or 08003 (connection not open), depending on the DM.
-    char sqlstate[6] = {};
-    SQLRETURN diag_ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc.getHandle(), 1, reinterpret_cast<SQLCHAR*>(sqlstate),
-                                       nullptr, nullptr, 0, nullptr);
+    SQLCHAR sqlstate[6] = {};
+    SQLRETURN diag_ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc.getHandle(), 1, sqlstate, nullptr, nullptr, 0, nullptr);
     CHECK(SQL_SUCCEEDED(diag_ret));
-    std::string state(sqlstate);
+    std::string state(reinterpret_cast<const char*>(sqlstate));
     CHECK((state == "HY010" || state == "08003"));
   }
 }
@@ -152,13 +159,24 @@ TEST_CASE("should set and get SQL_ATTR_PACKET_SIZE before connect", "[odbc-api][
 
   // When SQL_ATTR_PACKET_SIZE is set before connecting
   ret = SQLSetConnectAttr(dbc.getHandle(), SQL_ATTR_PACKET_SIZE, reinterpret_cast<SQLPOINTER>(4096), 0);
-  REQUIRE(ret == SQL_SUCCESS);
 
-  // Then Getting the attribute should return the stored value
-  SQLULEN size = 0;
-  ret = SQLGetConnectAttr(dbc.getHandle(), SQL_ATTR_PACKET_SIZE, &size, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
-  CHECK(size == 4096);
+  NON_IODBC {
+    // And the set succeeds and the value round-trips on GET
+    // unixODBC / Windows DM forward the set immediately; round-trip the value via GET.
+    REQUIRE(ret == SQL_SUCCESS);
+    SQLULEN size = 0;
+    ret = SQLGetConnectAttr(dbc.getHandle(), SQL_ATTR_PACKET_SIZE, &size, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(size == 4096);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM caches SQL_ATTR_PACKET_SIZE locally on the unconnected
+    //   handle and returns SQL_SUCCESS without forwarding to the driver. The
+    //   value is not round-tripped back via GET because iODBC does not expose
+    //   the cached value on an unconnected handle, so only the SET return code
+    //   is asserted here.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
 }
 
 // ============================================================================
@@ -175,13 +193,21 @@ TEST_CASE("should set and get SQL_ATTR_QUIET_MODE", "[odbc-api][conn_attr][quiet
   // When SQL_ATTR_QUIET_MODE is set to a pointer value
   SQLPOINTER hwnd = reinterpret_cast<SQLPOINTER>(0xDEADBEEF);
   ret = SQLSetConnectAttr(dbc.getHandle(), SQL_ATTR_QUIET_MODE, hwnd, 0);
-  REQUIRE(ret == SQL_SUCCESS);
 
-  // Then Getting the attribute should return the same pointer
-  SQLPOINTER result = nullptr;
-  ret = SQLGetConnectAttr(dbc.getHandle(), SQL_ATTR_QUIET_MODE, &result, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
-  CHECK(result == hwnd);
+  NON_IODBC {
+    // And the set succeeds and the pointer round-trips on GET
+    // unixODBC / Windows DM accept the set and round-trip the pointer.
+    REQUIRE(ret == SQL_SUCCESS);
+    SQLPOINTER result = nullptr;
+    ret = SQLGetConnectAttr(dbc.getHandle(), SQL_ATTR_QUIET_MODE, &result, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(result == hwnd);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM caches SQL_ATTR_QUIET_MODE locally on the unconnected
+    //   handle and returns SQL_SUCCESS without forwarding to the driver
+    REQUIRE(ret == SQL_SUCCESS);
+  }
 }
 
 // ============================================================================
@@ -240,7 +266,7 @@ TEST_CASE("should set SQL_ATTR_CURRENT_CATALOG to current value successfully",
   ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG,
                           reinterpret_cast<SQLPOINTER>(initial_catalog), SQL_NTS);
 
-  // Then It should succeed and the catalog should remain the same
+  // Then it should succeed and the catalog should remain the same
   REQUIRE(SQL_SUCCEEDED(ret));
   char result_catalog[256] = {};
   SQLINTEGER result_len = 0;
@@ -249,19 +275,15 @@ TEST_CASE("should set SQL_ATTR_CURRENT_CATALOG to current value successfully",
   REQUIRE(SQL_SUCCEEDED(ret));
   CHECK(std::string(result_catalog) == std::string(initial_catalog));
 
-  // Verify the catalog reported by the driver matches the server's view.
-  // Note: this confirms consistency between driver and server, but does not prove that a
-  // USE DATABASE round-trip was made (a driver caching the name and skipping the server call
-  // would still pass — see the note above about what this test does and does not verify).
-  {
-    char db_from_server[256];
-    std::memset(db_from_server, 0xFF, sizeof(db_from_server));
-    SQLLEN cb = 0;
-    auto stmt = conn.execute_fetch("SELECT CURRENT_DATABASE()");
-    REQUIRE(SQL_SUCCEEDED(SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, db_from_server, sizeof(db_from_server), &cb)));
-    REQUIRE(cb != SQL_NULL_DATA);
-    CHECK(std::string(db_from_server) == std::string(initial_catalog));
-  }
+  // And the SET round-trips to the server, so SELECT CURRENT_DATABASE() reports
+  //   the same catalog
+  char db_from_server[256];
+  std::memset(db_from_server, 0xFF, sizeof(db_from_server));
+  SQLLEN cb = 0;
+  auto stmt = conn.execute_fetch("SELECT CURRENT_DATABASE()");
+  REQUIRE(SQL_SUCCEEDED(SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, db_from_server, sizeof(db_from_server), &cb)));
+  REQUIRE(cb != SQL_NULL_DATA);
+  CHECK(std::string(db_from_server) == std::string(initial_catalog));
 }
 
 #if !defined(_WIN32)
@@ -271,6 +293,10 @@ TEST_CASE("should set SQL_ATTR_CURRENT_CATALOG to current value successfully",
 // where the DM passes the call through to our driver.
 TEST_CASE("should return 3D000 when setting SQL_ATTR_CURRENT_CATALOG to nonexistent database",
           "[odbc-api][conn_attr][current_catalog][error][connecting]") {
+  // Old driver executes USE "<db>" via Simba SDK but does not map the failure to 3D000.
+  SKIP_OLD_DRIVER("SNOW-3235552",
+                  "Old driver does not map invalid catalog to 3D000; Simba framework returns HY000/42000");
+
   // Given A connected DBC handle
   Connection conn;
 
@@ -279,16 +305,9 @@ TEST_CASE("should return 3D000 when setting SQL_ATTR_CURRENT_CATALOG to nonexist
   SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG,
                                     reinterpret_cast<SQLPOINTER>(bad_catalog), SQL_NTS);
 
-  // Then:
-  // - New driver: validates the catalog against the server and explicitly returns 3D000.
-  // - Old driver: executes USE "<db>" on the server via the Simba SDK; the resulting Snowflake
-  //   server error is propagated as SQL_ERROR, but with HY000/42000 rather than 3D000 (the
-  //   Simba framework does not map USE failures to the ODBC 3D000 state).
-  if (get_driver_type() == DRIVER_TYPE::NEW) {
-    REQUIRE_EXPECTED_ERROR(ret, "3D000", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
-  } else {
-    CHECK(ret == SQL_ERROR);
-  }
+  // And the driver round-trips the set to the server, the server rejects
+  //   the nonexistent catalog, and the driver maps that to SQLSTATE 3D000
+  REQUIRE_EXPECTED_ERROR(ret, "3D000", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
 }
 #endif  // !defined(_WIN32)
 

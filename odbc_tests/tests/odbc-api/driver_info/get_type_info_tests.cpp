@@ -813,8 +813,6 @@ static const TypeInfoExpected ALL_TYPE_INFO[] = {
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when using SQL_ALL_TYPES",
                  "[odbc-api][gettypeinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -888,8 +886,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: SQL_INVALID_HANDLE - Inv
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Returns empty result for invalid SQL data type",
                  "[odbc-api][gettypeinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), 9999);
 
   // Note: Reference driver returns SUCCESS with empty result set (differs from ODBC spec)
@@ -925,8 +921,6 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetTypeInfo: Requires active connection",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple times on same statement",
                  "[odbc-api][gettypeinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_VARCHAR);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -946,8 +940,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct columns",
                  "[odbc-api][gettypeinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -980,8 +972,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fetch data",
                  "[odbc-api][gettypeinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   char typeName[256];
   SQLLEN typeNameInd;
   SQLSMALLINT dataType;
@@ -1023,8 +1013,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fe
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported types with exact column values",
                  "[odbc-api][gettypeinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 

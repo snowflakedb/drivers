@@ -60,7 +60,10 @@ fn should_not_include_spcs_token_when_env_var_is_not_set() {
 #[test]
 fn should_include_spcs_token_when_env_var_is_set_and_file_exists() {
     let fs = Arc::new(MockFs::new().with_file("/snowflake/session/spcs_token", "my-spcs-token"));
-    let context = SpcsTokenTestContext::with_providers(DriverProviders { fs: Some(fs) });
+    let context = SpcsTokenTestContext::with_providers(DriverProviders {
+        fs: Some(fs),
+        ..Default::default()
+    });
     context.mock.mount(
         Mock::given(method("POST"))
             .and(path_regex(r"/session/v1/login-request"))

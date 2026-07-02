@@ -53,27 +53,43 @@ TEST_CASE("SQLAllocHandle ENV: Multiple allocations succeed", "[odbc-api][alloc_
 }
 
 TEST_CASE("SQLAllocHandle ENV: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc_handle][env][connecting][error]") {
-  // SQLSTATE HY009: Invalid use of null pointer
+  // iODBC dereferences OutputHandlePtr without a NULL check and segfaults
+  // instead of returning HY009; the scenario is unrunnable under iODBC.
+  SKIP_IODBC("iODBC DM segfaults instead of returning HY009 for NULL OutputHandlePtr");
+
+  // Given no environment handle yet
+  // When SQLAllocHandle(SQL_HANDLE_ENV) is called with a NULL OutputHandlePtr
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, nullptr);
 
+  // Then the DM null-checks OutputHandlePtr and returns SQL_ERROR (SQLSTATE HY009:
+  //   invalid use of null pointer); iODBC is skipped above because it segfaults
   REQUIRE(ret == SQL_ERROR);
 }
 
 TEST_CASE("SQLAllocHandle ENV: Non-NULL InputHandle returns error",
           "[odbc-api][alloc_handle][env][connecting][error]") {
+  // Given an already-allocated environment handle env1
+  // Per the ODBC spec, InputHandle MUST be SQL_NULL_HANDLE for SQL_HANDLE_ENV.
   SQLHENV env1 = SQL_NULL_HENV;
   SQLHENV env2 = SQL_NULL_HENV;
 
-  // Allocate first environment
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env1);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Allocate second environment with first environment as InputHandle
-  // Per ODBC spec, InputHandle should be SQL_NULL_HANDLE for ENV
+  // When SQLAllocHandle(SQL_HANDLE_ENV) is called again with env1 as the InputHandle
   ret = SQLAllocHandle(SQL_HANDLE_ENV, env1, &env2);
 
-  // Driver Manager returns SQL_INVALID_HANDLE when InputHandle is not SQL_NULL_HANDLE
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  NON_IODBC {
+    // And the DM enforces the spec and returns SQL_INVALID_HANDLE
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
+  IODBC_ONLY {
+    // And the DM does not enforce the spec and silently returns SQL_SUCCESS,
+    //   yielding a second usable env that shadows the first
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLFreeHandle(SQL_HANDLE_ENV, env2);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
 
   SQLFreeHandle(SQL_HANDLE_ENV, env1);
 }
@@ -506,20 +522,38 @@ TEST_CASE("SQLAllocHandle: Works with SQL_OV_ODBC3", "[odbc-api][alloc_handle][c
 }
 
 TEST_CASE("SQLAllocHandle: Works with SQL_OV_ODBC3_80", "[odbc-api][alloc_handle][connecting][version]") {
+  // Given a freshly allocated environment handle
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
 
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQL_ATTR_ODBC_VERSION is set to SQL_OV_ODBC3_80
   ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3_80), 0);
-  REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(dbc != SQL_NULL_HDBC);
+  NON_IODBC {
+    // And the 3.8 version negotiates successfully and a
+    //   subsequent SQLAllocHandle(SQL_HANDLE_DBC) succeeds
+    REQUIRE(ret == SQL_SUCCESS);
 
-  SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+    ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(dbc != SQL_NULL_HDBC);
+
+    ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  IODBC_ONLY {
+    // And the DM rejects SQL_OV_ODBC3_80 with HY024 because it implements ODBC
+    //   up to 3.5x only (the 3.8 async-DBC, streaming-output, and SQLCancelHandle
+    //   infrastructure was never picked up)
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_ENV, env);
+    REQUIRE(!records.empty());
+    CHECK(records[0].sqlState == "HY024");
+  }
+
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 

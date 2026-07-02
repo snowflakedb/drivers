@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 
 from types import ModuleType
-from typing import Union
 
 from . import errors
 
@@ -27,7 +26,7 @@ class MissingPandas(MissingOptionalDependency):
     _dep_name = "pandas"
 
 
-ModuleLikeObject = Union[ModuleType, MissingOptionalDependency]
+ModuleLikeObject = ModuleType | MissingOptionalDependency
 
 
 def _import_or_missing_pandas() -> tuple[ModuleLikeObject, ModuleLikeObject, bool]:

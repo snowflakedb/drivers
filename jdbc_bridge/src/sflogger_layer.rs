@@ -56,30 +56,53 @@ where
             }
         };
 
-        let logger_factory = env
-            .find_class("net/snowflake/client/internal/log/SFLoggerFactory")
-            .unwrap();
-        let logger_name = env.new_string("com.snowflake.jdbc.CoreLogger").unwrap();
-        let logger = env
+        let logger_factory =
+            match env.find_class("net/snowflake/client/internal/log/SFLoggerFactory") {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to find SFLoggerFactory class: {e:?}");
+                    return;
+                }
+            };
+        let logger_name = match env.new_string("com.snowflake.jdbc.CoreLogger") {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to create logger name string: {e:?}");
+                return;
+            }
+        };
+        let logger = match env
             .call_static_method(
                 logger_factory,
                 "getLogger",
                 "(Ljava/lang/String;)Lnet/snowflake/client/internal/log/SFLogger;",
                 &[(&logger_name).into()],
             )
-            .unwrap()
-            .l()
-            .unwrap();
+            .and_then(|v| v.l())
+        {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Failed to get SFLogger instance: {e:?}");
+                return;
+            }
+        };
 
-        let java_log_msg = env.new_string(log_msg).unwrap();
+        let java_log_msg = match env.new_string(log_msg) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to create log message string: {e:?}");
+                return;
+            }
+        };
 
-        env.call_method(
+        if let Err(e) = env.call_method(
             logger,
             level_str,
             "(Ljava/lang/String;Z)V",
             &[(&java_log_msg).into(), JValue::Bool(1)],
-        )
-        .unwrap();
+        ) {
+            eprintln!("Failed to call SFLogger.{level_str}: {e:?}");
+        }
     }
 }
 

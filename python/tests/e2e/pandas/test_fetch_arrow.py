@@ -201,6 +201,75 @@ class TestFetchArrowBatches:
         assert total_rows == LARGE_RESULT_SET_ROW_COUNT
 
 
+class TestMixedFetchModes:
+    """Test that mixing row-by-row and arrow fetch modes works on same cursor.
+
+    After the ResultSet concept, each arrow stream is built on-demand from stored
+    RowsetData — there is no reason to prevent switching between fetch modes.
+    """
+
+    def test_fetch_arrow_batches_after_fetchone(self, cursor):
+        """fetch_arrow_batches works after partial row-by-row consumption."""
+        # When a query is executed and partially consumed via fetchone
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+            """
+        )
+        row1 = cursor.fetchone()
+        row2 = cursor.fetchone()
+        assert row1 == (0,)
+        assert row2 == (1,)
+
+        # Then fetch_arrow_batches returns a fresh full result set
+        batches = list(cursor.fetch_arrow_batches())
+        assert len(batches) > 0
+        combined = pa.concat_tables(batches)
+        assert combined.num_rows == 10
+        assert combined.column("N").to_pylist() == list(range(10))
+
+    def test_fetch_arrow_all_after_fetchmany(self, cursor):
+        """fetch_arrow_all works after partial fetchmany consumption."""
+        # When a query is executed and partially consumed via fetchmany
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        batch = cursor.fetchmany(2)
+        assert batch == [(0,), (1,)]
+
+        # Then fetch_arrow_all returns a fresh full result set
+        table = cursor.fetch_arrow_all()
+        assert table is not None
+        assert table.num_rows == 5
+        assert table.column("N").to_pylist() == list(range(5))
+
+    def test_fetchone_after_fetch_arrow_batches(self, cursor):
+        """Row-by-row fetching works after arrow fetching on same result set."""
+        # When a query is executed and consumed via fetch_arrow_batches
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        batches = list(cursor.fetch_arrow_batches())
+        combined = pa.concat_tables(batches)
+        assert combined.num_rows == 5
+
+        # Then fetchone returns rows from a fresh full result set
+        row = cursor.fetchone()
+        assert row == (0,)
+        remaining = cursor.fetchall()
+        assert remaining == [(1,), (2,), (3,), (4,)]
+
+
 class TestResultBatchPickleArrow:
     """Tests for result batch pickle round-trip with to_arrow conversion."""
 

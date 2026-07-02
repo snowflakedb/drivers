@@ -69,9 +69,10 @@ class TestModuleConnectFunction:
         assert callable(pep249_dbapi.connect)
         assert callable(connect)
 
-    def test_connect_returns_connection(self, connection):
+    def test_connect_returns_connection(self, mock_db_api):
         """Test that connect returns a Connection object."""
-        assert isinstance(connection, Connection)
+        conn = connect(user="test_user", account="test_account")
+        assert isinstance(conn, Connection)
 
 
 class TestModuleExports:

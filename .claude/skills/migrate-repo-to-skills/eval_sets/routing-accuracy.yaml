@@ -1,0 +1,48 @@
+# Routing-accuracy eval set for: migrate-repo-to-skills
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "migrate .ai to skills"
+    notes: "Exact trigger phrase from the skill description."
+  - prompt: "run sf ai skills migrate"
+    notes: "Exact trigger phrase from the skill description."
+  - prompt: "convert .ai/commands to .claude/skills"
+    notes: "Direct task request naming both source and target paths."
+  - prompt: "port our legacy commands directory to the new skill layout"
+    notes: "Paraphrase of 'port legacy commands' trigger phrase."
+  - prompt: "our repo still has .ai/commands from before we onboarded to sf ai skills — want to consolidate everything into .claude/skills"
+    notes: "Indirect/contextual: describes the migration situation without using the exact trigger phrase."
+  - prompt: "we bootstrapped skills but forgot to migrate the old .ai/commands stuff, how do we finish the job?"
+    notes: "Indirect: user already ran bootstrap and now needs the migration step."
+  - prompt: "sf ai skills check is complaining that .ai/commands still exists and isn't migrated"
+    notes: "Error/incident: tool failure points directly at the migration gap this skill addresses."
+  - prompt: "inherited a repo that uses the old .ai command format, need to get everything into the skills convention"
+    notes: "Indirect/incident: describes a common onboarding scenario where migration is required."
+  - prompt: "ai commands migration"
+    notes: "Terse abbreviated shorthand; likely typed by someone who knows what they want."
+  - prompt: "move .ai context files into rules or skills"
+    notes: "Borderline: mentions .ai/context migration without using canonical trigger phrases; should still trigger since context/ is in scope."
+  - prompt: "want to clean up the old .ai layout now that we're fully on sf ai skills"
+    notes: "Borderline: vague enough to be ambiguous, but the '.ai layout' + 'sf ai skills' combination points squarely at this migration."
+  - prompt: "migrate ai commands, dry run first"
+    notes: "Abbreviated with a dry-run qualifier; tests that the --dry-run path is covered."
+
+should_not_trigger:
+  - prompt: "set up sf ai skills in our repo from scratch"
+    reason: "bootstrap-skills-evals — user wants initial onboarding, not migration of existing .ai content."
+  - prompt: "write a new skill that runs our integration test suite"
+    reason: "author-skill — user wants to create a new skill, not migrate legacy commands."
+  - prompt: "my skill frontmatter has the wrong description length and name/dir mismatch, can you fix it?"
+    reason: "configure-skill-settings — targets SKILL.md frontmatter hygiene, not the migration workflow."
+  - prompt: "run routing evals on all my skills and tell me which ones are misconfigured"
+    reason: "run-skill-evals — user wants to execute evals, not migrate .ai content."
+  - prompt: "how should I structure my .ai directory — what goes in commands vs context?"
+    reason: "general conversation — user is asking about .ai conventions, not requesting a migration. Shares several keywords but the intent is informational."
+  - prompt: "clean up the broken reviewer configs under .ai/review, they're failing lint"
+    reason: "no skill — .ai/review is explicitly out of scope for migrate-repo-to-skills; the skill's quality rules forbid touching it."
+  - prompt: "the skills I migrated last week have failing evals, help me fix them"
+    reason: "author-skill — fixing post-migration eval failures is explicitly out of scope; the SKILL.md directs this to author-skill --mode=modify."
+  - prompt: "generate an eval set for the migrate skill so we can test its routing"
+    reason: "generate-eval-set — user wants eval authoring, not to run the migration workflow itself."

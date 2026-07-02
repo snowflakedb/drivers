@@ -23,6 +23,8 @@
 -- (CASCADE), so it can be safely re-run to reset the database.
 -- =============================================================================
 
+USE ROLE TESTROLE_UNIVERSAL;
+
 CREATE DATABASE IF NOT EXISTS DTMREPLAYTESTDB;
 USE DATABASE DTMREPLAYTESTDB;
 DROP SCHEMA IF EXISTS PUBLIC CASCADE;

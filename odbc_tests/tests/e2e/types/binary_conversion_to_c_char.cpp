@@ -42,7 +42,7 @@ TEST_CASE("should convert binary to SQL_C_WCHAR returning uppercase hex", "[data
   const auto stmt = conn.execute_fetch("SELECT X'ABCDEF'::BINARY");
 
   // Then SQL_C_WCHAR should return "ABCDEF" as wide string
-  REQUIRE(check_wchar_success(stmt, 1) == u"ABCDEF");
+  REQUIRE(check_wchar_success(stmt, 1) == U"ABCDEF");
 }
 
 // ============================================================================
@@ -91,8 +91,10 @@ TEST_CASE("should retrieve binary via SQLBindCol with SQL_C_WCHAR", "[datatype][
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then Bound wide buffer should contain uppercase hex string "ABCDEF"
-  REQUIRE(indicator == 12);
+  // Then Bound wide buffer should contain uppercase hex string "ABCDEF".
+  // The indicator reports the payload length in DM-side bytes
+  // (6 hex chars * `sizeof(SQLWCHAR)`, NUL excluded).
+  REQUIRE(indicator == 6 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
   REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('A'));
   REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('B'));
   REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('C'));
@@ -183,10 +185,10 @@ TEST_CASE("should convert VARBINARY to SQL_C_CHAR and SQL_C_WCHAR same as BINARY
   // Then SQL_C_CHAR should return uppercase hex "ABCDEF"
   REQUIRE(check_char_success(stmt, 1) == "ABCDEF");
 
-  // And SQL_C_WCHAR should return uppercase hex u"ABCDEF"
+  // And SQL_C_WCHAR should return uppercase hex U"ABCDEF"
   {
     const auto stmt2 = conn.execute_fetch("SELECT X'ABCDEF'::VARBINARY");
-    REQUIRE(check_wchar_success(stmt2, 1) == u"ABCDEF");
+    REQUIRE(check_wchar_success(stmt2, 1) == U"ABCDEF");
   }
 }
 
@@ -238,22 +240,25 @@ TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL
   SQLWCHAR wbuffer[4] = {};
   SQLLEN indicator = 0;
 
-  // Then First SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS_WITH_INFO with truncated data
+  // Then First SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS_WITH_INFO with truncated data.
+  // The indicator reports the *remaining* payload length in DM-side bytes:
+  // 6 hex chars total * `sizeof(SQLWCHAR)`.
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   REQUIRE(get_sqlstate(stmt) == "01004");
-  REQUIRE(indicator == 12);
+  REQUIRE(indicator == 6 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
   REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('A'));
   REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('B'));
   REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('C'));
   REQUIRE(wbuffer[3] == 0);
 
-  // And Second SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS with remaining wide hex
+  // And Second SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS with remaining wide hex.
+  // 3 remaining hex chars * `sizeof(SQLWCHAR)`.
   memset(wbuffer, 0, sizeof(wbuffer));
   indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(indicator == 6);
+  REQUIRE(indicator == 3 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
   REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('D'));
   REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('E'));
   REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('F'));
@@ -295,12 +300,14 @@ TEST_CASE("should succeed with exact-fit buffer for SQL_C_WCHAR", "[datatype][bi
   // When Query "SELECT X'CAFE'::BINARY" is executed (2 bytes -> hex "CAFE" = 4 wide chars)
   const auto stmt = conn.execute_fetch("SELECT X'CAFE'::BINARY");
 
-  // Then SQL_C_WCHAR with buffer = 5 * sizeof(SQLWCHAR) (4 chars + null) should return SQL_SUCCESS
+  // Then SQL_C_WCHAR with buffer = 5 * sizeof(SQLWCHAR) (4 chars + null) should return SQL_SUCCESS.
+  // The indicator reports the payload length in DM-side bytes
+  // (4 hex chars * `sizeof(SQLWCHAR)`, NUL excluded).
   SQLWCHAR wbuffer[5] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, 5 * sizeof(SQLWCHAR), &indicator);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(indicator == 8);
+  REQUIRE(indicator == 4 * static_cast<SQLLEN>(sizeof(SQLWCHAR)));
   REQUIRE(wbuffer[0] == static_cast<SQLWCHAR>('C'));
   REQUIRE(wbuffer[1] == static_cast<SQLWCHAR>('A'));
   REQUIRE(wbuffer[2] == static_cast<SQLWCHAR>('F'));

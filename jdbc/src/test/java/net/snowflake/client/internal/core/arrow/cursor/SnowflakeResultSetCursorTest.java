@@ -10,8 +10,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
-import net.snowflake.client.internal.util.NotImplementedException;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
@@ -95,18 +94,6 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
         assertEquals(1, rs.getInt(1));
         assertFalse(rs.next());
         assertThrows(SQLException.class, () -> rs.getInt(1));
-      }
-    }
-  }
-
-  @Test
-  public void testUnsupportedGettersThrow() throws Exception {
-    Connection conn = getDefaultConnection();
-    try (Statement stmt = conn.createStatement()) {
-      try (ResultSet rs = stmt.executeQuery("select 1")) {
-        assertTrue(rs.next());
-        assertThrows(NotImplementedException.class, () -> rs.getTime(1));
-        assertThrows(NotImplementedException.class, () -> rs.getTimestamp(1));
       }
     }
   }

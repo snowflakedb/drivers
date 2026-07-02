@@ -1,0 +1,42 @@
+name: Set ODBC build environment
+description: >
+  Export the workflow-level env vars that every ODBC build/test job
+  expects in its process environment: CCACHE_DIR/BASEDIR/MAXSIZE so
+  ccache can find and bound its cache, VCPKG_BINARY_SOURCES so vcpkg
+  reuses prebuilt packages across runs, and CARGO_TERM_COLOR so cargo
+  emits coloured output in CI logs. Centralised here instead of being
+  redeclared in an `env:` block at the top of every reusable workflow
+  (workflow-level env doesn't cross reusable-workflow boundaries, so
+  every caller would otherwise have to duplicate the same 5-line
+  block).
+
+  Call as the first step after checkout in each job that runs the
+  ODBC build (i.e. anywhere ccache, vcpkg, or cargo is invoked).
+  Jobs that only orchestrate (matrix generation, parameter cleanup)
+  don't need it.
+
+runs:
+  using: composite
+  steps:
+    # Quoted heredoc ('EOF') stops bash from interpreting anything
+    # inside the body. The ${{ github.workspace }} substitutions are
+    # expanded by GHA at YAML load time, before the shell sees the
+    # script, so they end up as platform-native paths in the lines
+    # written to $GITHUB_ENV — backslashes-and-all on Windows, which
+    # ccache/vcpkg both accept. The redirect target `$GITHUB_ENV` is
+    # outside the heredoc body so bash still expands that part to
+    # locate the env file.
+    - name: Export ODBC build env vars
+      shell: bash
+      run: |
+        cat <<'EOF' >> "$GITHUB_ENV"
+        CARGO_TERM_COLOR=always
+        CCACHE_DIR=${{ github.workspace }}/.ccache
+        CCACHE_BASEDIR=${{ github.workspace }}
+        CCACHE_MAXSIZE=1G
+        CCACHE_SLOPPINESS=include_file_mtime,time_macros,pch_defines,clang_index_store
+        CCACHE_COMPILERCHECK=content
+        CCACHE_DEPEND=true
+        CCACHE_NOHASHDIR=true
+        VCPKG_BINARY_SOURCES=clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite
+        EOF

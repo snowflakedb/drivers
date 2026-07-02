@@ -7,6 +7,8 @@ import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
@@ -21,10 +23,27 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  */
 public class SnowflakeDriver implements Driver {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeDriver.class);
-  private static final String DRIVER_NAME = "Snowflake JDBC Driver";
-  private static final String DRIVER_VERSION = "4.0.0";
-  private static final int MAJOR_VERSION = 4;
-  private static final int MINOR_VERSION = 0;
+
+  // Up to 9 digits keeps the result within Integer.MAX_VALUE so parseInt cannot overflow.
+  // Declared before the constants below because their initializers call parseVersionComponent.
+  private static final Pattern LEADING_DIGITS = Pattern.compile("\\d{1,9}");
+
+  public static final String DRIVER_NAME = "Snowflake JDBC Driver";
+
+  public static final String JDBC_SPEC_VERSION = "4.2";
+
+  /** Sourced from {@code build.gradle}'s {@code project.version} via the generated class. */
+  public static final String DRIVER_VERSION = DriverVersion.VALUE;
+
+  public static final int MAJOR_VERSION = parseVersionComponent(DRIVER_VERSION, 0);
+  public static final int MINOR_VERSION = parseVersionComponent(DRIVER_VERSION, 1);
+
+  public static final int JDBC_SPEC_MAJOR = parseVersionComponent(JDBC_SPEC_VERSION, 0);
+  public static final int JDBC_SPEC_MINOR = parseVersionComponent(JDBC_SPEC_VERSION, 1);
+
+  public static String getDriverVersion() {
+    return DRIVER_VERSION;
+  }
 
   public static void empty() {}
 
@@ -63,7 +82,6 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) throws SQLException {
-    // Return empty array for stub implementation
     return new DriverPropertyInfo[0];
   }
 
@@ -79,11 +97,28 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public boolean jdbcCompliant() {
-    return false; // Not fully compliant to JDBC 4.2 specification
+    // Not fully compliant with the JDBC 4.2 specification.
+    return false;
   }
 
   @Override
   public Logger getParentLogger() {
     return null;
+  }
+
+  /**
+   * Returns the {@code index}-th dot-separated component as a non-negative int, or {@code 0} when
+   * absent or non-numeric (e.g. {@code "0-SNAPSHOT"} yields {@code 0}).
+   */
+  public static int parseVersionComponent(String version, int index) {
+    if (version == null || index < 0) {
+      return 0;
+    }
+    String[] parts = version.split("\\.", -1);
+    if (index >= parts.length) {
+      return 0;
+    }
+    Matcher matcher = LEADING_DIGITS.matcher(parts[index]);
+    return matcher.lookingAt() ? Integer.parseInt(matcher.group()) : 0;
   }
 }

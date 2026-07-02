@@ -1,6 +1,9 @@
 use crate::config::retry::RetryPolicy;
 use crate::crl::config::CrlConfig;
-use crate::crl::error::{CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu, MutexPoisonedSnafu};
+use crate::crl::error::{
+    CrlDistributionPointFailedSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
+    MutexPoisonedSnafu, VerificationTaskFailedSnafu,
+};
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry};
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
@@ -12,6 +15,7 @@ use snafu::ResultExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio_stream::StreamExt;
+use tracing::instrument::WithSubscriber;
 
 #[derive(Debug, Clone)]
 pub struct CachedCrl {
@@ -140,9 +144,11 @@ impl CrlCache {
         }
 
         let thread_name = "crl-refresh".to_string();
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
         let _ = std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
+                let _log_guard = tracing::dispatcher::set_default(&dispatch);
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -180,13 +186,12 @@ impl CrlCache {
                                     let _ = tokio::spawn(async move {
                                         let lock = match me.get_url_lock(&url_for_task) { Ok(l) => l, Err(_) => return };
                                         let _guard = lock.lock().await;
-                                        // Check current cache entry and validity
                                         if let Ok(Some(entry)) = me.get_from_memory_cache(&url_for_task).await
                                             && Utc::now() < entry.expires_at
                                         {
                                             let _ = me.fetch_from_network_and_cache(&url_for_task).await;
                                         }
-                                    }).await;
+                                    }.with_current_subscriber()).await;
                                     // After refresh, look up updated entry and reschedule
                                     this.reschedule_url(&mut dq, &mut keys, &url).await;
                                 }
@@ -287,7 +292,7 @@ impl CrlCache {
         cert_der: &[u8],
         issuer_der: Option<&[u8]>,
         issuer_candidates: Option<&[&[u8]]>,
-        root_store: Option<&rustls::RootCertStore>,
+        root_store: Option<Arc<rustls::RootCertStore>>,
     ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
     {
         use crate::tls::revocation::RevocationOutcome;
@@ -315,6 +320,11 @@ impl CrlCache {
         let mut any_verified = false;
         let mut any_full_coverage = false;
         let mut min_expires: Option<DateTime<Utc>> = None;
+        // Remember the last URL whose CRL failed verification alongside its error.
+        // We propagate BOTH so callers receive an error that identifies which
+        // distribution point failed (via CrlDistributionPointFailed), not just the
+        // underlying cause. See CrlError::CrlDistributionPointFailed in error.rs.
+        let mut last_verify_error: Option<(String, CrlError)> = None;
         for url in crl_urls.iter() {
             let bytes = self
                 .get(url)
@@ -332,9 +342,14 @@ impl CrlCache {
                     None => dt,
                 });
             }
-            match self
-                .verify_and_check_crl(&bytes, &serial, issuer_der, issuer_candidates, root_store)
-                .await
+            match Self::verify_and_check_crl(
+                bytes,
+                &serial,
+                issuer_der,
+                issuer_candidates,
+                root_store.clone(),
+            )
+            .await
             {
                 Ok(Some(outcome)) => {
                     self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
@@ -350,10 +365,27 @@ impl CrlCache {
                         any_full_coverage = true;
                     }
                 }
-                Err(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        target: "sf_core::crl",
+                        url = %url,
+                        error = %e,
+                        "CRL verification failed for distribution point"
+                    );
+                    last_verify_error = Some((url.clone(), e));
+                }
             }
         }
         if !any_verified {
+            // If CRL URLs existed but none could be verified, propagate the error
+            // rather than returning NotDetermined (which could be misinterpreted as
+            // "no CRL distribution points available"). Wrap with the CRLDP URL so
+            // callers can identify which endpoint failed without parsing logs.
+            if let Some((failed_url, err)) = last_verify_error {
+                return Err(Box::new(err))
+                    .context(CrlDistributionPointFailedSnafu { url: failed_url })
+                    .context(crate::tls::revocation::CrlOperationSnafu);
+            }
             return Ok(RevocationOutcome::NotDetermined);
         }
         let outcome = if any_full_coverage {
@@ -366,60 +398,96 @@ impl CrlCache {
     }
 
     async fn verify_and_check_crl(
-        &self,
-        crl_bytes: &[u8],
+        crl_bytes: Vec<u8>,
         serial: &[u8],
         issuer_der: Option<&[u8]>,
         issuer_candidates: Option<&[&[u8]]>,
-        root_store: Option<&rustls::RootCertStore>,
+        root_store: Option<Arc<rustls::RootCertStore>>,
     ) -> Result<Option<crate::tls::revocation::RevocationOutcome>, CrlError> {
         use crate::tls::revocation::RevocationOutcome;
-        let mut verified =
-            crate::tls::x509_utils::verify_crl_signature(crl_bytes, issuer_der).is_ok();
-        if !verified && let Some(cands) = issuer_candidates {
-            for cand in cands {
-                if crate::tls::x509_utils::verify_crl_signature(crl_bytes, Some(cand)).is_ok() {
-                    verified = true;
-                    break;
+
+        // The CRL signature verification (RSA/ECDSA, looped over issuer candidates
+        // plus the anchor fallback) and the revoked-serial scan are CPU-bound and
+        // run on the TLS-handshake path, so do them on the blocking pool — a large
+        // CRL must not stall a runtime worker. Only owned inputs cross the
+        // boundary: `crl_bytes` is *moved* (no copy of the potentially multi-MB
+        // CRL), the root store is a cheap `Arc` clone, and the serial / issuer
+        // DERs are small.
+        let serial = serial.to_vec();
+        let issuer_der = issuer_der.map(<[u8]>::to_vec);
+        let issuer_candidates =
+            issuer_candidates.map(|c| c.iter().map(|d| d.to_vec()).collect::<Vec<Vec<u8>>>());
+
+        let join = tokio::task::spawn_blocking(
+            move || -> Result<Option<RevocationOutcome>, CrlError> {
+                let mut verified = crate::tls::x509_utils::verify_crl_signature(
+                    &crl_bytes,
+                    issuer_der.as_deref(),
+                )
+                .is_ok();
+                if !verified && let Some(cands) = &issuer_candidates {
+                    for cand in cands {
+                        if crate::tls::x509_utils::verify_crl_signature(&crl_bytes, Some(cand))
+                            .is_ok()
+                        {
+                            verified = true;
+                            break;
+                        }
+                    }
                 }
-            }
-        }
-        // If still not verified, try configured root store to resolve a matching anchor and verify via its SPKI
-        let mut attempted_anchor = false;
-        if !verified
-            && let Some(store) = root_store
-            && let Some(anchor) =
-                crate::tls::x509_utils::resolve_anchor_issuer_key(crl_bytes, store)
-        {
-            attempted_anchor = true;
-            verified = crate::tls::x509_utils::verify_crl_sig_with_name_and_spki(
-                crl_bytes,
-                anchor.subject.as_ref(),
-                anchor.subject_public_key_info.as_ref(),
-            )
-            .is_ok();
-        }
+                // If still not verified, try configured root store to resolve a matching anchor and verify via its SPKI
+                let mut attempted_anchor = false;
+                if !verified
+                    && let Some(store) = root_store.as_deref()
+                    && let Some(anchor) =
+                        crate::tls::x509_utils::resolve_anchor_issuer_key(&crl_bytes, store)
+                {
+                    attempted_anchor = true;
+                    verified = crate::tls::x509_utils::verify_crl_sig_with_name_and_spki(
+                        &crl_bytes,
+                        anchor.subject.as_ref(),
+                        anchor.subject_public_key_info.as_ref(),
+                    )
+                    .is_ok();
+                }
 
-        if !verified {
-            tracing::warn!(
-                target: "sf_core::crl",
-                "Unable to verify CRL signature (serial={}, issuer_provided={}, anchor_attempted={})",
-                hex::encode(serial),
-                issuer_der.is_some(),
-                attempted_anchor
-            );
-            return InvalidCrlSignatureSnafu {}.fail();
-        }
+                if !verified {
+                    // Diagnostic only — emitted at debug level to avoid duplicating the
+                    // warn emitted by the caller ("CRL verification failed for distribution
+                    // point"), which includes the URL context that's more useful for ops.
+                    // The failure itself is propagated via InvalidCrlSignatureSnafu and logged
+                    // with full error chain by the caller.
+                    tracing::debug!(
+                        target: "sf_core::crl",
+                        "Unable to verify CRL signature (serial={}, issuer_provided={}, anchor_attempted={})",
+                        hex::encode(&serial),
+                        issuer_der.is_some(),
+                        attempted_anchor
+                    );
+                    return InvalidCrlSignatureSnafu {}.fail();
+                }
 
-        let is_revoked =
-            crate::crl::certificate_parser::check_certificate_in_crl(serial, crl_bytes)?;
-        if is_revoked {
-            Ok(Some(RevocationOutcome::Revoked {
-                reason: None,
-                revocation_time: None,
-            }))
-        } else {
-            Ok(None)
+                let is_revoked =
+                    crate::crl::certificate_parser::check_certificate_in_crl(&serial, &crl_bytes)?;
+                if is_revoked {
+                    Ok(Some(RevocationOutcome::Revoked {
+                        reason: None,
+                        revocation_time: None,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            },
+        )
+        .await;
+
+        match join {
+            Ok(result) => result,
+            // A panic in the pure-CPU verification closure is a bug; re-raise it so
+            // it propagates exactly as it would have on the runtime thread before
+            // this work was moved onto the blocking pool.
+            Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+            Err(e) => Err(e).context(VerificationTaskFailedSnafu),
         }
     }
 
@@ -581,7 +649,7 @@ impl CrlCache {
         {
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
-            if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(bytes) = tokio::fs::read(&path).await {
                 let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
                     Ok(Some(dt)) => dt,
                     _ => Utc::now() + self.config.validity_time,
@@ -609,7 +677,7 @@ impl CrlCache {
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
         {
-            if let Err(e) = std::fs::create_dir_all(&dir) {
+            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
                 tracing::warn!(
                     target: "sf_core::crl",
                     dir = %dir.display(),
@@ -619,7 +687,7 @@ impl CrlCache {
             }
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
-            if let Err(e) = std::fs::write(&path, &fetched) {
+            if let Err(e) = tokio::fs::write(&path, &fetched).await {
                 tracing::warn!(
                     target: "sf_core::crl",
                     path = %path.display(),

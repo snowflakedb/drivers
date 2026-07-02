@@ -10,11 +10,11 @@ from __future__ import annotations
 import secrets
 import warnings
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Callable, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from ..cursor import SnowflakeCursor
 from ..errors import ProgrammingError
@@ -461,7 +461,11 @@ class WritePandasOperation:
         cfg = self._cfg
         original = cfg.qualify(cfg.table_name)
         _drop_object(cursor, original, "TABLE")
-        cursor.execute(f"ALTER TABLE {target_location} RENAME TO {original}")
+        cursor.execute(
+            "ALTER TABLE IDENTIFIER(?) RENAME TO IDENTIFIER(?)",
+            params=(target_location, original),
+            _force_qmark_paramstyle=True,
+        )
 
     # -- COPY INTO -------------------------------------------------------
 

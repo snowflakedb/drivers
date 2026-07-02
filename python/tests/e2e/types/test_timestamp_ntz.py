@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_datetime_type, assert_sequential_values, batch_insert
+from .utils import assert_datetime_type, assert_sequential_values, assert_timezone, batch_insert
 
 
 # =============================================================================
@@ -58,9 +58,9 @@ class TestTimestampNtzTypeCasting:
         result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ", single_row=True)
 
         # Then All values should be returned as appropriate type
-        assert_datetime_type(result, require_tzinfo=False)
+        assert_datetime_type(result)
         # And Values should not have timezone info
-        assert result[0].tzinfo is None
+        assert_timezone(result, expected_tz=None)
 
 
 class TestTimestampNtzLiteral:
@@ -85,8 +85,8 @@ class TestTimestampNtzLiteral:
         # Then Result should contain timestamps <expected_values>
         assert tuple(result) == expected_values
         # And Values should not have timezone info
-        assert_datetime_type(result, require_tzinfo=False)
-        assert all(v.tzinfo is None for v in result)
+        assert_datetime_type(result)
+        assert_timezone(result, expected_tz=None)
 
     def test_should_handle_null_values_for_timestamp_ntz(self, execute_query):
         # Given Snowflake client is logged in
@@ -99,7 +99,8 @@ class TestTimestampNtzLiteral:
         )
 
         # Then Result should contain [2024-01-15 10:30:00, NULL]
-        assert_datetime_type(result, can_be_none=True, require_tzinfo=False)
+        assert_datetime_type(result, can_be_none=True)
+        assert_timezone(result, expected_tz=None, can_be_none=True)
         assert tuple(result) == (TS_2024_JAN, None)
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_ntz(self, execute_query):
@@ -119,8 +120,8 @@ class TestTimestampNtzLiteral:
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00
         values = [row[0] for row in rows]
-        assert_datetime_type(values, require_tzinfo=False)
-        assert all(v.tzinfo is None for v in values)
+        assert_datetime_type(values)
+        assert_timezone(values, expected_tz=None)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp)
 
 
@@ -154,8 +155,8 @@ class TestTimestampNtzTable:
         # Then Result should contain timestamps <expected_values>
         assert result == expected_values
         # And Values should not have timezone info
-        assert_datetime_type(result, can_be_none=can_be_none, require_tzinfo=False)
-        assert all(v.tzinfo is None for v in result if v is not None)
+        assert_datetime_type(result, can_be_none=can_be_none)
+        assert_timezone(result, expected_tz=None, can_be_none=can_be_none)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table_for_timestamp_ntz(
         self, execute_query, tmp_schema
@@ -178,8 +179,8 @@ class TestTimestampNtzTable:
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00
         values = [row[0] for row in rows]
-        assert_datetime_type(values, require_tzinfo=False)
-        assert all(v.tzinfo is None for v in values)
+        assert_datetime_type(values)
+        assert_timezone(values, expected_tz=None)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp)
 
 
@@ -207,8 +208,8 @@ class TestTimestampNtzBinding:
         # Then Result should contain [2024-01-15 10:30:00, 2024-06-20 14:45:30]
         assert tuple(result) == (TS_2024_JAN, TS_2024_JUN)
         # And Values should not have timezone info
-        assert_datetime_type(result, require_tzinfo=False)
-        assert all(v.tzinfo is None for v in result)
+        assert_datetime_type(result)
+        assert_timezone(result, expected_tz=None)
 
     def test_should_return_null_when_selecting_timestamp_ntz_using_parameter_binding_with_null_value(
         self, execute_query
@@ -243,7 +244,7 @@ class TestTimestampNtzBinding:
         result = [row[0] for row in rows]
 
         # Then SELECT should return the inserted values in ascending order
-        assert_datetime_type([r for r in result if r is not None], require_tzinfo=False)
+        assert_datetime_type([r for r in result if r is not None])
         assert result == [TS_2024_JAN, TS_2024_JUN, None]
 
     @pytest.mark.parametrize(
@@ -293,9 +294,9 @@ class TestTimestampNtzAliases:
             result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::{type_name}", single_row=True)
 
             # Then All values should be returned as appropriate type
-            assert_datetime_type(result, require_tzinfo=False)
+            assert_datetime_type(result)
             # And Values should not have timezone info
-            assert result[0].tzinfo is None
+            assert_timezone(result, expected_tz=None)
         finally:
             execute_query("ALTER SESSION UNSET TIMESTAMP_TYPE_MAPPING")
 
@@ -313,7 +314,7 @@ class TestTimestampNtzAliases:
             result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP", single_row=True)
 
             # Then All values should be returned as appropriate type
-            assert_datetime_type(result, require_tzinfo=True)
+            assert_datetime_type(result)
             # And Values should have timezone info
             assert result[0].tzinfo is not None
         finally:
@@ -348,5 +349,5 @@ class TestTimestampNtzPrecision:
         # Then Result should contain [<expected>]
         assert result[0] == expected
         # And Values should not have timezone info
-        assert_datetime_type(result, require_tzinfo=False)
-        assert result[0].tzinfo is None
+        assert_datetime_type(result)
+        assert_timezone(result, expected_tz=None)

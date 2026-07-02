@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import lombok.Getter;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 
@@ -22,11 +23,11 @@ public class ConnectionString {
   private static final ConnectionString INVALID_CONNECT_STRING =
       new ConnectionString("", "", -1, Collections.emptyMap(), "");
 
-  private final String scheme;
-  private final String host;
-  private final int port;
+  @Getter private final String scheme;
+  @Getter private final String host;
+  @Getter private final int port;
   private final Map<String, Object> parameters;
-  private final String account;
+  @Getter private final String account;
 
   private ConnectionString(
       String scheme, String host, int port, Map<String, Object> parameters, String account) {
@@ -79,24 +80,8 @@ public class ConnectionString {
     return !isNullOrEmpty(host);
   }
 
-  public String getScheme() {
-    return scheme;
-  }
-
-  public String getHost() {
-    return host;
-  }
-
-  public int getPort() {
-    return port;
-  }
-
   public Map<String, Object> getParameters() {
     return Collections.unmodifiableMap(parameters);
-  }
-
-  public String getAccount() {
-    return account;
   }
 
   private static boolean isSslDisabled(Object value) {

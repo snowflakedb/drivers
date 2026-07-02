@@ -89,6 +89,10 @@ bool try_password_connect(const std::string& connection_string, ConnectionHandle
 }
 
 TEST_CASE("should authenticate using username and password", "[user_password]") {
+  auto params = get_test_parameters("testconnection");
+  if (params.find("SNOWFLAKE_TEST_PASSWORD") == params.end()) {
+    SKIP("Skipping: SNOWFLAKE_TEST_PASSWORD not configured (JWT-only environment)");
+  }
   // Given Authentication is set to default (snowflake) with valid username and password
   std::string connection_string = get_password_connection_string();
 
@@ -107,7 +111,10 @@ TEST_CASE("should authenticate using username and password", "[user_password]") 
 
 TEST_CASE("should authenticate using explicit snowflake authenticator", "[user_password]") {
   SKIP_OLD_DRIVER("", "Old driver already accepts 'snowflake' — test verifies new driver does too");
-
+  auto params = get_test_parameters("testconnection");
+  if (params.find("SNOWFLAKE_TEST_PASSWORD") == params.end()) {
+    SKIP("Skipping: SNOWFLAKE_TEST_PASSWORD not configured (JWT-only environment)");
+  }
   // Given Authentication is explicitly set to snowflake with valid username and password
   std::string connection_string = get_password_connection_string_with_explicit_authenticator();
 

@@ -340,6 +340,30 @@ class TestConvertProtoError:
         assert result.errno == 1003
         assert result.sqlstate == "42000"
 
+    def test_application_exception_message_has_no_wrapper_prefixes(self):
+        """Regression test: match old snowflake-connector-python error format.
+
+        Old driver produces '002003 (42S02): SQL compilation error: ...'
+        — no 'Query execution failed:' or 'Query failed:' wrapper.
+        """
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="SQL compilation error: Object 'FOO' does not exist.",
+            status_code=STATUS_CODE_INTERNAL_ERROR,
+            vendor_code=2003,
+            sql_state="42S02",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        msg = str(result)
+        assert "Query execution failed" not in msg
+        assert "Query failed:" not in msg
+        assert msg == "002003 (42S02): SQL compilation error: Object 'FOO' does not exist."
+
     def test_application_exception_root_cause_appended(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
@@ -373,6 +397,24 @@ class TestConvertProtoError:
         # root_cause should not be appended when it already appears in message
         msg_str = str(result)
         assert msg_str.count("division by zero") == 1
+
+    def test_application_exception_vendor_code_100072_maps_to_integrity_error(self):
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="NULL result in a non-nullable column",
+            status_code=STATUS_CODE_INTERNAL_ERROR,
+            vendor_code=100072,
+            sql_state="23000",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, IntegrityError)
+        assert result.errno == 100072
+        assert result.sqlstate == "23000"
 
     def test_application_exception_report_not_included(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (

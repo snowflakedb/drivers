@@ -117,14 +117,20 @@ fn load_parameters(path: &PathBuf) -> Result<Parameters, Box<dyn std::error::Err
 
 fn default_client_info() -> ClientInfo {
     ClientInfo {
-        application: "PythonConnector".to_string(),
-        version: "3.15.0".to_string(),
-        os: "Darwin".to_string(),
-        os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+        client_app_id: env!("CARGO_PKG_NAME").to_string(),
+        application: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        os_version: sf_core::telemetry::environment::detect_os_version(),
         ocsp_mode: Some("FAIL_OPEN".to_string()),
+        runtime_name: None,
+        runtime_version: None,
+        compiler: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         platforms: Vec::new(),
+        os_details: None,
     }
 }
 
@@ -313,6 +319,8 @@ fn build_login_params(
         LoginMethod::Password {
             username: user,
             password: SensitiveString::from(password.clone()),
+            passcode_in_password: false,
+            passcode: None,
         }
     } else {
         return Err("No authentication method available: set private_key_file, private_key_contents, or password in parameters".into());
@@ -329,6 +337,7 @@ fn build_login_params(
         client_info,
         session_parameters: None,
         spcs_token: None,
+        disable_parallel_user_prompt: false,
     })
 }
 
@@ -357,6 +366,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_url,
         client_info,
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
+        log_query_text: false,
+        log_query_parameters: false,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 
@@ -368,11 +379,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let alter_response = snowflake_query(
         query_params.clone(),
         &session_token,
-        QueryInput {
-            sql: alter_sql.to_string(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new(alter_sql),
         QueryExecutionMode::Blocking,
     )
     .await?;
@@ -386,11 +393,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = snowflake_query(
         query_params,
         &session_token,
-        QueryInput {
-            sql: cli.sql.clone(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new(cli.sql.clone()),
         QueryExecutionMode::Blocking,
     )
     .await?;
@@ -418,22 +421,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Format: {format_label}");
 
-    let rowset_data = response.data.to_rowset_data();
-    match rowset_data {
-        sf_core::rest::snowflake::query_response::RowsetData::ArrowMultiChunk { .. }
-        | sf_core::rest::snowflake::query_response::RowsetData::ArrowSingleChunk { .. } => {
-            save_arrow_data(&response.data, &cli.output_dir, &tls_client).await?;
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::JsonMultiChunk { .. }
-        | sf_core::rest::snowflake::query_response::RowsetData::JsonRowset { .. } => {
-            save_json_data(&response.data, &cli.output_dir, &tls_client).await?;
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::SchemaOnly { .. } => {
-            return Err("Query returned schema-only (no data)".into());
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::NoData => {
-            return Err("Query returned no data".into());
-        }
+    match format_label {
+        "arrow" => save_arrow_data(&response.data, &cli.output_dir, &tls_client).await?,
+        "json" => save_json_data(&response.data, &cli.output_dir, &tls_client).await?,
+        other => return Err(format!("Unsupported query result format: {other}").into()),
     }
 
     println!("Done! Chunk data saved to {:?}", cli.output_dir);

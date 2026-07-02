@@ -19,6 +19,9 @@ _current_run_dir = None
 # Track performance history comparisons for the session summary
 _perf_comparisons = []
 
+# Registry of test parameters for regression re-runs (test_name -> params dict)
+_regression_test_params = {}
+
 
 def pytest_configure():
     """Configure pytest and suppress verbose library logs"""
@@ -95,6 +98,26 @@ def pytest_addoption(parser):
         action="store",
         default=None,
         help="Reuse existing WireMock mappings directory (e.g., 'run_20251230_155413'). Skips recording phase.",
+    )
+    parser.addoption(
+        "--regression-check",
+        action="store_true",
+        default=False,
+        help="Enable regression detection: compare PR results against Benchstore main baseline after tests complete",
+    )
+    parser.addoption(
+        "--regression-threshold",
+        action="store",
+        default=5.0,
+        type=float,
+        help="Regression threshold percentage (default: 5.0). Only used with --regression-check",
+    )
+    parser.addoption(
+        "--regression-rerun-iterations",
+        action="store",
+        default=10,
+        type=int,
+        help="Number of iterations for regression confirmation re-runs (default: 10). Only used with --regression-check",
     )
 
 
@@ -380,6 +403,13 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
         is_comparison = _should_run_comparison(driver, driver_type)
 
+        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
+            _regression_test_params[test_name] = {
+                "sql_command": sql_command,
+                "parameters_json": parameters_json,
+                "setup_queries": final_setup_queries,
+            }
+
         # Route to appropriate runner based on test type
         if test_type == PerfTestType.SELECT_RECORDED_HTTP:
             result = _run_wiremock_test(
@@ -635,6 +665,75 @@ def pytest_sessionfinish(session, exitstatus):
                 handler.setLevel(level)
     else:
         logger.info("\nSkipping Benchstore upload (use --upload-to-benchstore to enable)")
+
+    # Regression check (PR vs main baseline from Benchstore)
+    regression_check_enabled = session.config.getoption("--regression-check")
+    if regression_check_enabled:
+        if exitstatus != 0:
+            logger.warning("Skipping regression check — test session already failed (exit code %d)", exitstatus)
+            return
+
+        driver_type_val = session.config.getoption("--driver-type") or os.getenv("DRIVER_TYPE", "universal")
+        if driver_type_val == "both":
+            logger.error("--regression-check is not supported with --driver-type=both (results are split into universal/ and old/ subdirs)")
+            session.exitstatus = 1
+            return
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info(">>> REGRESSION CHECK")
+        logger.info("=" * 80)
+        logger.info("")
+
+        if not _current_run_dir:
+            logger.error("No run directory found - cannot perform regression check")
+            session.exitstatus = pytest.ExitCode.USAGE_ERROR
+            return
+
+        # Suppress noisy library logs but keep our runner.* logs visible
+        _noisy_loggers = ["snowflake", "benchstore", "urllib3", "botocore"]
+        _saved_lib_levels = {}
+        for name in _noisy_loggers:
+            lib_logger = logging.getLogger(name)
+            _saved_lib_levels[name] = lib_logger.level
+            lib_logger.setLevel(logging.WARNING)
+
+        try:
+            from runner.pr_smoke_reg_detection.regression_check import run_regression_check
+
+            driver_val = session.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+            threshold = session.config.getoption("--regression-threshold")
+
+            run_id_val = _current_run_dir.name if _current_run_dir else None
+
+            rerun_iterations = session.config.getoption("--regression-rerun-iterations")
+
+            passed = run_regression_check(
+                results_dir=_current_run_dir,
+                driver=driver_val,
+                driver_type=driver_type_val,
+                threshold_pct=threshold,
+                use_local_auth=local_benchstore_upload,
+                test_params_registry=_regression_test_params,
+                run_id=run_id_val,
+                iterations=rerun_iterations,
+                warmup_iterations=session.config.getoption("--warmup-iterations") if session.config.getoption("--warmup-iterations") is not None else 2,
+            )
+
+            REGRESSION_EXIT_CODE = 77
+
+            if not passed:
+                session.exitstatus = REGRESSION_EXIT_CODE
+                logger.error("Regression check FAILED - performance regression confirmed (exit code 77)")
+
+        except Exception as e:
+            logger.error(f"\nRegression check failed with error: {e}")
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+            raise
+        finally:
+            for name, level in _saved_lib_levels.items():
+                logging.getLogger(name).setLevel(level)
+    else:
+        logger.info("\nSkipping regression check (use --regression-check to enable)")
 
 
 def _download_s3_files_if_needed(s3_download_url: str = None, s3_download_dir: str = None):

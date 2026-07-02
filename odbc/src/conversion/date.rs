@@ -2,25 +2,30 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
-use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, UnsupportedCDataTypeSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu,
+    InvalidDatetimeValueSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ConversionError, DatetimeOutOfSqlRangeSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+    parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+
+/// Expected literal shape for a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to a
+/// DATE target, surfaced in the 22018 diagnostic when parsing fails.
+const DATE_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD";
 
 /// Format a `NaiveDate` as `YYYY-MM-DD` into a stack buffer without heap
 /// allocation. 32 bytes is sufficient for any year chrono can represent.
@@ -48,6 +53,16 @@ const UNIX_EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(1970, 1, 1) {
 
 impl SnowflakeType for SnowflakeDate {
     type Representation<'a> = NaiveDate;
+
+    fn validate_value(&self, value: &NaiveDate) -> Result<(), ConversionError> {
+        if !SQL_DATETIME_YEAR_RANGE.contains(&value.year()) {
+            return DatetimeOutOfSqlRangeSnafu {
+                reason: format!("DATE year {} is outside SQL range 0001..9999", value.year()),
+            }
+            .fail();
+        }
+        Ok(())
+    }
 }
 
 impl ReadArrowType<PrimitiveArray<Date32Type>> for SnowflakeDate {
@@ -171,34 +186,25 @@ impl ReadODBC for SnowflakeDate {
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
-    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+    ) -> Result<Self::Representation<'a>, BindingError> {
         match binding.value_type {
             CDataType::Date | CDataType::TypeDate => {
                 let date = read_unaligned::<sql::Date>(binding);
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_DATE for DATE target: \
+                                 year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
                         }
                         .build()
                     })
             }
-            CDataType::Char => {
-                let s = read_char_str(binding)?;
-                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
-                })
-            }
-            CDataType::WChar => {
-                let s = read_wchar_str(binding)?;
-                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
+            CDataType::Char | CDataType::WChar => {
+                parse_temporal_char_input(binding, DATE_CHAR_EXPECTED_FORMAT, |s| {
+                    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| ())
                 })
             }
             CDataType::Binary => {
@@ -214,6 +220,60 @@ impl ReadODBC for SnowflakeDate {
                         .build()
                     })
             }
+            // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the
+            // date portion of the timestamp. Per ODBC Appendix D ("Converting
+            // Data from C to SQL Data Types") and matching the legacy 3.16.0
+            // driver, the conversion only succeeds when the discarded time
+            // portion is exactly zero; otherwise SQLSTATE 22008 ("Datetime
+            // field overflow") is returned.
+            //
+            // Error precedence: validate the *struct* first (22007 for any
+            // out-of-range field — month=13, hour=25, fraction=3e9, …) and
+            // only then enforce the 22008 narrowing rule. Otherwise an input
+            // like {hour=25, minute=0, second=0, fraction=0} would surface
+            // as "datetime field overflow" when in fact the struct itself is
+            // malformed.
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                    .ok_or_else(|| {
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                             year={}, month={}, day={}",
+                                ts.year, ts.month, ts.day
+                            ),
+                        }
+                        .build()
+                    })?;
+                NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                             hour={}, minute={}, second={}, fraction={}",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .build()
+                })?;
+                if ts.hour != 0 || ts.minute != 0 || ts.second != 0 || ts.fraction != 0 {
+                    return DatetimeFieldOverflowSnafu {
+                        reason: format!(
+                            "SQL_C_TYPE_TIMESTAMP → SQL_TYPE_DATE: time portion must be \
+                             zero (got hour={}, minute={}, second={}, fraction={})",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .fail();
+                }
+                Ok(date)
+            }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
             }
@@ -222,10 +282,10 @@ impl ReadODBC for SnowflakeDate {
     }
 }
 
-impl WriteJson for SnowflakeDate {
-    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+impl WriteWire for SnowflakeDate {
+    fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
         let millis = (value - UNIX_EPOCH).num_days() * 86_400_000;
-        Ok(Value::String(millis.to_string()))
+        Ok(millis.to_string())
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
@@ -263,5 +323,54 @@ mod format_date_ascii_tests {
         let mut buf = [0u8; 32];
         let d = NaiveDate::from_ymd_opt(-44, 3, 15).unwrap();
         assert_eq!(format_date_ascii(&d, &mut buf), "-044-03-15");
+    }
+}
+
+#[cfg(test)]
+mod read_arrow_type_tests {
+    use super::*;
+    use arrow::array::PrimitiveArray;
+
+    fn days_since_epoch(year: i32, month: u32, day: u32) -> i32 {
+        let target = NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        (target - UNIX_EPOCH).num_days() as i32
+    }
+
+    #[test]
+    fn reads_year_1_boundary() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(days_since_epoch(1, 1, 1))]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveDate::from_ymd_opt(1, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn reads_year_9999_boundary() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(days_since_epoch(9999, 12, 31))]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveDate::from_ymd_opt(9999, 12, 31).unwrap());
+    }
+
+    #[test]
+    fn rejects_year_before_1() {
+        let day_count = days_since_epoch(1, 1, 1) - 1;
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(day_count)]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        let err = SnowflakeDate.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_year_after_9999() {
+        let day_count = days_since_epoch(9999, 12, 31) + 1;
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(day_count)]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        let err = SnowflakeDate.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
     }
 }

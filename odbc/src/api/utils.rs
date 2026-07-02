@@ -5,9 +5,16 @@ use crate::api::error::{
 };
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
 use crate::conversion::warning::Warnings;
-use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
+use crate::conversion::{
+    column_size_from_field, decimal_digits_from_field, display_size_from_field,
+    is_case_sensitive_from_field, is_unsigned_from_field, literal_prefix_from_field,
+    literal_suffix_from_field, num_prec_radix_from_field, octet_length_from_field,
+    precision_from_field, searchable_from_field, sql_type_from_field, type_name_from_field,
+    verbose_sql_type_from_field,
+};
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
+use sf_core::apis::database_driver_v1::ESCAPE_CHAR;
 use snafu::ResultExt;
 use tracing;
 
@@ -36,19 +43,69 @@ pub(crate) fn process_catalog_arg(
     }
 }
 
+/// Converts a catalog function string argument to a core search pattern.
+///
+/// Pattern mode (metadata_id=false, ODBC default): pass through verbatim.
+///   NULL → None (no filter); non-NULL → Some(as-is, app's wildcards carry core semantics).
+///
+/// Identifier mode (metadata_id=true):
+///   NULL → HY009 (NullPointer error)
+///   Quoted: strip surrounding `"`, collapse `""` → `"`, then escape `%`/`_`/`\` for core.
+///   Unquoted: trim trailing blanks, uppercase, then escape `%`/`_`/`\` → `\%`/`\_`/`\\`.
+///
+/// In both modes, empty string passes through (core yields empty result per policy).
+pub(crate) fn catalog_arg_to_pattern(
+    arg: Option<&str>,
+    metadata_id: bool,
+) -> OdbcResult<Option<String>> {
+    match (arg, metadata_id) {
+        (None, true) => NullPointerSnafu.fail(),
+        (None, false) => Ok(None),
+        (Some(s), false) => Ok(Some(s.to_string())),
+        (Some(s), true) => {
+            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                let inner = &s[1..s.len() - 1];
+                let literal = inner.replace("\"\"", "\"");
+                Ok(Some(escape_like_wildcards(&literal)))
+            } else {
+                let trimmed = s.trim_end().to_uppercase();
+                Ok(Some(escape_like_wildcards(&trimmed)))
+            }
+        }
+    }
+}
+
+/// Escapes `%`, `_`, and `\` in a literal identifier so the core treats it as an
+/// exact-match pattern via `is_exact`.
+pub(crate) fn escape_like_wildcards(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        if c == ESCAPE_CHAR || c == '%' || c == '_' {
+            out.push(ESCAPE_CHAR);
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Get the number of result columns
 pub fn num_result_cols(
     statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_async_executing() {
+        return crate::api::error::AsyncInProgressSnafu.fail();
+    }
+
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let num_cols = match stmt.state.as_ref() {
+    let num_cols = match inner.state.as_ref() {
         StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
         StatementState::QueryExecuted { reader, .. } => {
             reader.schema().fields().len() as sql::SmallInt
@@ -73,13 +130,14 @@ pub fn num_result_cols(
 /// Get the number of affected rows
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let row_count = match stmt.state.as_ref() {
+    let row_count = match inner.state.as_ref() {
         StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
         StatementState::DmlExecuted { rows_affected, .. } => *rows_affected as sql::Len,
@@ -97,7 +155,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     Ok(())
 }
 
-/// Get a column attribute (SQLColAttribute)
+/// Get a column attribute (SQLColAttribute / SQLColAttributes)
 #[allow(clippy::too_many_arguments)]
 pub fn col_attribute<E: OdbcEncoding>(
     statement_handle: sql::Handle,
@@ -114,94 +172,166 @@ pub fn col_attribute<E: OdbcEncoding>(
         column_number,
         field_identifier
     );
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let schema = match stmt.state.as_ref() {
+    let schema = match inner.state.as_ref() {
+        StatementState::Prepared { schema } => schema.clone(),
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
-    // ODBC column numbers are 1-based; validate before indexing into the schema
-    if column_number == 0 {
-        tracing::warn!("col_attribute: invalid column_number=0");
-        return StatementNotExecutedSnafu.fail();
-    }
-    let column_index = (column_number - 1) as usize;
-    if column_index >= schema.fields().len() {
-        tracing::warn!(
-            "col_attribute: column_number={} out of range (num_fields={})",
-            column_number,
-            schema.fields().len()
-        );
-        return StatementNotExecutedSnafu.fail();
-    }
-
-    let field = schema.field(column_index);
     let desc_field = DescField::try_from(field_identifier as i16)?;
 
-    match desc_field {
-        DescField::Type | DescField::ConciseType => {
-            // SAFETY: conn pointer is valid for the statement's lifetime;
-            // no mutable reference to the Connection exists in this scope.
-            let sql_type = sql_type_from_field(field, &unsafe { stmt.conn() }.numeric_settings)
-                .context(ConversionSnafu)?;
-            if !numeric_attribute_ptr.is_null() {
-                unsafe {
-                    std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
-                }
-            }
-            Ok(())
+    // SQL_DESC_COUNT / SQL_COLUMN_COUNT don't require a valid column number
+    if matches!(desc_field, DescField::Count | DescField::ColumnCount) {
+        write_numeric(numeric_attribute_ptr, schema.fields().len() as sql::Len);
+        return Ok(());
+    }
+
+    // Validate column number (1-based)
+    if column_number < 1 || (column_number as usize - 1) >= schema.fields().len() {
+        return InvalidDescriptorIndexSnafu {
+            number: column_number as sql::SmallInt,
         }
-        DescField::TypeName => {
-            let logical_type = field
-                .metadata()
-                .get("logicalType")
-                .map(|s| s.as_str())
-                .unwrap_or("");
-            let type_name = match logical_type {
-                "OBJECT" => "STRUCT",
-                "ARRAY" => "ARRAY",
-                "VARIANT" => "VARIANT",
-                _ => "",
-            };
-            match logical_type {
-                "OBJECT" | "ARRAY" | "VARIANT" => {
-                    write_string_bytes::<E>(
-                        type_name,
-                        character_attribute_ptr,
-                        buffer_length,
-                        string_length_ptr,
-                        Some(warnings),
-                    );
-                    Ok(())
-                }
-                _ => {
-                    tracing::warn!(
-                        "col_attribute: SQL_DESC_TYPE_NAME not yet implemented for logicalType={logical_type}"
-                    );
-                    write_string_bytes::<E>(
-                        "",
-                        character_attribute_ptr,
-                        buffer_length,
-                        string_length_ptr,
-                        None,
-                    );
-                    Ok(())
-                }
-            }
-        }
-        _ => {
-            tracing::warn!(
-                "col_attribute: unsupported field_identifier={:?}",
-                desc_field
+        .fail();
+    }
+    let column_index = (column_number - 1) as usize;
+    let field = schema.field(column_index);
+    let dbc = guard.conn()?;
+    let numeric_settings = dbc.connection.lock().numeric_settings;
+
+    match compute_ird_field(field, desc_field, &numeric_settings)? {
+        IrdFieldValue::SmallInt(v) => write_numeric(numeric_attribute_ptr, v as sql::Len),
+        IrdFieldValue::Integer(v) => write_numeric(numeric_attribute_ptr, v as sql::Len),
+        IrdFieldValue::Len(v) => write_numeric(numeric_attribute_ptr, v),
+        IrdFieldValue::Str(s) => {
+            write_string_bytes::<E>(
+                s,
+                character_attribute_ptr,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
             );
-            Ok(())
         }
+    }
+
+    Ok(())
+}
+
+fn write_numeric(ptr: *mut sql::Len, value: sql::Len) {
+    if !ptr.is_null() {
+        unsafe { std::ptr::write(ptr, value) };
+    }
+}
+
+/// Result of computing an IRD record field value from Arrow metadata.
+///
+/// Variants match the C type that `SQLGetDescField` writes for each IRD field
+/// (per the ODBC spec table), so the descriptor path writes exactly the right
+/// number of bytes.  `SQLColAttribute` widens everything to `SQLLEN`.
+pub(crate) enum IrdFieldValue<'a> {
+    SmallInt(sql::SmallInt),
+    Integer(sql::Integer),
+    Len(sql::Len),
+    Str(&'a str),
+}
+
+/// Compute the value of an IRD record field from Arrow metadata.
+/// Shared logic between `SQLColAttribute` and `SQLGetDescField(IRD)`.
+pub(crate) fn compute_ird_field<'a>(
+    field: &'a arrow::datatypes::Field,
+    desc_field: DescField,
+    numeric_settings: &crate::conversion::NumericSettings,
+) -> OdbcResult<IrdFieldValue<'a>> {
+    use IrdFieldValue::*;
+    match desc_field {
+        DescField::Type => {
+            let t =
+                verbose_sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(t.0))
+        }
+        DescField::ConciseType => {
+            let t = sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(t.0))
+        }
+        DescField::Nullable | DescField::ColumnNullable => {
+            let val = if field.is_nullable() {
+                sql::Nullability::NULLABLE.0
+            } else {
+                sql::Nullability::NO_NULLS.0
+            };
+            Ok(SmallInt(val))
+        }
+        DescField::Precision | DescField::ColumnPrecision => {
+            let v = precision_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(v as sql::SmallInt))
+        }
+        DescField::Scale | DescField::ColumnScale => {
+            let v = decimal_digits_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(v))
+        }
+        DescField::Length => {
+            let v = column_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Len(v as sql::Len))
+        }
+        DescField::OctetLength | DescField::ColumnLength => {
+            let v = octet_length_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Len(v))
+        }
+        DescField::DisplaySize => {
+            let v = display_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Len(v))
+        }
+        DescField::NumPrecRadix => {
+            let v = num_prec_radix_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Integer(v as sql::Integer))
+        }
+        DescField::Unsigned => {
+            let v = is_unsigned_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(if v { 1 } else { 0 }))
+        }
+        DescField::CaseSensitive => {
+            let v =
+                is_case_sensitive_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Integer(if v { 1 } else { 0 }))
+        }
+        DescField::Searchable => {
+            let v = searchable_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(SmallInt(v as sql::SmallInt))
+        }
+        DescField::Updatable => Ok(SmallInt(2)), // SQL_ATTR_READWRITE_UNKNOWN
+        DescField::AutoUniqueValue => Ok(Integer(0)), // SQL_FALSE
+        DescField::FixedPrecScale => Ok(SmallInt(0)), // SQL_FALSE
+        DescField::Unnamed => Ok(SmallInt(0)),   // SQL_NAMED
+        DescField::Name | DescField::ColumnName | DescField::Label | DescField::BaseColumnName => {
+            Ok(Str(field.name()))
+        }
+        DescField::TableName
+        | DescField::BaseTableName
+        | DescField::CatalogName
+        | DescField::SchemaName => Ok(Str("")),
+        DescField::TypeName | DescField::LocalTypeName => {
+            let name = type_name_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(name))
+        }
+        DescField::LiteralPrefix => {
+            let v = literal_prefix_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(v))
+        }
+        DescField::LiteralSuffix => {
+            let v = literal_suffix_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(v))
+        }
+        _ => crate::api::error::UnknownAttributeSnafu {
+            attribute: desc_field as i32,
+        }
+        .fail(),
     }
 }
 
@@ -220,13 +350,14 @@ pub fn describe_col<E: OdbcEncoding>(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("describe_col: column_number={column_number}");
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let schema = match stmt.state.as_ref() {
+    let schema = match inner.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         StatementState::Prepared { schema } => schema.clone(),
@@ -249,9 +380,8 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     let field = schema.field(col_idx);
-    // SAFETY: conn pointer is valid for the statement's lifetime;
-    // no mutable reference to the Connection exists in this scope.
-    let conn = unsafe { stmt.conn() };
+    let dbc = guard.conn()?;
+    let numeric_settings = dbc.connection.lock().numeric_settings;
 
     let name = field.name();
     write_string_chars::<E>(
@@ -263,20 +393,18 @@ pub fn describe_col<E: OdbcEncoding>(
     );
 
     if !data_type_ptr.is_null() {
-        let sql_type =
-            sql_type_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
+        let sql_type = sql_type_from_field(field, &numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
     if !column_size_ptr.is_null() {
-        let col_size =
-            column_size_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
+        let col_size = column_size_from_field(field, &numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
     if !decimal_digits_ptr.is_null() {
         let digits =
-            decimal_digits_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
+            decimal_digits_from_field(field, &numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }
 
@@ -431,5 +559,104 @@ mod tests {
             process_catalog_arg(Some("straße"), false).unwrap(),
             Some("straße".to_string())
         );
+    }
+
+    // ---- catalog_arg_to_pattern ----
+
+    #[test]
+    fn new_pattern_mode_none_returns_none() {
+        assert_eq!(catalog_arg_to_pattern(None, false).unwrap(), None);
+    }
+
+    #[test]
+    fn new_pattern_mode_passes_through_verbatim() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("hello%_world"), false).unwrap(),
+            Some("hello%_world".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_none_returns_hy009() {
+        let result = catalog_arg_to_pattern(None, true);
+        assert!(matches!(result, Err(OdbcError::NullPointer { .. })));
+    }
+
+    #[test]
+    fn new_identifier_mode_unquoted_uppercases_and_escapes_wildcards() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("hello%world"), true).unwrap(),
+            Some("HELLO\\%WORLD".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_unquoted_trims_trailing() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("FOO  "), true).unwrap(),
+            Some("FOO".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_quoted_strips_quotes_and_escapes() {
+        // "hello%world" → strip quotes → hello%world → escape → hello\%world
+        assert_eq!(
+            catalog_arg_to_pattern(Some("\"hello%world\""), true).unwrap(),
+            Some("hello\\%world".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_quoted_collapses_double_quotes() {
+        // "he""llo" → strip outer → he""llo → collapse → he"llo → escape → he"llo
+        assert_eq!(
+            catalog_arg_to_pattern(Some("\"he\"\"llo\""), true).unwrap(),
+            Some("he\"llo".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_quoted_preserves_case() {
+        // Quoted identifiers keep their case
+        assert_eq!(
+            catalog_arg_to_pattern(Some("\"MixedCase\""), true).unwrap(),
+            Some("MixedCase".to_string())
+        );
+    }
+
+    #[test]
+    fn new_identifier_mode_unquoted_escapes_backslash() {
+        assert_eq!(
+            catalog_arg_to_pattern(Some("foo\\bar"), true).unwrap(),
+            Some("FOO\\\\BAR".to_string())
+        );
+    }
+
+    #[test]
+    fn connection_context_catalog_with_underscore_is_escaped_for_exact_match() {
+        let db = "SNOWFLAKE_SAMPLE_DATA";
+        let escaped = escape_like_wildcards(db);
+        assert_eq!(escaped, "SNOWFLAKE\\_SAMPLE\\_DATA");
+
+        // resolve_null_catalog_to_connection_context returns the escaped form;
+        // pattern mode passes it through unchanged to the core.
+        let pattern = catalog_arg_to_pattern(Some(&escaped), false)
+            .unwrap()
+            .expect("pattern");
+        assert_eq!(pattern, escaped);
+
+        // Without escaping, the bare name would reach the core as a pattern containing
+        // wildcards and is_exact() would fail, falling through to IN ACCOUNT.
+        assert_eq!(
+            catalog_arg_to_pattern(Some(db), false).unwrap(),
+            Some(db.to_string())
+        );
+    }
+
+    #[test]
+    fn escape_like_wildcards_escapes_percent_and_backslash() {
+        assert_eq!(escape_like_wildcards("DB%1"), "DB\\%1");
+        assert_eq!(escape_like_wildcards("A\\B"), "A\\\\B");
     }
 }

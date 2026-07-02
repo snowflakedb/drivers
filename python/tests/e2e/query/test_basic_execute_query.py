@@ -14,8 +14,11 @@ This module tests basic query execution functionality including:
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
+from snowflake.connector import IntegrityError, ProgrammingError
 from tests.e2e.types.utils import assert_sequential_values
 
 
@@ -154,13 +157,28 @@ class TestErrorHandling:
         # Given Snowflake client is logged in
         pass
 
-        from snowflake.connector import ProgrammingError
-
         # When Invalid SQL "SELCT INVALID SYNTAX" is executed
         invalid_sql = "SELCT INVALID SYNTAX"
         # Then An error should be returned
         with pytest.raises(ProgrammingError):
             cursor.execute(invalid_sql)
+
+    def test_should_return_proper_error_for_null_in_not_null_column(self, cursor):
+        """Test IntegrityError when inserting NULL into a NOT NULL column."""
+        # Given Snowflake client is logged in
+        pass
+
+        # And A temporary table with a NOT NULL column is created
+        table_name = f"test_nn_{uuid.uuid4().hex[:8]}"
+        cursor.execute(f"CREATE TEMPORARY TABLE {table_name} (bar CHAR NOT NULL)")
+
+        # When NULL is inserted into the NOT NULL column
+        sql = f"INSERT INTO {table_name} VALUES (NULL)"
+
+        # Then A proper error should be raised with vendor code 100072
+        with pytest.raises(IntegrityError, match="NULL result in a non-nullable column") as excinfo:
+            cursor.execute(sql)
+        assert excinfo.value.errno == 100072
 
 
 class TestSequentialExecution:

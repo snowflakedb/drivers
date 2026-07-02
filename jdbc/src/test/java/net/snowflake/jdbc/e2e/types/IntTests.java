@@ -14,7 +14,7 @@ import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -334,6 +334,43 @@ public class IntTests extends SnowflakeIntegrationTestBase {
               resultSet,
               Arrays.asList(
                   (long) Integer.MIN_VALUE, 0L, (long) Integer.MAX_VALUE, Long.MAX_VALUE));
+        });
+  }
+
+  @Test
+  public void shouldInsertAndSelectIntegersFromTableUsingBatchParameterBindingForIntAndSynonyms()
+      throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists
+    String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
+
+    // When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using
+    // binding
+    long[] testValues = {0L, 42L, Integer.MIN_VALUE, Integer.MAX_VALUE, Long.MAX_VALUE};
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+      for (long value : testValues) {
+        preparedStatement.setLong(1, value);
+        preparedStatement.addBatch();
+      }
+      int[] counts = preparedStatement.executeBatch();
+      assertEquals(testValues.length, counts.length, "Expected one count per batched row");
+    }
+
+    // And Query "SELECT * FROM <table>" is executed
+    withQueryResult(
+        connection,
+        "SELECT * FROM " + tableName + " ORDER BY col",
+        resultSet -> {
+
+          // Then Result should contain integers [0, 42, -2147483648, 2147483647,
+          // 9223372036854775807]
+          assertSingleColumnRows(
+              resultSet,
+              Arrays.asList(
+                  (long) Integer.MIN_VALUE, 0L, 42L, (long) Integer.MAX_VALUE, Long.MAX_VALUE));
         });
   }
 

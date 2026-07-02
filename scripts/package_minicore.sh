@@ -2,6 +2,13 @@
 # Exit on any error
 set -euxo pipefail
 
+# Ensure rustup/cargo are on PATH before any cargo/rustup invocation below.
+# Jenkins `sh` steps run non-login shells, and recent macOS build agents ship
+# rustup pre-installed without ~/.cargo/bin on the default PATH, so cargo would
+# otherwise be "command not found". Safe no-op when cargo is already on PATH.
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
+
 source ./scripts/version.sh
 
 echo "=== Platform: $PLATFORM ==="
@@ -81,8 +88,33 @@ cbindgen --config sf_mini_core/cbindgen.toml --crate sf_mini_core > $BUILD_DIR/s
 echo "=== Building dynamic library version ==="
 $CARGO_CMD build --release --package sf_mini_core --target $PLATFORM_TARGET 
 
+# AIX: the Rust toolchain on `powerpc64-ibm-aix` (tier-3) emits LLVM bitcode
+# in an archive section the AIX linker driver can't locate, so any LTO
+# (thin or fat) on a `staticlib` crate fails with:
+#
+#   error: failed to get bitcode from object file for LTO
+#       (could not find requested section)
+#
+# The cdylib build above succeeds because Rust links it directly without
+# needing the bitcode passed through to a downstream consumer's linker.
+# Disable LTO only for the staticlib build on AIX as a workaround until
+# upstream Rust/LLVM fixes the bitcode packaging on AIX. Other targets
+# keep the workspace default (`lto = "thin"` from the root Cargo.toml).
+#
+# Functional impact: `sf_mini_core` is a single-function stub with no
+# dependencies, so the lost cross-language LTO is negligible — the static
+# `.a` is at most a few percent larger and effectively the same speed.
+STATIC_LTO_OVERRIDE=()
+if [[ "$PLATFORM" == aix-* ]]; then
+    STATIC_LTO_OVERRIDE=(env CARGO_PROFILE_RELEASE_LTO=off)
+fi
+
 echo "=== Building static library version ==="
-$CARGO_CMD build --release --package sf_mini_core_static --target $PLATFORM_TARGET
+# `${ARR[@]+"${ARR[@]}"}` expands to nothing when ARR is empty, but to the
+# array elements otherwise. Required because the script runs under `set -u`
+# and bash < 4.4 (notably macOS's bash 3.2) treats `"${EMPTY[@]}"` as an
+# unbound-variable reference instead of an empty expansion.
+${STATIC_LTO_OVERRIDE[@]+"${STATIC_LTO_OVERRIDE[@]}"} $CARGO_CMD build --release --package sf_mini_core_static --target $PLATFORM_TARGET
 
 # Determine dynamic library extension based on platform
 case "$PLATFORM" in

@@ -1,39 +1,66 @@
 [package]
 name = "odbc"
-version = "0.1.0"
+version = "4.0.0"
 edition = "2024"
+
+[package.metadata.odbc]
+# ODBC API conformance level reported by SQLGetInfo(SQL_DRIVER_ODBC_VER) and
+# registered as DriverODBCVer with unixODBC / the Windows ODBC registry.
+# Format is "MM.mm" (e.g. "03.80").
+odbc_api_version = "03.80"
+# Snowflake ODBC UD release version used as the artifact
+# version and embedded in the Windows DLL VERSIONINFO resource. The git
+# short SHA is appended at packaging time to produce the full release string.
+# Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
+# This is to be removed and the package.version used after moving into the PuPr
+odbc_preview_version = "0.0.4"
 
 [lib]
 name = "sfodbc"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sf_core = { path = "../sf_core" }
+sf_core = { path = "../sf_core", default-features = false, features = ["protobuf"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 snafu = "0.8.7"
 odbc-sys = "0.25.1"
-arrow = { version = "56.0.0", features = ["ffi"] }
+arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 chrono = "0.4.43"
 base64 = "0.22.1"
 serde_json = "1.0"
 libc = "0.2"
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
+dirs = "5.0"
+strum = "0.26"
+strum_macros = "0.26"
 
 proto_utils = { path = "../proto_utils" }
 error_trace = { path = "../error_trace" }
-tokio = { version = "1.50.0", features = ["rt"] }
+tokio = { version = "1.50.0", features = ["rt", "macros"] }
 tokio-util = "0.7"
+rust-ini = "0.21.3"
 
 # Forwarded to sf_core so that libsfodbc.so includes compiled-in perf spans.
 # Only used by performance tests.
 [features]
+default = ["sonic-json"]
+sonic-json = ["sf_core/sonic-json"]
 perf_timing = ["sf_core/perf_timing"]
+vendored-openssl = ["sf_core/vendored-openssl"]
+
+[build-dependencies]
+rustc_version = "0.4"
 
 [dev-dependencies]
 test-case = "3.3.1"
+temp-env = "0.3.6"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
 
 [[test]]
 name = "odbc_api_tests"

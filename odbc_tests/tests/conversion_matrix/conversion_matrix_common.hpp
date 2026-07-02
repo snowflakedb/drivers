@@ -21,6 +21,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 
@@ -184,23 +185,53 @@ struct SampleValue {
   SQLLEN buffer_length = 0;
 };
 
-static SampleValue make_sample_value(SQLSMALLINT c_type) {
+// Character sources convert to every SQL type, but the driver parses the
+// literal against a target-specific format (e.g. SnowflakeDate expects
+// "%Y-%m-%d", SnowflakeTime "%H:%M:%S"). A single value like "42" only
+// satisfies numeric / string / binary / interval targets; for DATE/TIME/
+// TIMESTAMP it fails to parse and the cell looks unsupported even though
+// the conversion is. Pick a target-appropriate literal so the char/wchar
+// rows reflect real capability rather than a fixture artifact.
+static const char* char_literal_for_sql_type(SQLSMALLINT sql_type) {
+  switch (sql_type) {
+    case SQL_DATE:
+    case SQL_TYPE_DATE:
+      return "2024-01-15";
+    case SQL_TIME:
+    case SQL_TYPE_TIME:
+      return "12:30:45";
+    case SQL_TIMESTAMP:
+    case SQL_TYPE_TIMESTAMP:
+      return "2024-01-15 12:30:45";
+    default:
+      return "42";
+  }
+}
+
+static SampleValue make_sample_value(SQLSMALLINT c_type, SQLSMALLINT target_sql_type) {
   SampleValue sv;
   std::memset(sv.raw, 0, sizeof(sv.raw));
 
   switch (c_type) {
     case SQL_C_CHAR: {
-      const char* text = "42";
+      const char* text = char_literal_for_sql_type(target_sql_type);
       std::strncpy(sv.raw, text, sizeof(sv.raw) - 1);
       sv.indicator = SQL_NTS;
       sv.buffer_length = static_cast<SQLLEN>(std::strlen(text) + 1);
       break;
     }
     case SQL_C_WCHAR: {
-      const char16_t text[] = u"42";
-      std::memcpy(sv.raw, text, sizeof(text));
+      // Pick a target-appropriate literal (so DATE/TIME/TIMESTAMP cells parse),
+      // then encode it (always ASCII) into the DM-side SQLWCHAR width via
+      // encode_wide. Under UTF-16 the buffer holds char16_t units; under UTF-32
+      // char32_t units.
+      const char* literal = char_literal_for_sql_type(target_sql_type);
+      const std::u32string code_points(literal, literal + std::strlen(literal));
+      const auto text = sf::wide::encode_wide(code_points);
+      const auto bytes = text.size() * sizeof(SQLWCHAR);
+      std::memcpy(sv.raw, text.data(), bytes);
       sv.indicator = SQL_NTS;
-      sv.buffer_length = static_cast<SQLLEN>(sizeof(text));
+      sv.buffer_length = static_cast<SQLLEN>(bytes);
       break;
     }
     case SQL_C_BIT: {
@@ -295,10 +326,110 @@ static SampleValue make_sample_value(SQLSMALLINT c_type) {
       break;
     }
     case SQL_C_BINARY: {
-      SQLCHAR bytes[] = {0x48, 0x65, 0x6C, 0x6C, 0x6F};
-      std::memcpy(sv.raw, bytes, sizeof(bytes));
-      sv.indicator = sizeof(bytes);
-      sv.buffer_length = sizeof(bytes);
+      // SQL_C_BINARY carries the raw little-endian image of the target type,
+      // so the driver requires the bound byte length to match the target
+      // exactly (MS ODBC "Converting Data from C to SQL Data Types: Binary").
+      // A single fixed-width payload only satisfies string / binary targets;
+      // numeric, real, decimal and datetime targets reject the size mismatch
+      // (22003) and the cell looks unsupported even though the conversion is.
+      // Build a target-sized image so the binary row reflects real capability
+      // rather than a fixture artifact.
+      switch (target_sql_type) {
+        case SQL_BIT: {
+          SQLCHAR val = 1;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_TINYINT: {
+          SQLSCHAR val = 42;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_SMALLINT: {
+          SQLSMALLINT val = 42;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_INTEGER: {
+          SQLINTEGER val = 42;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_BIGINT: {
+          SQLBIGINT val = 42;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_REAL: {
+          SQLREAL val = 42.0f;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_FLOAT:
+        case SQL_DOUBLE: {
+          SQLDOUBLE val = 42.0;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_DECIMAL:
+        case SQL_NUMERIC: {
+          SQL_NUMERIC_STRUCT val = {};
+          val.precision = 10;
+          val.scale = 0;
+          val.sign = 1;
+          val.val[0] = 42;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_DATE:
+        case SQL_TYPE_DATE: {
+          SQL_DATE_STRUCT val = {};
+          val.year = 2024;
+          val.month = 1;
+          val.day = 15;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_TIME:
+        case SQL_TYPE_TIME: {
+          SQL_TIME_STRUCT val = {};
+          val.hour = 12;
+          val.minute = 30;
+          val.second = 45;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        case SQL_TIMESTAMP:
+        case SQL_TYPE_TIMESTAMP: {
+          SQL_TIMESTAMP_STRUCT val = {};
+          val.year = 2024;
+          val.month = 1;
+          val.day = 15;
+          val.hour = 12;
+          val.minute = 30;
+          val.second = 45;
+          std::memcpy(sv.raw, &val, sizeof(val));
+          sv.buffer_length = sizeof(val);
+          break;
+        }
+        default: {
+          SQLCHAR bytes[] = {0x48, 0x65, 0x6C, 0x6C, 0x6F};
+          std::memcpy(sv.raw, bytes, sizeof(bytes));
+          sv.buffer_length = sizeof(bytes);
+          break;
+        }
+      }
+      sv.indicator = sv.buffer_length;
       break;
     }
     case SQL_C_TYPE_DATE: {
@@ -330,6 +461,14 @@ static SampleValue make_sample_value(SQLSMALLINT c_type) {
       val.minute = 30;
       val.second = 45;
       val.fraction = 0;
+      // Binding a timestamp to a DATE target is only legal when the time
+      // portion is zero (ODBC "C to SQL: Timestamp" rejects a non-zero time
+      // with 22008). Use midnight so the matrix exercises the supported path.
+      if (target_sql_type == SQL_DATE || target_sql_type == SQL_TYPE_DATE) {
+        val.hour = 0;
+        val.minute = 0;
+        val.second = 0;
+      }
       std::memcpy(sv.raw, &val, sizeof(val));
       sv.indicator = sizeof(val);
       sv.buffer_length = sizeof(val);
@@ -395,7 +534,7 @@ static void try_bindparam(Connection& conn, const char* insert_sql, const CTypeI
     return;
   }
 
-  auto sv = make_sample_value(ct.c_type);
+  auto sv = make_sample_value(ct.c_type, st.sql_type);
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, ct.c_type, st.sql_type, 0, 0, sv.raw, sv.buffer_length,
                          &sv.indicator);
   if (ret == SQL_ERROR) {

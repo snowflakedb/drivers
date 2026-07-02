@@ -118,7 +118,7 @@ Feature: Parameter binding
   #                        Multirow binding                                   #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert multiple rows using multirow binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -126,19 +126,19 @@ Feature: Parameter binding
     And Query "SELECT * FROM table ORDER BY id" is executed
     Then Result should contain 3 rows with correct values
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle empty sequence in multirow binding
     Given Snowflake client is logged in
     When Multirow binding is called with empty sequence
     Then No error should be raised
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should validate parameter length in multirow binding
     Given Snowflake client is logged in
     When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
     Then Error should be raised indicating parameter sequence length mismatch
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL values in multirow binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, value VARCHAR) exists

@@ -1,0 +1,16 @@
+FROM debian:12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl unzip \
+        build-essential cmake lld pkg-config perl \
+        libssl-dev unixodbc-dev \
+        ruby ruby-dev dpkg-dev tar gzip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN gem install --no-document fpm
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

@@ -1,0 +1,21 @@
+{
+  "name": "Logout session succeeds",
+  "request": {
+    "urlPath": "/session",
+    "method": "POST",
+    "queryParameters": {
+      "delete": {
+        "equalTo": "true"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

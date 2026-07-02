@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -32,7 +33,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ACTIVE_ENVIRONMENTS", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_DBC_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -46,7 +46,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_DBC_FUNCTIONS", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_MODE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -60,7 +59,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_MODE", "[odbc-api]
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_NOTIFICATION", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -102,17 +100,36 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_BATCH_SUPPORT", "[odbc-a
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_NAME", "[odbc-api][getinfo][driver_info]") {
+  // Given a DBC handle connected to the default DSN
   WINDOWS_ONLY { SKIP_NEW_DRIVER_NOT_IMPLEMENTED(); }  // Implemented by DM on Linux, but not on Windows
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  char dsnName[256];
+  // When SQLGetInfo is called with SQL_DATA_SOURCE_NAME
+  char dsnName[256] = {};
   SQLSMALLINT nameLen = 0;
   ret = SQLGetInfo(dbc_handle(), SQL_DATA_SOURCE_NAME, dsnName, sizeof(dsnName), &nameLen);
 
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(nameLen > 0);
-  REQUIRE(std::string(dsnName) == dsn_name());
+  NON_IODBC {
+    // Then the unixODBC DM synthesizes the DSN name from the connection
+    //   metadata, so the call succeeds and the returned name matches the DSN
+    //   used at connect
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(nameLen > 0);
+    REQUIRE(std::string(dsnName) == dsn_name());
+  }
+  IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#62") {
+      // The old driver answers SQL_DATA_SOURCE_NAME itself with an empty
+      //   string (SQL_SUCCESS, nameLen=0) instead of having the DM short-
+      //   circuit; the new driver lets iODBC reject the InfoType, surfacing
+      //   SQL_ERROR.
+      REQUIRE(ret == SQL_SUCCESS);
+    }
+    else {
+      REQUIRE(ret == SQL_ERROR);
+    }
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -136,8 +153,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_AWARE_POOLING_SUP
 // are implemented by the driver manager alone
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -147,7 +162,31 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(nameLen > 0);
-  REQUIRE(std::string(driverName) == "Snowflake");
+
+  OLD_DRIVER_ONLY("BD#71") {
+    // Reference driver returns the fixed marketing identifier
+    // "Snowflake" rather than a file path. This conflicts with the
+    // ODBC spec ("a character string with the file name of the driver
+    // used to access the data source") but the legacy implementation
+    // has always done it this way, so pin the exact value to detect
+    // regressions.
+    REQUIRE(std::string(driverName) == "Snowflake");
+  }
+  NEW_DRIVER_ONLY("BD#71") {
+    // New driver is spec-compliant: it returns the on-disk file path
+    // of the loaded driver shared library, resolved via the ODBC
+    // installer API (`SQLGetPrivateProfileString` against
+    // odbc.ini/odbcinst.ini) with a `dladdr` self-path fallback.
+    // The test fixture stamps the actually-loaded library path into
+    // odbcinst.ini via the `DRIVER_PATH` env var, so the resolver
+    // must round-trip to exactly that value.
+    const char* expected = std::getenv("DRIVER_PATH");
+    INFO(
+        "DRIVER_PATH must be set by the test runner so the new-driver "
+        "branch knows what file path to expect from SQL_DRIVER_NAME");
+    REQUIRE(expected != nullptr);
+    REQUIRE(std::string(driverName) == std::string(expected));
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -170,8 +209,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_ODBC_VER", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -181,14 +218,46 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api]
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(verLen > 0);
-  REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);  // Format: ##.##.####
+
+  OLD_DRIVER_ONLY("BD#72") {
+    // Reference driver reports the version as `MM.mm.bbbb` with each
+    // field zero-padded (e.g. `03.17.0000`).
+    REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);
+  }
+  NEW_DRIVER_ONLY("BD#72") {
+    // New driver reports the Cargo package version verbatim: semver
+    // `M.m.p` with NO zero-padding (e.g. `4.0.0`). Assert the exact
+    // shape — three dot-separated, unpadded, non-negative integer
+    // components — so a regression to the old zero-padded `MM.mm.bbbb`
+    // format (e.g. `03.17.0000`) fails here instead of slipping past a
+    // bare dot-count check that both formats satisfy.
+    const std::string ver(driverVer, static_cast<size_t>(verLen));
+    int components = 0;
+    for (size_t start = 0; start <= ver.size();) {
+      const size_t dot = ver.find('.', start);
+      const size_t end = (dot == std::string::npos) ? ver.size() : dot;
+      const std::string component = ver.substr(start, end - start);
+      INFO("version component '" << component << "' in '" << ver << "'");
+      // Non-empty and every char is a digit.
+      REQUIRE_FALSE(component.empty());
+      REQUIRE(std::all_of(component.begin(), component.end(), [](char c) { return c >= '0' && c <= '9'; }));
+      // Unpadded: a leading zero is only allowed when the component is
+      // exactly "0" (rejects "03", "0000").
+      REQUIRE((component.size() == 1 || component.front() != '0'));
+      ++components;
+      if (dot == std::string::npos) {
+        break;
+      }
+      start = dot + 1;
+    }
+    REQUIRE(components == 3);
+  }
 
   SQLDisconnect(dbc_handle());
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DYNAMIC_CURSOR_ATTRIBUTES1",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -256,7 +325,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DYNAMIC_CURSOR_ATTRIBUTE
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -286,7 +354,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_FORWARD_ONLY_CURSOR_ATTR
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES2",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -319,7 +386,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_FORWARD_ONLY_CURSOR_ATTR
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_FILE_USAGE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -396,7 +462,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_INFO_SCHEMA_VIEWS", "[od
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_KEYSET_CURSOR_ATTRIBUTES1",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -430,7 +495,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_KEYSET_CURSOR_ATTRIBUTES
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_KEYSET_CURSOR_ATTRIBUTES2",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -464,7 +528,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_KEYSET_CURSOR_ATTRIBUTES
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_ASYNC_CONCURRENT_STATEMENTS",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -479,7 +542,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_ASYNC_CONCURRENT_STA
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_CONCURRENT_ACTIVITIES",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -508,7 +570,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_DRIVER_CONNECTIONS",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ODBC_INTERFACE_CONFORMANCE",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -581,8 +642,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ROW_UPDATES", "[odbc-api
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SEARCH_PATTERN_ESCAPE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -614,7 +673,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SERVER_NAME", "[odbc-api
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STATIC_CURSOR_ATTRIBUTES1",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -648,7 +706,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STATIC_CURSOR_ATTRIBUTES
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STATIC_CURSOR_ATTRIBUTES2",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -685,8 +742,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STATIC_CURSOR_ATTRIBUTES
 // ============================================================================
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATABASE_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -719,8 +774,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_NAME", "[odbc-api][
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_VER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -768,7 +821,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ACCESSIBLE_TABLES", "[od
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_BOOKMARK_PERSISTENCE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -789,8 +841,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_BOOKMARK_PERSISTENCE", "
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_TERM", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -820,7 +870,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_COLLATION_SEQ", "[odbc-a
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONCAT_NULL_BEHAVIOR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -876,7 +925,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CURSOR_SENSITIVITY", "[o
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_READ_ONLY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -890,7 +938,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_READ_ONLY", 
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DEFAULT_TXN_ISOLATION", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -923,7 +970,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DESCRIBE_PARAMETER", "[o
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MULT_RESULT_SETS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -951,7 +997,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MULTIPLE_ACTIVE_TXN", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_NEED_LONG_DATA_LEN", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -996,8 +1041,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_PROCEDURE_TERM", "[odbc-
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCHEMA_TERM", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1012,7 +1055,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCHEMA_TERM", "[odbc-api
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCROLL_OPTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1032,8 +1074,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCROLL_OPTIONS", "[odbc-
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TABLE_TERM", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1048,8 +1088,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TABLE_TERM", "[odbc-api]
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TXN_CAPABLE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1063,7 +1101,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TXN_CAPABLE", "[odbc-api
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TXN_ISOLATION_OPTION", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1103,7 +1140,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_USER_NAME", "[odbc-api][
 // ============================================================================
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_AGGREGATE_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1221,7 +1257,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATETIME_LITERALS", "[od
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_LOCATION", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1235,7 +1270,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_LOCATION", "[odb
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1249,8 +1283,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_NAME", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_NAME_SEPARATOR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1265,7 +1297,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_NAME_SEPARATOR",
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_USAGE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1287,7 +1318,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CATALOG_USAGE", "[odbc-a
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_COLUMN_ALIAS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1301,7 +1331,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_COLUMN_ALIAS", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CORRELATION_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1641,7 +1670,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_EXPRESSIONS_IN_ORDERBY",
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_GROUP_BY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1670,8 +1698,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_IDENTIFIER_CASE", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_IDENTIFIER_QUOTE_CHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1764,7 +1790,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_LIKE_ESCAPE_CLAUSE", "[o
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_NON_NULLABLE_COLUMNS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1800,7 +1825,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_OJ_CAPABILITIES", "[odbc
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ORDER_BY_COLUMNS_IN_SELECT",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1842,7 +1866,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_QUOTED_IDENTIFIER_CASE",
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCHEMA_USAGE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1864,7 +1887,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCHEMA_USAGE", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SPECIAL_CHARACTERS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1881,8 +1903,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SPECIAL_CHARACTERS", "[o
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL_CONFORMANCE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2018,7 +2038,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_GRANT", "[odbc-api
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_PREDICATES", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2048,7 +2067,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_PREDICATES", "[odb
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_RELATIONAL_JOIN_OPERATORS",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2132,7 +2150,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_ROW_VALUE_CONSTRUC
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_VALUE_EXPRESSIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2224,7 +2241,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_COLUMN_NAME_LEN", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_COLUMNS_IN_GROUP_BY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2252,7 +2268,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_COLUMNS_IN_INDEX", "
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_COLUMNS_IN_ORDER_BY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2266,7 +2281,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_COLUMNS_IN_ORDER_BY"
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_COLUMNS_IN_SELECT", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2308,7 +2322,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_CURSOR_NAME_LEN", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_IDENTIFIER_LEN", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2379,7 +2392,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_ROW_SIZE_INCLUDES_LO
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_SCHEMA_NAME_LEN", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2455,7 +2467,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_USER_NAME_LEN", "[od
 // ============================================================================
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_NUMERIC_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2493,7 +2504,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_NUMERIC_FUNCTIONS", "[od
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STRING_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2534,7 +2544,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STRING_FUNCTIONS", "[odb
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SYSTEM_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2551,7 +2560,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SYSTEM_FUNCTIONS", "[odb
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TIMEDATE_ADD_INTERVALS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2575,7 +2583,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TIMEDATE_ADD_INTERVALS",
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TIMEDATE_DIFF_INTERVALS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2599,7 +2606,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TIMEDATE_DIFF_INTERVALS"
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TIMEDATE_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2708,7 +2714,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SQL92_STRING_FUNCTIONS",
 // ============================================================================
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2724,7 +2729,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_FUNCTIONS", "[od
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_BIGINT", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2764,7 +2768,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_BIGINT", "[odbc-
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_BINARY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2801,7 +2804,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_BINARY", "[odbc-
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_BIT", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2839,7 +2841,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_BIT", "[odbc-api
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_CHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2877,7 +2878,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_CHAR", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_DATE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2914,7 +2914,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_DATE", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_DECIMAL", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2950,7 +2949,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_DECIMAL", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_DOUBLE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -2986,7 +2984,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_DOUBLE", "[odbc-
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_FLOAT", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3022,7 +3019,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_FLOAT", "[odbc-a
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_GUID", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3060,7 +3056,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_GUID", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_INTEGER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3194,7 +3189,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_INTERVAL_YEAR_MO
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_LONGVARBINARY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3235,7 +3229,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_LONGVARBINARY", 
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_LONGVARCHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3281,7 +3274,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_LONGVARCHAR", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_NUMERIC", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3317,7 +3309,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_NUMERIC", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_REAL", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3357,7 +3348,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_REAL", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_SMALLINT", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3398,7 +3388,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_SMALLINT", "[odb
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_TIME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3434,7 +3423,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_TIME", "[odbc-ap
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_TIMESTAMP", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3471,7 +3459,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_TIMESTAMP", "[od
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_TINYINT", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3512,7 +3499,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_TINYINT", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_VARBINARY", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3549,7 +3535,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_VARBINARY", "[od
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_VARCHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3587,7 +3572,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_VARCHAR", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_WCHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3629,7 +3613,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_WCHAR", "[odbc-a
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_WVARCHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3672,7 +3655,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_WVARCHAR", "[odb
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_WLONGVARCHAR", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3746,7 +3728,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_FETCH_DIRECTION (depreca
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_LOCK_TYPES (deprecated)",
                  "[odbc-api][getinfo][driver_info][deprecated]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3794,7 +3775,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ODBC_SQL_CONFORMANCE (de
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_POS_OPERATIONS (deprecated)",
                  "[odbc-api][getinfo][driver_info][deprecated]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3834,7 +3814,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_POSITIONED_STATEMENTS (d
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCROLL_CONCURRENCY (deprecated)",
                  "[odbc-api][getinfo][driver_info][deprecated]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3853,7 +3832,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_SCROLL_CONCURRENCY (depr
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_STATIC_SENSITIVITY (deprecated)",
                  "[odbc-api][getinfo][driver_info][deprecated]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3891,7 +3869,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Returns SQL_SUCCESS_WITH_INF
   ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, smallBuffer, sizeof(smallBuffer), &actualLen);
 
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
-  REQUIRE(actualLen > sizeof(smallBuffer));
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver writes the *truncated* StringLength (matches the bytes
+    //   actually written, i.e. sizeof(smallBuffer) - 1 for the NUL) following
+    //   the ODBC 2.x convention; the new driver writes the untruncated value
+    //   required by ODBC 3.x so callers can size the buffer for a retry.
+    REQUIRE(actualLen == sizeof(smallBuffer) - 1);
+  }
+  else {
+    REQUIRE(actualLen > sizeof(smallBuffer));
+  }
 
   const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
@@ -3926,7 +3913,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query just the length wi
   SQLSMALLINT requiredLen = 0;
   ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, nullptr, 0, &requiredLen);
 
-  REQUIRE(ret == SQL_SUCCESS);
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver treats "NULL buffer + caller wants the length" as an
+    //   implicit truncation and surfaces SQL_SUCCESS_WITH_INFO + 01004; the
+    //   new driver returns plain SQL_SUCCESS because there's nothing to
+    //   truncate when the caller asked for nothing.
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
   REQUIRE(requiredLen > 0);
 
   auto buffer = std::make_unique<char[]>(requiredLen + 1);
@@ -3937,7 +3933,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query just the length wi
     // Windows DM reports Unicode byte length for NULL buffer but ANSI length for actual data
     REQUIRE(actualLen > 0);
   }
-  UNIX_ONLY { REQUIRE(actualLen == requiredLen); }
+  UNIX_ONLY {
+    OLD_IODBC_ONLY("BD#61") {
+      // The old driver reports the length-only query in wide-byte terms
+      //   (sizeof(SQLWCHAR) * char count, i.e. 4x on iODBC's UTF-32) but
+      //   the with-buffer call reports the narrow-byte write count, so the
+      //   two values disagree by the SQLWCHAR width factor. The new driver
+      //   reports a consistent ANSI byte count in both directions.
+      REQUIRE(actualLen * static_cast<SQLSMALLINT>(sizeof(SQLWCHAR)) == requiredLen);
+    }
+    else {
+      REQUIRE(actualLen == requiredLen);
+    }
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -3960,8 +3968,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY096/HY000 - Invalid InfoTy
     REQUIRE(std::string(records[0].sqlState) == "HY096");
   }
   UNIX_ONLY {
-    // Note: Reference driver returns HY000 instead of HY096
-    REQUIRE(std::string(records[0].sqlState) == "HY000");
+    OLD_IODBC_ONLY("BD#62") {
+      // The old driver under iODBC actually returns the spec-correct HY096
+      //   ("information type out of range"); when run through unixODBC the
+      //   DM remaps it to HY000, and the new driver propagates HY000 in
+      //   both DMs to stay consistent.
+      REQUIRE(std::string(records[0].sqlState) == "HY096");
+    }
+    else {
+      // Note: Reference driver returns HY000 instead of HY096
+      REQUIRE(std::string(records[0].sqlState) == "HY000");
+    }
   }
 
   SQLDisconnect(dbc_handle());
@@ -3969,24 +3986,52 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY096/HY000 - Invalid InfoTy
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY090 - Negative BufferLength",
                  "[odbc-api][getinfo][driver_info][error]") {
+  // Given a DBC handle connected to the default DSN
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQLGetInfo is called with a negative BufferLength (-1)
   char buffer[256];
   ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, buffer, -1, nullptr);
 
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  NON_IODBC {
+    // And the DM validates BufferLength and reports HY090
+    //   (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  IODBC_ONLY {
+    // And the DM does not validate BufferLength and forwards the call to the
+    //   driver; the driver currently ignores the negative length and may return success
+    //   or an error - assert any well-formed SQLRETURN (no crash)
+    REQUIRE((ret == SQL_SUCCESS || ret == SQL_ERROR || ret == SQL_SUCCESS_WITH_INFO));
+  }
 
   SQLDisconnect(dbc_handle());
 }
 
-TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: Requires active connection even for driver info",
+TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: SQL_DRIVER_NAME requires active connection",
                  "[odbc-api][getinfo][driver_info][error]") {
   char driverName[256];
-  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, driverName, sizeof(driverName), nullptr);
+  SQLSMALLINT nameLen = 0;
+  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, driverName, sizeof(driverName), &nameLen);
 
-  // Note: Reference driver requires active connection even for driver info
+  // Per ODBC spec, every InfoType except SQL_ODBC_VER requires an open connection;
+  // every DM (Windows, unixODBC, iODBC) intercepts and synthesises 08003 on an
+  // unconnected handle, so the call never reaches either driver.
   REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC);
+}
+
+TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: SQL_ODBC_VER succeeds before active connection",
+                 "[odbc-api][getinfo][driver_info]") {
+  char odbcVer[256] = {};
+  SQLSMALLINT verLen = 0;
+  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_ODBC_VER, odbcVer, sizeof(odbcVer), &verLen);
+
+  // Per ODBC spec, SQL_ODBC_VER is the only InfoType that may be queried on an
+  // unconnected handle; the DM answers from its own state with the ODBC version
+  // string it implements, without ever loading or contacting a driver.
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(verLen > 0);
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: Returns error before connection for data source info",

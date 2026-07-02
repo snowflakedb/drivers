@@ -52,9 +52,11 @@ TEST_CASE("TIME to SQL_C_TYPE_TIME with fractional truncation", "[time][conversi
   Connection conn;
 
   // When A TIME with non-zero fractional seconds is fetched as SQL_C_TYPE_TIME
+  // Then the sub-second digits are dropped (SQL_TIME_STRUCT has no fraction
+  //   field) and the data loss is flagged with SQLSTATE 01S07, matching the
+  //   reference driver.
   auto time = check_fractional_truncation<SQL_C_TYPE_TIME>(conn.execute_fetch("SELECT '14:30:45.123'::TIME"), 1);
 
-  // Then Time components are extracted with SQLSTATE 01S07 warning
   CHECK(time.hour == 14);
   CHECK(time.minute == 30);
   CHECK(time.second == 45);
@@ -103,7 +105,8 @@ TEST_CASE("TIME to SQL_C_DEFAULT with fractional truncation", "[time][conversion
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, &time, sizeof(time), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01S07
+  // Then SQL_C_DEFAULT resolves to SQL_C_TYPE_TIME; the fraction is dropped and
+  //   the data loss is flagged with SQLSTATE 01S07, matching the reference driver.
   CHECK(ret == SQL_SUCCESS_WITH_INFO);
   auto records = get_diag_rec(stmt);
   CHECK(!records.empty());

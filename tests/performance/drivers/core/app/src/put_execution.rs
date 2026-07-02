@@ -127,6 +127,7 @@ fn execute_put_get_iteration(
         .statement_execute_query_blocking(StatementExecuteQueryRequest {
             stmt_handle: Some(stmt_handle),
             bindings: None,
+            timeout_seconds: None,
         })
         .map_err(|e| format!("PUT/GET execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();

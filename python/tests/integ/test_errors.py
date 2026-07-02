@@ -1,8 +1,11 @@
 """
-Integration tests for error handling.
+Integration tests for the Snowflake error contract.
 
-Tests verify that real Snowflake errors are surfaced as proper PEP 249 exceptions
-with meaningful messages and structured attributes.
+Tests verify that real Snowflake server errors are surfaced as proper PEP 249
+exceptions with correct types, error codes, messages, and structured attributes.
+
+Object-lifecycle errors (closed cursor, closed connection) live in the test
+files for those objects (test_cursor.py, test_connection.py).
 
 These tests are designed to pass against both the new (universal) driver and
 the old (reference) snowflake-connector-python driver.
@@ -12,7 +15,7 @@ import uuid
 
 import pytest
 
-from snowflake.connector.errors import DatabaseError, Error, InterfaceError, ProgrammingError
+from snowflake.connector.errors import DatabaseError, Error, ProgrammingError
 from tests.compatibility import is_new_driver, is_old_driver
 
 
@@ -132,52 +135,6 @@ class TestObjectNotFoundErrors:
         assert error.errno == 2043
 
 
-class TestClosedCursorErrors:
-    """Test that operations on a closed cursor raise proper errors."""
-
-    def test_execute_on_closed_cursor(self, cursor):
-        """Test that execute on a closed cursor raises InterfaceError."""
-        cursor.close()
-        with pytest.raises(InterfaceError, match="(?i)cursor is closed"):
-            cursor.execute("SELECT 1")
-
-    def test_fetchone_on_closed_cursor(self, cursor):
-        """Test that fetchone on a closed cursor raises an error."""
-        cursor.close()
-        # New driver raises InterfaceError; old driver raises TypeError (no closed-cursor guard on fetch).
-        with pytest.raises((InterfaceError, TypeError)):
-            cursor.fetchone()
-
-    def test_fetchall_on_closed_cursor(self, cursor):
-        """Test that fetchall on a closed cursor raises an error."""
-        cursor.close()
-        # New driver raises InterfaceError; old driver raises TypeError (no closed-cursor guard on fetch).
-        with pytest.raises((InterfaceError, TypeError)):
-            cursor.fetchall()
-
-
-class TestClosedConnectionErrors:
-    """Test that operations on a closed connection raise proper errors."""
-
-    def test_cursor_on_closed_connection(self, connection_factory):
-        """Test that creating a cursor on a closed connection raises an error."""
-        conn = connection_factory()
-        conn.close()
-        # New driver: InterfaceError; old driver: DatabaseError (errno=250002)
-        with pytest.raises(Error, match="(?i)connection is closed"):
-            conn.cursor()
-
-    def test_execute_on_closed_connection(self, connection_factory):
-        """Test that execute via cursor on a closed connection raises an error."""
-        conn = connection_factory()
-        cur = conn.cursor()
-        conn.close()
-        # New driver: InterfaceError("Connection is closed.")
-        # Old driver: InterfaceError("Cursor is closed in execute.") or DatabaseError("Connection is closed")
-        with pytest.raises(Error, match="(?i)(?:connection|cursor) is closed"):
-            cur.execute("SELECT 1")
-
-
 class TestErrorAttributes:
     """Test that errors raised from real queries carry expected PEP 249 attributes."""
 
@@ -213,3 +170,40 @@ class TestErrorAttributes:
         with pytest.raises(Error) as excinfo:
             cursor.execute("SELEC 1")
         assert excinfo.value.__cause__ is None
+
+
+class TestErrorMessageFormat:
+    """Reference tests asserting the exact on-the-wire error message format.
+
+    The formatted message surfaced to users must match the legacy
+    snowflake-connector-python driver exactly:
+        ``{errno:06d} ({sqlstate}): {server_message}``
+    with no wrapper prefixes like ``"Query execution failed:"`` or ``"Query failed:"``.
+    """
+
+    def test_query_error_message_has_no_wrapper_prefixes(self, cursor):
+        with pytest.raises(DatabaseError) as excinfo:
+            cursor.execute("SELEC 1")
+        msg = str(excinfo.value)
+        assert "Query execution failed" not in msg
+        assert "Query failed:" not in msg
+
+    def test_query_error_message_format_matches_old_driver(self, cursor):
+        """End-to-end: the formatted message has the exact shape the old driver produces."""
+        table_name = f"nonexistent_table_{uuid.uuid4().hex[:8]}"
+        with pytest.raises(DatabaseError) as excinfo:
+            cursor.execute(f"SELECT * FROM {table_name}")
+        error = excinfo.value
+        msg = str(error)
+        # Must start with zero-padded errno and sqlstate, e.g. "002003 (42S02): "
+        prefix = f"{error.errno:06d} ({error.sqlstate}): "
+        assert msg.startswith(prefix), f"Expected '<errno> (<sqlstate>): ...' prefix, got: {msg!r}"
+        body = msg[len(prefix) :]
+        # At INFO/DEBUG log level the old driver injects "{sfqid}: " before the
+        # server message. Strip it if present so we can assert on the server text.
+        if error.sfqid and body.startswith(f"{error.sfqid}: "):
+            body = body[len(f"{error.sfqid}: ") :]
+        # The body must start with the server's error class, not a wrapper.
+        assert body.lower().startswith("sql compilation error"), (
+            f"Expected body to start with 'SQL compilation error', got: {body!r}"
+        )

@@ -106,11 +106,16 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative StringLength",
                                          outConnStr, sizeof(outConnStr), &outLen);
 
   // HY090: Invalid string or buffer length
-  // Note: DM-dependent - unixODBC may return HY090 or pass to driver which returns IM002
+  // Note: DM-dependent - unixODBC may return HY090 or pass to driver which returns IM002.
+  //   iODBC's DM additionally validates negative lengths up front and surfaces
+  //   the ODBC 2.x alias S1090 before forwarding to the old driver.
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  OLD_IODBC_ONLY("BD#60") { REQUIRE(records[0].sqlState == "S1090"); }
+  else {
+    REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative BufferLength",
@@ -126,11 +131,15 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative BufferLength",
                                          &outLen);
 
   // HY090: Invalid string or buffer length
-  // Note: DM-dependent - may return HY090 or IM002 (if DSN lookup happens first)
+  // Note: DM-dependent - may return HY090 or IM002 (if DSN lookup happens first);
+  //   iODBC surfaces the ODBC 2.x alias S1090 from the DM for the old driver.
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  OLD_IODBC_ONLY("BD#60") { REQUIRE(records[0].sqlState == "S1090"); }
+  else {
+    REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  }
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Zero BufferLength returns SQL_NEED_DATA",
@@ -401,10 +410,20 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Iterative browse with 
   const SQLRETURN ret =
       SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
-  // Note: Snowflake driver does NOT support iterative browsing.
-  // It requires a complete connection string and returns SQL_ERROR when given incomplete info.
-  REQUIRE(ret == SQL_ERROR);
+  OLD_IODBC_ONLY("BD#63") {
+    // The old driver under iODBC actually implements the iterative SQLBrowseConnect
+    //   protocol: when handed only DRIVER=... it returns SQL_NEED_DATA and writes the
+    //   prompt for the next required attribute into outConnStr. unixODBC + new and
+    //   iODBC + new short-circuit with SQL_ERROR because Snowflake's connection
+    //   model expects a complete connection string up front.
+    REQUIRE(ret == SQL_NEED_DATA);
+  }
+  else {
+    // Note: Snowflake driver does NOT support iterative browsing.
+    // It requires a complete connection string and returns SQL_ERROR when given incomplete info.
+    REQUIRE(ret == SQL_ERROR);
 
-  auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-  REQUIRE(!records.empty());
+    auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
+    REQUIRE(!records.empty());
+  }
 }

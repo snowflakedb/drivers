@@ -1,16 +1,14 @@
 use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
-use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
-use crate::rest::snowflake::error::SfError;
+use crate::http::retry::{HttpContext, execute_with_retry};
+use crate::rest::snowflake::error::{SfError, current_location, map_http_error};
 use crate::rest::snowflake::{
-    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_request,
-    query_response,
+    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_log_fields,
+    query_request, query_response,
 };
 use reqwest::{Method, StatusCode};
-use snafu::Location;
-use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
-use tracing::debug;
+use tracing::{debug, info};
 use url::Url;
 
 const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
@@ -20,6 +18,13 @@ const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
     Duration::from_millis(40),
 ];
 const QUERY_SEQUENCE_ID: u64 = 1;
+
+/// Maximum wall-clock time the driver will spend polling for a single
+/// statement's completion. `None` means unbounded — poll until Snowflake
+/// returns data or a terminal error.
+///
+/// TODO: plumb a caller-supplied `statement_timeout` (e.g. configuration) so users can cap long-running queries.
+const STATEMENT_POLL_DEADLINE: Option<Duration> = None;
 
 /// Metrics for async query execution phases, logged for monitoring and debugging.
 ///
@@ -115,9 +120,9 @@ fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request:
         query_submission_time: current_epoch_millis(),
         is_internal: false,
         describe_only: query_input.describe_only,
-        parameters: None,
+        parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
-        bind_stage: None,
+        bind_stage: query_input.bind_stage.clone(),
         query_context: query_request::QueryContext { entries: None },
     }
 }
@@ -192,6 +197,14 @@ pub async fn submit_statement_async<'a>(
     let server_url = &params.server_url;
     let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
+    // query logging guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(params, query_input);
+    info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing async query"
+    );
     let request_body = build_async_query_request(query_input);
     let submit_request = || {
         build_submit_request(
@@ -261,6 +274,14 @@ pub(super) async fn execute_blocking_with_async<'a>(
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
+    // query logging guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(params, query_input);
+    info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing sync query"
+    );
     let client_info = &params.client_info;
     let mut metrics = AsyncExecutionMetrics::default();
     let submit_start = Instant::now();
@@ -310,47 +331,6 @@ pub(super) async fn execute_blocking_with_async<'a>(
 
     metrics.emit("async execution timings");
     Ok(response)
-}
-
-#[track_caller]
-fn current_location() -> Location {
-    let caller = StdLocation::caller();
-    Location::new(caller.file(), caller.line(), caller.column())
-}
-
-#[track_caller]
-fn map_http_error(err: HttpError) -> SfError {
-    let location = current_location();
-    match err {
-        HttpError::Transport { source, .. } => SfError::Transport { source, location },
-        HttpError::DeadlineExceeded {
-            configured,
-            elapsed,
-            ..
-        } => SfError::DeadlineExceeded {
-            configured,
-            elapsed,
-            location,
-        },
-        HttpError::MaxAttempts {
-            attempts,
-            last_status,
-            ..
-        } => SfError::RetryAttemptsExhausted {
-            attempts,
-            last_status,
-            location,
-        },
-        HttpError::RetryAfterExceeded {
-            retry_after,
-            remaining,
-            ..
-        } => SfError::RetryBudgetExceeded {
-            retry_after,
-            remaining,
-            location,
-        },
-    }
 }
 
 #[track_caller]
@@ -447,9 +427,11 @@ async fn inline_poll_for_completion(
 /// Poll Snowflake for completion, starting with a burst of short delays
 /// and then degrading into retry-policy-driven exponential backoff.
 /// Each HTTP poll flows through the shared retry helper so transport
-/// or retryable status failures are retried automatically. We stop
-/// polling once tabular data arrives, Snowflake returns a terminal
-/// error, or the overall deadline / retry budget is exhausted.
+/// or retryable status failures are retried automatically.
+///
+/// The outer loop is bounded only by [`STATEMENT_POLL_DEADLINE`] (unbounded
+/// by default). `policy.max_elapsed` bounds each individual HTTP poll's
+/// internal retry budget — it does NOT cap total query wall-clock time.
 async fn wait_for_completion(
     client: &reqwest::Client,
     client_info: &ClientInfo,
@@ -463,13 +445,15 @@ async fn wait_for_completion(
     let mut polls: usize = 0;
 
     loop {
-        let elapsed = start.elapsed();
-        if elapsed >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed,
-                location: current_location(),
-            });
+        if let Some(deadline) = STATEMENT_POLL_DEADLINE {
+            let elapsed = start.elapsed();
+            if elapsed >= deadline {
+                return Err(SfError::DeadlineExceeded {
+                    configured: deadline,
+                    elapsed,
+                    location: current_location(),
+                });
+            }
         }
 
         let delay = if attempt < INLINE_SHORT_POLL_DELAYS.len() {
@@ -481,36 +465,21 @@ async fn wait_for_completion(
         attempt += 1;
 
         if !delay.is_zero() {
-            let sleep_deadline = start.elapsed() + delay;
-            if sleep_deadline >= policy.max_elapsed {
-                return Err(SfError::DeadlineExceeded {
-                    configured: policy.max_elapsed,
-                    elapsed,
-                    location: current_location(),
-                });
+            if let Some(deadline) = STATEMENT_POLL_DEADLINE {
+                let would_wake = start.elapsed() + delay;
+                if would_wake >= deadline {
+                    return Err(SfError::DeadlineExceeded {
+                        configured: deadline,
+                        elapsed: start.elapsed(),
+                        location: current_location(),
+                    });
+                }
             }
             tokio::time::sleep(delay).await;
         }
 
-        let elapsed_after_sleep = start.elapsed();
-        if elapsed_after_sleep >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed: elapsed_after_sleep,
-                location: current_location(),
-            });
-        }
-
-        let remaining = policy
-            .max_elapsed
-            .checked_sub(elapsed_after_sleep)
-            .unwrap_or_default()
-            .max(Duration::from_millis(1));
-
-        let mut poll_policy = policy.clone();
-        poll_policy.max_elapsed = remaining;
         let response =
-            poll_query_status(client, client_info, session_token, result_url, &poll_policy).await?;
+            poll_query_status(client, client_info, session_token, result_url, policy).await?;
         polls += 1;
 
         if let Some(done) = handle_poll_response(response, false)? {

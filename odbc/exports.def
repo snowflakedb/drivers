@@ -31,15 +31,27 @@ EXPORTS
     SQLGetDiagRecW
     SQLGetEnvAttr
     SQLGetInfoW
+    SQLGetTypeInfoW
     SQLGetStmtAttrW
     SQLMoreResults
     SQLNativeSqlW
     SQLNumParams
     SQLNumResultCols
     SQLDescribeParam
+    SQLParamData
     SQLPrepareW
+    SQLPutData
     SQLRowCount
     SQLSetConnectAttrW
     SQLSetDescFieldW
     SQLSetEnvAttr
     SQLSetStmtAttrW
+    SQLTablesW
+    SQLColumnsW
+    SQLSpecialColumnsW
+    SQLColumnPrivilegesW
+    SQLTablePrivilegesW
+    SQLStatisticsW
+    ConfigDSN
+    ConfigDSNW
+    ConfigDriver

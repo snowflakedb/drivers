@@ -3,10 +3,11 @@ from __future__ import annotations
 import functools
 import importlib
 
+from collections.abc import Callable
 from importlib import metadata
 from logging import getLogger
 from types import ModuleType
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from snowflake.connector import errors
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
@@ -20,6 +21,7 @@ DEP_PYARROW = "pyarrow"
 DEP_PANDAS = "pandas"
 DEP_NUMPY = "numpy"
 DEP_TZLOCAL = "tzlocal"
+DEP_SQLALCHEMY = "sqlalchemy"
 
 """This module helps to manage optional dependencies.
 
@@ -81,13 +83,14 @@ def check_dependency(module: ModuleType | MissingOptionalDependency) -> None:
             raise errors.MissingDependencyError(module.dep_name)
 
 
-def requires_dependency(module: ModuleType | MissingOptionalDependency) -> Callable[[F], F]:
-    """Raise ProgrammingError if dependency is not installed."""
+def requires_dependency(*modules: ModuleType | MissingOptionalDependency) -> Callable[[F], F]:
+    """Raise ProgrammingError if any of the listed dependencies are not installed."""
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            check_dependency(module)
+            for mod in modules:
+                check_dependency(mod)
             return func(*args, **kwargs)
 
         return cast(F, wrapper)
@@ -99,3 +102,4 @@ pyarrow = _import_or_missing(DEP_PYARROW)
 pandas = _import_or_missing(DEP_PANDAS)
 numpy = _import_or_missing(DEP_NUMPY)
 tzlocal = _import_or_missing(DEP_TZLOCAL)
+sqlalchemy = _import_or_missing(DEP_SQLALCHEMY)

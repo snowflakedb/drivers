@@ -1,4 +1,5 @@
 use proto_utils::ProtoError;
+use sf_core::config::logout::ErrorStrategy;
 use sf_core::config::param_names;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DatabaseDriverClientBlockingExt, DriverProviders, database_driver_client,
@@ -6,8 +7,21 @@ use sf_core::protobuf::apis::database_driver_v1::{
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
 
+use super::arrow_result_helper::ArrowResultHelper;
 use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
+
+/// Cloud provider backing the current Snowflake deployment.
+///
+/// Internal (temporary) stages are provisioned in the deployment's cloud, so
+/// this is the signal cloud-specific PUT/GET tests use to self-skip when the
+/// connected account lives on a different cloud than the one under test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudProvider {
+    Aws,
+    Gcp,
+    Azure,
+}
 
 /// Creates a connected Snowflake client with database and connection initialized
 pub struct SnowflakeTestClient {
@@ -47,6 +61,10 @@ impl SnowflakeTestClient {
         };
 
         test_client.set_options_from_parameters();
+        // Identify as PythonConnector so the server enables feature gates
+        // (multistatement, large LOB, etc.) that require a recognized client.
+        test_client.set_connection_option("client_app_id", "PythonConnector");
+        test_client.set_connection_option("client_app_version", "5.0.0");
         test_client
     }
 
@@ -94,7 +112,7 @@ impl SnowflakeTestClient {
         Self::with_int_tests_params_and_client(server_url, database_driver_client_with(providers))
     }
 
-    fn with_int_tests_params_and_client(
+    pub fn with_int_tests_params_and_client(
         server_url: Option<&str>,
         client: DatabaseDriverClient,
     ) -> Self {
@@ -139,6 +157,10 @@ impl SnowflakeTestClient {
         };
 
         test_client.set_options_from_parameters();
+        // Identify as PythonConnector so the server enables feature gates
+        // (multistatement, large LOB, etc.) that require a recognized client.
+        test_client.set_connection_option("client_app_id", "PythonConnector");
+        test_client.set_connection_option("client_app_version", "5.0.0");
         test_client
     }
 
@@ -175,15 +197,28 @@ impl SnowflakeTestClient {
         response.stmt_handle.unwrap()
     }
 
-    pub fn execute_statement_query(&self, stmt: &StatementHandle) -> ExecuteResult {
+    pub fn execute_statement_query(
+        &self,
+        stmt: &StatementHandle,
+    ) -> execute_query_response::Result {
         self.execute_statement_query_with_bindings(stmt, None)
+    }
+
+    /// Set a single per-statement option via the proto/FFI client.
+    pub fn set_statement_option(&self, stmt: &StatementHandle, key: &str, value: ConfigSetting) {
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
+                stmt_handle: Some(*stmt),
+                options: [(key.to_string(), value)].into_iter().collect(),
+            })
+            .unwrap();
     }
 
     pub fn execute_statement_query_with_bindings(
         &self,
         stmt: &StatementHandle,
         json_bindings: Option<&str>,
-    ) -> ExecuteResult {
+    ) -> execute_query_response::Result {
         let bindings = json_bindings.map(|json| {
             let ptr = json.as_bytes().as_ptr() as u64;
             QueryBindings {
@@ -197,6 +232,7 @@ impl SnowflakeTestClient {
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(*stmt),
                 bindings,
+                timeout_seconds: None,
             })
             .unwrap()
             .result
@@ -230,13 +266,11 @@ impl SnowflakeTestClient {
         serde_json::to_string(&bindings).unwrap()
     }
 
-    pub fn result_chunks(&self, stmt: &StatementHandle) -> ResultChunksResult {
+    pub fn result_set_get_chunks(&self, rs_handle: &ResultSetHandle) -> ResultSetGetChunksResponse {
         self.client
-            .statement_result_chunks_blocking(StatementResultChunksRequest {
-                stmt_handle: Some(*stmt),
+            .result_set_get_chunks_blocking(ResultSetGetChunksRequest {
+                result_set_handle: Some(*rs_handle),
             })
-            .unwrap()
-            .result
             .unwrap()
     }
 
@@ -245,6 +279,8 @@ impl SnowflakeTestClient {
             .database_fetch_chunk_blocking(DatabaseFetchChunkRequest {
                 db_handle: Some(self.db_handle),
                 chunk: Some(chunk),
+                // Arrow IPC path: columns are ignored.
+                columns: Vec::new(),
             })
             .unwrap()
     }
@@ -257,8 +293,8 @@ impl SnowflakeTestClient {
             .unwrap();
     }
 
-    /// Executes a SQL query and returns the result
-    pub fn execute_query(&self, sql: &str) -> ExecuteResult {
+    /// Executes a SQL statement, ignoring the result. Use for DDL/side-effect queries.
+    pub fn execute_sql(&self, sql: &str) {
         let stmt_handle = self.new_statement();
 
         self.client
@@ -268,18 +304,21 @@ impl SnowflakeTestClient {
             })
             .unwrap();
 
-        let response = self
-            .client
+        self.client
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
             .unwrap();
 
-        response.result.unwrap()
+        self.release_statement(&stmt_handle);
     }
 
-    pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
+    pub fn execute_query_no_unwrap(
+        &self,
+        sql: &str,
+    ) -> Result<execute_query_response::Result, String> {
         let stmt_handle = self.new_statement();
 
         if let Err(e) = self
@@ -289,30 +328,182 @@ impl SnowflakeTestClient {
                 query: sql.to_string(),
             })
         {
+            self.release_statement(&stmt_handle);
             return Err(format!("Failed to set SQL query: {e:?}"));
         }
 
-        match self
-            .client
-            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+        let result =
+            match self
+                .client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                    timeout_seconds: None,
+                }) {
+                Ok(response) => Ok(response.result.unwrap()),
+                Err(e) => match *e {
+                    ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
+                    ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
+                },
+            };
+        self.release_statement(&stmt_handle);
+        result
+    }
+
+    /// Execute a single query and get the Arrow stream directly.
+    pub fn execute_query(&self, sql: &str) -> ResultSetGetStreamResponse {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        let result = self.execute_statement_query(&stmt_handle);
+        let rs_handle = unwrap_single_rs_handle(&result);
+        let stream = self.result_set_get_stream(&rs_handle);
+        self.result_set_release(&rs_handle);
+        self.release_statement(&stmt_handle);
+        stream
+    }
+
+    /// Get an Arrow stream for a query_id by looking it up via the connection,
+    /// fetching the stream, and releasing the handle.
+    pub fn get_result_set(
+        &self,
+        _stmt: &StatementHandle,
+        query_id: &str,
+    ) -> ResultSetGetStreamResponse {
+        let rs = self.connection_get_result_set(query_id);
+        let rs_handle = rs.result_set_handle.unwrap();
+        let stream = self.result_set_get_stream(&rs_handle);
+        self.result_set_release(&rs_handle);
+        stream
+    }
+
+    /// Retrieve the result of an async PUT/GET by query_id via the connection.
+    /// Calls `connection_get_query_result`, which handles the DOWNLOAD/UPLOAD
+    /// command dispatch and stage-info refresh.
+    pub fn connection_get_query_result(
+        &self,
+        query_id: &str,
+    ) -> Result<ExecuteQueryResponse, String> {
+        self.client
+            .connection_get_query_result_blocking(ConnectionGetQueryResultRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    /// Get a ResultSetResponse (handle + descriptor) by query_id via the connection.
+    pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
+        self.client
+            .connection_get_result_set_blocking(ConnectionGetResultSetRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .unwrap()
+    }
+
+    pub fn result_set_get_stream(&self, rs_handle: &ResultSetHandle) -> ResultSetGetStreamResponse {
+        self.client
+            .result_set_get_stream_blocking(ResultSetGetStreamRequest {
+                result_set_handle: Some(*rs_handle),
+            })
+            .unwrap()
+    }
+
+    pub fn result_set_release(&self, rs_handle: &ResultSetHandle) {
+        self.client
+            .result_set_release_blocking(ResultSetReleaseRequest {
+                result_set_handle: Some(*rs_handle),
+            })
+            .unwrap();
+    }
+
+    /// Execute a multistatement query.
+    pub fn execute_multistatement(&self, sql: &str, count: i64) -> execute_query_response::Result {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
                 stmt_handle: Some(stmt_handle),
-                bindings: None,
-            }) {
-            Ok(response) => {
-                let proto_result = response.result.unwrap();
-                Ok(proto_result)
-            }
-            Err(e) => match e.as_ref() {
-                ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
-                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
-            },
-        }
+                options: [(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting::from(count),
+                )]
+                .into_iter()
+                .collect(),
+            })
+            .unwrap();
+        let result = self.execute_statement_query(&stmt_handle);
+        self.release_statement(&stmt_handle);
+        result
+    }
+
+    /// Execute a multistatement query, returning error on failure.
+    pub fn execute_multistatement_no_unwrap(
+        &self,
+        sql: &str,
+        count: i64,
+    ) -> Result<execute_query_response::Result, String> {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
+                stmt_handle: Some(stmt_handle),
+                options: [(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting::from(count),
+                )]
+                .into_iter()
+                .collect(),
+            })
+            .unwrap();
+        let result =
+            match self
+                .client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                    timeout_seconds: None,
+                }) {
+                Ok(response) => Ok(response.result.unwrap()),
+                Err(e) => match *e {
+                    ProtoError::Application(e) => Err(format!("{e:?}")),
+                    ProtoError::Transport(e) => Err(format!("{e:?}")),
+                },
+            };
+        self.release_statement(&stmt_handle);
+        result
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
-        self.execute_query(&format!(
+        self.execute_sql(&format!(
             "create temporary stage if not exists {stage_name}"
         ));
+    }
+
+    /// Returns the cloud provider of the current Snowflake deployment,
+    /// derived from `CURRENT_REGION()`. Internal (temporary) stages are
+    /// provisioned in this same cloud, so cloud-specific PUT/GET tests use
+    /// this to self-skip when the connected account is on another cloud
+    /// (e.g. CI's default AWS account vs. the GCS-only digest-skip test).
+    pub fn current_cloud(&self) -> CloudProvider {
+        let result = self.execute_query("SELECT CURRENT_REGION()");
+        let rows = ArrowResultHelper::from_result(result)
+            .transform_into_array::<String>()
+            .expect("CURRENT_REGION() should return rows");
+        let region = rows
+            .first()
+            .and_then(|row| row.first())
+            .expect("CURRENT_REGION() should return one value")
+            .to_uppercase();
+        // CURRENT_REGION() returns "<CLOUD>_<REGION>", optionally prefixed by a
+        // region group (e.g. "PUBLIC.AWS_US_WEST_2"); match on the cloud token.
+        if region.contains("GCP") {
+            CloudProvider::Gcp
+        } else if region.contains("AZURE") {
+            CloudProvider::Azure
+        } else {
+            CloudProvider::Aws
+        }
     }
 
     pub fn connect(&self) -> Result<(), String> {
@@ -334,6 +525,10 @@ impl SnowflakeTestClient {
         self.set_connection_config_setting(option_name, option_value.into());
     }
 
+    pub fn set_connection_option_bool(&self, option_name: &str, option_value: bool) {
+        self.set_connection_config_setting(option_name, option_value.into());
+    }
+
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
         self.client
             .connection_set_options_blocking(ConnectionSetOptionsRequest {
@@ -341,6 +536,7 @@ impl SnowflakeTestClient {
                 options: [(option_name.to_string(), option_value.to_vec().into())]
                     .into_iter()
                     .collect(),
+                no_connection_details: false,
             })
             .unwrap();
     }
@@ -364,6 +560,7 @@ impl SnowflakeTestClient {
             .connection_set_options_blocking(ConnectionSetOptionsRequest {
                 conn_handle: Some(self.conn_handle),
                 options: [(key.to_string(), setting)].into_iter().collect(),
+                no_connection_details: false,
             })
             .unwrap();
     }
@@ -456,6 +653,57 @@ impl SnowflakeTestClient {
             self.set_connection_option("protocol", protocol);
         }
     }
+
+    /// Initialize this connection (call after configuring options, before queries).
+    #[allow(clippy::result_large_err)]
+    pub fn connection_init_blocking(
+        &self,
+    ) -> Result<ConnectionInitResponse, Box<ProtoError<DriverException>>> {
+        self.client.connection_init_blocking(ConnectionInitRequest {
+            conn_handle: Some(self.conn_handle),
+            db_handle: Some(self.db_handle),
+            ..Default::default()
+        })
+    }
+
+    pub fn set_logout_error_strategy(&self, strategy: ErrorStrategy) {
+        self.set_connection_option("logout_error_strategy", strategy.as_str());
+    }
+
+    /// Close this connection (logout + release).
+    #[allow(clippy::result_large_err)]
+    pub fn connection_close_blocking(
+        &self,
+    ) -> Result<ConnectionCloseResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_close_blocking(ConnectionCloseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+    }
+
+    /// Check whether this connection has been closed.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_is_closed_blocking(&self) -> Result<bool, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_is_closed_blocking(ConnectionIsClosedRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .map(|r| r.is_closed)
+    }
+
+    /// Get connection info (tokens, host, etc.) for inspection.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_get_info_blocking(
+        &self,
+        include_master_token: bool,
+    ) -> Result<ConnectionGetInfoResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_get_info_blocking(ConnectionGetInfoRequest {
+                conn_handle: Some(self.conn_handle),
+                include_master_token,
+                ..Default::default()
+            })
+    }
 }
 
 impl Drop for SnowflakeTestClient {
@@ -477,6 +725,30 @@ impl Drop for SnowflakeTestClient {
             })
         {
             tracing::warn!("Failed to release database handle in Drop: {e:?}");
+        }
+    }
+}
+
+/// Extract the query_id from a single-statement execute result.
+/// Panics if the result is a multi-statement result.
+pub fn unwrap_single_query_id(result: &execute_query_response::Result) -> String {
+    match result {
+        execute_query_response::Result::Single(rs) => {
+            rs.result_descriptor.as_ref().unwrap().query_id.clone()
+        }
+        execute_query_response::Result::Multi(_) => {
+            panic!("Expected single-statement result, got multi-statement")
+        }
+    }
+}
+
+/// Extract the ResultSetHandle from a single-statement execute result.
+/// Panics if the result is a multi-statement result.
+pub fn unwrap_single_rs_handle(result: &execute_query_response::Result) -> ResultSetHandle {
+    match result {
+        execute_query_response::Result::Single(rs) => rs.result_set_handle.unwrap(),
+        execute_query_response::Result::Multi(_) => {
+            panic!("Expected single-statement result, got multi-statement")
         }
     }
 }

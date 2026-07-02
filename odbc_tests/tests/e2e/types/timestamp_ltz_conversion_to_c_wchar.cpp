@@ -22,25 +22,25 @@ TEST_CASE("TIMESTAMP_LTZ to SQL_C_WCHAR", "[timestamp_ltz][conversion][c_wchar]"
   {
     INFO("basic timestamp");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-01-15 14:30:45'::TIMESTAMP_LTZ"), 1);
-    CHECK(result == u"2024-01-15 14:30:45");
+    CHECK(result == U"2024-01-15 14:30:45");
   }
 
   {
     INFO("timestamp with fractional seconds");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_LTZ"), 1);
-    CHECK(result == u"2024-01-15 10:30:00.123456789");
+    CHECK(result == U"2024-01-15 10:30:00.123456789");
   }
 
   {
     INFO("pre-epoch timestamp");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '1960-06-15 12:00:00'::TIMESTAMP_LTZ"), 1);
-    CHECK(result == u"1960-06-15 12:00:00");
+    CHECK(result == U"1960-06-15 12:00:00");
   }
 
   {
     INFO("midnight");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-06-15 00:00:00'::TIMESTAMP_LTZ"), 1);
-    CHECK(result == u"2024-06-15 00:00:00");
+    CHECK(result == U"2024-06-15 00:00:00");
   }
 }
 
@@ -51,7 +51,7 @@ TEST_CASE("TIMESTAMP_LTZ to SQL_C_WCHAR buffer too small", "[timestamp_ltz][conv
 
   // When A TIMESTAMP_LTZ value is fetched into a WCHAR buffer smaller than 20 characters
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 14:30:45'::TIMESTAMP_LTZ");
-  char16_t buffer[5] = {};
+  SQLWCHAR buffer[5] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
@@ -70,7 +70,7 @@ TEST_CASE("TIMESTAMP_LTZ to SQL_C_WCHAR truncation", "[timestamp_ltz][conversion
 
   // When A TIMESTAMP_LTZ with fractional seconds is fetched into a WCHAR buffer of 21 characters
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_LTZ");
-  char16_t buffer[21] = {};
+  SQLWCHAR buffer[21] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 

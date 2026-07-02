@@ -84,7 +84,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: ARD record after binding
 
   ret = SQLGetDescRec(ard, 1, sqlchar(name), sizeof(name), &name_len, &type, &sub_type, &length, &precision, &scale,
                       &nullable);
-  REQUIRE(ret == SQL_SUCCESS);
+  // SQLGetDescRec is spec-documented to return SQL_SUCCESS_WITH_INFO for
+  // benign conditions such as 01004 (name buffer too small to hold the
+  // implicit field name); on macOS with brew unixODBC the driver returns
+  // 01004 for the empty Name field on an unbound (no SQLExecute yet)
+  // column-1 ARD record. The semantic invariant of this test is that the
+  // type was set correctly — accept SUCCESS or SUCCESS_WITH_INFO.
+  REQUIRE(SQL_SUCCEEDED(ret));
   REQUIRE(type == SQL_C_SLONG);
 }
 
@@ -112,7 +118,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: APD record after paramet
 
   ret = SQLGetDescRec(apd, 1, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
                       &precision, &scale, &nullable);
-  REQUIRE(ret == SQL_SUCCESS);
+  // See ARD-record test above: SQLGetDescRec may return SQL_SUCCESS_WITH_INFO
+  // with 01004 when the driver-supplied implicit name doesn't fit the buffer.
+  // Spec-allowed; semantic invariant is the type field.
+  REQUIRE(SQL_SUCCEEDED(ret));
   REQUIRE(type == SQL_C_SLONG);
 }
 
@@ -130,7 +139,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: All NULL output pointers
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   ret = SQLGetDescRec(ird, 1, nullptr, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver treats "all-NULL outputs + BufferLength==0" as an implicit
+    //   length-only query and returns SQL_SUCCESS_WITH_INFO; the new driver
+    //   reports a plain SQL_SUCCESS because there's nothing to truncate when
+    //   the caller asked for nothing.
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
 }
 
 // ============================================================================
@@ -176,7 +194,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 01004 - Name truncation 
                       &precision, &scale, &nullable);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   REQUIRE(std::string(tiny) == "MY");
-  REQUIRE(name_len == 6);
+  // ODBC 3.x mandates returning the *untruncated* length so callers can size
+  //   the buffer for a retry; the old driver returns the *truncated* length
+  //   matching the buffer fill (ODBC 2.x ambiguity) when running under iODBC.
+  OLD_IODBC_ONLY("BD#61") { REQUIRE(name_len == 2); }
+  else {
+    REQUIRE(name_len == 6);
+  }
   REQUIRE(type == SQL_DECIMAL);
 }
 
@@ -292,7 +316,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - Called during SQ
 
   ret = SQLGetDescRec(ard, 1, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
                       &precision, &scale, &nullable);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver doesn't gate descriptor reads on SQL_NEED_DATA: it walks
+    //   the ARD and, finding no record beyond the bound parameter (which lives
+    //   on the IPD, not the ARD), returns SQL_NO_DATA instead of HY010.
+    REQUIRE(ret == SQL_NO_DATA);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  }
 
   SQLCancel(stmt_handle());
 }
@@ -371,7 +403,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Explicit descriptor reco
 
   ret = SQLGetDescRec(explicit_desc, 1, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type,
                       &length, &precision, &scale, &nullable);
-  REQUIRE(ret == SQL_SUCCESS);
+  // See ARD-record test above: SQLGetDescRec may return SQL_SUCCESS_WITH_INFO
+  // with 01004 when the driver-supplied implicit name doesn't fit the buffer.
+  // Spec-allowed; semantic invariant is the type field.
+  REQUIRE(SQL_SUCCEEDED(ret));
   REQUIRE(type == SQL_C_SLONG);
 
   SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
@@ -413,7 +448,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Name NULL still returns 
   SQLLEN length = 0;
 
   ret = SQLGetDescRec(ird, 1, nullptr, 0, &name_len, &type, &sub_type, &length, &precision, &scale, &nullable);
-  REQUIRE(ret == SQL_SUCCESS);
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver flags the "NULL name buffer but caller wants the length"
+    //   case as a 01004 string-truncation warning even though there's nothing
+    //   to truncate; the new driver returns plain SQL_SUCCESS.
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
   REQUIRE(name_len == 6);
   REQUIRE(type == SQL_DECIMAL);
 }
@@ -439,7 +482,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - IRD access durin
   SQLLEN length = 0;
   ret = SQLGetDescRec(ird, 1, name, sizeof(name), &name_len, &type_val, &sub_type, &length, &precision, &scale,
                       &nullable);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", ird, SQL_HANDLE_DESC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver doesn't gate IRD reads on SQL_NEED_DATA and returns the
+    //   pre-execution IRD shape (one record placeholder) as SQL_SUCCESS; the
+    //   new driver enforces HY010 itself before reading the IRD.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ird, SQL_HANDLE_DESC);
+  }
 
   SQLCancel(stmt_handle());
 }
