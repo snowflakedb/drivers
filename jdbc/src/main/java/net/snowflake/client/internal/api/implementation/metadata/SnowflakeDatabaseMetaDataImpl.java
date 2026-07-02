@@ -629,7 +629,7 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getProcedures(catalog, schemaPattern, procedureNamePattern);
   }
 
   @Override
@@ -932,7 +932,7 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getFunctions(String catalog, String schemaPattern, String functionNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getFunctions(catalog, schemaPattern, functionNamePattern);
   }
 
   @Override

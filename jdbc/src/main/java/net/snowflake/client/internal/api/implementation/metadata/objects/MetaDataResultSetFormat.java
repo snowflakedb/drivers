@@ -159,7 +159,41 @@ enum MetaDataResultSetFormat {
           Types.SMALLINT,
           Types.INTEGER,
           Types.INTEGER,
-          Types.INTEGER));
+          Types.INTEGER)),
+
+  GET_PROCEDURES(
+      Arrays.asList(
+          "PROCEDURE_CAT",
+          "PROCEDURE_SCHEM",
+          "PROCEDURE_NAME",
+          "REMARKS",
+          "PROCEDURE_TYPE",
+          "SPECIFIC_NAME"),
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "SHORT", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.SMALLINT,
+          Types.VARCHAR)),
+
+  GET_FUNCTIONS(
+      Arrays.asList(
+          "FUNCTION_CAT",
+          "FUNCTION_SCHEM",
+          "FUNCTION_NAME",
+          "REMARKS",
+          "FUNCTION_TYPE",
+          "SPECIFIC_NAME"),
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "SHORT", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.SMALLINT,
+          Types.VARCHAR));
 
   private final List<String> columnNames;
   private final List<String> columnTypeNames;
