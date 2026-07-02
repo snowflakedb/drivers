@@ -1511,6 +1511,357 @@ pub fn get_info<E: OdbcEncoding>(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// SQLGetFunctions
+// ---------------------------------------------------------------------------
+
+const SQL_API_ALL_FUNCTIONS: sql::USmallInt = 0;
+const SQL_API_ODBC3_ALL_FUNCTIONS: sql::USmallInt = 999;
+const SQL_API_ODBC3_ALL_FUNCTIONS_SIZE: usize = 250;
+const SQL_TRUE_U16: sql::USmallInt = 1;
+const SQL_FALSE_U16: sql::USmallInt = 0;
+
+/// All known ODBC function IDs that can be queried via `SQLGetFunctions`.
+///
+/// Every standard ODBC 2.x/3.x function has a variant here.  The
+/// [`OdbcFunction::is_supported`] method returns `true` only for the
+/// entry-points this driver actually implements.
+///
+/// When a new entry-point is added to `c_api.rs`, flip its
+/// `is_supported` return value to `true`.
+#[repr(u16)]
+#[derive(Clone, Copy)]
+enum OdbcFunction {
+    // ---- Handle management ------------------------------------------------
+    AllocHandle = 1001,
+    FreeHandle = 1006,
+    FreeStmt = 16,
+
+    // ---- Connection -------------------------------------------------------
+    BrowseConnect = 55,
+    Connect = 7,
+    DriverConnect = 41,
+    Disconnect = 9,
+
+    // ---- Driver information -----------------------------------------------
+    DataSources = 57,
+    Drivers = 71,
+    GetFunctions = 44,
+    GetInfo = 45,
+    GetTypeInfo = 47,
+
+    // ---- Catalog ----------------------------------------------------------
+    ColumnPrivileges = 56,
+    Columns = 40,
+    ForeignKeys = 60,
+    PrimaryKeys = 65,
+    ProcedureColumns = 66,
+    Procedures = 67,
+    SpecialColumns = 52,
+    Statistics = 53,
+    TablePrivileges = 70,
+    Tables = 54,
+
+    // ---- Statement preparation --------------------------------------------
+    BindParameter = 72,
+    GetCursorName = 17,
+    Prepare = 19,
+    SetCursorName = 21,
+    SetScrollOptions = 69,
+
+    // ---- Result retrieval -------------------------------------------------
+    BindCol = 4,
+    BulkOperations = 24,
+    ColAttribute = 6, // also SQLColAttributes (ODBC 2.x), same ID
+    DescribeCol = 8,
+    ExtendedFetch = 59,
+    Fetch = 13,
+    FetchScroll = 1021,
+    GetData = 43,
+    GetDiagField = 1010,
+    GetDiagRec = 1011,
+    MoreResults = 61,
+    NumResultCols = 18,
+    RowCount = 20,
+    SetPos = 68,
+
+    // ---- Descriptor -------------------------------------------------------
+    CopyDesc = 1004,
+    GetDescField = 1008,
+    GetDescRec = 1009,
+    SetDescField = 1017,
+    SetDescRec = 1018,
+
+    // ---- Attributes -------------------------------------------------------
+    GetConnectAttr = 1007,
+    GetEnvAttr = 1012,
+    GetStmtAttr = 1014,
+    ParamOptions = 64,
+    SetConnectAttr = 1016,
+    SetEnvAttr = 1019,
+    SetStmtAttr = 1020,
+
+    // ---- Execution --------------------------------------------------------
+    DescribeParam = 58,
+    ExecDirect = 11,
+    Execute = 12,
+    NativeSql = 62,
+    NumParams = 63,
+    ParamData = 48,
+    PutData = 49,
+
+    // ---- Statement / transaction termination ------------------------------
+    Cancel = 5,
+    CancelHandle = 1022,
+    CloseCursor = 1003,
+    EndTran = 1005,
+}
+
+impl TryFrom<u16> for OdbcFunction {
+    type Error = ();
+
+    #[rustfmt::skip]
+    fn try_from(v: u16) -> Result<Self, ()> {
+        match v {
+            1001 => Ok(Self::AllocHandle),
+            1006 => Ok(Self::FreeHandle),
+            16   => Ok(Self::FreeStmt),
+            55   => Ok(Self::BrowseConnect),
+            7    => Ok(Self::Connect),
+            41   => Ok(Self::DriverConnect),
+            9    => Ok(Self::Disconnect),
+            57   => Ok(Self::DataSources),
+            71   => Ok(Self::Drivers),
+            44   => Ok(Self::GetFunctions),
+            45   => Ok(Self::GetInfo),
+            47   => Ok(Self::GetTypeInfo),
+            56   => Ok(Self::ColumnPrivileges),
+            40   => Ok(Self::Columns),
+            60   => Ok(Self::ForeignKeys),
+            65   => Ok(Self::PrimaryKeys),
+            66   => Ok(Self::ProcedureColumns),
+            67   => Ok(Self::Procedures),
+            52   => Ok(Self::SpecialColumns),
+            53   => Ok(Self::Statistics),
+            70   => Ok(Self::TablePrivileges),
+            54   => Ok(Self::Tables),
+            72   => Ok(Self::BindParameter),
+            17   => Ok(Self::GetCursorName),
+            19   => Ok(Self::Prepare),
+            21   => Ok(Self::SetCursorName),
+            69   => Ok(Self::SetScrollOptions),
+            4    => Ok(Self::BindCol),
+            24   => Ok(Self::BulkOperations),
+            6    => Ok(Self::ColAttribute),
+            8    => Ok(Self::DescribeCol),
+            59   => Ok(Self::ExtendedFetch),
+            13   => Ok(Self::Fetch),
+            1021 => Ok(Self::FetchScroll),
+            43   => Ok(Self::GetData),
+            1010 => Ok(Self::GetDiagField),
+            1011 => Ok(Self::GetDiagRec),
+            61   => Ok(Self::MoreResults),
+            18   => Ok(Self::NumResultCols),
+            20   => Ok(Self::RowCount),
+            68   => Ok(Self::SetPos),
+            1004 => Ok(Self::CopyDesc),
+            1008 => Ok(Self::GetDescField),
+            1009 => Ok(Self::GetDescRec),
+            1017 => Ok(Self::SetDescField),
+            1018 => Ok(Self::SetDescRec),
+            1007 => Ok(Self::GetConnectAttr),
+            1012 => Ok(Self::GetEnvAttr),
+            1014 => Ok(Self::GetStmtAttr),
+            64   => Ok(Self::ParamOptions),
+            1016 => Ok(Self::SetConnectAttr),
+            1019 => Ok(Self::SetEnvAttr),
+            1020 => Ok(Self::SetStmtAttr),
+            58   => Ok(Self::DescribeParam),
+            11   => Ok(Self::ExecDirect),
+            12   => Ok(Self::Execute),
+            62   => Ok(Self::NativeSql),
+            63   => Ok(Self::NumParams),
+            48   => Ok(Self::ParamData),
+            49   => Ok(Self::PutData),
+            5    => Ok(Self::Cancel),
+            1022 => Ok(Self::CancelHandle),
+            1003 => Ok(Self::CloseCursor),
+            1005 => Ok(Self::EndTran),
+            _    => Err(()),
+        }
+    }
+}
+
+impl OdbcFunction {
+    /// Whether this driver exports the function in `c_api.rs`.
+    fn is_supported(self) -> bool {
+        !matches!(
+            self,
+            Self::BrowseConnect
+                | Self::BulkOperations
+                | Self::CopyDesc
+                | Self::DataSources
+                | Self::Drivers
+                | Self::EndTran
+                | Self::ForeignKeys
+                | Self::GetCursorName
+                | Self::ParamOptions
+                | Self::PrimaryKeys
+                | Self::ProcedureColumns
+                | Self::Procedures
+                | Self::SetCursorName
+                | Self::SetDescRec
+                | Self::SetPos
+                | Self::SetScrollOptions
+        )
+    }
+
+    const ALL: &[Self] = &[
+        Self::AllocHandle,
+        Self::FreeHandle,
+        Self::FreeStmt,
+        Self::BrowseConnect,
+        Self::Connect,
+        Self::DriverConnect,
+        Self::Disconnect,
+        Self::DataSources,
+        Self::Drivers,
+        Self::GetFunctions,
+        Self::GetInfo,
+        Self::GetTypeInfo,
+        Self::ColumnPrivileges,
+        Self::Columns,
+        Self::ForeignKeys,
+        Self::PrimaryKeys,
+        Self::ProcedureColumns,
+        Self::Procedures,
+        Self::SpecialColumns,
+        Self::Statistics,
+        Self::TablePrivileges,
+        Self::Tables,
+        Self::BindParameter,
+        Self::GetCursorName,
+        Self::Prepare,
+        Self::SetCursorName,
+        Self::SetScrollOptions,
+        Self::BindCol,
+        Self::BulkOperations,
+        Self::ColAttribute,
+        Self::DescribeCol,
+        Self::ExtendedFetch,
+        Self::Fetch,
+        Self::FetchScroll,
+        Self::GetData,
+        Self::GetDiagField,
+        Self::GetDiagRec,
+        Self::MoreResults,
+        Self::NumResultCols,
+        Self::RowCount,
+        Self::SetPos,
+        Self::CopyDesc,
+        Self::GetDescField,
+        Self::GetDescRec,
+        Self::SetDescField,
+        Self::SetDescRec,
+        Self::GetConnectAttr,
+        Self::GetEnvAttr,
+        Self::GetStmtAttr,
+        Self::ParamOptions,
+        Self::SetConnectAttr,
+        Self::SetEnvAttr,
+        Self::SetStmtAttr,
+        Self::DescribeParam,
+        Self::ExecDirect,
+        Self::Execute,
+        Self::NativeSql,
+        Self::NumParams,
+        Self::ParamData,
+        Self::PutData,
+        Self::Cancel,
+        Self::CancelHandle,
+        Self::CloseCursor,
+        Self::EndTran,
+    ];
+}
+
+/// Fill the ODBC 3.x bitmap (4 000 bits, `SQL_API_ODBC3_ALL_FUNCTIONS_SIZE`
+/// words) with supported function IDs.
+fn fill_odbc3_bitmap(supported_ptr: *mut sql::USmallInt) {
+    let bitmap =
+        unsafe { std::slice::from_raw_parts_mut(supported_ptr, SQL_API_ODBC3_ALL_FUNCTIONS_SIZE) };
+    bitmap.fill(0);
+    for &f in OdbcFunction::ALL {
+        if !f.is_supported() {
+            continue;
+        }
+        let fid = f as u16;
+        let word = (fid >> 4) as usize;
+        let bit = fid & 0x000F;
+        bitmap[word] |= 1 << bit;
+    }
+}
+
+/// Fill the ODBC 2.x 100-element array with `SQL_TRUE` / `SQL_FALSE` per index.
+fn fill_odbc2_array(supported_ptr: *mut sql::USmallInt) {
+    let array = unsafe { std::slice::from_raw_parts_mut(supported_ptr, 100) };
+    array.fill(SQL_FALSE_U16);
+    for &f in OdbcFunction::ALL {
+        if !f.is_supported() {
+            continue;
+        }
+        let idx = f as usize;
+        if idx < 100 {
+            array[idx] = SQL_TRUE_U16;
+        }
+    }
+}
+
+/// Retrieve supported-function information (SQLGetFunctions).
+pub fn get_functions(
+    connection_handle: sql::Handle,
+    function_id: sql::USmallInt,
+    supported_ptr: *mut sql::USmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!(
+        "get_functions: connection_handle={connection_handle:?}, function_id={function_id}"
+    );
+
+    let dbc = conn_from_handle(connection_handle)?;
+
+    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
+        return DisconnectedSnafu.fail();
+    }
+
+    if supported_ptr.is_null() {
+        return Ok(());
+    }
+
+    if function_id == SQL_API_ODBC3_ALL_FUNCTIONS {
+        fill_odbc3_bitmap(supported_ptr);
+        return Ok(());
+    }
+    if function_id == SQL_API_ALL_FUNCTIONS {
+        fill_odbc2_array(supported_ptr);
+        return Ok(());
+    }
+
+    if function_id >= 4000 {
+        return crate::api::error::FunctionTypeOutOfRangeSnafu { function_id }.fail();
+    }
+
+    let supported = OdbcFunction::try_from(function_id)
+        .map(|f| f.is_supported())
+        .unwrap_or(false);
+    unsafe {
+        *supported_ptr = if supported {
+            SQL_TRUE_U16
+        } else {
+            SQL_FALSE_U16
+        };
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::query_types::RowType;
 use crate::rest::snowflake::query_response::Chunk;
 use arrow::array::{RecordBatchIterator, RecordBatchReader};
-use arrow::datatypes::{Fields, Schema};
+use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 pub use error::ChunkError;
@@ -93,6 +93,7 @@ pub async fn arrow_prefetch_reader(
     mut chunk_download_data: VecDeque<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = if let Some(initial_base64) = initial_base64_opt {
         let bytes = BASE64.decode(initial_base64).context(Base64DecodingSnafu)?;
@@ -108,21 +109,26 @@ pub async fn arrow_prefetch_reader(
     };
     let downloader = HttpChunkDownloader { client };
     let parser = ArrowChunkParser;
-    PrefetchChunkReader::reader(
+    let reader = PrefetchChunkReader::reader(
         initial_reader,
         chunk_download_data,
         downloader,
         parser,
         config,
     )
-    .await
+    .await?;
+    Ok(maybe_inject_nullable(reader, nullable_flags))
 }
 
-pub fn single_chunk_reader(base64: &str) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
+pub fn single_chunk_reader(
+    base64: &str,
+    nullable_flags: Option<&[bool]>,
+) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let bytes = BASE64.decode(base64).context(Base64DecodingSnafu)?;
     let cursor = io::Cursor::new(bytes);
     let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
-    Ok(Box::new(reader))
+    let boxed: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+    Ok(maybe_inject_nullable(boxed, nullable_flags))
 }
 
 pub fn schema_only_reader(
@@ -136,6 +142,69 @@ pub fn empty_reader() -> Box<dyn RecordBatchReader + Send> {
         vec![],
         Arc::new(Schema::new(Fields::empty())),
     ))
+}
+
+/// Overrides the schema returned by a reader without touching the underlying batches.
+struct SchemaOverrideReader {
+    inner: Box<dyn RecordBatchReader + Send>,
+    schema: SchemaRef,
+}
+
+impl RecordBatchReader for SchemaOverrideReader {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+impl Iterator for SchemaOverrideReader {
+    type Item = Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+/// Injects `"nullable"` metadata into each Arrow field that doesn't already have it.
+/// Returns the reader unchanged if no injection is needed.
+fn maybe_inject_nullable(
+    reader: Box<dyn RecordBatchReader + Send>,
+    nullable_flags: Option<&[bool]>,
+) -> Box<dyn RecordBatchReader + Send> {
+    let Some(flags) = nullable_flags else {
+        return reader;
+    };
+    let schema = reader.schema();
+    if flags.is_empty() || flags.len() != schema.fields().len() {
+        return reader;
+    }
+    let needs_injection = schema
+        .fields()
+        .iter()
+        .any(|f| !f.metadata().contains_key("nullable"));
+    if !needs_injection {
+        return reader;
+    }
+    let new_fields: Vec<Field> = schema
+        .fields()
+        .iter()
+        .zip(flags.iter())
+        .map(|(field, &nullable)| {
+            if field.metadata().contains_key("nullable") {
+                field.as_ref().clone()
+            } else {
+                let mut metadata = field.metadata().clone();
+                metadata.insert("nullable".to_string(), nullable.to_string());
+                field.as_ref().clone().with_metadata(metadata)
+            }
+        })
+        .collect();
+    let new_schema = Arc::new(Schema::new_with_metadata(
+        new_fields,
+        schema.metadata().clone(),
+    ));
+    Box::new(SchemaOverrideReader {
+        inner: reader,
+        schema: new_schema,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

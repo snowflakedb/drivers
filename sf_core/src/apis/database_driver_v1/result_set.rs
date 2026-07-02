@@ -357,12 +357,18 @@ pub(super) async fn fetch_query_response_data(
 /// guard across an `.await`.
 async fn snapshot_reader_inputs(
     rs_ptr: &Arc<Mutex<ResultSet>>,
-) -> (RowsetData, reqwest::Client, PrefetchConfig) {
+) -> (
+    RowsetData,
+    reqwest::Client,
+    PrefetchConfig,
+    Vec<ColumnMetadata>,
+) {
     let rs = rs_ptr.lock().await;
     (
         rs.data.clone(),
         rs.reader_ctx.http_client.clone(),
         rs.reader_ctx.prefetch_config.clone(),
+        rs.descriptor.columns.clone(),
     )
 }
 
@@ -389,11 +395,24 @@ impl DatabaseDriverV1 {
             }
             .build()
         })?;
-        let (data, http_client, prefetch_config) = snapshot_reader_inputs(&rs_ptr).await;
+        let (data, http_client, prefetch_config, columns) = snapshot_reader_inputs(&rs_ptr).await;
 
-        build_reader_from_rowset_data(&data, http_client, &prefetch_config, &self.wrapper_presets)
-            .await
-            .context(QueryResponseProcessingSnafu)
+        let nullable_flags: Vec<bool> = columns.iter().map(|c| c.nullable).collect();
+        let flags = if nullable_flags.is_empty() {
+            None
+        } else {
+            Some(nullable_flags.as_slice())
+        };
+        let reader = build_reader_from_rowset_data(
+            &data,
+            http_client,
+            &prefetch_config,
+            &self.wrapper_presets,
+            flags,
+        )
+        .await
+        .context(QueryResponseProcessingSnafu)?;
+        Ok(reader)
     }
 
     /// Returns chunk metadata (inline data + remote chunk URLs) for this result set.

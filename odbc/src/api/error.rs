@@ -248,6 +248,12 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Associated statement is not prepared"))]
+    AssociatedStatementNotPrepared {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("COUNT field incorrect: {reason}"))]
     CountFieldIncorrect {
         reason: String,
@@ -557,6 +563,13 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Function type out of range: {function_id}"))]
+    FunctionTypeOutOfRange {
+        function_id: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -663,6 +676,7 @@ impl OdbcError {
             OdbcError::AttributeCannotBeSetNow { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidParameterNumber { .. } => ErrorSource::ApiMisuse,
             OdbcError::StatementNotExecuted { .. } => ErrorSource::CursorState,
+            OdbcError::AssociatedStatementNotPrepared { .. } => ErrorSource::CursorState,
             OdbcError::CountFieldIncorrect { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCatalogName { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCursorState { .. } => ErrorSource::CursorState,
@@ -708,6 +722,7 @@ impl OdbcError {
             OdbcError::ConcatNullValue { .. } => ErrorSource::ApiMisuse,
             OdbcError::StillExecuting { .. } => ErrorSource::ApiMisuse,
             OdbcError::AsyncInProgress { .. } => ErrorSource::ApiMisuse,
+            OdbcError::FunctionTypeOutOfRange { .. } => ErrorSource::ApiMisuse,
         }
     }
 
@@ -820,6 +835,9 @@ impl OdbcError {
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
             OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
+            OdbcError::AssociatedStatementNotPrepared { .. } => {
+                SqlState::AssociatedStatementIsNotPrepared
+            }
             OdbcError::CountFieldIncorrect { .. } => SqlState::CountFieldIncorrect,
             OdbcError::InvalidCatalogName { .. } => SqlState::InvalidCatalogName,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
@@ -972,6 +990,7 @@ impl OdbcError {
             OdbcError::ConcatNullValue { .. } => SqlState::AttemptToConcatenateNullValue,
             OdbcError::StillExecuting { .. } => SqlState::GeneralError,
             OdbcError::AsyncInProgress { .. } => SqlState::FunctionSequenceError,
+            OdbcError::FunctionTypeOutOfRange { .. } => SqlState::FunctionTypeOutOfRange,
         }
     }
 
