@@ -264,6 +264,294 @@ pub unsafe extern "system" fn SQLGetTypeInfoW(
     result.to_sql_code()
 }
 
+/// ODBC catalog function: return special columns (row identifiers / version columns).
+/// Snowflake always returns an empty result set.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSpecialColumns(
+    statement_handle: sql::Handle,
+    identifier_type: sql::SmallInt,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    scope: sql::SmallInt,
+    nullable: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLSpecialColumns");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::special_columns::<Narrow>(
+        statement_handle,
+        identifier_type,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        scope,
+        nullable,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSpecialColumnsW(
+    statement_handle: sql::Handle,
+    identifier_type: sql::SmallInt,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    scope: sql::SmallInt,
+    nullable: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLSpecialColumns");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::special_columns::<Wide>(
+        statement_handle,
+        identifier_type,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        scope,
+        nullable,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// ODBC catalog function: return column-level privileges.
+/// Snowflake always returns an empty result set.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLColumnPrivileges(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    column_name: *const sql::Char,
+    name_length4: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLColumnPrivileges"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::column_privileges::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        column_name,
+        name_length4,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLColumnPrivilegesW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    column_name: *const WideChar,
+    name_length4: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLColumnPrivileges"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::column_privileges::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        column_name,
+        name_length4,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// ODBC catalog function: return table-level privileges.
+/// Snowflake always returns an empty result set.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLTablePrivileges(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLTablePrivileges"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::table_privileges::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLTablePrivilegesW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLTablePrivileges"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::table_privileges::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// ODBC catalog function: return index and statistics information.
+/// Snowflake always returns an empty result set.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLStatistics(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    unique: sql::SmallInt,
+    reserved: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLStatistics");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::statistics::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        unique,
+        reserved,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLStatisticsW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    unique: sql::SmallInt,
+    reserved: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLStatistics");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::statistics::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+        unique,
+        reserved,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
