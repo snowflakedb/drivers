@@ -49,6 +49,22 @@ impl Setting {
             None
         }
     }
+
+    /// Shared bool coercion for `ParamStore::get_bool` and
+    /// `TlsConfig::from_settings`, so both TLS-config paths agree. Returns
+    /// `None` for unrecognised strings/types so callers keep their own default.
+    pub(crate) fn coerce_bool(&self) -> Option<bool> {
+        match self {
+            Setting::Bool(b) => Some(*b),
+            Setting::String(s) => match s.to_lowercase().as_str() {
+                "true" | "1" | "on" => Some(true),
+                "false" | "0" | "off" => Some(false),
+                _ => None,
+            },
+            Setting::Int(i) => Some(*i != 0),
+            _ => None,
+        }
+    }
 }
 
 pub trait Settings {

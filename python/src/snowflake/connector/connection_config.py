@@ -246,6 +246,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     ssl: bool | None = None
     """Enable or disable SSL/TLS (sets protocol to https or http). Deprecated: use protocol instead"""
 
+    tls_skip_verify: bool | None = False
+    """Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since
+    certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only.
+
+    Default: False
+    """
+
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
 
