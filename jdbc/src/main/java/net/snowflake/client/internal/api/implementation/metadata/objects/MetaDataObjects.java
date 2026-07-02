@@ -336,6 +336,112 @@ public class MetaDataObjects {
     return createResultSet(TYPE_INFO, MetaDataResultSetFormat.GET_TYPE_INFO);
   }
 
+  public ResultSet getProcedures(
+      String originalCatalog, String originalSchemaPattern, String procedureNamePattern)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+    boolean isExactSchema = contextAware.isExactSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("procedures")
+            .like(procedureNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_PROCEDURES);
+    }
+
+    logger.debug("SQL query in getProcedures: {}", sqlQuery);
+
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
+    Pattern compiledProcedurePattern = Wildcard.toRegexPattern(procedureNamePattern, true);
+    RowConverter rowConverter =
+        row -> {
+          String catalogName = row.getString("catalog_name");
+          String schemaName = row.getString("schema_name");
+          String procedureName = row.getString("name");
+          String remarks = row.getString("description");
+          String specificName = row.getString("arguments");
+          if ((compiledProcedurePattern == null
+                  || compiledProcedurePattern.matcher(procedureName).matches())
+              && (compiledSchemaPattern == null
+                  || compiledSchemaPattern.matcher(schemaName).matches()
+                  || isExactSchema && schemaPattern.equals(schemaName))) {
+
+            return new Object[] {
+              catalogName,
+              schemaName,
+              procedureName,
+              remarks,
+              DatabaseMetaData.procedureReturnsResult,
+              specificName
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_PROCEDURES);
+  }
+
+  public ResultSet getFunctions(
+      String originalCatalog, String originalSchemaPattern, String functionNamePattern)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+    boolean isExactSchema = contextAware.isExactSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("functions")
+            .like(functionNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_FUNCTIONS);
+    }
+
+    logger.debug("SQL query in getFunctions: {}", sqlQuery);
+
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
+    Pattern compiledFunctionPattern = Wildcard.toRegexPattern(functionNamePattern, true);
+
+    RowConverter rowConverter =
+        row -> {
+          String catalogName = row.getString(11);
+          String schemaName = row.getString(3);
+          String functionName = row.getString(2);
+          String remarks = row.getString(10);
+          int functionType =
+              ("Y".equals(row.getString(12))
+                  ? DatabaseMetaData.functionReturnsTable
+                  : DatabaseMetaData.functionNoTable);
+          // TODO(SNOW-3695645): getProcedures has correct behavior of using getString("arguments")
+          //  for "specificName", consider to fix it here as well
+          String specificName = functionName;
+          if ((compiledFunctionPattern == null
+                  || compiledFunctionPattern.matcher(functionName).matches())
+              && (compiledSchemaPattern == null
+                  || compiledSchemaPattern.matcher(schemaName).matches()
+                  || isExactSchema && schemaPattern.equals(schemaName))) {
+
+            return new Object[] {
+              catalogName, schemaName, functionName, remarks, functionType, specificName
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_FUNCTIONS);
+  }
+
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
   static Integer getColumnSize(SnowflakeColumnMetadata columnMetadata) {
     switch (columnMetadata.getType()) {

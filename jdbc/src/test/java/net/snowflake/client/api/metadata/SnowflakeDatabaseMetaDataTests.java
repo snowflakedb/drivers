@@ -1477,16 +1477,139 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   void shouldReturnUserDefinedTypesForUDTs() {}
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnProceduresForProcedures() {}
+  void shouldReturnProceduresForProcedures() throws Exception {
+    try (Connection conn = openConnection()) {
+      DatabaseMetaData metaData = conn.getMetaData();
+      String currentDatabase;
+      String currentSchema;
+      try (Statement s = conn.createStatement();
+          ResultSet rs = s.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+        assertTrue(rs.next());
+        currentDatabase = rs.getString(1);
+        currentSchema = rs.getString(2);
+      }
+
+      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+      String procName = "TEST_PROC_" + suffix;
+      try (Statement stmt = conn.createStatement()) {
+        stmt.execute(
+            "CREATE OR REPLACE PROCEDURE "
+                + procName
+                + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
+        try {
+          // column shape
+          try (ResultSet rs = metaData.getProcedures(currentDatabase, currentSchema, "%")) {
+            ResultSetMetaData rsMeta = rs.getMetaData();
+            assertEquals(6, rsMeta.getColumnCount());
+            assertEquals("PROCEDURE_CAT", rsMeta.getColumnName(1));
+            assertEquals("PROCEDURE_SCHEM", rsMeta.getColumnName(2));
+            assertEquals("PROCEDURE_NAME", rsMeta.getColumnName(3));
+            assertEquals("REMARKS", rsMeta.getColumnName(4));
+            assertEquals("PROCEDURE_TYPE", rsMeta.getColumnName(5));
+            assertEquals("SPECIFIC_NAME", rsMeta.getColumnName(6));
+
+            boolean found = false;
+            while (rs.next()) {
+              if (procName.equals(rs.getString("PROCEDURE_NAME"))) {
+                assertEquals(currentDatabase, rs.getString("PROCEDURE_CAT"));
+                assertEquals(currentSchema, rs.getString("PROCEDURE_SCHEM"));
+                assertEquals(
+                    DatabaseMetaData.procedureReturnsResult, rs.getShort("PROCEDURE_TYPE"));
+                assertFalse(rs.wasNull());
+                found = true;
+              }
+            }
+            assertTrue(found, "Procedure " + procName + " not found in getProcedures result");
+          }
+
+          // exact name match
+          try (ResultSet rs = metaData.getProcedures(currentDatabase, currentSchema, procName)) {
+            assertTrue(rs.next());
+            assertEquals(procName, rs.getString("PROCEDURE_NAME"));
+            assertFalse(rs.next());
+          }
+
+          // non-existent db returns empty
+          try (ResultSet rs = metaData.getProcedures("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
+            assertFalse(rs.next());
+          }
+        } finally {
+          stmt.execute("DROP PROCEDURE IF EXISTS " + procName + "(FLOAT)");
+        }
+      }
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
   void shouldReturnProcedureColumnsForProcedureColumns() {}
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnFunctionsForFunctions() {}
+  void shouldReturnFunctionsForFunctions() throws Exception {
+    try (Connection conn = openConnection()) {
+      DatabaseMetaData metaData = conn.getMetaData();
+      String currentDatabase;
+      String currentSchema;
+      try (Statement s = conn.createStatement();
+          ResultSet rs = s.executeQuery("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")) {
+        assertTrue(rs.next());
+        currentDatabase = rs.getString(1);
+        currentSchema = rs.getString(2);
+      }
+
+      String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+      String funcName = "TEST_FUNC_" + suffix;
+      try (Statement stmt = conn.createStatement()) {
+        stmt.execute(
+            "CREATE OR REPLACE FUNCTION "
+                + funcName
+                + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
+        try {
+          // column shape
+          try (ResultSet rs = metaData.getFunctions(currentDatabase, currentSchema, "%")) {
+            ResultSetMetaData rsMeta = rs.getMetaData();
+            assertEquals(6, rsMeta.getColumnCount());
+            assertEquals("FUNCTION_CAT", rsMeta.getColumnName(1));
+            assertEquals("FUNCTION_SCHEM", rsMeta.getColumnName(2));
+            assertEquals("FUNCTION_NAME", rsMeta.getColumnName(3));
+            assertEquals("REMARKS", rsMeta.getColumnName(4));
+            assertEquals("FUNCTION_TYPE", rsMeta.getColumnName(5));
+            assertEquals("SPECIFIC_NAME", rsMeta.getColumnName(6));
+
+            boolean found = false;
+            while (rs.next()) {
+              if (funcName.equals(rs.getString("FUNCTION_NAME"))) {
+                assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
+                assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+                int funcType = rs.getInt("FUNCTION_TYPE");
+                assertFalse(rs.wasNull());
+                assertTrue(
+                    funcType == DatabaseMetaData.functionReturnsTable
+                        || funcType == DatabaseMetaData.functionNoTable,
+                    () -> "Unexpected FUNCTION_TYPE: " + funcType);
+                found = true;
+              }
+            }
+            assertTrue(found, "Function " + funcName + " not found in getFunctions result");
+          }
+
+          // exact name match
+          try (ResultSet rs = metaData.getFunctions(currentDatabase, currentSchema, funcName)) {
+            assertTrue(rs.next());
+            assertEquals(funcName, rs.getString("FUNCTION_NAME"));
+            assertFalse(rs.next());
+          }
+
+          // non-existent db returns empty
+          try (ResultSet rs = metaData.getFunctions("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
+            assertFalse(rs.next());
+          }
+        } finally {
+          stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT)");
+        }
+      }
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")
