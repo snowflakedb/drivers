@@ -79,6 +79,13 @@ repos:
         pass_filenames: false
         files: ^jdbc/
         language: system
+    -   id: jdbc-checkstyle
+        name: JDBC Checkstyle
+        description: Run Checkstyle on JDBC main and test sources.
+        entry: bash -c 'cd jdbc && bash ./gradlew checkstyleMain checkstyleTest'
+        pass_filenames: false
+        files: ^jdbc/
+        language: system
     -   id: nodejs-code-format
         name: Node.js code formatting & linting
         description: Auto-format with oxfmt and lint with oxlint
