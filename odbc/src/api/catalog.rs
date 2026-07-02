@@ -12,7 +12,7 @@
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, AsyncInProgressSnafu, CursorAlreadyOpenSnafu,
-    DisconnectedSnafu, InvalidDuringDaeSnafu, OdbcRuntimeSnafu,
+    DisconnectedSnafu, InvalidDuringDaeSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::statement::set_state_for_catalog;
@@ -157,15 +157,7 @@ pub fn tables<E: OdbcEncoding>(
     let conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
 
-    if inner.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
-    }
-    if inner.state.as_ref().is_async_executing() {
-        return AsyncInProgressSnafu.fail();
-    }
-    if inner.state.as_ref().has_open_cursor() {
-        return CursorAlreadyOpenSnafu.fail();
-    }
+    validate_catalog_stmt_ready(&inner)?;
 
     let conn_handle = match &conn.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
@@ -1286,6 +1278,263 @@ fn parse_table_type_list(types: Option<&str>) -> Vec<String> {
 }
 
 // ============================================================================
+// Shared helpers for empty-result catalog functions
+// ============================================================================
+
+fn validate_catalog_stmt_ready(inner: &StatementInner) -> OdbcResult<()> {
+    if inner.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+    if inner.state.as_ref().is_async_executing() {
+        return AsyncInProgressSnafu.fail();
+    }
+    if inner.state.as_ref().has_open_cursor() {
+        return CursorAlreadyOpenSnafu.fail();
+    }
+    Ok(())
+}
+
+fn set_static_empty_catalog_result(
+    inner: &mut StatementInner,
+    schema: SchemaRef,
+) -> OdbcResult<()> {
+    let batch = RecordBatch::new_empty(schema.clone());
+    let reader = reader_from_record_batch(batch, schema)?;
+    set_state_for_catalog(
+        inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
+}
+
+// ============================================================================
+// SQLSpecialColumns — empty result set (Snowflake has no row identifiers)
+// ============================================================================
+
+fn special_columns_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_smallint_field("SCOPE"),
+        catalog_text_field("COLUMN_NAME", 128),
+        catalog_smallint_field("DATA_TYPE"),
+        catalog_text_field("TYPE_NAME", 128),
+        catalog_int_field("COLUMN_SIZE"),
+        catalog_int_field("BUFFER_LENGTH"),
+        catalog_smallint_field("DECIMAL_DIGITS"),
+        catalog_smallint_field("PSEUDO_COLUMN"),
+    ]))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn special_columns<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    _identifier_type: sql::SmallInt,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+    _scope: sql::SmallInt,
+    _nullable: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("SQLSpecialColumns called");
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    match &conn.state {
+        ConnectionState::Connected { .. } => {}
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    }
+    drop(conn);
+
+    let _ = read_opt_str::<E>(catalog_name, name_length1)?;
+    let _ = read_opt_str::<E>(schema_name, name_length2)?;
+    let table = read_opt_str::<E>(table_name, name_length3)?;
+
+    if table.is_none() {
+        return NullPointerSnafu.fail();
+    }
+
+    set_static_empty_catalog_result(&mut inner, special_columns_schema())
+}
+
+// ============================================================================
+// SQLColumnPrivileges — empty result set (no column-level privileges in SF)
+// ============================================================================
+
+fn column_privileges_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("TABLE_CAT", 255),
+        catalog_text_field("TABLE_SCHEM", 255),
+        catalog_text_field("TABLE_NAME", 255),
+        catalog_text_field("COLUMN_NAME", 255),
+        catalog_text_field("GRANTOR", 255),
+        catalog_text_field("GRANTEE", 255),
+        catalog_text_field("PRIVILEGE", 255),
+        catalog_text_field("IS_GRANTABLE", 3),
+    ]))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn column_privileges<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+    column_name: *const E::Char,
+    name_length4: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("SQLColumnPrivileges called");
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    match &conn.state {
+        ConnectionState::Connected { .. } => {}
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    }
+    drop(conn);
+
+    let _ = read_opt_str::<E>(catalog_name, name_length1)?;
+    let _ = read_opt_str::<E>(schema_name, name_length2)?;
+    let table = read_opt_str::<E>(table_name, name_length3)?;
+    let _ = read_opt_str::<E>(column_name, name_length4)?;
+
+    if table.is_none() {
+        return NullPointerSnafu.fail();
+    }
+
+    set_static_empty_catalog_result(&mut inner, column_privileges_schema())
+}
+
+// ============================================================================
+// SQLTablePrivileges — empty result set (no table-level privileges in SF)
+// ============================================================================
+
+fn table_privileges_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("TABLE_CAT", 255),
+        catalog_text_field("TABLE_SCHEM", 255),
+        catalog_text_field("TABLE_NAME", 255),
+        catalog_text_field("GRANTOR", 255),
+        catalog_text_field("GRANTEE", 255),
+        catalog_text_field("PRIVILEGE", 255),
+        catalog_text_field("IS_GRANTABLE", 3),
+    ]))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn table_privileges<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("SQLTablePrivileges called");
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    match &conn.state {
+        ConnectionState::Connected { .. } => {}
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    }
+    drop(conn);
+
+    let _ = read_opt_str::<E>(catalog_name, name_length1)?;
+    let _ = read_opt_str::<E>(schema_name, name_length2)?;
+    let _ = read_opt_str::<E>(table_name, name_length3)?;
+
+    set_static_empty_catalog_result(&mut inner, table_privileges_schema())
+}
+
+// ============================================================================
+// SQLStatistics — empty result set (Snowflake has no index statistics)
+// ============================================================================
+
+fn statistics_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("TABLE_CAT", 255),
+        catalog_text_field("TABLE_SCHEM", 255),
+        catalog_text_field("TABLE_NAME", 255),
+        catalog_smallint_field("NON_UNIQUE"),
+        catalog_text_field("INDEX_QUALIFIER", 255),
+        catalog_text_field("INDEX_NAME", 255),
+        catalog_smallint_field("TYPE"),
+        catalog_smallint_field("ORDINAL_POSITION"),
+        catalog_text_field("COLUMN_NAME", 255),
+        catalog_text_field("ASC_OR_DESC", 1),
+        catalog_int_field("CARDINALITY"),
+        catalog_int_field("PAGES"),
+        catalog_text_field("FILTER_CONDITION", 255),
+    ]))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn statistics<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+    _unique: sql::SmallInt,
+    _reserved: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("SQLStatistics called");
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    match &conn.state {
+        ConnectionState::Connected { .. } => {}
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    }
+    drop(conn);
+
+    let _ = read_opt_str::<E>(catalog_name, name_length1)?;
+    let _ = read_opt_str::<E>(schema_name, name_length2)?;
+    let table = read_opt_str::<E>(table_name, name_length3)?;
+
+    // TableName is a required (ordinary) argument for SQLStatistics — the ODBC
+    // spec forbids a null pointer, so NULL must yield HY009. This check is not a
+    // Driver Manager responsibility, so it surfaces to the driver under iODBC.
+    if table.is_none() {
+        return NullPointerSnafu.fail();
+    }
+
+    set_static_empty_catalog_result(&mut inner, statistics_schema())
+}
+
+// ============================================================================
 // SQLGetTypeInfo — static type table
 // ============================================================================
 
@@ -1961,15 +2210,7 @@ pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) ->
     let conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
 
-    if inner.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
-    }
-    if inner.state.as_ref().is_async_executing() {
-        return AsyncInProgressSnafu.fail();
-    }
-    if inner.state.as_ref().has_open_cursor() {
-        return CursorAlreadyOpenSnafu.fail();
-    }
+    validate_catalog_stmt_ready(&inner)?;
 
     match &conn.state {
         ConnectionState::Connected { .. } => {}

@@ -48,6 +48,10 @@ EXPORTS
     SQLSetStmtAttrW
     SQLTablesW
     SQLColumnsW
+    SQLSpecialColumnsW
+    SQLColumnPrivilegesW
+    SQLTablePrivilegesW
+    SQLStatisticsW
     ConfigDSN
     ConfigDSNW
     ConfigDriver

@@ -9,7 +9,6 @@
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -24,7 +23,6 @@
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set has correct number of columns",
                  "[odbc-api][catalog][statistics]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -37,7 +35,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set has correct n
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][statistics]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -67,7 +64,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Returns empty result set for table with primary key",
                  "[odbc-api][catalog][statistics]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Snowflake does not expose index/statistics metadata through ODBC.
   // SQLStatistics always returns an empty result set.
 
@@ -81,7 +77,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Returns empty result set
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns empty",
                  "[odbc-api][catalog][statistics]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_UNIQUE, SQL_ENSURE);
   REQUIRE(ret == SQL_SUCCESS);
@@ -96,7 +91,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Can call multiple times after close cursor",
                  "[odbc-api][catalog][statistics]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -112,7 +106,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Can call multiple times 
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: SQLRowCount returns -1", "[odbc-api][catalog][statistics]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -131,6 +124,24 @@ TEST_CASE("SQLStatistics: SQL_INVALID_HANDLE for null statement handle", "[odbc-
   const SQLRETURN ret =
       SQLStatistics(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0, sqlchar("T"), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_INVALID_HANDLE);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: HY009 - NULL TableName pointer",
+                 "[odbc-api][catalog][statistics][error]") {
+  // Given an active statement on the default DSN
+  // When SQLStatistics is called with a NULL TableName pointer (which is required)
+  const SQLRETURN ret =
+      SQLStatistics(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
+  NON_IODBC {
+    // And the DM null-checks TableName and reports HY009
+    //   (invalid use of null pointer)
+    REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And iODBC does not null-check the required arg, so the call reaches the
+    //   driver, which returns HY009 (SQL_ERROR)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: HY090 - Negative TableName length",
@@ -153,7 +164,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: HY090 - Negative TableNa
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: 24000 - Cursor already open",
                  "[odbc-api][catalog][statistics][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -165,8 +175,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: 24000 - Cursor already o
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLStatistics: Requires active connection", "[odbc-api][catalog][statistics][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
 
