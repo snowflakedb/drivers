@@ -82,6 +82,8 @@ rules:
     rule: |
       **OBJECTIVE**: Use Gherkin's built-in parameterization mechanism instead of manual repetition for test variations.
 
+      **SEVERITY NOTE**: This is a readability/maintainability suggestion. Set priority to Low unless the repetition spans 5+ nearly identical scenarios.
+
       **REQUIREMENT**: When the same test structure is repeated with different input values or type synonyms, use `Scenario Outline:` with an `Examples:` table instead of separate scenarios or repeated When/Then blocks. This dramatically improves readability, reduces duplication, and makes it trivial to add new test cases.
 
       ❌ **BAD:**
@@ -235,6 +237,8 @@ rules:
     rule: |
       **OBJECTIVE**: Ensure scenario names and step descriptions accurately describe the tested behavior, without typos or misleading wording.
 
+      **SEVERITY NOTE**: This is documentation accuracy feedback. Set priority to Low unless the mismatch could cause a developer to misunderstand test intent or skip a real regression.
+
       **REQUIREMENT**:
       1. Scenario names MUST accurately describe what the test validates.
       2. Step text and feature descriptions MUST be free of spelling errors.
@@ -322,4 +326,74 @@ rules:
         # - Upload with unsupported file format
         # - Download file from stage (GET operation)
         # - Overwrite existing file behavior
+      ```
+
+  - id: ud-layered-coverage-gap-analysis
+    rule: |
+      **OBJECTIVE** (alternative to `ud-document-missing-test-coverage-gaps`): Identify intentional e2e gaps with awareness of lower test layers.
+
+      **REQUIREMENT**: For each feature file, compare scenario coverage against:
+      1. Unit tests in the driver module (`*Test.java`, `*_test.rs`, `test_*.py`)
+      2. Integration tests in the same feature area
+
+      Flag only gaps where NO lower layer covers the specific error path or edge case. When unit tests cover the path:
+      - Use Low priority: "Unit test `{file}::{method}` covers this error path; add e2e scenario only if cross-driver or real-server validation is needed."
+      - Do not skip entirely if the feature file lacks a `# TODO:` documenting intentional e2e deferral.
+
+      **CONSOLIDATION**: One comment per feature file listing all uncovered gaps in a single `# TODO:` block suggestion.
+
+      **PRIORITY**: High for uncovered error paths with no lower-layer coverage; Low when unit tests exist.
+
+      ❌ **BAD** (happy-path only, no lower-layer coverage, no TODO — High priority):
+      ```gherkin
+      Feature: PUT/GET file operations
+
+        Scenario: should upload file to stage
+          Given Snowflake client is logged in
+          When File "data.csv" is uploaded to stage "@mystage"
+          Then Upload should succeed
+      ```
+
+      ❌ **BAD** (e2e gap flagged at High when unit tests already cover error paths — use Low or skip):
+      ```gherkin
+      Feature: auto commit behavior
+
+        Scenario: should enable auto commit
+          Given Snowflake client is logged in
+          When Auto commit is enabled
+          Then Auto commit should be on
+      ```
+      ```java
+      // SnowflakeConnectionImplTest.java already covers:
+      @Test
+      void shouldThrowWhenSetAutoCommitOnClosedConnection() {
+          assertThrows(SQLException.class, () -> connection.setAutoCommit(true));
+      }
+      ```
+
+      ✅ **GOOD** (document intentional e2e deferral when unit tests cover error paths):
+      ```gherkin
+      Feature: auto commit behavior
+
+        Scenario: should enable auto commit
+          Given Snowflake client is logged in
+          When Auto commit is enabled
+          Then Auto commit should be on
+
+        # TODO: Add e2e scenarios only if cross-driver validation needed:
+        # - setAutoCommit on closed connection (covered by SnowflakeConnectionImplTest)
+      ```
+
+      ✅ **GOOD** (genuine gap with no lower-layer coverage — flag once with consolidated TODO):
+      ```gherkin
+      Feature: PUT/GET file operations
+
+        Scenario: should upload file to stage
+          Given Snowflake client is logged in
+          When File "data.csv" is uploaded to stage "@mystage"
+          Then Upload should succeed
+
+        # TODO: Add scenarios for:
+        # - Upload with invalid stage name (error path)
+        # - Download file from stage (GET operation)
       ```
