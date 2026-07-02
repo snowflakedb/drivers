@@ -87,6 +87,67 @@ public interface DataConversionContext {
   }
 
   /**
+   * The default generic {@code TIMESTAMP_OUTPUT_FORMAT}, used as the fallback for the three
+   * per-type timestamp formatters. Mirrors snowflake-jdbc's {@code ResultUtil} default.
+   */
+  String DEFAULT_TIMESTAMP_OUTPUT_FORMAT = "DY, DD MON YYYY HH24:MI:SS TZHTZM";
+
+  /**
+   * Formatter for {@code TIMESTAMP_NTZ} {@code getString}, built from {@code
+   * TIMESTAMP_NTZ_OUTPUT_FORMAT} with {@code TIMESTAMP_OUTPUT_FORMAT} as the fallback. Consumed by
+   * the NTZ converter (TODO P1). Default mirrors snowflake-jdbc's empty-per-type →
+   * generic-fallback.
+   */
+  default SnowflakeDateTimeFormat getTimestampNTZFormatter() {
+    return SnowflakeDateTimeFormat.fromSqlFormat(DEFAULT_TIMESTAMP_OUTPUT_FORMAT);
+  }
+
+  /**
+   * Formatter for {@code TIMESTAMP_LTZ} {@code getString}, built from {@code
+   * TIMESTAMP_LTZ_OUTPUT_FORMAT} with {@code TIMESTAMP_OUTPUT_FORMAT} as the fallback. Consumed by
+   * the LTZ converter (TODO P2).
+   */
+  default SnowflakeDateTimeFormat getTimestampLTZFormatter() {
+    return SnowflakeDateTimeFormat.fromSqlFormat(DEFAULT_TIMESTAMP_OUTPUT_FORMAT);
+  }
+
+  /**
+   * Formatter for {@code TIMESTAMP_TZ} {@code getString}, built from {@code
+   * TIMESTAMP_TZ_OUTPUT_FORMAT} with {@code TIMESTAMP_OUTPUT_FORMAT} as the fallback. Consumed by
+   * the TZ converter (TODO P3).
+   */
+  default SnowflakeDateTimeFormat getTimestampTZFormatter() {
+    return SnowflakeDateTimeFormat.fromSqlFormat(DEFAULT_TIMESTAMP_OUTPUT_FORMAT);
+  }
+
+  /**
+   * Whether {@code TIMESTAMP_NTZ} values keep their UTC wall-clock instead of being re-anchored to
+   * the client/session timezone. Mirrors the client-only {@code JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC}
+   * property (default false in snowflake-jdbc). Consumed by the NTZ read path (TODO P1).
+   */
+  default boolean isTreatNTZAsUTC() {
+    return false;
+  }
+
+  /**
+   * Whether {@code TIMESTAMP_NTZ} values are re-anchored from UTC into the caller's timezone.
+   * Mirrors the {@code CLIENT_HONOR_CLIENT_TZ_FOR_TIMESTAMP_NTZ} session parameter (default true in
+   * snowflake-jdbc). Consumed by the NTZ read path (TODO P1).
+   */
+  default boolean isHonorClientTZForTimestampNTZ() {
+    return true;
+  }
+
+  /**
+   * The concrete timestamp type a bare {@code setTimestamp} binds as. Mirrors the {@code
+   * CLIENT_TIMESTAMP_TYPE_MAPPING} session parameter (default {@code TIMESTAMP_LTZ} in
+   * snowflake-jdbc). Consumed by the write/bind path (TODO P4).
+   */
+  default String getTimestampMappedType() {
+    return "TIMESTAMP_LTZ";
+  }
+
+  /**
    * Converts a bound {@link Time} to nanoseconds-since-midnight for the server, matching
    * snowflake-jdbc exactly. The bind-side mirror of {@code TimeConverter}'s nanos-to-{@link Time}
    * materialization, governed by {@link #isTreatTimeAsWallClockTime()}.

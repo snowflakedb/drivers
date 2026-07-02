@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.core.arrow;
 
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.Calendar;
 import java.util.TimeZone;
@@ -74,8 +75,7 @@ public class ArrowDateUtil {
    * Calendar.getInstance(oldTZ)} in place of the reference's {@code CalendarCache} (a perf-only
    * optimization absent from this module).
    */
-  private static long moveToTimeZoneOffset(
-      long milliSecsSinceEpoch, TimeZone oldTZ, TimeZone newTZ) {
+  static long moveToTimeZoneOffset(long milliSecsSinceEpoch, TimeZone oldTZ, TimeZone newTZ) {
     if (oldTZ.hasSameRules(newTZ)) {
       // same time zone
       return 0;
@@ -153,6 +153,24 @@ public class ArrowDateUtil {
       return new Date(date.getTime() + milliToAdjust);
     } else {
       return date;
+    }
+  }
+
+  /**
+   * Adjust a timestamp for the Julian→Gregorian shift (dates before 1582-10-05), preserving
+   * sub-second nanos. Mirrors snowflake-jdbc's {@code ResultUtil.adjustTimestamp}.
+   *
+   * @param timestamp timestamp to adjust
+   * @return the adjusted timestamp (or the input when no adjustment is needed)
+   */
+  public static Timestamp adjustTimestamp(Timestamp timestamp) {
+    long milliToAdjust = msDiffJulianToGregorian(timestamp);
+    if (milliToAdjust != 0) {
+      Timestamp newTimestamp = new Timestamp(timestamp.getTime() + milliToAdjust);
+      newTimestamp.setNanos(timestamp.getNanos());
+      return newTimestamp;
+    } else {
+      return timestamp;
     }
   }
 
