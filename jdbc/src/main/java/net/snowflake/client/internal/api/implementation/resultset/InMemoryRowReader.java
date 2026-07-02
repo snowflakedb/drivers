@@ -284,6 +284,11 @@ class InMemoryRowReader implements RowReader {
     throw noConversion("TIMESTAMP", value);
   }
 
+  @Override
+  public Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException {
+    return getTimestamp(columnIndex);
+  }
+
   private Object cell(int columnIndex) throws SQLException {
     if (currentRow < 0 || currentRow >= rows.length) {
       throw new SQLException(NO_CURRENT_ROW);

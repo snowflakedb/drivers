@@ -266,6 +266,13 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
+  public Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException {
+    // Projected rows hold already-materialized java.sql.Timestamp values; the timezone was applied
+    // (or not) by the delegate when the value was produced, so tz is not re-applied here.
+    return getTimestamp(columnIndex);
+  }
+
+  @Override
   public Object getObject(int columnIndex) throws SQLException {
     return getObjectInternal(columnIndex);
   }

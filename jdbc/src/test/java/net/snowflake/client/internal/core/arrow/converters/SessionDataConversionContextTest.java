@@ -42,7 +42,8 @@ public class SessionDataConversionContextTest {
     when(api.connectionGetAllParameters(any()))
         .thenReturn(
             ConnectionGetAllParametersResponse.newBuilder().putAllParameters(params).build());
-    return SessionDataConversionContext.fromConnection(api, ConnectionHandle.getDefaultInstance());
+    return SessionDataConversionContext.fromConnection(
+        api, ConnectionHandle.getDefaultInstance(), null);
   }
 
   @Test
