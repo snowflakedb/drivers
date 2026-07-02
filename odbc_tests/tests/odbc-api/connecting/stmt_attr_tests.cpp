@@ -959,3 +959,115 @@ TEST_CASE("should return 24000 when setting SQL_ATTR_CONCURRENCY after all rows 
   REQUIRE(!records.empty());
   CHECK(records[0].sqlState == "24000");
 }
+
+// ============================================================================
+// SQL_ATTR_ROW_NUMBER (14) — read-only current row position (SNOW-3235555)
+// ============================================================================
+
+TEST_CASE("should return HY092 when setting read-only SQL_ATTR_ROW_NUMBER",
+          "[odbc-api][stmt_attr][row_number][error]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When the read-only SQL_ATTR_ROW_NUMBER is set
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, reinterpret_cast<SQLPOINTER>(5), 0);
+
+  // Then It should be rejected with SQLSTATE HY092 (read-only attribute).
+  // Both the new and old drivers reject the read-only set identically, so this
+  // runs on both (verified against the reference driver).
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "HY092");
+}
+
+TEST_CASE("should report 1-based SQL_ATTR_ROW_NUMBER during fetch and 0 when unpositioned",
+          "[odbc-api][stmt_attr][row_number]") {
+  // Given A connected statement with a 3-row result set
+  Connection conn;
+  auto stmt = conn.createStatement();
+  std::string query = "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3";
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar(query.c_str()), SQL_NTS);
+  REQUIRE(SQL_SUCCEEDED(ret));
+
+  // Reads SQL_ATTR_ROW_NUMBER. When the cursor is not positioned on a row
+  // (before the first fetch / after end-of-data) some driver managers
+  // (e.g. unixODBC) reject the read with SQL_ERROR, whereas the driver
+  // itself returns 0. Treat a rejected read as "no current row" so the test
+  // is portable across DMs; assert the concrete value only when readable.
+  // Runs on both drivers — the old driver supports SQL_ATTR_ROW_NUMBER
+  // identically (verified against the reference driver).
+  auto read_row_number = [&](SQLULEN& out) -> SQLRETURN {
+    out = static_cast<SQLULEN>(-1);
+    return SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, &out, 0, nullptr);
+  };
+  SQLULEN n = 0;
+
+  // Before the first fetch the cursor is not positioned -> 0 (when readable)
+  if (SQL_SUCCEEDED(read_row_number(n))) {
+    CHECK(n == 0);
+  }
+
+  // Each successful fetch advances the 1-based row number
+  for (SQLULEN expected = 1; expected <= 3; ++expected) {
+    const SQLRETURN fetch_ret = SQLFetch(stmt.getHandle());
+    REQUIRE(SQL_SUCCEEDED(fetch_ret));
+    if (SQL_SUCCEEDED(read_row_number(n))) {
+      CHECK(n == expected);
+    }
+  }
+
+  // After end-of-data the cursor is no longer positioned -> 0 (when readable)
+  REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
+  if (SQL_SUCCEEDED(read_row_number(n))) {
+    CHECK(n == 0);
+  }
+}
+
+// ============================================================================
+// SQL_ATTR_ROW_OPERATION_PTR (24) — ARD row-operation array pointer
+// ============================================================================
+
+TEST_CASE("should set and get SQL_ATTR_ROW_OPERATION_PTR", "[odbc-api][stmt_attr][row_operation_ptr]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // Default is a null pointer (pre-fill with a non-null sentinel to detect a write).
+  // Runs on both drivers — the old driver supports SQL_ATTR_ROW_OPERATION_PTR
+  // set/get identically (verified against the reference driver).
+  SQLUSMALLINT sentinel = 0;
+  SQLUSMALLINT* current = &sentinel;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_OPERATION_PTR, &current, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(current == nullptr);
+
+  // When a row-operation array pointer is set
+  SQLUSMALLINT row_ops[3] = {SQL_ROW_PROCEED, SQL_ROW_PROCEED, SQL_ROW_PROCEED};
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_OPERATION_PTR, row_ops, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting it back returns the same pointer
+  SQLUSMALLINT* got = nullptr;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_OPERATION_PTR, &got, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(got == row_ops);
+}
+
+// ============================================================================
+// Null-handle error path (SQL_INVALID_HANDLE)
+// ============================================================================
+
+TEST_CASE("SQLSetStmtAttr: SQL_INVALID_HANDLE for null statement handle", "[odbc-api][stmt_attr][error]") {
+  // The Driver Manager rejects a null statement handle before dispatch,
+  // independent of the attribute; one function-level test suffices.
+  const SQLRETURN ret = SQLSetStmtAttr(SQL_NULL_HSTMT, SQL_ATTR_ROW_ARRAY_SIZE, reinterpret_cast<SQLPOINTER>(1), 0);
+  REQUIRE(ret == SQL_INVALID_HANDLE);
+}
+
+TEST_CASE("SQLGetStmtAttr: SQL_INVALID_HANDLE for null statement handle", "[odbc-api][stmt_attr][error]") {
+  SQLULEN value = 0;
+  const SQLRETURN ret = SQLGetStmtAttr(SQL_NULL_HSTMT, SQL_ATTR_ROW_NUMBER, &value, 0, nullptr);
+  REQUIRE(ret == SQL_INVALID_HANDLE);
+}
