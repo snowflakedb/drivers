@@ -498,7 +498,7 @@ TEST_CASE("SQLExecute: SQL_INVALID_HANDLE for null statement handle",
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 when statement not prepared",
                  "[odbc-api][execute][submitting_request][error]") {
   SQLRETURN ret = SQLExecute(stmt_handle());
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM tracks per-statement prepare state and catches SQLExecute on
     //   an unprepared statement as ODBC 2.x "S1010" function sequence error
     //   before the old driver gets a chance to map it; the new driver

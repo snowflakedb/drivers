@@ -557,7 +557,7 @@ TEST_CASE("SQLPrepare with zero TextLength returns HY090.", "[query][prepare][er
   //   iODBC + old driver -> HY000, because iODBC's DM reshapes the zero-length
   //   string before forwarding to the old driver.
   REQUIRE(ret == SQL_ERROR);
-  OLD_IODBC_ONLY("BD#60") { CHECK(get_sqlstate(stmt) == "HY000"); }
+  OLD_IODBC_ONLY("BD#70") { CHECK(get_sqlstate(stmt) == "HY000"); }
   else {
     CHECK(get_sqlstate(stmt) == "HY090");
   }
@@ -578,7 +578,7 @@ TEST_CASE("SQLPrepare with empty SQL string returns HY090.", "[query][prepare][e
   REQUIRE(ret == SQL_ERROR);
   // TODO: Check why this is different on Windows
   UNIX_ONLY {
-    OLD_IODBC_ONLY("BD#60") {
+    OLD_IODBC_ONLY("BD#70") {
       // iODBC's DM reshapes the empty SQL string before forwarding to the old
       //   driver; surfaces HY000 instead of HY090.
       CHECK(get_sqlstate(stmt) == "HY000");

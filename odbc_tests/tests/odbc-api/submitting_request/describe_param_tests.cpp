@@ -215,7 +215,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNu
   SQLSMALLINT decDigits = 0;
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeParam(stmt_handle(), 0, &dataType, &paramSize, &decDigits, &nullable);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM validates ParameterNumber == 0 itself and returns ODBC 2.x
     //   "S1093 Invalid parameter number" before the call reaches the old
     //   driver; the new driver maps it to the spec-mandated "07009" inside.
@@ -263,7 +263,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 for statement n
   SQLSMALLINT decDigits = 0;
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeParam(fresh_stmt, 1, &dataType, &paramSize, &decDigits, &nullable);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM catches SQLDescribeParam on an unprepared statement as a
     //   function-sequence error and surfaces ODBC 2.x "S1010" before the old
     //   driver sees the call; the new driver maps it to "HY010" itself.

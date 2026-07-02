@@ -189,7 +189,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative TextLen
   SQLCHAR out[256] = {};
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), -5, out, sizeof(out), &outLen);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM validates TextLength1 itself and surfaces the ODBC 2.x
     //   alias "S1090" before forwarding to the old driver; the new driver
     //   maps the same condition to the ODBC 3.x "HY090".
@@ -210,7 +210,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative BufferL
   SQLCHAR out[256] = {};
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), SQL_NTS, out, -1, &outLen);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver doesn't pre-validate the negative output BufferLength
     //   and reaches the SimbaWStringHelper, which raises a vendor "HY000
     //   [Snowflake][Support] (30020) Invalid argument" diagnostic; the new

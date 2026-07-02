@@ -794,7 +794,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrup
   // records of the canceled function, and does NOT post its own.
   // The HY008 from the canceled SQLExecDirect should be the only record.
   auto records = get_diag_rec(SQL_HANDLE_STMT, stmt);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver under iODBC ends up with two diagnostic records: the
     //   first is iODBC's own "S1010" (function sequence error) posted when
     //   the cross-thread cancel collided with the in-flight SQLExecDirect,
@@ -804,7 +804,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrup
     REQUIRE(records[0].sqlState == "S1010");
     REQUIRE(records[1].sqlState == "HY008");
   }
-  NEW_IODBC_ONLY("BD#60") {
+  NEW_IODBC_ONLY("BD#70") {
     REQUIRE(records.size() == 1);
     REQUIRE(records[0].sqlState == "HY008");
   }

@@ -162,7 +162,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: HY010 when called before 
                  "[odbc-api][numparams][submitting_request][error]") {
   SQLSMALLINT count = -1;
   SQLRETURN ret = SQLNumParams(stmt_handle(), &count);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM intercepts SQLNumParams on an unprepared statement and
     //   returns ODBC 2.x "S1010" before the old driver sees the call; the new
     //   driver short-circuits with the spec-mandated "HY010" itself.

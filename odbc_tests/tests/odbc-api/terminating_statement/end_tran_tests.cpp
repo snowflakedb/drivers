@@ -240,7 +240,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit closes open cursors"
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM catches the post-commit SQLFetch as a function-sequence
     //   error and surfaces it as the ODBC 2.x "S1010" before the call reaches
     //   the driver; the old driver doesn't synthesise ODBC 3.x "HY010" ahead
@@ -272,7 +272,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback closes open cursor
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC DM catches the post-rollback SQLFetch as a function-sequence
     //   error (see "Commit closes open cursors" above for details).
     REQUIRE_EXPECTED_ERROR(ret, "S1010", stmt_handle(), SQL_HANDLE_STMT);
@@ -488,7 +488,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY012 - Invalid completion 
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), 999);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver under iODBC rejects the invalid completion type with
     //   SQL_ERROR but does not post any diagnostic record (the diag-record
     //   allocation is gated on the iODBC dispatch path's own validation
@@ -523,7 +523,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY092 - Invalid handle type
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_STMT, stmt_handle(), SQL_COMMIT);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM validates the HandleType enum before dispatching and rejects
     //   SQL_HANDLE_STMT for SQLEndTran with SQL_INVALID_HANDLE (no diagnostic
     //   records); the new driver does the HY092 mapping itself.
@@ -554,7 +554,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY010 - Called during SQL_N
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM tracks per-statement SQL_NEED_DATA across the connection and
     //   surfaces the SQLEndTran-during-DAE as ODBC 2.x "S1010" function
     //   sequence error before the old driver sees it; the new driver maps the
