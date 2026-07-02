@@ -112,7 +112,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative StringLength",
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  OLD_IODBC_ONLY("BD#60") { REQUIRE(records[0].sqlState == "S1090"); }
+  OLD_IODBC_ONLY("BD#70") { REQUIRE(records[0].sqlState == "S1090"); }
   else {
     REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
   }
@@ -136,7 +136,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative BufferLength",
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  OLD_IODBC_ONLY("BD#60") { REQUIRE(records[0].sqlState == "S1090"); }
+  OLD_IODBC_ONLY("BD#70") { REQUIRE(records[0].sqlState == "S1090"); }
   else {
     REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
   }

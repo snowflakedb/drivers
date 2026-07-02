@@ -237,7 +237,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for empty SQL string"
   }
   UNIX_ONLY {
     // Note: Reference driver treats empty string as invalid buffer length (HY090)
-    OLD_IODBC_ONLY("BD#60") {
+    OLD_IODBC_ONLY("BD#70") {
       // iODBC's DM mangles negative-length / empty-string parameters before
       //   forwarding them to the old driver, which then surfaces HY000
       //   instead of the spec-mandated HY090. unixODBC passes the arg through
@@ -276,7 +276,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for TextLength of zer
 
   // HY090: Invalid string or buffer length
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), 0);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM mangles negative-length / empty-string parameters before
     //   forwarding them to the old driver, which then surfaces HY000
     //   instead of the spec-mandated HY090. unixODBC passes the arg through

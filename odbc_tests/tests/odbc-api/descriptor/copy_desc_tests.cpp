@@ -364,7 +364,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLCopyDesc(ard, explicit_desc);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver does not track per-statement SQL_NEED_DATA state on
     //   descriptor calls and allows SQLCopyDesc to succeed mid-DAE; the new
     //   driver short-circuits with "HY010" and the test expects that on
