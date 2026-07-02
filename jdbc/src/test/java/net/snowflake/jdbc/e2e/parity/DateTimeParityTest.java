@@ -137,7 +137,6 @@ public class DateTimeParityTest {
     runReadParity(SfType.TIMESTAMP_NTZ, tz, fmt, profile);
   }
 
-  @Disabled("TIMESTAMP_LTZ read parity not yet green; re-enable once the gaps are closed.")
   @ParameterizedTest(name = "READ TIMESTAMP_LTZ tz={0} fmt={1} profile={2}")
   @MethodSource("timestampLtzReadCells")
   void readTimestampLtzParity(String tz, String fmt, Profile profile) throws Exception {
