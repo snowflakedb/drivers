@@ -3,6 +3,7 @@ package net.snowflake.client.api.metadata;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -1145,8 +1146,20 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnKnownTypesForTableTypes() {}
+  void shouldReturnKnownTypesForTableTypes() throws Exception {
+    try (ResultSet rs = metaData().getTableTypes()) {
+      ResultSetMetaData rsMeta = rs.getMetaData();
+      assertEquals(1, rsMeta.getColumnCount());
+      assertEquals("TABLE_TYPE", rsMeta.getColumnName(1));
+
+      Set<String> types = new HashSet<>();
+      while (rs.next()) {
+        types.add(rs.getString("TABLE_TYPE"));
+      }
+      assertTrue(types.contains("TABLE"));
+      assertTrue(types.contains("VIEW"));
+    }
+  }
 
   @Test
   void shouldReturnTableColumnsForColumns() throws Exception {
@@ -1260,8 +1273,200 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
   void shouldReturnRelationshipsForCrossReference() {}
 
   @Test
-  @Disabled("requires query against Snowflake; happy-path test pending")
-  void shouldReturnSupportedTypesForTypeInfo() {}
+  void shouldReturnSupportedTypesForTypeInfo() throws Exception {
+    try (ResultSet rs = metaData().getTypeInfo()) {
+      ResultSetMetaData rsMeta = rs.getMetaData();
+      assertEquals(18, rsMeta.getColumnCount());
+      assertEquals("TYPE_NAME", rsMeta.getColumnName(1));
+      assertEquals("DATA_TYPE", rsMeta.getColumnName(2));
+      assertEquals("PRECISION", rsMeta.getColumnName(3));
+      assertEquals("LITERAL_PREFIX", rsMeta.getColumnName(4));
+      assertEquals("LITERAL_SUFFIX", rsMeta.getColumnName(5));
+      assertEquals("CREATE_PARAMS", rsMeta.getColumnName(6));
+      assertEquals("NULLABLE", rsMeta.getColumnName(7));
+      assertEquals("CASE_SENSITIVE", rsMeta.getColumnName(8));
+      assertEquals("SEARCHABLE", rsMeta.getColumnName(9));
+      assertEquals("UNSIGNED_ATTRIBUTE", rsMeta.getColumnName(10));
+      assertEquals("FIXED_PREC_SCALE", rsMeta.getColumnName(11));
+      assertEquals("AUTO_INCREMENT", rsMeta.getColumnName(12));
+      assertEquals("LOCAL_TYPE_NAME", rsMeta.getColumnName(13));
+      assertEquals("MINIMUM_SCALE", rsMeta.getColumnName(14));
+      assertEquals("MAXIMUM_SCALE", rsMeta.getColumnName(15));
+      assertEquals("SQL_DATA_TYPE", rsMeta.getColumnName(16));
+      assertEquals("SQL_DATETIME_SUB", rsMeta.getColumnName(17));
+      assertEquals("NUM_PREC_RADIX", rsMeta.getColumnName(18));
+
+      // NUMBER
+      assertTrue(rs.next());
+      assertEquals("NUMBER", rs.getString("TYPE_NAME"));
+      assertEquals(Types.DECIMAL, rs.getInt("DATA_TYPE"));
+      assertEquals(38, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(0, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(37, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // INTEGER
+      assertTrue(rs.next());
+      assertEquals("INTEGER", rs.getString("TYPE_NAME"));
+      assertEquals(Types.INTEGER, rs.getInt("DATA_TYPE"));
+      assertEquals(38, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(0, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(0, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // DOUBLE
+      assertTrue(rs.next());
+      assertEquals("DOUBLE", rs.getString("TYPE_NAME"));
+      assertEquals(Types.DOUBLE, rs.getInt("DATA_TYPE"));
+      assertEquals(38, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(0, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(37, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // VARCHAR
+      assertTrue(rs.next());
+      assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
+      assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
+      assertEquals(-1, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // DATE
+      assertTrue(rs.next());
+      assertEquals("DATE", rs.getString("TYPE_NAME"));
+      assertEquals(Types.DATE, rs.getInt("DATA_TYPE"));
+      assertEquals(-1, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // TIME
+      assertTrue(rs.next());
+      assertEquals("TIME", rs.getString("TYPE_NAME"));
+      assertEquals(Types.TIME, rs.getInt("DATA_TYPE"));
+      assertEquals(-1, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // TIMESTAMP
+      assertTrue(rs.next());
+      assertEquals("TIMESTAMP", rs.getString("TYPE_NAME"));
+      assertEquals(Types.TIMESTAMP, rs.getInt("DATA_TYPE"));
+      assertEquals(-1, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      // BOOLEAN
+      assertTrue(rs.next());
+      assertEquals("BOOLEAN", rs.getString("TYPE_NAME"));
+      assertEquals(Types.BOOLEAN, rs.getInt("DATA_TYPE"));
+      assertEquals(-1, rs.getInt("PRECISION"));
+      assertNull(rs.getString("LITERAL_PREFIX"));
+      assertNull(rs.getString("LITERAL_SUFFIX"));
+      assertNull(rs.getString("CREATE_PARAMS"));
+      assertEquals(DatabaseMetaData.typeNullable, rs.getShort("NULLABLE"));
+      assertFalse(rs.getBoolean("CASE_SENSITIVE"));
+      assertEquals(DatabaseMetaData.typeSearchable, rs.getShort("SEARCHABLE"));
+      assertFalse(rs.getBoolean("UNSIGNED_ATTRIBUTE"));
+      assertTrue(rs.getBoolean("FIXED_PREC_SCALE"));
+      assertTrue(rs.getBoolean("AUTO_INCREMENT"));
+      assertNull(rs.getString("LOCAL_TYPE_NAME"));
+      assertEquals(-1, rs.getShort("MINIMUM_SCALE"));
+      assertEquals(-1, rs.getShort("MAXIMUM_SCALE"));
+      assertEquals(-1, rs.getInt("SQL_DATA_TYPE"));
+      assertEquals(-1, rs.getInt("SQL_DATETIME_SUB"));
+      assertEquals(-1, rs.getInt("NUM_PREC_RADIX"));
+
+      assertFalse(rs.next());
+    }
+  }
 
   @Test
   @Disabled("requires query against Snowflake; happy-path test pending")

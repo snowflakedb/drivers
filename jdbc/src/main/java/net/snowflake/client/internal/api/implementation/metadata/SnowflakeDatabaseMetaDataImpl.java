@@ -663,7 +663,7 @@ public class SnowflakeDatabaseMetaDataImpl
   @Override
   public ResultSet getTableTypes() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getTableTypes();
   }
 
   @Override
@@ -732,7 +732,8 @@ public class SnowflakeDatabaseMetaDataImpl
 
   @Override
   public ResultSet getTypeInfo() throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getTypeInfo();
   }
 
   @Override

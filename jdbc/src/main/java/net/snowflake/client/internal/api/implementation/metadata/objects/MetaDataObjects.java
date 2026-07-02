@@ -5,6 +5,7 @@ import static java.sql.ResultSetMetaData.columnNullable;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -325,6 +326,16 @@ public class MetaDataObjects {
     return createResultSet(sqlQuery, rowConverter, resultFormat);
   }
 
+  public ResultSet getTableTypes() throws SQLException {
+    Object[][] rows =
+        SUPPORTED_TABLE_TYPES.stream().map(t -> new Object[] {t}).toArray(Object[][]::new);
+    return createResultSet(rows, MetaDataResultSetFormat.GET_TABLE_TYPES);
+  }
+
+  public ResultSet getTypeInfo() throws SQLException {
+    return createResultSet(TYPE_INFO, MetaDataResultSetFormat.GET_TYPE_INFO);
+  }
+
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
   static Integer getColumnSize(SnowflakeColumnMetadata columnMetadata) {
     switch (columnMetadata.getType()) {
@@ -390,6 +401,29 @@ public class MetaDataObjects {
     }
   }
 
+  private ResultSet createResultSet(Object[][] rows, MetaDataResultSetFormat format)
+      throws SQLException {
+    SnowflakeStatementImpl statement =
+        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+    try {
+      return ResultSetFactory.createFromRows(statement, format.metaData(null), rows, true);
+    } catch (SQLException | RuntimeException e) {
+      statement.close();
+      throw e;
+    }
+  }
+
+  private ResultSet emptyResultSet(MetaDataResultSetFormat format) throws SQLException {
+    SnowflakeStatementImpl statement =
+        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+    try {
+      return ResultSetFactory.createEmpty(statement, format.metaData(null), true);
+    } catch (SQLException | RuntimeException e) {
+      statement.close();
+      throw e;
+    }
+  }
+
   private static boolean isMissingMetadataObject(Throwable error) {
     for (SQLException sqlException = findSQLException(error);
         sqlException != null;
@@ -417,17 +451,6 @@ public class MetaDataObjects {
     return null;
   }
 
-  private ResultSet emptyResultSet(MetaDataResultSetFormat format) throws SQLException {
-    SnowflakeStatementImpl statement =
-        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
-    try {
-      return ResultSetFactory.createEmpty(statement, format.metaData(null), true);
-    } catch (SQLException | RuntimeException e) {
-      statement.close();
-      throw e;
-    }
-  }
-
   private static List<String> validateTableTypes(String[] types) {
     List<String> inputValidTableTypes = new ArrayList<>();
     if (types != null) {
@@ -441,4 +464,168 @@ public class MetaDataObjects {
     }
     return inputValidTableTypes;
   }
+
+  private final Object[][] TYPE_INFO =
+      new Object[][] {
+        {
+          "NUMBER",
+          Types.DECIMAL,
+          38,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          0,
+          37,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "INTEGER",
+          Types.INTEGER,
+          38,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          0,
+          0,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "DOUBLE",
+          Types.DOUBLE,
+          38,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          0,
+          37,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "VARCHAR",
+          Types.VARCHAR,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "DATE",
+          Types.DATE,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "TIME",
+          Types.TIME,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "TIMESTAMP",
+          Types.TIMESTAMP,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "BOOLEAN",
+          Types.BOOLEAN,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        }
+      };
 }
