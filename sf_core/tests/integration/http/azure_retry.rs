@@ -28,6 +28,7 @@ fn azure_stage(mock_uri: &str) -> StageInfo {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
+        tls_config: sf_core::tls::config::TlsConfig::default(),
         storage_account: Some("test".to_string()),
     }
 }
@@ -264,6 +265,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
+        tls_config: sf_core::tls::config::TlsConfig::default(),
         storage_account: Some("test".to_string()),
     };
 

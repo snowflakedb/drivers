@@ -1,6 +1,7 @@
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
+use crate::tls::config::TlsConfig;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use snafu::{Location, Snafu};
@@ -263,6 +264,12 @@ pub struct StageInfo {
     pub use_s3_regional_url: bool,
     /// Azure storage account name (required for Azure Blob Storage).
     pub storage_account: Option<String>,
+    /// TLS configuration for storage HTTP clients (S3/GCS/Azure). Carried on
+    /// `StageInfo` so every `create_*_client` site can honour CRL, custom root
+    /// store, and the protocol-version window without threading them through
+    /// the transfer call chain. Set from the connection's `TlsConfig` in
+    /// `perform_put_get_transfer`; defaults to `TlsConfig::default()` elsewhere.
+    pub tls_config: TlsConfig,
 }
 
 impl StageInfo {

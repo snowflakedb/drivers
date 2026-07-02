@@ -1238,6 +1238,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             use_regional_url,
             use_s3_regional_url,
             storage_account,
+            tls_config: crate::tls::config::TlsConfig::default(),
         })
     }
 }

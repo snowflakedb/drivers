@@ -30,7 +30,7 @@ pub async fn upload_to_azure_or_skip(
     skip_upload_on_content_match: bool,
     policy: &RetryPolicy,
 ) -> Result<UploadStatus, AzureUploadError> {
-    let client = create_azure_client()?;
+    let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
 
@@ -129,7 +129,7 @@ pub async fn download_from_azure(
     filename: &str,
     policy: &RetryPolicy,
 ) -> Result<DownloadResponse, AzureDownloadError> {
-    let client = create_azure_client()?;
+    let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
     let response = azure_request_with_retry(
@@ -479,13 +479,23 @@ fn map_http_error(e: HttpError) -> AzureRequestError {
 
 // --- Helpers ---
 
-fn create_azure_client() -> Result<reqwest::Client, AzureRequestError> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| AzureRequestError::Http {
+fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureRequestError> {
+    let builder = crate::tls::client::configure_tls_builder(
+        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+        &stage_info.tls_config,
+    )
+    .map_err(|e| {
+        HttpSnafu {
             detail: e.to_string(),
-        })
+        }
+        .build()
+    })?;
+    builder.build().map_err(|e| {
+        HttpSnafu {
+            detail: e.to_string(),
+        }
+        .build()
+    })
 }
 
 /// Constructs the Azure Blob Storage URL and extracts the SAS token from stage info.
@@ -604,7 +614,7 @@ pub async fn download_from_azure_streaming(
     filename: &str,
     policy: &RetryPolicy,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
-    let client = create_azure_client()?;
+    let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
     let response = azure_request_with_retry(
@@ -861,6 +871,7 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: overrides
                 .storage_account
                 .or(Some("mystorageaccount".to_string())),
@@ -1159,6 +1170,7 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: Some("test".to_string()),
         }
     }

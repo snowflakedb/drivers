@@ -227,6 +227,11 @@ async fn upload_blob(
     // expiry window (typically ≥15 minutes). A presigned-URL rotation mid-upload
     // is therefore not a realistic concern, unlike the large-file PUT/GET path
     // where files can run for minutes.
+    //
+    // Note: this internal path builds `StageInfo` outside
+    // `perform_put_get_transfer`, so the storage client uses the default TLS
+    // version window rather than the connection's narrowed one (see
+    // adr/tls_version_enforcement_implementation_notes.md, "Known gaps").
     upload_in_memory_file(csv_bytes.to_vec(), single, &mut None)
         .await
         .context(UploadFailedSnafu)?;

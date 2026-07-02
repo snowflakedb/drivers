@@ -641,13 +641,17 @@ async fn create_s3_client(
     );
 
     let policy = s3_retry_policy(max_attempts);
-    let config = aws_config::defaults(BehaviorVersion::latest())
+    let mut loader = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
         .retry_config(to_aws_retry_config(&policy))
-        .timeout_config(to_aws_timeout_config(&policy))
-        .load()
-        .await;
+        .timeout_config(to_aws_timeout_config(&policy));
+    // Always inject our hyper/rustls client so S3 connections honour the
+    // connection's full TLS policy (version window, CRL, custom root store).
+    loader = loader.http_client(crate::tls::aws_http_client::tls_configured_aws_http_client(
+        &stage_info.tls_config,
+    ));
+    let config = loader.load().await;
 
     let accelerate = resolve_acceleration(stage_info, &config).await;
     let endpoint_url = resolve_s3_endpoint(stage_info, accelerate);
@@ -1020,6 +1024,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url,
             storage_account: None,
+            tls_config: crate::tls::config::TlsConfig::default(),
         }
     }
 
@@ -1366,6 +1371,7 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: None,
         };
 
@@ -1466,6 +1472,7 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: None,
         };
 
