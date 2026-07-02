@@ -22,6 +22,24 @@ public class SnowflakeUtil {
   public static final String BYTE_STR = "byte";
   public static final String BYTES_STR = "byte array";
 
+  /**
+   * Convert milliseconds since epoch to whole seconds, rounding toward negative infinity for
+   * pre-epoch values. Mirrors snowflake-jdbc's {@code SnowflakeUtil.getSecondsFromMillis}: negative
+   * values must round to the next more-negative second (so the leftover fraction stays positive),
+   * while positive values truncate. Used by the timezone-carrying timestamp/time wrappers when
+   * rebuilding a {@code LocalDateTime} from epoch millis + nanos.
+   */
+  public static long getSecondsFromMillis(long millis) {
+    long returnVal;
+    if (millis < 0) {
+      returnVal = (long) Math.ceil((double) Math.abs(millis) / 1000);
+      returnVal *= -1;
+    } else {
+      returnVal = millis / 1000;
+    }
+    return returnVal;
+  }
+
   // ported from snowflake-jdbc
   public static int toSqlType(SnowflakeType sfType) {
     if (sfType == null) {
