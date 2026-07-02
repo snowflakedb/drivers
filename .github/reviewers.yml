@@ -94,8 +94,11 @@ reviewers:
 
 rules:
   all:
-    - dariusz-aniszewski_snow
     - bartosz-oler_snow
+  dotnet:
+    - michal-cepiga_snow
+    - piotr-bulawa_snow
+    - michal-hofman_snow
   jdbc:
     - antoni-solarski_snow
     - dawid-heyman_snow
@@ -104,8 +107,8 @@ rules:
     - ruslan-savenok_snow
     - rafal-kowalski_snow
     - piotr-bulawa_snow
-  odbc:
     - michal-cepiga_snow
+  odbc:
     - michal-hofman_snow
     - jakub-szczerbinski_snow
     - devansh-das_snow
