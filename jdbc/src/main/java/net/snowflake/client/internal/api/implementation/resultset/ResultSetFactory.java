@@ -89,6 +89,19 @@ public class ResultSetFactory {
     return new SnowflakeResultSetImpl(statement, queryID, convertingReader, metaData, true);
   }
 
+  /** Creates a result set backed by pre-built in-memory rows. */
+  public static InternalResultSet createFromRows(
+      SnowflakeStatementImpl statement,
+      SnowflakeResultSetMetaDataImpl metaData,
+      Object[][] rows,
+      boolean ownsStatement)
+      throws SQLException {
+    String queryId = metaData.getQueryID();
+    String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
+    InMemoryRowReader rowReader = new InMemoryRowReader(names, rows);
+    return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, ownsStatement);
+  }
+
   /** Creates a result set with the given metadata and no rows. */
   public static InternalResultSet createEmpty(
       SnowflakeStatementImpl statement,
@@ -97,7 +110,7 @@ public class ResultSetFactory {
       throws SQLException {
     String queryId = metaData.getQueryID();
     String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
-    EmptyRowReader rowReader = new EmptyRowReader(names);
+    InMemoryRowReader rowReader = new InMemoryRowReader(names, new Object[][] {});
     return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, ownsStatement);
   }
 
