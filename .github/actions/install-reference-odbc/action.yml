@@ -69,6 +69,7 @@ runs:
         echo "${DEB_X86_64_SHA256}  ${REF_CACHE_DIR}/${DEB}" | sha256sum -c -
         sudo dpkg -i "${REF_CACHE_DIR}/${DEB}"
         sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+        sudo bash -c "cat tests/wiremock/wiremock-ca.pem >> /usr/lib/snowflake/odbc/lib/cacert.pem"
 
     - name: Install reference ODBC driver (macOS)
       if: runner.os == 'macOS'
@@ -144,6 +145,7 @@ runs:
             exit 1
             ;;
         esac
+        sudo bash -c "cat tests/wiremock/wiremock-ca.pem >> /opt/snowflake/snowflakeodbc/lib/universal/cacert.pem"
 
     - name: Install reference ODBC driver (Windows)
       if: runner.os == 'Windows'
@@ -182,3 +184,17 @@ runs:
 
         $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i `"$cachedMsi`" /quiet" -Wait -PassThru
         if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
+
+        # Inject the WireMock CA cert into the driver's CA bundle so TLS tests
+        $driverRegKey = "HKLM:\SOFTWARE\Snowflake\Driver"
+        $cabundleProp = Get-ItemProperty -Path $driverRegKey -Name "CABundleFile" -ErrorAction Stop
+        $cacertPath = $cabundleProp.CABundleFile
+        if (-not $cacertPath) {
+          throw "CABundleFile value is empty under $driverRegKey"
+        }
+        if (-not (Test-Path $cacertPath)) {
+          throw "CABundleFile registered at $driverRegKey points to a missing file: $cacertPath"
+        }
+        $wiremockCaPem = Get-Content -Raw "tests\wiremock\wiremock-ca.pem"
+        Add-Content -Path $cacertPath -Value "`n$wiremockCaPem" -Encoding UTF8
+        Write-Host "Appended WireMock CA cert to $cacertPath"

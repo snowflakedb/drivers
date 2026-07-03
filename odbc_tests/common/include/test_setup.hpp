@@ -231,4 +231,34 @@ inline std::string get_connection_string() {
   return ss.str();
 }
 
+#include "WiremockClient.hpp"
+
+inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
+  std::ostringstream ss;
+  configure_driver_string(ss);
+  ss << "SERVER=localhost;";
+  ss << "PORT=" << wm.port() << ";";
+  ss << "ACCOUNT=testaccount;";
+  ss << "UID=testuser;";
+  ss << "PWD=testpass;";
+  ss << "SSL=off;";
+  ss << "DisableOCSPCheck=true;";
+  return ss.str();
+}
+
+inline std::string get_wiremock_https_connection_string(const WiremockClient& wm, const std::string& extra = "") {
+  std::ostringstream ss;
+  configure_driver_string(ss);
+  ss << "SERVER=localhost;";
+  ss << "PORT=" << wm.https_port() << ";";
+  ss << "ACCOUNT=testaccount;";
+  ss << "UID=testuser;";
+  ss << "PWD=testpass;";
+  ss << "SSL=on;";
+  ss << "VERIFY_CERTIFICATES=false;";
+  ss << "DisableOCSPCheck=true;";
+  ss << extra;
+  return ss.str();
+}
+
 #endif  // TEST_SETUP_HPP

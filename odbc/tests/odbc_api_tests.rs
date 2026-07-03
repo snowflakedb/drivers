@@ -103,6 +103,8 @@ fn smoke_connection_set_tls_config() {
                 config_option("crl_mode", "ENABLED"),
                 config_option("crl_http_timeout", 30_i64),
                 config_option("crl_connection_timeout", 10_i64),
+                config_option("min_tls_version", "tls12"),
+                config_option("max_tls_version", "tls13"),
             ]
             .into_iter()
             .collect(),

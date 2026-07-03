@@ -5,10 +5,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "WiremockClient.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
+#include "test_setup.hpp"
 
 static void do_connect_cycle(const std::string& conn_str, const std::string& label) {
   INFO("Cycle: " << label);

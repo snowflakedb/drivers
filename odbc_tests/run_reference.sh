@@ -48,6 +48,7 @@ docker run --rm \
         # Detect ODBC library path for the container architecture
         ODBC_LIB=\$(find /usr/lib -name 'libodbc.so' -print -quit)
         
+        cat /workspace/tests/wiremock/wiremock-ca.pem >> /usr/lib/snowflake/odbc/lib/cacert.pem
         echo 'Building and running ODBC tests...'
         cd /workspace/odbc_tests/
         

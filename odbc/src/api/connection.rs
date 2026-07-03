@@ -121,6 +121,73 @@ fn normalize_connection_string_option(
     }
 }
 
+const SF_GLOBAL_SSL_VERSION_ENV: &str = "SF_GLOBAL_SSL_VERSION";
+
+/// Resolve a `SF_GLOBAL_SSL_VERSION` value to the canonical `sf_core` TLS token,
+/// accepting the legacy snowflake-odbc `SSLVersion` spellings (`TLSv1_2` /
+/// `TLSv1_3`, case-insensitive, `.`/`_` separators interchangeable).
+///
+/// `Ok(None)` means "no override" — unset / empty / `DEFAULT` (the old driver's
+/// `DEFAULT` meant "negotiate normally"). A sub-1.2 or unrecognized value is an
+/// `Err`: rustls supports only TLS 1.2/1.3, so — unlike the old driver, which
+/// merely warned — we fail closed rather than silently downgrade.
+fn resolve_global_ssl_version(raw: &str) -> Result<Option<&'static str>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("DEFAULT") {
+        return Ok(None);
+    }
+    // Normalize separators so TLSv1_2 / TLSv1.2 / tls12 all compare equal.
+    match trimmed
+        .to_ascii_lowercase()
+        .replace(['.', '_'], "")
+        .as_str()
+    {
+        "tls12" | "tlsv12" => Ok(Some("tls12")),
+        "tls13" | "tlsv13" => Ok(Some("tls13")),
+        "tlsv1" | "tlsv10" | "tlsv11" | "sslv2" | "sslv3" => Err(format!(
+            "SF_GLOBAL_SSL_VERSION='{raw}' selects a TLS version below 1.2, which is not \
+             supported (use TLSv1_2 or TLSv1_3)"
+        )),
+        _ => Err(format!(
+            "SF_GLOBAL_SSL_VERSION='{raw}' is not a recognized TLS version (use TLSv1_2 or TLSv1_3)"
+        )),
+    }
+}
+
+/// Pin both `min_tls_version` and `max_tls_version` to `version`, dropping any
+/// explicit MIN_TLS_VERSION / MAX_TLS_VERSION already present (resolved against
+/// the `sf_core` registry so every alias and case is caught) so the global pin
+/// is the single source of truth.
+fn pin_tls_version(options: &mut HashMap<String, ConfigSetting>, version: &str) {
+    let registry = sf_core::config::param_registry::registry();
+    options.retain(|key, _| {
+        !matches!(
+            registry.resolve(key.as_str()).map(|def| def.canonical_name),
+            Some("min_tls_version") | Some("max_tls_version")
+        )
+    });
+    options.insert("min_tls_version".to_owned(), version.to_owned().into());
+    options.insert("max_tls_version".to_owned(), version.to_owned().into());
+}
+
+/// Apply the `SF_GLOBAL_SSL_VERSION` override (if the env var is set to a usable
+/// value) onto the normalized connection options, before they become the
+/// connection seed.
+fn apply_global_ssl_version_override(
+    options: &mut HashMap<String, ConfigSetting>,
+) -> OdbcResult<()> {
+    let Ok(raw) = std::env::var(SF_GLOBAL_SSL_VERSION_ENV) else {
+        return Ok(());
+    };
+    let version = resolve_global_ssl_version(&raw)
+        .map_err(|reason| InvalidConnectionStringSnafu { reason }.build())?;
+    if let Some(version) = version {
+        tracing::info!("SF_GLOBAL_SSL_VERSION={raw} pins TLS to {version} (overrides min/max)");
+        pin_tls_version(options, version);
+    }
+    Ok(())
+}
+
 /// Parse connection string into key-value pairs.
 ///
 /// Supports brace-quoted values (e.g. `PWD={p@ss;word}`) where `}}` inside
@@ -262,6 +329,7 @@ fn connect_with_params(
     }
 
     let mut options = normalize_connection_string_options(params);
+    apply_global_ssl_version_override(&mut options)?;
     if let Some(config_setting::Value::StringValue(raw_port)) = options
         .get("port")
         .and_then(|setting| setting.value.as_ref())
@@ -1935,6 +2003,80 @@ mod tests {
         )]));
 
         assert_eq!(config_string(&options, "CRL_MODE"), Some("ENABLED"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_forwards_tls_version_keys_for_core_resolution() {
+        // MIN_TLS_VERSION and MAX_TLS_VERSION flow through as UPPERCASE so
+        // sf_core's registry can resolve them (case-insensitive) to the
+        // canonical min_tls_version / max_tls_version names.  Values are
+        // preserved as-is; TlsVersion::parse lowercases before matching.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("MIN_TLS_VERSION".to_owned(), "tls12".to_owned()),
+            ("MAX_TLS_VERSION".to_owned(), "tls13".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "MIN_TLS_VERSION"), Some("tls12"));
+        assert_eq!(config_string(&options, "MAX_TLS_VERSION"), Some("tls13"));
+        assert!(!options.contains_key("min_tls_version"));
+        assert!(!options.contains_key("max_tls_version"));
+    }
+
+    #[test]
+    fn resolve_global_ssl_version_maps_legacy_odbc_spellings() {
+        // The values old snowflake-odbc accepted for `SSLVersion`, mapped to the
+        // canonical core tokens.
+        assert_eq!(
+            resolve_global_ssl_version("TLSv1_2").unwrap(),
+            Some("tls12")
+        );
+        assert_eq!(
+            resolve_global_ssl_version("TLSv1_3").unwrap(),
+            Some("tls13")
+        );
+        assert_eq!(
+            resolve_global_ssl_version("tlsv1_3").unwrap(),
+            Some("tls13")
+        );
+        assert_eq!(
+            resolve_global_ssl_version("TLSv1.2").unwrap(),
+            Some("tls12")
+        );
+        assert_eq!(resolve_global_ssl_version("tls13").unwrap(), Some("tls13"));
+    }
+
+    #[test]
+    fn resolve_global_ssl_version_default_or_empty_means_no_override() {
+        assert_eq!(resolve_global_ssl_version("DEFAULT").unwrap(), None);
+        assert_eq!(resolve_global_ssl_version("default").unwrap(), None);
+        assert_eq!(resolve_global_ssl_version("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_global_ssl_version_rejects_sub_tls12_and_unknown() {
+        // rustls cannot honour anything below TLS 1.2, so these fail closed
+        // rather than silently downgrade (the old driver merely warned).
+        for v in ["TLSv1", "TLSv1_0", "TLSv1_1", "SSLv2", "SSLv3", "bogus"] {
+            assert!(
+                resolve_global_ssl_version(v).is_err(),
+                "value {v} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn pin_tls_version_overrides_explicit_min_and_max() {
+        // Explicit user keys (uppercase, as forwarded) are dropped and replaced
+        // by the pinned canonical version.
+        let mut options = normalize_connection_string_options(HashMap::from([
+            ("MIN_TLS_VERSION".to_owned(), "tls12".to_owned()),
+            ("MAX_TLS_VERSION".to_owned(), "tls12".to_owned()),
+        ]));
+        pin_tls_version(&mut options, "tls13");
+        assert_eq!(config_string(&options, "min_tls_version"), Some("tls13"));
+        assert_eq!(config_string(&options, "max_tls_version"), Some("tls13"));
+        assert!(!options.contains_key("MIN_TLS_VERSION"));
+        assert!(!options.contains_key("MAX_TLS_VERSION"));
     }
 
     #[test]
