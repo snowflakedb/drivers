@@ -21,7 +21,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "HandleWrapper.hpp"
-#include "compatibility.hpp"
 #include "oauth_auth_helpers.hpp"
 #include "odbc_cast.hpp"
 #include "require.hpp"
@@ -68,7 +67,6 @@ void verify_simple_query_execution(ConnectionHandleWrapper& dbc) {
 
 TEST_CASE("should authenticate with external browser via Okta IdP", "[external_browser_e2e][requires_browser]") {
   REQUIRE_BROWSER("External browser E2E needs the headless Chromium container");
-  SKIP_OLD_DRIVER("", "New-driver-only: external browser E2E against headless Chromium");
 
   oauth_auth::clean_browser_processes();
 
