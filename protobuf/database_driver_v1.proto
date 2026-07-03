@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package database_driver_v1;
 option java_package = "net.snowflake.client.internal.unicore.protobuf_gen";
+option csharp_namespace = "Snowflake.Data.Proto";
 
 import "google/protobuf/descriptor.proto";
 

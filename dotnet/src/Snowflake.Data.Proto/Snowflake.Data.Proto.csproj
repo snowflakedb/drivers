@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>Snowflake.Data.Proto</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.35.1" />
+  </ItemGroup>
+  <!-- Proto staleness check: fails the build if the proto file changed but generated code wasn't regenerated. Update ProtoFileHash after running: dotnet msbuild -t:RegenerateProto -->
+  <PropertyGroup>
+    <ProtoFileHash>CF8D314A222C348504E95340EB60C8BC96A95657D3FB52D5494E7359A54DA9B3</ProtoFileHash>
+    <ProtoFilePath>$(MSBuildThisFileDirectory)../../../protobuf/database_driver_v1.proto</ProtoFilePath>
+  </PropertyGroup>
+  <Target Name="CheckProtoStaleness" BeforeTargets="CoreCompile">
+    <GetFileHash Files="$(ProtoFilePath)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="CurrentProtoHash" />
+    </GetFileHash>
+    <Error Condition="'$(CurrentProtoHash)' != '$(ProtoFileHash)'" Text="Generated proto code is stale. Proto file hash changed from $(ProtoFileHash) to $(CurrentProtoHash). Run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/" />
+  </Target>
+  <Target Name="RegenerateProto">
+    <ItemGroup>
+      <GeneratedCsFiles Include="$(MSBuildThisFileDirectory)**/*.cs" />
+    </ItemGroup>
+    <Delete Files="@(GeneratedCsFiles)" />
+    <RemoveDir Directories="$(MSBuildThisFileDirectory)Exceptions;$(MSBuildThisFileDirectory)DatabaseDriver" />
+    <Exec Command="cargo run --bin proto_generator --manifest-path $(MSBuildThisFileDirectory)../../../Cargo.toml -- --generator csharp --input $(ProtoFilePath) --output $(MSBuildThisFileDirectory)" />
+    <GetFileHash Files="$(ProtoFilePath)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="NewProtoHash" />
+    </GetFileHash>
+    <XmlPoke XmlInputPath="$(MSBuildThisFileFullPath)" Query="/Project/PropertyGroup/ProtoFileHash" Value="$(NewProtoHash)" />
+    <Message Importance="high" Text="Proto regenerated. ProtoFileHash updated to $(NewProtoHash)." />
+  </Target>
+</Project>
