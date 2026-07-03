@@ -1,6 +1,8 @@
 use clap::{Arg, ArgMatches, Command};
+use proto_generator::{
+    CSharpGenerator, JavaGenerator, JsonGenerator, PythonGenerator, RustGenerator,
+};
 use proto_generator::{CodeGenerator, GenerationResult, GeneratorContext};
-use proto_generator::{JavaGenerator, JsonGenerator, PythonGenerator, RustGenerator};
 use snafu::Whatever;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -11,6 +13,7 @@ static GENERATORS: LazyLock<Vec<Box<dyn CodeGenerator + Sync + Send>>> = LazyLoc
         Box::new(JsonGenerator::new()),
         Box::new(PythonGenerator::new()),
         Box::new(JavaGenerator::new()),
+        Box::new(CSharpGenerator::new()),
     ]
 });
 

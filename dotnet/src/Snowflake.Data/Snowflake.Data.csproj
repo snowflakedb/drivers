@@ -6,4 +6,8 @@
     <AssemblyName>Snowflake.Data.UD</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj" />
+  </ItemGroup>
+
 </Project>

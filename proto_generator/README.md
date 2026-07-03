@@ -47,3 +47,11 @@ cargo run --bin proto_generator -- --generator json \
   --input protobuf/database_driver_v1.proto \
   --output <output_dir>
 ```
+
+### dotnet
+
+```
+cargo run --bin proto_generator -- --generator csharp \
+ --input protobuf/database_driver_v1.proto \ 
+ --output dotnet/src/Snowflake.Data.Proto/    
+```
