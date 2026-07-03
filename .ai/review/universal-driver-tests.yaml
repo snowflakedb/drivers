@@ -302,6 +302,12 @@ rules:
 
       The fix is to add `# TODO:` comments listing the missing scenarios, or add pending scenario stubs.
 
+      **UNIT TEST CROSS-CHECK**: Before flagging a coverage gap, search for unit tests in the same module that already cover the flagged error paths or edge cases (e.g., `*Test.java`, `*_test.rs`, `test_*.py` in the corresponding source module). If equivalent coverage exists at the unit-test layer:
+      - Do NOT flag as High priority
+      - Either skip the comment, or use Low priority with: "Note: Unit tests in `<test-file>` may already cover these error paths. Consider whether e2e/feature coverage is also needed, or add a `# TODO:` only if e2e gaps remain intentional."
+
+      **CONSOLIDATION**: Emit at most one coverage-gap comment per feature file per PR.
+
       ❌ **BAD** (upload feature with no error paths, no download, no TODOs):
       ```gherkin
       Feature: PUT/GET file operations
