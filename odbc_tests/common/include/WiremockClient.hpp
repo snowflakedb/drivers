@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -14,7 +15,6 @@
 #include "Subprocess.hpp"
 #include "compatibility.hpp"
 #include "platform.hpp"
-#include "test_setup.hpp"
 #include "utils.hpp"
 
 /// Cross-platform wrapper around the WireMock standalone JAR.
@@ -33,14 +33,23 @@ class WiremockClient {
     ForwardProxy,
   };
 
+  /// TLS protocol version the HTTPS listener is restricted to. Used by the
+  /// TLS-version-enforcement integration tests: the driver connects to the
+  /// HTTPS port and the handshake succeeds or fails purely on the version
+  /// window it was configured with.
+  enum class TlsVersion {
+    Tls12,
+    Tls13,
+  };
+
   WiremockClient() : WiremockClient(Mode::Server) {}
 
-  explicit WiremockClient(Mode mode) : mode_(mode) {
-    ensure_driver_installed();
-    port_ = platform::find_free_port();
-    start_process();
-    wait_for_health();
-  }
+  explicit WiremockClient(Mode mode) : mode_(mode) { init(); }
+
+  /// Start WireMock with an HTTPS listener restricted to a single TLS protocol
+  /// version (in addition to the plain-HTTP admin port used for health checks
+  /// and mapping uploads). Connect the driver to `https_port()`.
+  WiremockClient(Mode mode, TlsVersion tls_version) : mode_(mode), tls_version_(tls_version) { init(); }
 
   ~WiremockClient() {
     process_.reset();
@@ -53,6 +62,9 @@ class WiremockClient {
   std::string http_url() const { return "http://localhost:" + std::to_string(port_); }
 
   int port() const { return port_; }
+
+  /// HTTPS listener port (only valid when constructed with a `TlsVersion`).
+  int https_port() const { return https_port_; }
 
   void add_mapping_file(const std::string& relative_path) {
     auto file_path = wiremock_mappings_dir() / relative_path;
@@ -158,9 +170,20 @@ class WiremockClient {
 
  private:
   Mode mode_;
+  std::optional<TlsVersion> tls_version_;
   int port_;
+  int https_port_{};
   std::filesystem::path root_dir_;
   std::unique_ptr<Subprocess> process_;
+
+  void init() {
+    port_ = platform::find_free_port();
+    if (tls_version_) {
+      https_port_ = platform::find_free_port();
+    }
+    start_process();
+    wait_for_health();
+  }
 
   std::string admin_url(const std::string& path) const { return "http://localhost:" + std::to_string(port_) + path; }
 
@@ -197,6 +220,10 @@ class WiremockClient {
     return test_utils::repo_root() / "tests" / "wiremock" / "wiremock_standalone" / "wiremock-standalone-3.13.2.jar";
   }
 
+  static std::filesystem::path wiremock_keystore_path() {
+    return test_utils::repo_root() / "tests" / "wiremock" / "wiremock-keystore.p12";
+  }
+
   void start_process() {
     auto jar = wiremock_jar_path();
     if (!std::filesystem::exists(jar)) {
@@ -208,12 +235,52 @@ class WiremockClient {
     std::filesystem::create_directories(root_dir_ / "mappings");
     std::filesystem::create_directories(root_dir_ / "__files");
 
-    std::vector<std::string> args{"-jar",   jar.string(),           "--root-dir", root_dir_.string(), "--port",
-                                  port_str, "--proxy-pass-through", "false",      "--disable-gzip"};
+    std::vector<std::string> args;
+    // JVM options must precede `-jar`. To restrict the HTTPS listener to a
+    // single TLS version we disable the others JVM-wide via
+    // `jdk.tls.disabledAlgorithms` (WireMock/Jetty has no CLI flag for this).
+    if (tls_version_) {
+      args.push_back("-Djava.security.properties=" + write_tls_security_override());
+    }
+    args.insert(args.end(), {"-jar", jar.string(), "--root-dir", root_dir_.string(), "--port", port_str,
+                             "--proxy-pass-through", "false", "--disable-gzip"});
+    if (tls_version_) {
+      // Plain-HTTP admin port stays up (used for health + mapping uploads); the
+      // driver connects to this HTTPS port, which serves the same stubs.
+      // A custom PKCS12 keystore with CN=localhost and SAN=localhost is used so
+      // the old Simba ODBC driver passes hostname verification (the built-in
+      // WireMock cert has CN=Tom Akehurst, which fails hostname checks against
+      // SERVER=localhost in any libcurl-backed driver).
+      auto keystore = wiremock_keystore_path();
+      if (!std::filesystem::exists(keystore)) {
+        throw std::runtime_error("WireMock keystore not found at: " + keystore.string());
+      }
+      args.emplace_back("--https-port");
+      args.emplace_back(std::to_string(https_port_));
+      args.emplace_back("--https-keystore");
+      args.emplace_back(keystore.string());
+      args.emplace_back("--keystore-type");
+      args.emplace_back("PKCS12");
+      args.emplace_back("--keystore-password");
+      args.emplace_back("password");
+    }
     if (mode_ == Mode::ForwardProxy) {
       args.emplace_back("--enable-browser-proxying");
     }
     process_ = std::make_unique<Subprocess>("java", std::move(args));
+  }
+
+  /// Writes a `java.security` override that disables every TLS protocol except
+  /// the selected one, so WireMock's HTTPS port offers only that version.
+  /// Returns the file path for `-Djava.security.properties` (single `=`
+  /// overrides just this property, leaving the JDK's other defaults intact).
+  std::string write_tls_security_override() const {
+    const std::string disabled =
+        (*tls_version_ == TlsVersion::Tls12) ? "SSLv3, TLSv1, TLSv1.1, TLSv1.3" : "SSLv3, TLSv1, TLSv1.1, TLSv1.2";
+    auto path = root_dir_ / "tls.security";
+    std::ofstream f(path);
+    f << "jdk.tls.disabledAlgorithms=" << disabled << "\n";
+    return path.string();
   }
 
   void wait_for_health(int timeout_secs = 15) const {
@@ -227,19 +294,5 @@ class WiremockClient {
     throw std::runtime_error("WireMock did not become healthy within " + std::to_string(timeout_secs) + "s");
   }
 };
-
-/// Build an ODBC connection string pointing to a running WireMock instance.
-inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
-  std::ostringstream ss;
-  configure_driver_string(ss);
-  ss << "SERVER=localhost;";
-  ss << "PORT=" << wm.port() << ";";
-  ss << "ACCOUNT=testaccount;";
-  ss << "UID=testuser;";
-  ss << "PWD=testpass;";
-  ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
-  return ss.str();
-}
 
 #endif  // WIREMOCK_CLIENT_HPP
