@@ -148,7 +148,10 @@ inline std::string build_mfa_connection_string(const picojson::object& params, c
   ss << "AUTHENTICATOR=USERNAME_PASSWORD_MFA;";
   ss << "ROLE=PUBLIC;";
   if (passcode_in_password) {
-    ss << "PASSCODEINPASSWORD=true;";
+    // BD#84: the legacy ODBC driver only recognizes the value "on" (case-insensitive)
+    // for PASSCODEINPASSWORD, whereas the new driver accepts "on"/"true"/"1". Use "on"
+    // so the shared e2e flow runs against either driver.
+    ss << "PASSCODEINPASSWORD=on;";
   } else if (passcode != nullptr) {
     ss << "PASSCODE=" << *passcode << ";";
   }

@@ -60,6 +60,13 @@ case "${AUTH_BROWSER_MODE:-universal}" in
         export DRIVER_PATH="/usr/lib/snowflake/odbc/lib/libSnowflake.so"
         DRIVER_TYPE=OLD
         BUILD_DIR=cmake-build-reference
+
+        # The old driver's OCSP code creates $HOME/.cache/snowflake/ with 0755,
+        # but its credential cache (libsnowflakeclient CacheFile.cpp) requires
+        # exactly 0700 and silently skips the directory otherwise. Pre-create it
+        # with the correct permissions so MFA token caching works.
+        mkdir -p "${HOME}/.cache/snowflake"
+        chmod 700 "${HOME}/.cache/snowflake"
         ;;
     *)
         echo "ERROR: unknown AUTH_BROWSER_MODE '${AUTH_BROWSER_MODE}'" >&2

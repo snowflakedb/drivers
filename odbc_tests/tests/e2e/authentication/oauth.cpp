@@ -240,6 +240,8 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
   ss << "OAUTH_CLIENT_ID=" << client_id << ";";
   ss << "OAUTH_CLIENT_SECRET=invalid_client_secret_12345;";  // pragma: allowlist secret
   ss << "OAUTH_REDIRECT_URI=" << redirect_uri << ";";
+  // BD#85: pin caching off so the legacy driver can't replay a cached AC token and mask the failure.
+  OLD_DRIVER_ONLY("BD#85") { ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;"; }
   std::string connection_string = ss.str();
 
   auto env = setup_oauth_environment();
@@ -256,7 +258,11 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   REQUIRE(records.size() >= 1);
-  CHECK(records[0].sqlState == "28000");
+  // BD#83: the new driver maps an IdP token-exchange rejection to SQLSTATE 28000
+  // (invalid authorization specification); the legacy driver surfaces it as the
+  // generic HY000.
+  OLD_DRIVER_ONLY("BD#83") { CHECK(records[0].sqlState == "HY000"); }
+  NEW_DRIVER_ONLY("BD#83") { CHECK(records[0].sqlState == "28000"); }
 }
 
 // =============================================================================
@@ -325,5 +331,9 @@ TEST_CASE("oauth should fail client credentials flow with bad client secret", "[
 
   // Then Connection fails with an authentication / login error
   REQUIRE(records.size() >= 1);
-  CHECK(records[0].sqlState == "28000");
+  // BD#83: the new driver maps an IdP token-exchange rejection to SQLSTATE 28000
+  // (invalid authorization specification); the legacy driver surfaces it as the
+  // generic HY000.
+  OLD_DRIVER_ONLY("BD#83") { CHECK(records[0].sqlState == "HY000"); }
+  NEW_DRIVER_ONLY("BD#83") { CHECK(records[0].sqlState == "28000"); }
 }
