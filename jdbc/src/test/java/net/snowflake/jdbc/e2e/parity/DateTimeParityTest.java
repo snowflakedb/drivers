@@ -143,7 +143,6 @@ public class DateTimeParityTest {
     runReadParity(SfType.TIMESTAMP_LTZ, tz, fmt, profile);
   }
 
-  @Disabled("TIMESTAMP_TZ read parity not yet green; re-enable once the gaps are closed.")
   @ParameterizedTest(name = "READ TIMESTAMP_TZ tz={0} fmt={1} profile={2}")
   @MethodSource("timestampTzReadCells")
   void readTimestampTzParity(String tz, String fmt, Profile profile) throws Exception {
@@ -717,6 +716,9 @@ public class DateTimeParityTest {
         Arrays.asList(
             "2024-01-15 12:34:56.789 -05:00",
             "2024-01-15 12:34:56.789 +09:00",
+            // half-hour offset -- exercises the non-zero TZM minute component of the tz-index
+            // decode and the TZH:TZM / TZHTZM suffix rendering.
+            "2024-06-01 12:00:00 +05:30",
             "1970-01-01 00:00:00 +00:00",
             "2024-03-10 02:30:00 -05:00",
             // supported-range boundaries with explicit offsets.
