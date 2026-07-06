@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
@@ -23,15 +24,15 @@ final class PreparedStatementBindingSerializer {
   static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
 
   static final class ParameterValue {
-    private final String bindType;
+    private final SnowflakeType bindType;
     private final Object value;
 
-    ParameterValue(String bindType, Object value) {
+    ParameterValue(SnowflakeType bindType, Object value) {
       this.bindType = bindType;
       this.value = value;
     }
 
-    String bindType() {
+    SnowflakeType bindType() {
       return bindType;
     }
 
@@ -102,7 +103,7 @@ final class PreparedStatementBindingSerializer {
         throw new SQLException("Missing value for parameter index: " + parameterIndex);
       }
       jsonStringer.key(String.valueOf(parameterIndex)).object();
-      jsonStringer.key("type").value(parameterValue.bindType());
+      jsonStringer.key("type").value(parameterValue.bindType().name());
       jsonStringer.key("value");
       writeBindingValue(jsonStringer, parameterIndex, parameterValue.value());
       jsonStringer.endObject();

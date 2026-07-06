@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +30,7 @@ class PreparedBatchTest {
     }
     Map<Integer, ParameterValue> r = new HashMap<>();
     for (int i = 0; i < pairs.length; i += 3) {
-      r.put((Integer) pairs[i], new ParameterValue((String) pairs[i + 1], pairs[i + 2]));
+      r.put((Integer) pairs[i], new ParameterValue((SnowflakeType) pairs[i + 1], pairs[i + 2]));
     }
     return r;
   }
@@ -38,10 +39,12 @@ class PreparedBatchTest {
   void rejectsTypeMismatchWithErrorCodeAndSqlState() throws SQLException {
     PreparedBatch batch = new PreparedBatch();
     SqlPlaceholderMetadata meta = oneCol();
-    batch.addRow(meta, row(1, "FIXED", "1"));
+    batch.addRow(meta, row(1, SnowflakeType.FIXED, "1"));
 
     SnowflakeSQLException ex =
-        assertThrows(SnowflakeSQLException.class, () -> batch.addRow(meta, row(1, "TEXT", "boom")));
+        assertThrows(
+            SnowflakeSQLException.class,
+            () -> batch.addRow(meta, row(1, SnowflakeType.TEXT, "boom")));
     assertEquals(200023, ex.getErrorCode());
     assertEquals("0A000", ex.getSQLState());
   }
@@ -50,12 +53,12 @@ class PreparedBatchTest {
   void typeMismatchDoesNotAdvanceBatchSize() throws SQLException {
     PreparedBatch batch = new PreparedBatch();
     SqlPlaceholderMetadata meta = twoCol();
-    batch.addRow(meta, row(1, "FIXED", "1", 2, "TEXT", "ok"));
+    batch.addRow(meta, row(1, SnowflakeType.FIXED, "1", 2, SnowflakeType.TEXT, "ok"));
     assertEquals(1, batch.size());
 
     assertThrows(
         SnowflakeSQLException.class,
-        () -> batch.addRow(meta, row(1, "FIXED", "2", 2, "FIXED", "999")));
+        () -> batch.addRow(meta, row(1, SnowflakeType.FIXED, "2", 2, SnowflakeType.FIXED, "999")));
 
     // size() reads the first column's list length; if the failed addRow had partially
     // appended to column 1 before throwing on column 2, size would be 2.
@@ -68,9 +71,9 @@ class PreparedBatchTest {
     SqlPlaceholderMetadata meta = oneCol();
     assertDoesNotThrow(
         () -> {
-          batch.addRow(meta, row(1, "ANY", null));
-          batch.addRow(meta, row(1, "ANY", null));
-          batch.addRow(meta, row(1, "FIXED", "7"));
+          batch.addRow(meta, row(1, SnowflakeType.ANY, null));
+          batch.addRow(meta, row(1, SnowflakeType.ANY, null));
+          batch.addRow(meta, row(1, SnowflakeType.FIXED, "7"));
         });
   }
 
@@ -80,9 +83,9 @@ class PreparedBatchTest {
     SqlPlaceholderMetadata meta = oneCol();
     assertDoesNotThrow(
         () -> {
-          batch.addRow(meta, row(1, "TEXT", "hi"));
-          batch.addRow(meta, row(1, "ANY", null));
-          batch.addRow(meta, row(1, "TEXT", "there"));
+          batch.addRow(meta, row(1, SnowflakeType.TEXT, "hi"));
+          batch.addRow(meta, row(1, SnowflakeType.ANY, null));
+          batch.addRow(meta, row(1, SnowflakeType.TEXT, "there"));
         });
   }
 
@@ -90,7 +93,8 @@ class PreparedBatchTest {
   void rejectsMissingValue() {
     PreparedBatch batch = new PreparedBatch();
     SQLException ex =
-        assertThrows(SQLException.class, () -> batch.addRow(twoCol(), row(1, "FIXED", "1")));
+        assertThrows(
+            SQLException.class, () -> batch.addRow(twoCol(), row(1, SnowflakeType.FIXED, "1")));
     assertTrue(ex.getMessage().contains("Missing value for parameter index: 2"));
   }
 
@@ -98,8 +102,8 @@ class PreparedBatchTest {
   void clearResetsState() throws SQLException {
     PreparedBatch batch = new PreparedBatch();
     SqlPlaceholderMetadata meta = oneCol();
-    batch.addRow(meta, row(1, "FIXED", "1"));
-    batch.addRow(meta, row(1, "FIXED", "2"));
+    batch.addRow(meta, row(1, SnowflakeType.FIXED, "1"));
+    batch.addRow(meta, row(1, SnowflakeType.FIXED, "2"));
 
     batch.clear();
 

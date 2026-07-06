@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import org.junit.jupiter.api.AfterAll;
@@ -49,7 +50,8 @@ public class PreparedStatementBindingSerializerTest {
   @Test
   public void testSerializeMissingParameterFailsWithIndex() {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
-    params.put(1, new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello"));
+    params.put(
+        1, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.TEXT, "hello"));
 
     SQLException ex =
         assertThrows(
@@ -65,8 +67,9 @@ public class PreparedStatementBindingSerializerTest {
   @Test
   public void testSerializeCreatesJsonBindingsWithExpectedPointerMetadata() throws Exception {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
-    params.put(1, new PreparedStatementBindingSerializer.ParameterValue("FIXED", "42"));
-    params.put(2, new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello"));
+    params.put(1, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.FIXED, "42"));
+    params.put(
+        2, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.TEXT, "hello"));
 
     String expectedJson =
         "{\"1\":{\"type\":\"FIXED\",\"value\":\"42\"},\"2\":{\"type\":\"TEXT\",\"value\":\"hello\"}}";
@@ -97,8 +100,8 @@ public class PreparedStatementBindingSerializerTest {
   @Test
   public void testSerializeNumericPlaceholdersUsesReferencedIndexes() throws Exception {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
-    params.put(2, new PreparedStatementBindingSerializer.ParameterValue("TEXT", "two"));
-    params.put(4, new PreparedStatementBindingSerializer.ParameterValue("FIXED", "4"));
+    params.put(2, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.TEXT, "two"));
+    params.put(4, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.FIXED, "4"));
 
     String expectedJson =
         "{\"2\":{\"type\":\"TEXT\",\"value\":\"two\"},\"4\":{\"type\":\"FIXED\",\"value\":\"4\"}}";
@@ -122,11 +125,11 @@ public class PreparedStatementBindingSerializerTest {
     params.put(
         1,
         new PreparedStatementBindingSerializer.ParameterValue(
-            "FIXED", Arrays.asList("1", "2", null, "4")));
+            SnowflakeType.FIXED, Arrays.asList("1", "2", null, "4")));
     params.put(
         2,
         new PreparedStatementBindingSerializer.ParameterValue(
-            "TEXT", Arrays.asList("a", null, "c", "d")));
+            SnowflakeType.TEXT, Arrays.asList("a", null, "c", "d")));
 
     String expectedJson =
         "{\"1\":{\"type\":\"FIXED\",\"value\":[\"1\",\"2\",null,\"4\"]},"
@@ -143,6 +146,43 @@ public class PreparedStatementBindingSerializerTest {
           expectedJsonBytes.length,
           bindings.getJson().getLength(),
           "Array-bind JSON byte length should match the canonical payload");
+    }
+  }
+
+  @Test
+  public void shouldPassTimestampBatchBindsThroughAsRawEpochNanosArraysWithoutReformat()
+      throws Exception {
+    // Batch timestamp binds go inline as JSON arrays of the raw wire strings the setters produced:
+    // LTZ/NTZ are epoch-nanos decimal strings, TZ is "<nanos> <offsetCode>". There is no Java-side
+    // stage/CSV reformat in this tree, so the serializer must emit these verbatim (a reformat to a
+    // human-readable "yyyy-MM-dd ..." string would change the payload length below).
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
+    params.put(
+        1,
+        new PreparedStatementBindingSerializer.ParameterValue(
+            SnowflakeType.TIMESTAMP_LTZ, Arrays.asList("1705323296789012345", "-1999999999")));
+    params.put(
+        2,
+        new PreparedStatementBindingSerializer.ParameterValue(
+            SnowflakeType.TIMESTAMP_TZ,
+            Arrays.asList("1705323296789012345 1560", "1705323296789012345 960")));
+
+    String expectedJson =
+        "{\"1\":{\"type\":\"TIMESTAMP_LTZ\",\"value\":[\"1705323296789012345\",\"-1999999999\"]},"
+            + "\"2\":{\"type\":\"TIMESTAMP_TZ\",\"value\":"
+            + "[\"1705323296789012345 1560\",\"1705323296789012345 960\"]}}";
+    byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
+
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(
+            SqlPlaceholderMetadata.analyze("INSERT INTO t VALUES (?, ?)"), params)) {
+      QueryBindings bindings = nativeBindings.bindings();
+      assertNotNull(bindings, "Expected non-null bindings for timestamp array bind");
+      assertTrue(bindings.hasJson(), "Expected JSON variant for timestamp array bind");
+      assertEquals(
+          expectedJsonBytes.length,
+          bindings.getJson().getLength(),
+          "Timestamp array-bind JSON byte length should match the verbatim epoch-nanos payload");
     }
   }
 }

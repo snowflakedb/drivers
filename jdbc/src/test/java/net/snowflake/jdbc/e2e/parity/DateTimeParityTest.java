@@ -19,7 +19,6 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
@@ -99,10 +98,10 @@ public class DateTimeParityTest {
    * additionally gates the connection-time focused tests below ({@code getDateNullTimezoneParity}
    * etc.), whose type is a runtime parameter and so cannot be disabled per-type via an annotation.
    * Keep the two in sync: re-enabling a type means both dropping its {@code @Disabled} and removing
-   * it here.
+   * it here. All three timestamp flavours are now fully enabled (read: P1–P3, write: P4), so the
+   * set is empty; add a type back here (and re-add its {@code @Disabled}) to disable it again.
    */
-  private static final Set<SfType> DISABLED_TYPES =
-      EnumSet.of(SfType.TIMESTAMP_NTZ, SfType.TIMESTAMP_LTZ, SfType.TIMESTAMP_TZ);
+  private static final Set<SfType> DISABLED_TYPES = EnumSet.noneOf(SfType.class);
 
   private ParityHarness harness;
 
@@ -237,21 +236,18 @@ public class DateTimeParityTest {
     runWriteParity(SfType.TIME, tz, fmt);
   }
 
-  @Disabled("TIMESTAMP_NTZ write parity not yet green; re-enable once the gaps are closed.")
   @ParameterizedTest(name = "WRITE TIMESTAMP_NTZ tz={0} fmt={1}")
   @MethodSource("timestampNtzWriteCells")
   void writeTimestampNtzParity(String tz, String fmt) throws Exception {
     runWriteParity(SfType.TIMESTAMP_NTZ, tz, fmt);
   }
 
-  @Disabled("TIMESTAMP_LTZ write parity not yet green; re-enable once the gaps are closed.")
   @ParameterizedTest(name = "WRITE TIMESTAMP_LTZ tz={0} fmt={1}")
   @MethodSource("timestampLtzWriteCells")
   void writeTimestampLtzParity(String tz, String fmt) throws Exception {
     runWriteParity(SfType.TIMESTAMP_LTZ, tz, fmt);
   }
 
-  @Disabled("TIMESTAMP_TZ write parity not yet green; re-enable once the gaps are closed.")
   @ParameterizedTest(name = "WRITE TIMESTAMP_TZ tz={0} fmt={1}")
   @MethodSource("timestampTzWriteCells")
   void writeTimestampTzParity(String tz, String fmt) throws Exception {

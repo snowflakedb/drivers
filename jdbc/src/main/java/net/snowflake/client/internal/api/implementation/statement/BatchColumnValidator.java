@@ -4,6 +4,7 @@ import java.sql.SQLException;
 import java.util.List;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 
 final class BatchColumnValidator {
@@ -22,9 +23,9 @@ final class BatchColumnValidator {
     if (stringValue == null) {
       return;
     }
-    String prevType = existing.bindType();
-    String newType = newValue.bindType();
-    if ("ANY".equalsIgnoreCase(prevType) || prevType.equalsIgnoreCase(newType)) {
+    SnowflakeType prevType = existing.bindType();
+    SnowflakeType newType = newValue.bindType();
+    if (prevType == SnowflakeType.ANY || prevType == newType) {
       return;
     }
     @SuppressWarnings("unchecked")
