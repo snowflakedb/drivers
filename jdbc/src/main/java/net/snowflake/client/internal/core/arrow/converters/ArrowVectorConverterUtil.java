@@ -117,10 +117,9 @@ public final class ArrowVectorConverterUtil {
 
         case TIMESTAMP:
           // A bare TIMESTAMP column is resolved to a concrete type by
-          // CLIENT_TIMESTAMP_TYPE_MAPPING.
-          // NTZ (TODO P1) and LTZ (P2) are supported; TZ lands in P3. Result-set
-          // Arrow metadata normally
-          // carries the concrete logical type, so this is defensive.
+          // CLIENT_TIMESTAMP_TYPE_MAPPING, which only ever maps to NTZ or LTZ (never TZ).
+          // Result-set Arrow metadata normally carries the concrete logical type, so this is
+          // defensive.
           String mappedType = context.getTimestampMappedType();
           if (SnowflakeType.TIMESTAMP_LTZ.name().equals(mappedType)) {
             return initTimestampLtzConverter(vector, context, idx);
@@ -147,6 +146,9 @@ public final class ArrowVectorConverterUtil {
         case TIMESTAMP_LTZ:
           return initTimestampLtzConverter(vector, context, idx);
 
+        case TIMESTAMP_TZ:
+          return initTimestampTzConverter(vector, context, idx);
+
         default:
           throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());
       }
@@ -171,6 +173,27 @@ public final class ArrowVectorConverterUtil {
     }
     throw new SnowflakeSQLException(
         "Unsupported Arrow physical layout for TIMESTAMP_LTZ: "
+            + vector.getField().getChildren().size()
+            + " struct children");
+  }
+
+  /**
+   * Build the {@code TIMESTAMP_TZ} converter for {@code vector}, selecting by struct child count (a
+   * two-field {@code {epoch, timezone}} struct at scale 0, or a three-field {@code {epoch,
+   * fraction, timezone}} struct otherwise), mirroring snowflake-jdbc. {@code TIMESTAMP_TZ} is
+   * always a struct — there is no compact {@code Int64} form — and a bare {@code TIMESTAMP} never
+   * maps to it.
+   */
+  private static ArrowVectorConverter initTimestampTzConverter(
+      ValueVector vector, DataConversionContext context, int idx) throws SnowflakeSQLException {
+    int scale = getScaleFromFieldMetadata(vector);
+    if (vector.getField().getChildren().size() == 2) {
+      return new TwoFieldStructToTimestampTZConverter(vector, idx, context, scale);
+    } else if (vector.getField().getChildren().size() == 3) {
+      return new ThreeFieldStructToTimestampTZConverter(vector, idx, context, scale);
+    }
+    throw new SnowflakeSQLException(
+        "Unsupported Arrow physical layout for TIMESTAMP_TZ: "
             + vector.getField().getChildren().size()
             + " struct children");
   }
