@@ -191,13 +191,16 @@ rules:
 
   - id: ud-no-blocking-in-async
     rule: |
-      **OBJECTIVE**: Prevent blocking the tokio async executor thread, which causes deadlocks and performance degradation.
+      **OBJECTIVE**: Prevent blocking or starving the tokio async executor thread — with blocking operations or heavy synchronous compute — which causes deadlocks and performance degradation.
 
-      **REQUIREMENT**: Never call blocking operations inside async functions or futures without proper wrapping:
+      **REQUIREMENT**: Never run blocking operations or heavy synchronous work inside async functions or futures without proper wrapping:
 
       1. Never use `std::thread::sleep` in async code. Use `tokio::time::sleep` instead.
       2. Never call synchronous I/O (file reads, keyring access, DNS lookups) directly inside an async context. Wrap them in `tokio::task::block_in_place` or `tokio::task::spawn_blocking`.
       3. Never hold a `std::sync::Mutex` or `std::sync::RwLock` guard across `.await` points. Use `tokio::sync::Mutex` or `tokio::sync::RwLock` for data accessed across await boundaries.
+      4. Never run heavy CPU-bound work inline on the executor. Long-running synchronous computation (large (de)compression, encryption / key derivation, big serde or parsing loops) must be moved off the async worker via `tokio::task::spawn_blocking` (or `tokio::task::block_in_place`).
+      5. Never call a blocking runtime entry point from within an async context: no `block_on` (`futures::executor::block_on`, `tokio::runtime::Handle::block_on`, `Runtime::block_on`) and no `blocking_*` family methods (`blocking_recv`, `blocking_send`, `blocking_lock`). If you already hold a future, `.await` it directly.
+      6. Blocking hidden behind a synchronous helper still counts. Judge a call by what it ultimately does, not by whether it is a direct `std::` call: a sync helper invoked from async that internally performs blocking I/O or heavy compute is a violation — wrap it at the call site.
 
       ❌ **BAD:**
       ```rust
@@ -220,6 +223,25 @@ rules:
           let guard = self.async_cache.write().await;
           do_something(&guard).await;
           Ok(())
+      }
+      ```
+
+      ❌ **BAD** (heavy compute + nested `block_on` on the executor):
+      ```rust
+      async fn load(&self, path: &Path) -> Result<Vec<u8>, Error> {
+          let bytes = std::fs::read(path)?;                      // sync I/O — item 2
+          let decoded = futures::executor::block_on(decode(bytes)); // nested block_on — item 5
+          Ok(zstd::decode_all(&decoded[..])?)                    // heavy CPU on executor — item 4
+      }
+      ```
+
+      ✅ **GOOD** (offload blocking + heavy work; await the future directly):
+      ```rust
+      async fn load(&self, path: PathBuf) -> Result<Vec<u8>, Error> {
+          let bytes = tokio::task::spawn_blocking(move || std::fs::read(path)).await??;
+          let decoded = decode(bytes).await;                     // it's a future — just await it
+          let out = tokio::task::spawn_blocking(move || zstd::decode_all(&decoded[..])).await??;
+          Ok(out)
       }
       ```
 

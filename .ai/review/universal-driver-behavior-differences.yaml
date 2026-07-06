@@ -1,0 +1,161 @@
+id: universal-driver-behavior-differences
+friendly_name: "Universal Driver Behavioral Differences Rules"
+status: enabled
+allowed_folders: []
+excluded_folders: []
+rules:
+  - id: ud-behavior-change-requires-bd-entry
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Any change to user-observable driver behavior must be recorded in the matching `BehaviorDifferences.yaml` so the delta between the new (universal) driver and the old (legacy) driver is tracked and reviewed, rather than shipping silently.
+
+      **REQUIREMENT**: When a PR changes production code in a tracked surface AND the change is user-observable, it MUST add or update an entry in that surface's `BehaviorDifferences.yaml`.
+
+      **Path → BD file mapping:**
+      - `python/src/snowflake/connector/**` → `python/BehaviorDifferences.yaml`
+      - `jdbc/src/main/java/**` and `jdbc_bridge/src/**` → `jdbc/BehaviorDifferences.yaml`
+      - `odbc/src/**` → `odbc_tests/BehaviorDifferences.yaml`
+      - `sf_core/src/**` (shared core) → an entry in **each** surface `BehaviorDifferences.yaml` the change is observable from. The shared core underlies all three surfaces; use judgment, and flag when a plausibly cross-surface change adds no entry anywhere.
+
+      **"User-observable"** includes (non-exhaustive): returned values or their types/precision; error messages, `SQLSTATE`, or error codes; default option values; accepted connection parameters or their names; public API signatures; result-ordering guarantees; supported authentication methods; wire / compression behavior.
+
+      Each new entry MUST follow the file's documented schema: `name`, `type` (`api_incompatibility` | `bug` | `bugfix` | `enhancement`), `status`, `is_breaking_change`, `impact`, and `status_rationale` when `reviewed: true`.
+
+      **EXEMPTIONS** — do NOT flag if ANY of these hold:
+      - Pure internal refactor with no user-observable effect.
+      - Test-only, CI/CD, tooling, build-script, or internal-documentation changes.
+      - The behavior is already covered by an existing BD entry (reference its id/number).
+
+      This rule is distinct from and complementary to `ud-java-skip-annotation-requires-behavior-differences-entry` (which covers test `@SkipNewDriver`/`@SkipOldDriver` annotations) and `ud-pr-description-changelog-required` (release notes). A behavior change typically needs BOTH a BD entry and a `## Changelog` bullet.
+
+      ❌ **BAD** — PR renames an accepted connection parameter in `python/src/snowflake/connector/`, with no entry added to `python/BehaviorDifferences.yaml`:
+      ```python
+      # python/src/snowflake/connector/config.py
+      - "private_key_file_pwd"
+      + "private_key_password"   # legacy name no longer documented; behavior changed, BD untouched
+      ```
+
+      ✅ **GOOD** — same change, with a matching entry:
+      ```yaml
+      # python/BehaviorDifferences.yaml
+      37:
+        name: "Private key password parameter name changed"
+        status: allowed
+        type: api_incompatibility
+        reviewed: false
+        is_breaking_change: false
+        impact: low
+        old_driver_behavior: |
+          `private_key_file_pwd`
+        new_driver_behavior: |
+          `private_key_password`. The legacy name `private_key_file_pwd` is still
+          accepted and mapped to `private_key_password`, but emits a `DeprecationWarning`.
+      ```
+
+  - id: ud-new-bd-entry-must-be-unreviewed
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: A behavioral-difference entry must enter the registry unreviewed, so acceptance is a separate, deliberate step — an author cannot self-approve their own behavior change in the same PR that introduces it.
+
+      **REQUIREMENT**: Any entry ADDED in this PR to a `BehaviorDifferences.yaml` (`jdbc/BehaviorDifferences.yaml`, `python/BehaviorDifferences.yaml`, or `odbc_tests/BehaviorDifferences.yaml`) MUST have `reviewed: false`. A newly-added entry with `reviewed: true` is a violation.
+
+      Flipping an EXISTING entry from `reviewed: false` to `reviewed: true` is the designated reviewer's action and is allowed, but it MUST be accompanied by a `status_rationale` explaining why the chosen `status` is accepted. Setting `reviewed: true` without a `status_rationale` is a violation (this mirrors the file's own documented schema).
+
+      **EXEMPTIONS**: none — this applies to every added entry regardless of surface.
+
+      ❌ **BAD** — a brand-new entry marked reviewed by its author:
+      ```yaml
+      42:
+        name: "Statement.executeBatch update-count int overflow"
+        status: allowed
+        type: bugfix
+        reviewed: true        # new entry must not start reviewed
+        is_breaking_change: true
+        impact: medium
+      ```
+
+      ✅ **GOOD** — new entry starts unreviewed:
+      ```yaml
+      42:
+        name: "Statement.executeBatch update-count int overflow"
+        status: unknown
+        type: bugfix
+        reviewed: false
+        is_breaking_change: true
+        impact: medium
+      ```
+
+      ✅ **GOOD** — reviewer later accepts an existing entry, adding a rationale:
+      ```yaml
+      42:
+        name: "Statement.executeBatch update-count int overflow"
+        status: allowed
+        type: bugfix
+        reviewed: true
+        is_breaking_change: true
+        impact: medium
+        status_rationale: |
+          The old driver silently overflowed batch update counts past INT_MAX; the new
+          driver returns SUCCESS_NO_INFO per the JDBC spec. Accepted as a spec-compliance fix.
+      ```
+
+  - id: ud-breaking-change-prefer-wrapper-preset
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: Avoid shipping breaking changes when the legacy behavior can be preserved per-wrapper. Shared `sf_core` code can branch on `WrapperPresets` so each wrapper (Python / ODBC / JDBC) keeps its established behavior while new wrappers get the improved one.
+
+      **REQUIREMENT**: When a PR introduces a behavioral change that is breaking — a new or updated `BehaviorDifferences.yaml` entry with `is_breaking_change: true`, or a change to `sf_core/src/**` that alters established behavior for an existing wrapper — check whether the legacy behavior can be retained by gating the new behavior behind a `WrapperPresets` field.
+
+      `WrapperPresets` lives in `sf_core/src/apis/database_driver_v1/global_state.rs`: an immutable, init-time, per-wrapper struct (`WrapperPresets::python()` / `::odbc()` / `::jdbc()`) that shared core code branches on (see `legacy_odbc_compression_autodetect` and `put_get_resultset_flavor` for existing precedents). Adding a preset field lets the affected wrapper opt into its legacy behavior, turning a breaking change into a wrapper-scoped, non-breaking one.
+
+      **SEVERITY** — this is a **non-blocking suggestion (Low)** by default, because preserving legacy behavior is not always possible (e.g. server-driven changes, shared protocol/wire changes, or a deliberate cross-wrapper bugfix). Raise it as a comment that points to `WrapperPresets` and asks the author whether a preset could avoid the break.
+
+      **ESCALATE to a blocking finding (High)** only when you can articulate a concrete preset-based approach: name the specific `WrapperPresets` field to add, which wrapper preset (`python()` / `odbc()` / `jdbc()`) should set it to retain legacy behavior, and the branch point in shared code. A vague "maybe use a preset" stays non-blocking.
+
+      **EXEMPTIONS** — do NOT raise even as a suggestion if ANY hold:
+      - The change is already gated behind `WrapperPresets` (or an equivalent per-wrapper switch).
+      - The BD entry is `type: bugfix` and `status_rationale` explains the fix is intentionally applied to all wrappers.
+      - The behavior is server-driven / wire-level and cannot differ per wrapper.
+
+      ❌ **BAD** (breaking core change shipped unconditionally; legacy behavior was per-wrapper and could have been preserved):
+      ```rust
+      // sf_core/src/apis/database_driver_v1/query.rs — new behavior forced on every wrapper
+      fn upload_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+          new_strict_upload_types()   // ODBC previously relied on the legacy column set
+      }
+      ```
+      ```yaml
+      # odbc_tests/BehaviorDifferences.yaml
+      88:
+        name: "PUT upload column metadata changed for ODBC"
+        status: unknown
+        type: api_incompatibility
+        reviewed: false
+        is_breaking_change: true   # ← preserved behavior was achievable via a preset
+        impact: high
+      ```
+
+      ✅ **GOOD** (new behavior gated behind a preset; the affected wrapper keeps legacy behavior):
+      ```rust
+      // sf_core/src/apis/database_driver_v1/global_state.rs
+      pub struct WrapperPresets {
+          pub put_get_resultset_flavor: PutGetResultsetFlavor,
+          pub legacy_odbc_compression_autodetect: bool,
+          pub legacy_upload_column_metadata: bool,   // ← new gate
+      }
+      impl WrapperPresets {
+          pub fn odbc() -> Self {
+              Self { legacy_upload_column_metadata: true, ..Self::default() }
+          }
+      }
+
+      // sf_core/src/apis/database_driver_v1/query.rs
+      fn upload_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+          if wrapper_presets.legacy_upload_column_metadata {
+              legacy_upload_types()    // ODBC keeps its established behavior — no break
+          } else {
+              new_strict_upload_types()
+          }
+      }
+      ```
+
