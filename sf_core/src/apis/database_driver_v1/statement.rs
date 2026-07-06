@@ -438,11 +438,12 @@ impl DatabaseDriverV1 {
                     });
                 // Late-bind `put_get_max_attempts` so post-init `set_option`
                 // overrides take effect (mirrors `LogoutConfig`).
-                let (put_get_max_attempts, use_s3_regional_url_session_param, tls_config) = {
+                let (put_get_max_attempts, use_s3_regional_url_session_param, unsafe_file_write, tls_config) = {
                     let conn = conn.lock().await;
                     (
                         conn.put_get_max_attempts(),
                         conn.use_s3_regional_url_session_param().await,
+                        conn.unsafe_file_write(),
                         conn.tls_config(),
                     )
                 };
@@ -454,6 +455,7 @@ impl DatabaseDriverV1 {
                     stage_info_refresh_context,
                     use_s3_regional_url_session_param,
                     skip_upload_on_content_match,
+                    unsafe_file_write,
                     tls_config,
                 )
                 .await

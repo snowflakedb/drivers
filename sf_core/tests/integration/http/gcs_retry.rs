@@ -818,6 +818,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         presigned_urls: vec![Some(url_a.clone()), Some(url_b.clone())],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let results = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
@@ -853,6 +854,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         presigned_urls: vec![None],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let err = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
@@ -1783,6 +1785,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         presigned_urls: vec![Some(stale_a.clone()), Some(stale_b.clone())],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);

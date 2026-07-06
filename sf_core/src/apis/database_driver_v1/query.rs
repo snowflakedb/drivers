@@ -82,6 +82,7 @@ pub(super) async fn perform_put_get_transfer(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
+    unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
@@ -117,6 +118,7 @@ pub(super) async fn perform_put_get_transfer(
                 .to_file_download_data(
                     &wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url_session_param,
+                    unsafe_file_write,
                 )
                 .map_err(|e| {
                     if e.to_string().contains("source locations") {

@@ -156,6 +156,11 @@ pub struct DownloadData {
     /// the concurrent-part count. Defaults (200 MiB / 1) apply when the server
     /// omits them.
     pub multipart: MultipartParams,
+    /// When `true`, downloaded files are created with the process-default umask
+    /// permissions instead of the secure owner-only mode (`0o600`). Mirrors
+    /// Python's `unsafe_file_write` connection parameter. Unix-only; no-op on
+    /// Windows.
+    pub unsafe_file_write: bool,
 }
 
 #[derive(Debug)]
@@ -172,6 +177,9 @@ pub struct SingleDownloadData {
     pub presigned_url: Option<String>,
     pub flavor: PutGetResultsetFlavor,
     pub multipart: MultipartParams,
+    /// Forwarded from `DownloadData.unsafe_file_write`; see that field for
+    /// semantics.
+    pub unsafe_file_write: bool,
 }
 
 /// Bytes plus metadata returned by the cloud transfer layer for a single

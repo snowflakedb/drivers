@@ -532,6 +532,7 @@ impl Data {
         &self,
         flavor: &PutGetResultsetFlavor,
         use_s3_regional_url_session_param: bool,
+        unsafe_file_write: bool,
     ) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
@@ -604,6 +605,7 @@ impl Data {
             presigned_urls,
             flavor: flavor.clone(),
             multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
+            unsafe_file_write,
         })
     }
 
@@ -1700,7 +1702,7 @@ mod tests {
     fn download_data_forwards_flavor_python() {
         let data: Data = serde_json::from_str(&make_download_json()).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Python);
     }
@@ -1709,7 +1711,7 @@ mod tests {
     fn download_data_forwards_flavor_odbc() {
         let data: Data = serde_json::from_str(&make_download_json()).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Odbc, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Odbc, false, false)
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Odbc);
     }
@@ -1746,7 +1748,7 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1", "u2"]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1767,7 +1769,7 @@ mod tests {
         let json = make_download_json_multi_with_urls("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1783,7 +1785,7 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1"]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1806,7 +1808,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1837,7 +1839,7 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": []"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1865,7 +1867,7 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": [null, "u1", null]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(
             download.presigned_urls,
@@ -1881,7 +1883,7 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": [null, null, null]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1893,7 +1895,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Jdbc, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Jdbc, false, false)
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
@@ -1903,7 +1905,7 @@ mod tests {
         let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1"]"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Jdbc, false)
+            .to_file_download_data(&PutGetResultsetFlavor::Jdbc, false, false)
             .unwrap();
         assert_eq!(download.presigned_urls, vec![None, None, None]);
     }
