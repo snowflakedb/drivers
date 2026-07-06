@@ -62,9 +62,23 @@ class MetaDataQueryBuilderTest {
   // --- likeWithWildcards() ---
 
   @Test
-  void shouldEscapeSingleQuoteInLikeWithWildcardsPattern() {
-    String result = builder().show("schemas").likeWithWildcards("O'BRIEN").build();
+  void shouldEscapeSingleQuoteInLikeSchema() {
+    String result = builder().show("schemas").likeSchema("O'BRIEN").build();
     assertEquals("show schemas like 'O\\'BRIEN'", result);
+  }
+
+  @Test
+  void shouldEscapeSingleQuoteInLikeSchemaWhenExactSchemaAndWildcardsEnabled() {
+    MetaDataQueryBuilder qb = new MetaDataQueryBuilder(true, false, true);
+    String result = qb.show("schemas").likeSchema("O'BRIEN").build();
+    assertEquals("show schemas like 'O\\'BRIEN'", result);
+  }
+
+  @Test
+  void shouldEscapeWildcardsAndSingleQuoteInLikeSchemaWhenExactSchema() {
+    MetaDataQueryBuilder qb = new MetaDataQueryBuilder(true, false, true);
+    String result = qb.show("schemas").likeSchema("O'_%").build();
+    assertEquals("show schemas like 'O\\'\\\\_\\\\%'", result);
   }
 
   // --- inAccount() / in(null) ---

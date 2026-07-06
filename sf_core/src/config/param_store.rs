@@ -64,23 +64,12 @@ impl ParamStore {
 
     /// Extract a boolean value for `key`.
     ///
-    /// Checks `Setting::Bool` first, then falls back to `Setting::String` with
-    /// `"true"` / `"1"` / `"on"` / `"false"` / `"0"` / `"off"` parsing for
-    /// backward compatibility with TOML-loaded values and ODBC connection-string
-    /// encodings (e.g. `SSL=on`). Non-zero `Setting::Int` values are also
-    /// accepted. Unrecognised strings return `None` so the caller falls through
-    /// to its default rather than silently degrading to `false`.
+    /// Coercion (native `Bool`, `"true"`/`"1"`/`"on"` / `"false"`/`"0"`/`"off"`
+    /// strings, non-zero `Int`) is shared with `TlsConfig::from_settings` via
+    /// [`Setting::coerce_bool`]. Unrecognised strings return `None` so the
+    /// caller falls through to its default rather than degrading to `false`.
     pub fn get_bool(&self, key: ParamKey) -> Option<bool> {
-        match self.get(key)? {
-            Setting::Bool(b) => Some(*b),
-            Setting::String(s) => match s.to_lowercase().as_str() {
-                "true" | "1" | "on" => Some(true),
-                "false" | "0" | "off" => Some(false),
-                _ => None,
-            },
-            Setting::Int(i) => Some(*i != 0),
-            _ => None,
-        }
+        self.get(key).and_then(Setting::coerce_bool)
     }
 
     /// Create a `ParamStore` pre-populated with all registry defaults.

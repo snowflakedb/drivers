@@ -1,10 +1,15 @@
 use crate::api::CDataType;
-use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
-use crate::api::error::StatementNotExecutedSnafu;
+use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32, write_string_chars};
+use crate::api::error::AssociatedStatementNotPreparedSnafu;
 use crate::api::handle_registry::HandleGuard;
 use crate::api::types::{DescriptorAccess, DescriptorKind, State, Statement};
-use crate::api::utils::{IrdFieldValue, compute_ird_field};
+use crate::api::utils::{
+    IrdFieldValue, compute_ird_concise_type, compute_ird_field, compute_ird_name,
+    compute_ird_nullable, compute_ird_octet_length, compute_ird_precision, compute_ird_scale,
+    compute_ird_verbose_type,
+};
 use crate::api::{DescField, OdbcResult, StatementState, desc_from_handle};
+use crate::conversion::warning::Warnings;
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use tracing;
@@ -17,6 +22,7 @@ pub fn get_desc_field<E: OdbcEncoding>(
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!(
         "get_desc_field: desc_handle={:?}, rec_number={}, field_identifier={}",
@@ -33,6 +39,13 @@ pub fn get_desc_field<E: OdbcEncoding>(
     if rec_number < 0 {
         tracing::error!("get_desc_field: invalid negative rec_number {}", rec_number);
         return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
+    }
+
+    if buffer_length < 0 {
+        return crate::api::error::InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
     }
 
     let field = DescField::try_from(field_identifier)?;
@@ -66,6 +79,7 @@ pub fn get_desc_field<E: OdbcEncoding>(
                     string_length_ptr,
                     &guard,
                     &inner.state,
+                    warnings,
                 ),
                 DescriptorKind::Apd => get_apd_field(&inner.apd, rec_number, field, value_ptr),
                 DescriptorKind::Ipd => get_ipd_field(&inner.ipd, rec_number, field, value_ptr),
@@ -132,6 +146,13 @@ fn get_ard_field(
             }
         }
     } else {
+        if !is_valid_ard_record_field(field) {
+            return crate::api::error::InvalidDescriptorFieldIdSnafu {
+                field_id: field as i16,
+            }
+            .fail();
+        }
+
         let column_number = rec_number as u16;
         let binding = match desc.bindings.get(&column_number) {
             Some(b) => b,
@@ -215,7 +236,15 @@ fn get_ird_field<E: OdbcEncoding>(
     string_length_ptr: *mut sql::Integer,
     guard: &HandleGuard<Statement>,
     state: &State<StatementState>,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
+    let schema = match state.as_ref() {
+        StatementState::Prepared { schema } => schema.clone(),
+        StatementState::QueryExecuted { reader, .. } => reader.schema(),
+        StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+        _ => return AssociatedStatementNotPreparedSnafu.fail(),
+    };
+
     if rec_number == 0 {
         match field {
             DescField::Count => {
@@ -248,13 +277,6 @@ fn get_ird_field<E: OdbcEncoding>(
             }
         }
     } else {
-        let schema = match state.as_ref() {
-            StatementState::Prepared { schema } => schema.clone(),
-            StatementState::QueryExecuted { reader, .. } => reader.schema(),
-            StatementState::Fetching { record_batch, .. } => record_batch.schema(),
-            _ => return StatementNotExecutedSnafu.fail(),
-        };
-
         let col_idx = (rec_number as usize) - 1;
         if col_idx >= schema.fields().len() {
             return crate::api::error::NoMoreDataSnafu.fail();
@@ -275,17 +297,407 @@ fn get_ird_field<E: OdbcEncoding>(
                 unsafe { std::ptr::write_unaligned(value_ptr as *mut sql::Len, v) };
             }
             IrdFieldValue::Str(s) => {
-                // TODO: pass a Warnings collector and propagate 01004 on truncation
                 write_string_bytes_i32::<E>(
                     s,
                     value_ptr as *mut E::Char,
                     buffer_length,
                     string_length_ptr,
-                    None,
+                    Some(warnings),
                 );
             }
         }
         Ok(())
+    }
+}
+
+/// Get a descriptor record (composite of multiple fields).
+#[allow(clippy::too_many_arguments)]
+pub fn get_desc_rec<E: OdbcEncoding>(
+    desc_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    name: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    if rec_number <= 0 {
+        return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
+    }
+
+    let access = desc_from_handle(desc_handle)?;
+
+    match access {
+        DescriptorAccess::Implicit { guard, kind } => {
+            let inner = guard.inner.lock();
+            if inner.state.as_ref().is_need_data() {
+                return crate::api::error::InvalidDuringDaeSnafu.fail();
+            }
+            match kind {
+                DescriptorKind::Ird => get_ird_rec::<E>(
+                    rec_number,
+                    name,
+                    buffer_length,
+                    string_length_ptr,
+                    type_ptr,
+                    sub_type_ptr,
+                    length_ptr,
+                    precision_ptr,
+                    scale_ptr,
+                    nullable_ptr,
+                    &guard,
+                    &inner.state,
+                    warnings,
+                ),
+                DescriptorKind::Ard => get_ard_rec::<E>(
+                    &inner.ard,
+                    rec_number,
+                    name,
+                    buffer_length,
+                    string_length_ptr,
+                    type_ptr,
+                    sub_type_ptr,
+                    length_ptr,
+                    precision_ptr,
+                    scale_ptr,
+                    nullable_ptr,
+                    warnings,
+                ),
+                DescriptorKind::Apd => get_apd_rec::<E>(
+                    &inner.apd,
+                    rec_number,
+                    name,
+                    buffer_length,
+                    string_length_ptr,
+                    type_ptr,
+                    sub_type_ptr,
+                    length_ptr,
+                    precision_ptr,
+                    scale_ptr,
+                    nullable_ptr,
+                    warnings,
+                ),
+                DescriptorKind::Ipd => get_ipd_rec::<E>(
+                    &inner.ipd,
+                    rec_number,
+                    name,
+                    buffer_length,
+                    string_length_ptr,
+                    type_ptr,
+                    sub_type_ptr,
+                    length_ptr,
+                    precision_ptr,
+                    scale_ptr,
+                    nullable_ptr,
+                    warnings,
+                ),
+            }
+        }
+        DescriptorAccess::Explicit { desc } => {
+            let desc = desc.lock();
+            get_ard_rec::<E>(
+                &desc,
+                rec_number,
+                name,
+                buffer_length,
+                string_length_ptr,
+                type_ptr,
+                sub_type_ptr,
+                length_ptr,
+                precision_ptr,
+                scale_ptr,
+                nullable_ptr,
+                warnings,
+            )
+        }
+    }
+}
+
+struct DescRecValues<'a> {
+    name: &'a str,
+    type_value: sql::SmallInt,
+    concise_type: sql::SmallInt,
+    octet_length: sql::Len,
+    precision: sql::SmallInt,
+    scale: sql::SmallInt,
+    nullable: sql::SmallInt,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_desc_rec<E: OdbcEncoding>(
+    values: &DescRecValues<'_>,
+    name_buf: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) {
+    if !name_buf.is_null() || !string_length_ptr.is_null() {
+        write_string_chars::<E>(
+            values.name,
+            name_buf,
+            buffer_length,
+            string_length_ptr,
+            Some(warnings),
+        );
+    }
+    if !type_ptr.is_null() {
+        unsafe { std::ptr::write_unaligned(type_ptr, values.type_value) };
+    }
+    if !sub_type_ptr.is_null() {
+        unsafe {
+            std::ptr::write_unaligned(sub_type_ptr, datetime_interval_code(values.concise_type))
+        };
+    }
+    if !length_ptr.is_null() {
+        unsafe { std::ptr::write_unaligned(length_ptr, values.octet_length) };
+    }
+    if !precision_ptr.is_null() {
+        unsafe { std::ptr::write_unaligned(precision_ptr, values.precision) };
+    }
+    if !scale_ptr.is_null() {
+        unsafe { std::ptr::write_unaligned(scale_ptr, values.scale) };
+    }
+    if !nullable_ptr.is_null() {
+        unsafe { std::ptr::write_unaligned(nullable_ptr, values.nullable) };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn get_ird_rec<E: OdbcEncoding>(
+    rec_number: sql::SmallInt,
+    name: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    guard: &HandleGuard<Statement>,
+    state: &State<StatementState>,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    let schema = match state.as_ref() {
+        StatementState::Prepared { schema } => schema.clone(),
+        StatementState::QueryExecuted { reader, .. } => reader.schema(),
+        StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+        _ => return AssociatedStatementNotPreparedSnafu.fail(),
+    };
+
+    let col_idx = (rec_number as usize) - 1;
+    if col_idx >= schema.fields().len() {
+        return crate::api::error::NoMoreDataSnafu.fail();
+    }
+
+    let arrow_field = schema.field(col_idx);
+    let dbc = guard.conn()?;
+    let numeric_settings = dbc.connection.lock().numeric_settings;
+
+    let values = DescRecValues {
+        name: compute_ird_name(arrow_field),
+        type_value: compute_ird_verbose_type(arrow_field, &numeric_settings)?,
+        concise_type: compute_ird_concise_type(arrow_field, &numeric_settings)?,
+        octet_length: compute_ird_octet_length(arrow_field, &numeric_settings)?,
+        precision: compute_ird_precision(arrow_field, &numeric_settings)?,
+        scale: compute_ird_scale(arrow_field, &numeric_settings)?,
+        nullable: compute_ird_nullable(arrow_field),
+    };
+    write_desc_rec::<E>(
+        &values,
+        name,
+        buffer_length,
+        string_length_ptr,
+        type_ptr,
+        sub_type_ptr,
+        length_ptr,
+        precision_ptr,
+        scale_ptr,
+        nullable_ptr,
+        warnings,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn get_ard_rec<E: OdbcEncoding>(
+    desc: &crate::api::ArdDescriptor,
+    rec_number: sql::SmallInt,
+    name: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    let binding = desc.bindings.get(&(rec_number as u16)).ok_or_else(|| {
+        crate::api::error::OdbcError::NoMoreData {
+            location: snafu::location!(),
+        }
+    })?;
+
+    let concise_type = binding.target_type as sql::SmallInt;
+    let values = DescRecValues {
+        name: "",
+        type_value: concise_type,
+        concise_type,
+        octet_length: binding.buffer_length,
+        precision: 0,
+        scale: 0,
+        nullable: 0,
+    };
+    write_desc_rec::<E>(
+        &values,
+        name,
+        buffer_length,
+        string_length_ptr,
+        type_ptr,
+        sub_type_ptr,
+        length_ptr,
+        precision_ptr,
+        scale_ptr,
+        nullable_ptr,
+        warnings,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn get_apd_rec<E: OdbcEncoding>(
+    desc: &crate::api::ApdDescriptor,
+    rec_number: sql::SmallInt,
+    name: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    let record = desc.records.get(&(rec_number as u16)).ok_or_else(|| {
+        crate::api::error::OdbcError::NoMoreData {
+            location: snafu::location!(),
+        }
+    })?;
+
+    let concise_type = record.value_type as sql::SmallInt;
+    let values = DescRecValues {
+        name: "",
+        type_value: concise_type,
+        concise_type,
+        octet_length: record.buffer_length,
+        precision: 0,
+        scale: 0,
+        nullable: 0,
+    };
+    write_desc_rec::<E>(
+        &values,
+        name,
+        buffer_length,
+        string_length_ptr,
+        type_ptr,
+        sub_type_ptr,
+        length_ptr,
+        precision_ptr,
+        scale_ptr,
+        nullable_ptr,
+        warnings,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn get_ipd_rec<E: OdbcEncoding>(
+    desc: &crate::api::IpdDescriptor,
+    rec_number: sql::SmallInt,
+    name: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    type_ptr: *mut sql::SmallInt,
+    sub_type_ptr: *mut sql::SmallInt,
+    length_ptr: *mut sql::Len,
+    precision_ptr: *mut sql::SmallInt,
+    scale_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    let record = desc.records.get(&(rec_number as u16)).ok_or_else(|| {
+        crate::api::error::OdbcError::NoMoreData {
+            location: snafu::location!(),
+        }
+    })?;
+
+    let concise_type = record.sql_data_type.0;
+    let precision = if record.column_size <= i16::MAX as sql::ULen {
+        record.column_size as sql::SmallInt
+    } else {
+        i16::MAX
+    };
+    let values = DescRecValues {
+        name: "",
+        type_value: concise_type,
+        concise_type,
+        octet_length: ipd_octet_length(record.sql_data_type, record.column_size),
+        precision,
+        scale: record.decimal_digits,
+        nullable: record.nullable,
+    };
+    write_desc_rec::<E>(
+        &values,
+        name,
+        buffer_length,
+        string_length_ptr,
+        type_ptr,
+        sub_type_ptr,
+        length_ptr,
+        precision_ptr,
+        scale_ptr,
+        nullable_ptr,
+        warnings,
+    );
+    Ok(())
+}
+
+fn datetime_interval_code(concise_type: sql::SmallInt) -> sql::SmallInt {
+    match sql::SqlDataType(concise_type) {
+        sql::SqlDataType::DATE => 1,      // SQL_CODE_DATE
+        sql::SqlDataType::TIME => 2,      // SQL_CODE_TIME
+        sql::SqlDataType::TIMESTAMP => 3, // SQL_CODE_TIMESTAMP
+        _ => 0,
+    }
+}
+
+fn ipd_octet_length(sql_type: sql::SqlDataType, column_size: sql::ULen) -> sql::Len {
+    match sql_type {
+        sql::SqlDataType::EXT_BIT => 1,
+        sql::SqlDataType::EXT_TINY_INT => 1,
+        sql::SqlDataType::SMALLINT => 2,
+        sql::SqlDataType::INTEGER => 4,
+        sql::SqlDataType::EXT_BIG_INT => 8,
+        sql::SqlDataType::REAL => 4,
+        sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => 8,
+        sql::SqlDataType::DATE => 6,       // sizeof(SQL_DATE_STRUCT)
+        sql::SqlDataType::TIME => 6,       // sizeof(SQL_TIME_STRUCT)
+        sql::SqlDataType::TIMESTAMP => 16, // sizeof(SQL_TIMESTAMP_STRUCT)
+        _ => column_size as sql::Len,
     }
 }
 
@@ -771,10 +1183,7 @@ fn get_ipd_field(
             "get_desc_field: unsupported IPD field {:?} for record 0",
             field
         );
-        return crate::api::error::InvalidDescriptorFieldIdSnafu {
-            field_id: field as i16,
-        }
-        .fail();
+        return crate::api::error::InvalidRecordNumberSnafu { number: 0i16 }.fail();
     }
 
     {
@@ -899,4 +1308,17 @@ fn set_ipd_field(
             }
         }
     }
+}
+
+fn is_valid_ard_record_field(field: DescField) -> bool {
+    matches!(
+        field,
+        DescField::Type
+            | DescField::ConciseType
+            | DescField::OctetLength
+            | DescField::DataPtr
+            | DescField::IndicatorPtr
+            | DescField::OctetLengthPtr
+            | DescField::DatetimeIntervalPrecision
+    )
 }

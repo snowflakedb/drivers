@@ -601,6 +601,9 @@ pub enum StmtAttr {
     RetrieveData = 11,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
+    /// `SQL_ATTR_ROW_NUMBER` (14) — read-only: 1-based number of the current row
+    /// in the result set (0 when the cursor is not positioned on a row).
+    RowNumber = 14,
     /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
     EnableAutoIpd = 15,
     /// `SQL_ATTR_PARAM_BIND_OFFSET_PTR` (17) — pointer to offset added to APD data/indicator ptrs.
@@ -615,6 +618,10 @@ pub enum StmtAttr {
     ParamsetSize = 22,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
+    /// `SQL_ATTR_ROW_OPERATION_PTR` (24) — pointer to the per-row operation array
+    /// (`SQL_DESC_ARRAY_STATUS_PTR` on the ARD); used to skip rows during
+    /// `SQLSetPos`. Stored but a no-op for Snowflake's forward-only cursors.
+    RowOperationPtr = 24,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
     RowStatusPtr = 25,
     /// `SQL_ATTR_ROWS_FETCHED_PTR` (26) — pointer to count of rows fetched.
@@ -658,6 +665,7 @@ impl TryFrom<i32> for StmtAttr {
             10 => Ok(StmtAttr::SimulateCursor),
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
+            14 => Ok(StmtAttr::RowNumber),
             15 => Ok(StmtAttr::EnableAutoIpd),
             17 => Ok(StmtAttr::ParamBindOffsetPtr),
             18 => Ok(StmtAttr::ParamBindType),
@@ -665,6 +673,7 @@ impl TryFrom<i32> for StmtAttr {
             21 => Ok(StmtAttr::ParamsProcessedPtr),
             22 => Ok(StmtAttr::ParamsetSize),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
+            24 => Ok(StmtAttr::RowOperationPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
             27 => Ok(StmtAttr::RowArraySize),
@@ -1140,6 +1149,10 @@ pub struct ArdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_OPERATION_PTR` — app-owned
+    /// per-row operation array (`SQL_ROW_IGNORE`/`SQL_ROW_PROCEED`). Stored for
+    /// retrieval; not consulted for forward-only cursors. Default null.
+    pub array_status_ptr: *mut u16,
 }
 
 // Safety: ArdDescriptor contains raw pointers (bind_offset_ptr, indicator/data ptrs
@@ -1169,6 +1182,7 @@ impl ArdDescriptor {
             array_size: 1,
             bind_type: 0,
             bind_offset_ptr: std::ptr::null_mut(),
+            array_status_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -2314,16 +2328,14 @@ mod tests {
     #[test]
     fn stmt_attr_is_known_odbc_accepts_supported_and_unsupported_spec_ids() {
         // Identifiers this driver implements (a sample across the range).
-        for id in [-2, -1, 0, 6, 7, 27, 10010, 10014] {
+        for id in [-2, -1, 0, 6, 7, 14, 24, 27, 10010, 10014] {
             assert!(StmtAttr::is_known_odbc(id), "{id} should be a known attr");
         }
         // Spec-defined identifiers the driver does NOT model — must still be
         // "known" so the get path reports HYC00, not HY092.
         for id in [
-            14, // SQL_ATTR_ROW_NUMBER (read-only)
             16, // SQL_ATTR_FETCH_BOOKMARK_PTR
             19, // SQL_ATTR_PARAM_OPERATION_PTR
-            24, // SQL_ATTR_ROW_OPERATION_PTR
             29, // SQL_ATTR_ASYNC_STMT_EVENT
         ] {
             assert!(
@@ -2341,6 +2353,13 @@ mod tests {
                 "{id} is outside the ODBC range → HY092"
             );
         }
+    }
+
+    #[test]
+    fn stmt_attr_try_from_maps_row_number_and_row_operation_ptr() {
+        // SNOW-3235555: SQL_ATTR_ROW_NUMBER (14) and SQL_ATTR_ROW_OPERATION_PTR (24).
+        assert_eq!(StmtAttr::try_from(14).unwrap(), StmtAttr::RowNumber);
+        assert_eq!(StmtAttr::try_from(24).unwrap(), StmtAttr::RowOperationPtr);
     }
 
     #[test]

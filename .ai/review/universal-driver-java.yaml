@@ -94,6 +94,11 @@ rules:
 
       **REQUIREMENT**: Immediately after calling a nullable getter (`getString`, `getObject`, `getInt`, etc.) on a column that may be SQL NULL, tests MUST call `ResultSet.wasNull()` and assert the expected nullability. Do not infer NULL from sentinel values alone.
 
+      **CONSOLIDATION**: Emit at most ONE comment per file per PR. If multiple violations exist in the same file, consolidate them into a single finding that lists every affected line number. Do not post separate comments for each `assertNull()` / getter call on the same file.
+
+      **COMMENT TEMPLATE** (use when multiple instances exist in one file):
+      "This file has N instances of nullable getter assertions without `wasNull()` verification. Affected lines: [line1, line2, ...]. After each `assertNull(rs.getX(...))` (or equivalent nullable read), add `assertTrue(rs.wasNull())` (or `assertFalse` when the column is non-null)."
+
       ❌ **BAD:**
       ```java
       assertTrue(rs.next());
@@ -521,3 +526,16 @@ rules:
       props.setProperty("password", System.getenv("SNOWFLAKE_TEST_PASSWORD"));
       props.setProperty("token", INVALID_TOKEN_PLACEHOLDER);  // exercises auth rejection
       ```
+
+  - id: ud-java-nullable-getter-file-audit
+    rule: |
+      **OBJECTIVE** (alternative to per-line `ud-java-wasnull-after-nullable-getter`): Audit JDBC test files for systematic NULL-handling gaps instead of flagging each getter call independently.
+
+      **REQUIREMENT**: When reviewing a test file, scan all `ResultSet` nullable getter usages (`getString`, `getObject`, `getInt`, `getLong`, `getDouble`, etc.). If any read lacks a subsequent `wasNull()` assertion, produce exactly one file-level finding.
+
+      **COMMENT TEMPLATE**:
+      "This file has N nullable getter reads without `wasNull()` verification at lines [list]. JDBC requires explicit nullability checks — add `assertTrue(rs.wasNull())` after NULL reads and `assertFalse(rs.wasNull())` after non-null reads. Patterns include `assertNull(rs.getString(...))`, `assertEquals(sentinel, rs.getInt(...))`, and similar."
+
+      **PRIORITY**: High when N >= 3 (systematic gap); Medium when N is 1-2.
+
+      Do not emit per-line comments for the same file in the same PR.

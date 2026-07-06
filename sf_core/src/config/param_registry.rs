@@ -71,6 +71,9 @@ pub mod param_names {
     pub const CUSTOM_ROOT_STORE_PATH: ParamKey = ParamKey("custom_root_store_path");
     pub const VERIFY_HOSTNAME: ParamKey = ParamKey("verify_hostname");
     pub const VERIFY_CERTIFICATES: ParamKey = ParamKey("verify_certificates");
+    pub const TLS_SKIP_VERIFY: ParamKey = ParamKey("tls_skip_verify");
+    pub const MIN_TLS_VERSION: ParamKey = ParamKey("min_tls_version");
+    pub const MAX_TLS_VERSION: ParamKey = ParamKey("max_tls_version");
     pub const CRL_CHECK_MODE: ParamKey = ParamKey("crl_check_mode");
     pub const CRL_ENABLE_DISK_CACHING: ParamKey = ParamKey("crl_enable_disk_caching");
     pub const CRL_ENABLE_MEMORY_CACHING: ParamKey = ParamKey("crl_enable_memory_caching");
@@ -853,6 +856,49 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: true,
         mutable_after_connect: false,
     },
+    ParamDef {
+        canonical_name: param_names::TLS_SKIP_VERIFY.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // TLS protocol-version window.
+    ParamDef {
+        canonical_name: param_names::MIN_TLS_VERSION.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::String("tls12".to_string())),
+        sensitive: false,
+        description: "Minimum TLS protocol version to negotiate (tls12 or tls13)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::MAX_TLS_VERSION.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::String("tls13".to_string())),
+        sensitive: false,
+        description: "Maximum TLS protocol version to negotiate (tls12 or tls13)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
     // ── CRL ─────────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CRL_CHECK_MODE.as_str(),
@@ -1592,6 +1638,7 @@ mod tests {
             ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
             ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
             ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
+            ("TLS_SKIP_VERIFY", "tls_skip_verify"),
             ("CRL_MODE", "crl_check_mode"),
             ("CRL_ENABLED", "crl_check_mode"),
             ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
@@ -1676,6 +1723,26 @@ mod tests {
         assert!(r.resolve("").is_none());
         assert!(r.resolve("FOOBAR").is_none());
         assert!(!r.is_known("nonexistent_param"));
+    }
+
+    #[test]
+    fn tls_version_params_have_correct_metadata() {
+        let r = registry();
+        for key in ["min_tls_version", "max_tls_version"] {
+            let d = r
+                .resolve(key)
+                .unwrap_or_else(|| panic!("expected registry entry for {key}"));
+            assert_eq!(d.canonical_name, key);
+            assert_eq!(d.value_type, ValueType::String);
+            assert_eq!(d.scope, ParamScope::Connection);
+            assert!(d.used_at_connect, "key {key} must be used at connect");
+            assert!(
+                !d.mutable_after_connect,
+                "key {key} must be immutable after connect"
+            );
+            assert!(d.default.is_some(), "key {key} must have a static default");
+            assert!(!d.sensitive);
+        }
     }
 
     #[test]

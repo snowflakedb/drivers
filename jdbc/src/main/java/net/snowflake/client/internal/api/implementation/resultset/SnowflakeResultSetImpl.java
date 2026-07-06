@@ -773,7 +773,12 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public Timestamp getTimestamp(int columnIndex, Calendar cal) throws SQLException {
-    return getTimestamp(columnIndex);
+    checkClosed();
+    // Mirrors snowflake-jdbc's SnowflakeBaseResultSet.getTimestamp(int, Calendar): pass the
+    // Calendar's timezone to the converter. Only TIMESTAMP_NTZ consumes it (honor-client-TZ
+    // re-anchoring); LTZ/TZ ignore it. Note getTime(int, Calendar) intentionally drops the Calendar
+    // to match legacy.
+    return rowReader.getTimestamp(columnIndex, cal == null ? null : cal.getTimeZone());
   }
 
   @Override

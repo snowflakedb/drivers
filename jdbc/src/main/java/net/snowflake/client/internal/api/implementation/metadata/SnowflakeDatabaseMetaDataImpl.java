@@ -629,7 +629,7 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getProcedures(catalog, schemaPattern, procedureNamePattern);
   }
 
   @Override
@@ -663,7 +663,7 @@ public class SnowflakeDatabaseMetaDataImpl
   @Override
   public ResultSet getTableTypes() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getTableTypes();
   }
 
   @Override
@@ -732,7 +732,8 @@ public class SnowflakeDatabaseMetaDataImpl
 
   @Override
   public ResultSet getTypeInfo() throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getTypeInfo();
   }
 
   @Override
@@ -931,7 +932,7 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getFunctions(String catalog, String schemaPattern, String functionNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getFunctions(catalog, schemaPattern, functionNamePattern);
   }
 
   @Override

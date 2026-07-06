@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.metadata.objects;
 
+import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.isPatternMatchingAll;
+
 import net.snowflake.common.util.Wildcard;
 
 class MetaDataQueryBuilder {
@@ -25,18 +27,23 @@ class MetaDataQueryBuilder {
   }
 
   MetaDataQueryBuilder like(String pattern) {
-    if (pattern != null
-        && !pattern.isEmpty()
-        && !pattern.trim().equals("%")
-        && !pattern.trim().equals(".*")) {
+    if (!isPatternMatchingAll(pattern)) {
       builder.append(" like '").append(escapeSingleQuoteForLikeCommand(pattern)).append("'");
     }
     return this;
   }
 
-  MetaDataQueryBuilder likeWithWildcards(String pattern) {
-    builder.append(" like '").append(escapeSingleQuoteForLikeCommand(pattern)).append("'");
-    return this;
+  MetaDataQueryBuilder likeSchema(String schemaPattern) {
+    if (isExactSchema && enableWildcardsInShowMetadataCommands && schemaPattern != null) {
+      String escapedSchemaPattern =
+          schemaPattern.replaceAll("_", "\\\\\\\\_").replaceAll("%", "\\\\\\\\%");
+      builder
+          .append(" like '")
+          .append(escapeSingleQuoteForLikeCommand(escapedSchemaPattern))
+          .append("'");
+      return this;
+    }
+    return like(schemaPattern);
   }
 
   MetaDataQueryBuilder inAccount() {

@@ -1983,6 +1983,7 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: None,
         }
     }
@@ -2056,6 +2057,7 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
+            tls_config: crate::tls::config::TlsConfig::default(),
             storage_account: Some("test".to_string()),
         };
 
@@ -2148,6 +2150,7 @@ mod tests {
                 use_virtual_url: false,
                 use_regional_url: false,
                 use_s3_regional_url: false,
+                tls_config: crate::tls::config::TlsConfig::default(),
                 storage_account: None,
             },
             encryption_material: None,

@@ -115,12 +115,64 @@ public final class ArrowVectorConverterUtil {
         case OBJECT:
           return new VarCharConverter(vector, idx, context);
 
+        case TIMESTAMP:
+          // A bare TIMESTAMP column is resolved to a concrete type by
+          // CLIENT_TIMESTAMP_TYPE_MAPPING.
+          // NTZ (TODO P1) and LTZ (P2) are supported; TZ lands in P3. Result-set
+          // Arrow metadata normally
+          // carries the concrete logical type, so this is defensive.
+          String mappedType = context.getTimestampMappedType();
+          if (SnowflakeType.TIMESTAMP_LTZ.name().equals(mappedType)) {
+            return initTimestampLtzConverter(vector, context, idx);
+          }
+          if (!SnowflakeType.TIMESTAMP_NTZ.name().equals(mappedType)) {
+            throw new SnowflakeSQLException(
+                "Unsupported TIMESTAMP mapping for bare TIMESTAMP: " + mappedType);
+          }
+          // fall through: mapped to NTZ
+        case TIMESTAMP_NTZ:
+          int ntzScale = getScaleFromFieldMetadata(vector);
+          // Select by struct child count, mirroring snowflake-jdbc: no children (compact Int64) vs.
+          // a two-field {epoch, fraction} struct.
+          if (vector.getField().getChildren().isEmpty()) {
+            return new BigIntToTimestampNTZConverter(vector, idx, context, ntzScale);
+          } else if (vector.getField().getChildren().size() == 2) {
+            return new TwoFieldStructToTimestampNTZConverter(vector, idx, context, ntzScale);
+          }
+          throw new SnowflakeSQLException(
+              "Unsupported Arrow physical layout for TIMESTAMP_NTZ: "
+                  + vector.getField().getChildren().size()
+                  + " struct children");
+
+        case TIMESTAMP_LTZ:
+          return initTimestampLtzConverter(vector, context, idx);
+
         default:
           throw new SnowflakeSQLException("Unsupported Arrow logical type: " + st.name());
       }
     }
 
     throw new SnowflakeSQLException("Unsupported Arrow field type: " + type);
+  }
+
+  /**
+   * Build the {@code TIMESTAMP_LTZ} converter for {@code vector}, selecting by struct child count
+   * (no children → compact {@code Int64}; two children → {@code {epoch, fraction}} struct),
+   * mirroring snowflake-jdbc. Shared by the {@code TIMESTAMP_LTZ} case and the bare-{@code
+   * TIMESTAMP} fall-through when {@code CLIENT_TIMESTAMP_TYPE_MAPPING} resolves to LTZ.
+   */
+  private static ArrowVectorConverter initTimestampLtzConverter(
+      ValueVector vector, DataConversionContext context, int idx) throws SnowflakeSQLException {
+    int scale = getScaleFromFieldMetadata(vector);
+    if (vector.getField().getChildren().isEmpty()) {
+      return new BigIntToTimestampLTZConverter(vector, idx, context, scale);
+    } else if (vector.getField().getChildren().size() == 2) {
+      return new TwoFieldStructToTimestampLTZConverter(vector, idx, context, scale);
+    }
+    throw new SnowflakeSQLException(
+        "Unsupported Arrow physical layout for TIMESTAMP_LTZ: "
+            + vector.getField().getChildren().size()
+            + " struct children");
   }
 
   public static ArrowVectorConverter initConverter(

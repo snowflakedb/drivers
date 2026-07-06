@@ -199,7 +199,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: HY009 for negative Na
     REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
   }
   UNIX_ONLY {
-    OLD_IODBC_ONLY("BD#60") {
+    OLD_IODBC_ONLY("BD#70") {
       // iODBC's DM validates NameLength<0 itself and surfaces the ODBC 2.x
       //   alias "S1090" before forwarding to the old driver; the new driver
       //   gets to map the same condition to "HY009" (and on unixODBC the old
@@ -240,7 +240,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: HY010 during SQL_NEED
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLSetCursorName(stmt_handle(), sqlchar("test_cursor"), SQL_NTS);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM catches SQLSetCursorName during SQL_NEED_DATA as a function
     //   sequence error and surfaces the ODBC 2.x alias "S1010" before the
     //   old driver can map it to "HY010".

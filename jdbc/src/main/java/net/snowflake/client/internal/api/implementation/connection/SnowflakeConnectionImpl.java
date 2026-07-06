@@ -166,6 +166,12 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
+  public Properties getResolvedProperties() {
+    // Return a copy so callers can't mutate the connection's resolved properties.
+    return (Properties) resolvedProperties.clone();
+  }
+
+  @Override
   public Statement createStatement() throws SQLException {
     checkClosed();
     Statement stmt = new SnowflakeStatementImpl(this, coreDriverApi);

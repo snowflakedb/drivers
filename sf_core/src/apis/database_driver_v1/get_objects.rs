@@ -622,7 +622,7 @@ async fn execute_show(
     // Account-wide `SHOW OBJECTS` spills to external chunks; parsing only the
     // inline rowset here would silently drop most rows.
     let rowset_data = response.data.into_rowset_data();
-    let reader = super::query::read_batches(&rowset_data, http_client, &prefetch_config)
+    let reader = super::query::read_batches(&rowset_data, http_client, &prefetch_config, None)
         .await
         .map_err(|e| {
             InvalidArgumentSnafu {
@@ -1653,7 +1653,7 @@ mod tests {
             writer.finish().unwrap();
         }
         let chunk_base64 = BASE64.encode(&buf);
-        let reader = single_chunk_reader(&chunk_base64).unwrap();
+        let reader = single_chunk_reader(&chunk_base64, None).unwrap();
         let rows = rows_from_reader(reader).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].1, "MY_TABLE");

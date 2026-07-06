@@ -143,6 +143,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     master_validity_in_seconds: int | None = None
     """Remaining validity in seconds for the master token (session token auth)"""
 
+    max_tls_version: str | None = "tls13"
+    """Maximum TLS protocol version to negotiate (tls12 or tls13). Default: 'tls13'"""
+
+    min_tls_version: str | None = "tls12"
+    """Minimum TLS protocol version to negotiate (tls12 or tls13). Default: 'tls12'"""
+
     no_proxy: str | None = None
     """Comma-separated list of hosts to bypass the proxy for"""
 
@@ -245,6 +251,13 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     ssl: bool | None = None
     """Enable or disable SSL/TLS (sets protocol to https or http). Deprecated: use protocol instead"""
+
+    tls_skip_verify: bool | None = False
+    """Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since
+    certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only.
+
+    Default: False
+    """
 
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""

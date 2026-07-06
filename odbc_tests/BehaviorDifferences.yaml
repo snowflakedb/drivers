@@ -1310,8 +1310,6 @@ behavior_differences:
     description: |
       Applications using ODBC 2.x field identifiers with the 3.x function will now
       receive correct values.
-      receive correct values.
-
   81:
     name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
     status: allowed
@@ -1352,4 +1350,84 @@ behavior_differences:
       A leading `~` or `~/` in the local source path is expanded to the user's home directory before glob expansion, so `PUT file://~/data/*.csv @stage` resolves to `<home>/data/*.csv`. This matches JDBC's `expandFileNames` and Python's `os.path.expanduser`. A `~` that is not the leading path segment (e.g. `/data/~/file` or `file~name`) is preserved literally. When the home directory cannot be determined the `~` is left untouched.
     description: |
       Reference: JDBC `SnowflakeFileTransferAgent.expandFileNames` (leading-`~` replacement) and Python `file_transfer_agent.py` (`os.path.expanduser`). The `~user` (named-user) form is not expanded by the universal driver; only the bare `~` and `~/` leading forms are. This differs from Python's `os.path.expanduser`, which additionally resolves `~user` via the password database; it matches the leading-only intent of JDBC. Applications that relied on the legacy ODBC behavior of treating a leading `~` literally will now have it expanded.
-
+  83:
+    name: "OAuth IdP token-exchange rejection returns SQLSTATE 28000 instead of generic HY000"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The new driver classifies an IdP-side credential rejection (bad client secret during the
+      OAuth Authorization Code / Client Credentials token-exchange step) as an authentication
+      failure, which the ODBC spec models with SQLSTATE 28000. The legacy driver reports the
+      generic HY000. Surfacing 28000 lets applications distinguish auth failures from other
+      general errors, so the difference is accepted.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A failed OAuth token exchange (e.g. invalid client secret) surfaces with SQLSTATE HY000.
+    new_driver_behavior: |
+      Returns SQLSTATE 28000 (invalid authorization specification).
+    description: |
+      Applications inspecting the SQLSTATE on a failed OAuth Authorization Code or Client
+      Credentials connection will now see 28000 instead of HY000.
+  84:
+    name: "PASSCODEINPASSWORD accepts on/true/1 instead of only on"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      The legacy ODBC driver only enables passcode-in-password when the connection-string value
+      is the literal "on" (case-insensitive); any other value, including "true" or "1", is
+      treated as disabled. The new driver parses the standard boolean spellings ("on", "true",
+      "1") consistently with every other boolean connection attribute. Broadening accepted values
+      is a usability improvement and a superset of the old behavior, so the difference is accepted.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      PASSCODEINPASSWORD is enabled only when the value is "on" (case-insensitive). With
+      PASSCODEINPASSWORD=true the attribute is silently treated as false, so a password with an
+      appended TOTP passcode is sent as a literal password and login fails with native error
+      390100 ("Incorrect username or password was specified").
+    new_driver_behavior: |
+      PASSCODEINPASSWORD accepts "on", "true", and "1" (case-insensitive); each enables the
+      passcode-in-password flow.
+    description: |
+      Applications that set PASSCODEINPASSWORD=true succeed on the new driver where they silently
+      failed on the legacy driver. Tests use the value "on", which both drivers accept, to keep
+      the shared e2e flow running against either driver.
+  85:
+    name: "OAuth Authorization Code token caching default differs from legacy ODBC (platform-dependent across reference drivers)"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      OAuth token caching for the Authorization Code flow is gated by
+      CLIENT_STORE_TEMPORARY_CREDENTIAL, but the default varies by driver and platform. Legacy
+      ODBC force-enables it for OAUTH_AUTHORIZATION_CODE on all platforms
+      (SFConnection::Connect sets m_clientStoreTemporaryCredential = true in the AC authenticator
+      branch). JDBC and Go enable it by default only on macOS and Windows; on Linux they default
+      off unless explicitly configured. Python defaults off on all platforms. The new driver defaults
+      off on all platforms (client_store_temporary_credential=false when unset) and only caches
+      when the caller opts in — aligning with Python and with JDBC/Go on Linux, but diverging from
+      legacy ODBC everywhere and from JDBC/Go on macOS/Windows. Explicit opt-in is the safer
+      behavior; the difference is accepted pending review.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Legacy ODBC OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by default
+      on all platforms. A later connection for the same host + user can short-circuit the
+      interactive + token-exchange legs by replaying the cached token, even when other credentials
+      (e.g. the client secret) have changed. Other reference drivers are platform-dependent: JDBC
+      and Go default caching on for OAuth flows on macOS/Windows only; Python requires an explicit
+      client_store_temporary_credential=true on every platform.
+    new_driver_behavior: |
+      On all platforms, OAUTH_AUTHORIZATION_CODE connections do not cache the token unless
+      CLIENT_STORE_TEMPORARY_CREDENTIAL is explicitly set to true; every connect performs a fresh
+      authorization + token exchange unless the caller opts in.
+    description: |
+      Applications relying on legacy ODBC's implicit AC token caching on any platform must set
+      CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver to keep that behavior. macOS/Windows
+      users accustomed to JDBC or Go (where OAuth caching defaults on) also need the explicit flag
+      on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
+      on the legacy driver so a token cached by the preceding happy-path test cannot mask the
+      expected token-exchange failure.

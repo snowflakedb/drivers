@@ -1,3 +1,4 @@
+pub mod aws_http_client;
 pub mod client;
 pub mod config;
 pub mod crl_verifier;

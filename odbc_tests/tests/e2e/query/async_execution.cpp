@@ -515,7 +515,7 @@ TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_
   NEW_DRIVER_ONLY("BD#47") { REQUIRE_THAT(OdbcResult(ctx.cancel_result, stmt), OdbcMatchers::Succeeded()); }
 
   REQUIRE(exec_ret == SQL_ERROR);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM catches the cross-thread cancel as a function-sequence event
     //   on the busy async statement and surfaces ODBC 2.x "S1010" instead of
     //   the spec-mandated "HY008" the new driver maps inside.

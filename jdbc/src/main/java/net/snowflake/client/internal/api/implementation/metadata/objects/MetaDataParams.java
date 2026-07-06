@@ -1,11 +1,9 @@
 package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import java.sql.SQLException;
-import lombok.Value;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
-import net.snowflake.client.internal.util.NotImplementedException;
 
 /**
  * Session- and connection-derived parameters that drive {@link java.sql.DatabaseMetaData} command
@@ -18,14 +16,6 @@ import net.snowflake.client.internal.util.NotImplementedException;
  * it already uses the real RPC path so no call sites change when core catches up.
  */
 class MetaDataParams {
-
-  @Value
-  static class ContextAwareMetadataSearch {
-    String database;
-    String schema;
-    boolean isExactSchema;
-    boolean useSessionSchema;
-  }
 
   // Snowflake session parameter names (see SFSessionProperty / SessionUtil in snowflake-jdbc).
   private static final String CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX =
@@ -119,39 +109,20 @@ class MetaDataParams {
     if (metadataRequestUseConnectionCtx()) {
       // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX = TRUE
       if (catalog == null) {
-        catalog = sessionDatabase();
+        catalog = connection.getCatalog();
       }
       if (schemaPattern == null) {
-        schemaPattern = sessionSchema();
+        schemaPattern = connection.getSchema();
         useSessionSchema = true;
       }
     } else if (metadataRequestUseSessionDatabase() && catalog == null) {
-      catalog = sessionDatabase();
+      catalog = connection.getCatalog();
     }
 
     boolean isExactSchema =
         (enableExactSchemaSearch() && useSessionSchema)
             || !isEnableWildcardsInShowMetadataCommands();
     return new ContextAwareMetadataSearch(catalog, schemaPattern, isExactSchema, useSessionSchema);
-  }
-
-  // Session database/schema come from the connection. Until Connection#getCatalog/#getSchema are
-  // implemented in the new driver, these throw NotImplementedException; treat that as "no session
-  // context available" so metadata still works under the legacy (non-context) defaults.
-  private String sessionDatabase() throws SQLException {
-    try {
-      return connection.getCatalog();
-    } catch (NotImplementedException e) {
-      return null;
-    }
-  }
-
-  private String sessionSchema() throws SQLException {
-    try {
-      return connection.getSchema();
-    } catch (NotImplementedException e) {
-      return null;
-    }
   }
 
   private boolean readBooleanParameter(String key, boolean defaultValue) throws SQLException {

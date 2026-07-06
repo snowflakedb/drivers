@@ -2,9 +2,11 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import static java.sql.ResultSetMetaData.columnNoNulls;
 import static java.sql.ResultSetMetaData.columnNullable;
+import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.matches;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
@@ -17,7 +19,6 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
-import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataParams.ContextAwareMetadataSearch;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.RowConverter;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
@@ -77,19 +78,9 @@ public class MetaDataObjects {
         params.applySessionContext(originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
-    boolean isExactSchema = contextAware.isExactSchema();
 
-    MetaDataQueryBuilder sqlQueryBuilder = queryBuilder(contextAware).show("schemas");
-    if (isExactSchema
-        && schemaPattern != null
-        && params.isEnableWildcardsInShowMetadataCommands()) {
-      String escapedSchemaPattern =
-          schemaPattern.replaceAll("_", "\\\\\\\\_").replaceAll("%", "\\\\\\\\%");
-      sqlQueryBuilder.likeWithWildcards(escapedSchemaPattern);
-    } else {
-      sqlQueryBuilder.like(schemaPattern);
-    }
-    String sqlQuery = sqlQueryBuilder.in(catalog).build();
+    String sqlQuery =
+        queryBuilder(contextAware).show("schemas").likeSchema(schemaPattern).in(catalog).build();
 
     if (sqlQuery == null) {
       return emptyResultSet(MetaDataResultSetFormat.GET_SCHEMAS);
@@ -102,9 +93,7 @@ public class MetaDataObjects {
         row -> {
           String schemaName = row.getString(2);
           String dbName = row.getString(5);
-          if (compiledSchemaPattern == null
-              || compiledSchemaPattern.matcher(schemaName).matches()
-              || isExactSchema && schemaPattern.equals(schemaName)) {
+          if (contextAware.schemaMatches(compiledSchemaPattern, schemaName)) {
             return new Object[] {schemaName, dbName};
           }
           return null;
@@ -176,9 +165,9 @@ public class MetaDataObjects {
             comment = row.getString(6);
           }
 
-          if ((compiledTablePattern == null || compiledTablePattern.matcher(tableName).matches())
-              && (compiledSchemaPattern == null
-                  || compiledSchemaPattern.matcher(schemaName).matches())) {
+          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          if (matches(compiledTablePattern, tableName)
+              && matches(compiledSchemaPattern, schemaName)) {
             return new Object[] {
               dbName, schemaName, tableName, kind, comment, null, null, null, null, null
             };
@@ -249,11 +238,10 @@ public class MetaDataObjects {
           String catalogName = row.getString(10);
           String autoIncrement = row.getString(11);
 
-          if ((compiledTablePattern == null || compiledTablePattern.matcher(tableName).matches())
-              && (compiledSchemaPattern == null
-                  || compiledSchemaPattern.matcher(schemaName).matches())
-              && (compiledColumnPattern == null
-                  || compiledColumnPattern.matcher(columnName).matches())) {
+          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          if (matches(compiledTablePattern, tableName)
+              && matches(compiledSchemaPattern, schemaName)
+              && matches(compiledColumnPattern, columnName)) {
 
             int ordinalPosition = ordinalTracker.nextOrdinalFor(tableName);
 
@@ -325,6 +313,114 @@ public class MetaDataObjects {
     return createResultSet(sqlQuery, rowConverter, resultFormat);
   }
 
+  public ResultSet getTableTypes() throws SQLException {
+    Object[][] rows =
+        SUPPORTED_TABLE_TYPES.stream().map(t -> new Object[] {t}).toArray(Object[][]::new);
+    return createResultSet(rows, MetaDataResultSetFormat.GET_TABLE_TYPES);
+  }
+
+  public ResultSet getTypeInfo() throws SQLException {
+    return createResultSet(TYPE_INFO, MetaDataResultSetFormat.GET_TYPE_INFO);
+  }
+
+  public ResultSet getProcedures(
+      String originalCatalog, String originalSchemaPattern, String procedureNamePattern)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("procedures")
+            .like(procedureNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_PROCEDURES);
+    }
+
+    logger.debug("SQL query in getProcedures: {}", sqlQuery);
+
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
+    Pattern compiledProcedurePattern = Wildcard.toRegexPattern(procedureNamePattern, true);
+    RowConverter rowConverter =
+        row -> {
+          String catalogName = row.getString("catalog_name");
+          String schemaName = row.getString("schema_name");
+          String procedureName = row.getString("name");
+          String remarks = row.getString("description");
+          String specificName = row.getString("arguments");
+          if (matches(compiledProcedurePattern, procedureName)
+              && contextAware.schemaMatches(compiledSchemaPattern, schemaName)) {
+
+            return new Object[] {
+              catalogName,
+              schemaName,
+              procedureName,
+              remarks,
+              DatabaseMetaData.procedureReturnsResult,
+              specificName
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_PROCEDURES);
+  }
+
+  public ResultSet getFunctions(
+      String originalCatalog, String originalSchemaPattern, String functionNamePattern)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("functions")
+            .like(functionNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_FUNCTIONS);
+    }
+
+    logger.debug("SQL query in getFunctions: {}", sqlQuery);
+
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
+    Pattern compiledFunctionPattern = Wildcard.toRegexPattern(functionNamePattern, true);
+
+    RowConverter rowConverter =
+        row -> {
+          String catalogName = row.getString(11);
+          String schemaName = row.getString(3);
+          String functionName = row.getString(2);
+          String remarks = row.getString(10);
+          int functionType =
+              ("Y".equals(row.getString(12))
+                  ? DatabaseMetaData.functionReturnsTable
+                  : DatabaseMetaData.functionNoTable);
+          // TODO(SNOW-3695645): getProcedures has correct behavior of using getString("arguments")
+          //  for "specificName", consider to fix it here as well
+          String specificName = functionName;
+          if (matches(compiledFunctionPattern, functionName)
+              && contextAware.schemaMatches(compiledSchemaPattern, schemaName)) {
+
+            return new Object[] {
+              catalogName, schemaName, functionName, remarks, functionType, specificName
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_FUNCTIONS);
+  }
+
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
   static Integer getColumnSize(SnowflakeColumnMetadata columnMetadata) {
     switch (columnMetadata.getType()) {
@@ -390,6 +486,29 @@ public class MetaDataObjects {
     }
   }
 
+  private ResultSet createResultSet(Object[][] rows, MetaDataResultSetFormat format)
+      throws SQLException {
+    SnowflakeStatementImpl statement =
+        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+    try {
+      return ResultSetFactory.createFromRows(statement, format.metaData(null), rows, true);
+    } catch (SQLException | RuntimeException e) {
+      statement.close();
+      throw e;
+    }
+  }
+
+  private ResultSet emptyResultSet(MetaDataResultSetFormat format) throws SQLException {
+    SnowflakeStatementImpl statement =
+        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
+    try {
+      return ResultSetFactory.createEmpty(statement, format.metaData(null), true);
+    } catch (SQLException | RuntimeException e) {
+      statement.close();
+      throw e;
+    }
+  }
+
   private static boolean isMissingMetadataObject(Throwable error) {
     for (SQLException sqlException = findSQLException(error);
         sqlException != null;
@@ -417,17 +536,6 @@ public class MetaDataObjects {
     return null;
   }
 
-  private ResultSet emptyResultSet(MetaDataResultSetFormat format) throws SQLException {
-    SnowflakeStatementImpl statement =
-        connection.createStatement().unwrap(SnowflakeStatementImpl.class);
-    try {
-      return ResultSetFactory.createEmpty(statement, format.metaData(null), true);
-    } catch (SQLException | RuntimeException e) {
-      statement.close();
-      throw e;
-    }
-  }
-
   private static List<String> validateTableTypes(String[] types) {
     List<String> inputValidTableTypes = new ArrayList<>();
     if (types != null) {
@@ -441,4 +549,168 @@ public class MetaDataObjects {
     }
     return inputValidTableTypes;
   }
+
+  private static final Object[][] TYPE_INFO =
+      new Object[][] {
+        {
+          "NUMBER",
+          Types.DECIMAL,
+          38,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          0,
+          37,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "INTEGER",
+          Types.INTEGER,
+          38,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          0,
+          0,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "DOUBLE",
+          Types.DOUBLE,
+          38,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          0,
+          37,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "VARCHAR",
+          Types.VARCHAR,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "DATE",
+          Types.DATE,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "TIME",
+          Types.TIME,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "TIMESTAMP",
+          Types.TIMESTAMP,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        },
+        {
+          "BOOLEAN",
+          Types.BOOLEAN,
+          -1,
+          null,
+          null,
+          null,
+          DatabaseMetaData.typeNullable,
+          false,
+          DatabaseMetaData.typeSearchable,
+          false,
+          true,
+          true,
+          null,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        }
+      };
 }

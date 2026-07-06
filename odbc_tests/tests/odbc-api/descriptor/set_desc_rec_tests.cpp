@@ -245,7 +245,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: HY010 - Called during SQ
   SQLINTEGER val = 0;
   SQLLEN ind = 0, olen = 0;
   ret = SQLSetDescRec(ard, 1, SQL_C_SLONG, 0, sizeof(SQLINTEGER), 0, 0, &val, &olen, &ind);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver doesn't gate descriptor mutations on SQL_NEED_DATA and
     //   silently accepts SQLSetDescRec mid-DAE; the new driver enforces
     //   "HY010" itself before reaching the descriptor.

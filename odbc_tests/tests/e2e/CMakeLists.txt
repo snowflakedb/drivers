@@ -59,6 +59,7 @@ add_odbc_test(e2e_query_large_bindings query/large_bindings.cpp)
 
 # tls
 add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
+add_odbc_test(e2e_tls_version_enforcement tls/tls_version.cpp)
 
 # logging
 add_odbc_test(e2e_logging_odbc_logging logging/odbc_logging.cpp)

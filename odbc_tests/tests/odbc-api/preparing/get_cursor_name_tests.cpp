@@ -259,7 +259,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: HY090 for negative Bu
   SQLSMALLINT name_len = 0;
   // HY090: Invalid string or buffer length (negative BufferLength)
   SQLRETURN ret = SQLGetCursorName(stmt_handle(), cursor_name, -1, &name_len);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM validates BufferLength<0 itself and surfaces the ODBC 2.x
     //   alias "S1090" before forwarding to the old driver.
     REQUIRE_EXPECTED_ERROR(ret, "S1090", stmt_handle(), SQL_HANDLE_STMT);
@@ -286,7 +286,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: HY010 during SQL_NEED
   SQLCHAR name[64] = {};
   SQLSMALLINT name_len = 0;
   ret = SQLGetCursorName(stmt_handle(), name, sizeof(name), &name_len);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // iODBC's DM catches SQLGetCursorName during SQL_NEED_DATA as a function
     //   sequence error and surfaces the ODBC 2.x alias "S1010" before the old
     //   driver can map it to "HY010".

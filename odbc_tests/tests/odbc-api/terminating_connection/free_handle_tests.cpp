@@ -403,7 +403,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY017 - Cannot free impli
   // Try to free implicit descriptor
   // HY017: Invalid use of an automatically allocated descriptor handle
   ret = SQLFreeHandle(SQL_HANDLE_DESC, ard);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver under iODBC rejects the free of an implicit descriptor
     //   with a plain SQL_INVALID_HANDLE (no diagnostic record posted) instead
     //   of the spec-mandated HY017 the new driver synthesizes inside.
@@ -471,7 +471,7 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for completely invalid handle type 
 
   // Try to free with invalid handle type (999)
   ret = SQLFreeHandle(999, env);
-  OLD_IODBC_ONLY("BD#60") {
+  OLD_IODBC_ONLY("BD#70") {
     // The old driver attempts to dispatch on the bogus handle type, fails the
     //   per-type lookup and surfaces SQL_ERROR; the new driver rejects the
     //   call up-front with SQL_INVALID_HANDLE.

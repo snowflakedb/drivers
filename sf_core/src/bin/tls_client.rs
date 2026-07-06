@@ -169,6 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         custom_root_store_path: matches.get_one::<String>("cert-store").map(PathBuf::from),
         verify_hostname: !matches.get_flag("no-verify-hostname"),
         verify_certificates: !matches.get_flag("no-verify-certs"),
+        versions: Default::default(),
     };
     if matches.get_flag("insecure") {
         warn!("Insecure mode enabled - disabling all verification");

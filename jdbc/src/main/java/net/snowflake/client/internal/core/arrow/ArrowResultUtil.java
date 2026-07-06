@@ -2,8 +2,11 @@ package net.snowflake.client.internal.core.arrow;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.util.TimeZone;
 import lombok.experimental.UtilityClass;
+import net.snowflake.client.internal.jdbc.SnowflakeTimestampWithTimezone;
 
 @UtilityClass
 public class ArrowResultUtil {
@@ -38,5 +41,85 @@ public class ArrowResultUtil {
             numNanos.divide(NANO_IN_SECOND, RoundingMode.FLOOR).longValueExact(),
             numNanos.remainder(NANO_IN_SECOND).longValueExact());
     return sign >= 0 ? duration : duration.negated();
+  }
+
+  /**
+   * Generate a Java {@link Timestamp} from a scaled epoch value, using the JVM default timezone and
+   * a plain (non-session-zone) result. Mirrors snowflake-jdbc's {@code
+   * ArrowResultUtil.toJavaTimestamp(long, int)}.
+   *
+   * @param epoch the value since epoch, scaled by {@code 10^scale}
+   * @param scale the scale of the value
+   * @return the timestamp
+   */
+  public static Timestamp toJavaTimestamp(long epoch, int scale) {
+    return toJavaTimestamp(epoch, scale, TimeZone.getDefault(), false);
+  }
+
+  /**
+   * Generate a Java {@link Timestamp} from a compact (scaled {@code Int64}) epoch value. Decomposes
+   * into whole seconds plus a nanosecond fraction, normalizing the negative-epoch case so the
+   * fraction stays in {@code [0, 10^9)} (e.g. {@code -1232.234} → seconds {@code -1233}, fraction
+   * {@code 766_000_000}). Mirrors snowflake-jdbc's {@code ArrowResultUtil.toJavaTimestamp(long,
+   * int, TimeZone, boolean)}.
+   *
+   * @param epoch the value since epoch, scaled by {@code 10^scale}
+   * @param scale the scale of the value
+   * @param sessionTimezone the session timezone carried by the result when {@code
+   *     useSessionTimezone} is set
+   * @param useSessionTimezone whether to return a {@link SnowflakeTimestampWithTimezone}
+   * @return the timestamp
+   */
+  public static Timestamp toJavaTimestamp(
+      long epoch, int scale, TimeZone sessionTimezone, boolean useSessionTimezone) {
+    long seconds = epoch / powerOfTen(scale);
+    int fraction = (int) ((epoch % powerOfTen(scale)) * powerOfTen(9 - scale));
+    if (fraction < 0) {
+      // handle negative case here
+      seconds--;
+      fraction += 1000000000;
+    }
+    return createTimestamp(seconds, fraction, sessionTimezone, useSessionTimezone);
+  }
+
+  /**
+   * Create a Java {@link Timestamp} from whole seconds since epoch and a nanosecond fraction. For
+   * example {@code 1232.234} is {@code seconds=1232, fraction=234_000_000}; {@code -1232.234} is
+   * {@code seconds=-1233, fraction=766_000_000}; {@code -0.13} is {@code seconds=-1,
+   * fraction=870_000_000}. When {@code useSessionTz} is set, returns a {@link
+   * SnowflakeTimestampWithTimezone} carrying {@code timezone} for rendering; otherwise a plain
+   * {@link Timestamp}. Mirrors snowflake-jdbc's {@code ArrowResultUtil.createTimestamp}.
+   */
+  public static Timestamp createTimestamp(
+      long seconds, int fraction, TimeZone timezone, boolean useSessionTz) {
+    if (useSessionTz) {
+      return new SnowflakeTimestampWithTimezone(seconds * powerOfTen(3), fraction, timezone);
+    }
+    Timestamp ts = new Timestamp(seconds * powerOfTen(3));
+    ts.setNanos(fraction);
+    return ts;
+  }
+
+  /**
+   * Move {@code ts} from {@code oldTZ} to {@code newTZ} by the plain offset difference, preserving
+   * nanos. No-op when the zones share rules.
+   */
+  public static Timestamp moveToTimeZone(Timestamp ts, TimeZone oldTZ, TimeZone newTZ) {
+    long offset = ArrowDateUtil.moveToTimeZoneOffset(ts.getTime(), oldTZ, newTZ);
+    if (offset == 0) {
+      return ts;
+    }
+    int nanos = ts.getNanos();
+    ts = new Timestamp(ts.getTime() + offset);
+    ts.setNanos(nanos);
+    return ts;
+  }
+
+  /**
+   * Whether the given seconds-since-epoch value falls outside the range a Java {@link Timestamp}
+   * can represent in milliseconds.
+   */
+  public static boolean isTimestampOverflow(long seconds) {
+    return seconds < Long.MIN_VALUE / powerOfTen(3) || seconds > Long.MAX_VALUE / powerOfTen(3);
   }
 }

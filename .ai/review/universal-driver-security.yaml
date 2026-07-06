@@ -65,6 +65,8 @@ rules:
 
       Flag cases where a struct has a plain `String` field that holds sensitive data (based on the field name) AND uses `#[derive(Debug)]`. The field should either be changed to `SensitiveString`, or the struct needs a manual `Debug` impl.
 
+      **CONSOLIDATION**: Emit at most ONE comment per struct type per PR. If the same struct (e.g., `ManagedIdentityTokenResponse` with `access_token: String`) appears in multiple files or is flagged multiple times within the PR, consolidate into a single finding that lists all affected locations. Do not post duplicate comments for the same struct and sensitive field combination.
+
       ❌ **BAD:**
       ```rust
       #[derive(Debug)]

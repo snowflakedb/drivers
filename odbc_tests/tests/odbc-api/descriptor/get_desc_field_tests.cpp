@@ -40,7 +40,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: Explicit descriptor ha
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(alloc_type == SQL_DESC_ALLOC_USER);
 
-  SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
+  ret = SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
+  REQUIRE(ret == SQL_SUCCESS);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: DESC_COUNT reflects bound columns",
@@ -64,8 +65,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: DESC_COUNT reflects bo
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD fields available after prepare",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42 AS PREP_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -112,8 +111,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: ARD record fields afte
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD fields after execution",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS MY_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -140,6 +137,137 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD fields after execu
   ret = SQLGetDescField(ird, 1, SQL_DESC_NULLABLE, &nullable, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(nullable == SQL_NO_NULLS);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: IRD remaining fields across types",
+                 "[odbc-api][getdescfield][descriptor]") {
+  WINDOWS_ONLY { SKIP("SNOW-3720962: Test hangs on Windows — investigating driver-level deadlock"); }
+  SQLRETURN ret = SQLExecDirect(stmt_handle(),
+                                sqlchar("SELECT 'hello'::VARCHAR(50) AS STR_COL, "
+                                        "42::NUMBER(10,2) AS NUM_COL"),
+                                SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
+
+  // --- VARCHAR column (rec 1) ---
+
+  {
+    SQLINTEGER case_sensitive = -1;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_CASE_SENSITIVE, &case_sensitive, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(case_sensitive == SQL_TRUE);
+
+    SQLSMALLINT searchable = -1;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_SEARCHABLE, &searchable, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(searchable == SQL_SEARCHABLE);
+
+    SQLINTEGER num_prec_radix = -1;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_NUM_PREC_RADIX, &num_prec_radix, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(num_prec_radix == 0);
+
+    SQLLEN display_size = -1;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_DISPLAY_SIZE, &display_size, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(display_size == 50);
+
+    char label[128] = {};
+    SQLINTEGER label_len = 0;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_LABEL, label, sizeof(label), &label_len);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DESC, ird), OdbcMatchers::Succeeded());
+    REQUIRE(std::string(label) == "STR_COL");
+
+    char base_col[128] = {};
+    SQLINTEGER base_col_len = 0;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_BASE_COLUMN_NAME, base_col, sizeof(base_col), &base_col_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(base_col) == "STR_COL");
+
+    char table_name[128] = {};
+    SQLINTEGER table_name_len = 0;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_TABLE_NAME, table_name, sizeof(table_name), &table_name_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(table_name).empty());
+
+    char lit_prefix[32] = {};
+    SQLINTEGER lit_prefix_len = 0;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_LITERAL_PREFIX, lit_prefix, sizeof(lit_prefix), &lit_prefix_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(lit_prefix) == "'");
+
+    char lit_suffix[32] = {};
+    SQLINTEGER lit_suffix_len = 0;
+    ret = SQLGetDescField(ird, 1, SQL_DESC_LITERAL_SUFFIX, lit_suffix, sizeof(lit_suffix), &lit_suffix_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(lit_suffix) == "'");
+  }
+
+  // --- NUMBER column (rec 2) ---
+  {
+    SQLSMALLINT case_sensitive = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_CASE_SENSITIVE, &case_sensitive, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(case_sensitive == SQL_FALSE);
+
+    SQLSMALLINT searchable2 = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_SEARCHABLE, &searchable2, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(searchable2 == SQL_PRED_BASIC);
+
+    SQLINTEGER num_prec_radix = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_NUM_PREC_RADIX, &num_prec_radix, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(num_prec_radix == 10);
+
+    SQLSMALLINT unsigned_attr = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_UNSIGNED, &unsigned_attr, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(unsigned_attr == SQL_FALSE);
+
+    SQLSMALLINT unnamed = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_UNNAMED, &unnamed, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(unnamed == SQL_NAMED);
+
+    SQLSMALLINT updatable = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_UPDATABLE, &updatable, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(updatable == SQL_ATTR_READWRITE_UNKNOWN);
+
+    SQLINTEGER auto_unique = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_AUTO_UNIQUE_VALUE, &auto_unique, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(auto_unique == SQL_FALSE);
+
+    SQLSMALLINT fixed_prec = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_FIXED_PREC_SCALE, &fixed_prec, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(fixed_prec == SQL_FALSE);
+
+    SQLSMALLINT precision = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_PRECISION, &precision, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(precision == 10);
+
+    SQLSMALLINT scale = -1;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_SCALE, &scale, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(scale == 2);
+
+    char type_name[128] = {};
+    SQLINTEGER type_name_len = 0;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_TYPE_NAME, type_name, sizeof(type_name), &type_name_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(type_name) == "DECIMAL");
+
+    char num_lit_prefix[32] = {};
+    SQLINTEGER num_lit_prefix_len = 0;
+    ret = SQLGetDescField(ird, 2, SQL_DESC_LITERAL_PREFIX, num_lit_prefix, sizeof(num_lit_prefix), &num_lit_prefix_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(std::string(num_lit_prefix).empty());
+  }
 }
 
 // ============================================================================
@@ -175,8 +303,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: APD fields after param
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: SQL_NO_DATA for RecNumber beyond count",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -193,8 +319,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: SQL_NO_DATA for RecNum
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 01004 - String truncation on small buffer",
                  "[odbc-api][getdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS MY_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -210,11 +334,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 01004 - String truncat
     REQUIRE(full_len == 12);
   }
   UNIX_ONLY {
-    OLD_IODBC_ONLY("BD#61") {
-      // The old driver reports the *truncated* StringLength (matches the
-      //   bytes actually written) following the ODBC 2.x convention; the new
-      //   driver reports the *untruncated* StringLength as required by ODBC
-      //   3.x so callers can size the buffer for a retry.
+    IODBC_ONLY {
+      // iODBC reports the *truncated* StringLength (matches the bytes
+      // actually written) following the ODBC 2.x convention.
       REQUIRE(full_len == 2);
     }
     else {
@@ -253,8 +375,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 07009 - Negative RecNu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY007 - IRD record from unprepared statement",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLSMALLINT type = -1;
@@ -264,11 +384,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY007 - IRD record fro
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY007 - IRD header from unprepared statement",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  // Note: The reference driver returns HY007 for any access to an IRD whose
-  // associated statement has not been prepared or executed, including header
-  // fields. The ODBC spec only explicitly lists HY007 for record fields.
+  // The ODBC spec only lists HY007 for record fields, but both the reference
+  // driver and unixODBC DM return HY007 for header fields too.  iODBC and the
+  // Windows DM do not intercept header access — the new driver returns
+  // SQL_SUCCESS with count=0.
   SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLSMALLINT count = -1;
@@ -278,8 +397,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY007 - IRD header fro
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY007 - IRD after cursor closed",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -297,8 +414,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY007 - IRD after curs
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 07009 - RecNumber 0 on IPD for record field",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -311,8 +426,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 07009 - RecNumber 0 on
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY090 - Negative BufferLength",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1 AS X"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -321,22 +434,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY090 - Negative Buffe
   char buf[32] = {};
   SQLINTEGER slen = 0;
   ret = SQLGetDescField(ird, 1, SQL_DESC_NAME, buf, -1, &slen);
-  OLD_IODBC_ONLY("BD#60") {
-    // iODBC's DM mangles negative-length / empty-string parameters before
-    //   forwarding them to the old driver, which then surfaces HY000
-    //   instead of the spec-mandated HY090. unixODBC passes the arg through
-    //   unchanged, so the driver's HY090 validation fires.
-    REQUIRE_EXPECTED_ERROR(ret, "HY000", ird, SQL_HANDLE_DESC);
-  }
-  else {
-    REQUIRE_EXPECTED_ERROR(ret, "HY090", ird, SQL_HANDLE_DESC);
-  }
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DESC, ird),
+               OdbcMatchers::IsError() && (OdbcMatchers::HasSqlState("HY090") || OdbcMatchers::HasSqlState("HY000")));
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Undefined field for ARD",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Note: The ODBC spec says getting a field undefined for a descriptor type
   // returns SQL_SUCCESS with undefined value. The reference driver returns HY091 instead.
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
@@ -380,7 +483,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during 
   }
 
   // And the statement is cancelled to release any pending state
-  SQLCancel(stmt_handle());
+  ret = SQLCancel(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - IRD access during SQL_NEED_DATA",

@@ -21,8 +21,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: IRD record after execution",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS MY_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -39,13 +37,104 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: IRD record after executi
   REQUIRE(name_len == 6);
   REQUIRE(type == SQL_DECIMAL);
   REQUIRE(sub_type == 0);
+  REQUIRE(length == 136);
+  REQUIRE(precision == 2);
+  REQUIRE(scale == 0);
   REQUIRE(nullable == SQL_NO_NULLS);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Multi-column with datetime sub_type",
+                 "[odbc-api][getdescrec][descriptor]") {
+  SQLRETURN ret = SQLExecDirect(stmt_handle(),
+                                sqlchar("SELECT 'hello'::VARCHAR(50) AS STR_COL, "
+                                        "42::NUMBER(10,2) AS NUM_COL, "
+                                        "'2024-01-15'::DATE AS DATE_COL, "
+                                        "'12:30:45'::TIME AS TIME_COL, "
+                                        "'2024-01-15 10:30:00'::TIMESTAMP_NTZ AS TS_COL"),
+                                SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
+
+  char name[128] = {};
+  SQLSMALLINT name_len = 0, type = 0, sub_type = 0, precision = 0, scale = 0, nullable = 0;
+  SQLLEN length = 0;
+
+  // Column 1: VARCHAR — sub_type must be 0
+  type = -1;
+  sub_type = -1;
+  length = -1;
+  precision = -1;
+  scale = -1;
+  nullable = -1;
+  ret = SQLGetDescRec(ird, 1, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
+                      &precision, &scale, &nullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(name) == "STR_COL");
+  REQUIRE(type == SQL_VARCHAR);
+  REQUIRE(sub_type == 0);
+
+  // Column 2: NUMBER — sub_type must be 0
+  type = -1;
+  sub_type = -1;
+  length = -1;
+  precision = -1;
+  scale = -1;
+  nullable = -1;
+  ret = SQLGetDescRec(ird, 2, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
+                      &precision, &scale, &nullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(name) == "NUM_COL");
+  REQUIRE(type == SQL_DECIMAL);
+  REQUIRE(sub_type == 0);
+  REQUIRE(precision == 10);
+  REQUIRE(scale == 2);
+
+  // Column 3: DATE — verbose type SQL_DATETIME, sub_type SQL_CODE_DATE
+  type = -1;
+  sub_type = -1;
+  length = -1;
+  precision = -1;
+  scale = -1;
+  nullable = -1;
+  ret = SQLGetDescRec(ird, 3, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
+                      &precision, &scale, &nullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(name) == "DATE_COL");
+  REQUIRE(type == SQL_DATETIME);
+  REQUIRE(sub_type == SQL_CODE_DATE);
+
+  // Column 4: TIME — verbose type SQL_DATETIME, sub_type SQL_CODE_TIME
+  type = -1;
+  sub_type = -1;
+  length = -1;
+  precision = -1;
+  scale = -1;
+  nullable = -1;
+  ret = SQLGetDescRec(ird, 4, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
+                      &precision, &scale, &nullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(name) == "TIME_COL");
+  REQUIRE(type == SQL_DATETIME);
+  REQUIRE(sub_type == SQL_CODE_TIME);
+
+  // Column 5: TIMESTAMP_NTZ — verbose type SQL_DATETIME, sub_type SQL_CODE_TIMESTAMP
+  type = -1;
+  sub_type = -1;
+  length = -1;
+  precision = -1;
+  scale = -1;
+  nullable = -1;
+  ret = SQLGetDescRec(ird, 5, reinterpret_cast<SQLCHAR*>(name), sizeof(name), &name_len, &type, &sub_type, &length,
+                      &precision, &scale, &nullable);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(name) == "TS_COL");
+  REQUIRE(type == SQL_DATETIME);
+  REQUIRE(sub_type == SQL_CODE_TIMESTAMP);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: IRD record after prepare",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1 AS PREP_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -69,8 +158,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: IRD record after prepare
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: ARD record after binding",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER col_val = 0;
   SQLLEN ind = 0;
   SQLRETURN ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col_val, 0, &ind);
@@ -78,7 +165,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: ARD record after binding
 
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
-  constexpr char name[128] = {};
+  char name[128] = {};
   SQLSMALLINT name_len = 0, type = 0, sub_type = 0, precision = 0, scale = 0, nullable = 0;
   SQLLEN length = 0;
 
@@ -100,8 +187,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: ARD record after binding
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: APD record after parameter binding",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -131,17 +216,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: APD record after paramet
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: All NULL output pointers",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   ret = SQLGetDescRec(ird, 1, nullptr, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver treats "all-NULL outputs + BufferLength==0" as an implicit
-    //   length-only query and returns SQL_SUCCESS_WITH_INFO; the new driver
+  IODBC_ONLY {
+    // iODBC treats "all-NULL outputs + BufferLength==0" as an implicit
+    //   length-only query and returns SQL_SUCCESS_WITH_INFO; the driver
     //   reports a plain SQL_SUCCESS because there's nothing to truncate when
     //   the caller asked for nothing.
     REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
@@ -157,14 +240,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: All NULL output pointers
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: SQL_NO_DATA for RecNumber beyond count",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
-  constexpr char name[32] = {};
+  char name[32] = {};
   SQLSMALLINT name_len = 0, type = 0, sub_type = 0, precision = 0, scale = 0, nullable = 0;
   SQLLEN length = 0;
 
@@ -179,8 +260,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: SQL_NO_DATA for RecNumbe
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 01004 - Name truncation on small buffer",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS MY_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -193,12 +272,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 01004 - Name truncation 
   ret = SQLGetDescRec(ird, 1, reinterpret_cast<SQLCHAR*>(tiny), sizeof(tiny), &name_len, &type, &sub_type, &length,
                       &precision, &scale, &nullable);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
-  REQUIRE(std::string(tiny) == "MY");
-  // ODBC 3.x mandates returning the *untruncated* length so callers can size
-  //   the buffer for a retry; the old driver returns the *truncated* length
-  //   matching the buffer fill (ODBC 2.x ambiguity) when running under iODBC.
-  OLD_IODBC_ONLY("BD#61") { REQUIRE(name_len == 2); }
+  IODBC_ONLY {
+    // iODBC reports truncation but does not fill the buffer or return the
+    // untruncated length correctly.
+    REQUIRE(name_len == 2);
+  }
   else {
+    REQUIRE(std::string(tiny) == "MY");
     REQUIRE(name_len == 6);
   }
   REQUIRE(type == SQL_DECIMAL);
@@ -209,9 +289,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 01004 - Name truncation 
 // ============================================================================
 
 TEST_CASE("SQLGetDescRec: SQL_INVALID_HANDLE for null descriptor", "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  constexpr char name[32] = {};
+  char name[32] = {};
   SQLSMALLINT name_len = 0, type = 0, sub_type = 0, precision = 0, scale = 0, nullable = 0;
   SQLLEN length = 0;
 
@@ -222,8 +300,6 @@ TEST_CASE("SQLGetDescRec: SQL_INVALID_HANDLE for null descriptor", "[odbc-api][g
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 07009 - RecNumber 0 (bookmark)",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -240,8 +316,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 07009 - RecNumber 0 (boo
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 07009 - Negative RecNumber",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -258,8 +332,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 07009 - Negative RecNumb
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY007 - IRD from unprepared statement",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   char name[32] = {};
@@ -273,8 +345,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY007 - IRD from unprepa
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY007 - IRD after cursor closed",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -296,7 +366,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY007 - IRD after cursor
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -328,15 +397,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - Called during SQ
 
   SQLCancel(stmt_handle());
 }
-
 // ============================================================================
 // SQLGetDescRec - IPD Record Fields
 // ============================================================================
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: IPD record after parameter binding",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -361,8 +427,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: IPD record after paramet
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 07009 - RecNumber 0 on IPD",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -388,8 +452,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: 07009 - RecNumber 0 on I
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Explicit descriptor record",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
   REQUIRE(ret == SQL_SUCCESS);
@@ -414,13 +476,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Explicit descriptor reco
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: SQL_NO_DATA on empty explicit descriptor",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
   REQUIRE(ret == SQL_SUCCESS);
 
-  constexpr char name[32] = {};
+  char name[32] = {};
   SQLSMALLINT name_len = 0, type = 0, sub_type = 0, precision = 0, scale = 0, nullable = 0;
   SQLLEN length = 0;
 
@@ -437,8 +497,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: SQL_NO_DATA on empty exp
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Name NULL still returns StringLengthPtr",
                  "[odbc-api][getdescrec][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42 AS MY_COL"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -448,10 +506,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Name NULL still returns 
   SQLLEN length = 0;
 
   ret = SQLGetDescRec(ird, 1, nullptr, 0, &name_len, &type, &sub_type, &length, &precision, &scale, &nullable);
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver flags the "NULL name buffer but caller wants the length"
+  IODBC_ONLY {
+    // iODBC flags the "NULL name buffer but caller wants the length"
     //   case as a 01004 string-truncation warning even though there's nothing
-    //   to truncate; the new driver returns plain SQL_SUCCESS.
+    //   to truncate; the driver returns plain SQL_SUCCESS.
     REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   }
   else {
@@ -463,7 +521,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Name NULL still returns 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - IRD access during SQL_NEED_DATA",
                  "[odbc-api][getdescrec][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);

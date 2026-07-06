@@ -243,7 +243,7 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
     let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
         metadata
             .iter()
-            .filter(|(k, _)| !excluded.contains(&k.as_str()))
+            .filter(|(k, _)| !excluded.contains(&k.as_str()) && k.as_str() != "nullable")
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     };

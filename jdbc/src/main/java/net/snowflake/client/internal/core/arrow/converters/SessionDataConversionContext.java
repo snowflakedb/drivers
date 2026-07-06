@@ -2,6 +2,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.sql.SQLException;
 import java.util.Map;
+import java.util.Properties;
 import java.util.TimeZone;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -12,6 +13,7 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.util.StringUtil;
 
 @Getter
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -36,9 +38,15 @@ public final class SessionDataConversionContext implements DataConversionContext
   private final SnowflakeDateTimeFormat timeFormatter;
   private final boolean useSessionTimezone;
   private final boolean treatTimeAsWallClockTime;
+  private final SnowflakeDateTimeFormat timestampNTZFormatter;
+  private final SnowflakeDateTimeFormat timestampLTZFormatter;
+  private final SnowflakeDateTimeFormat timestampTZFormatter;
+  private final boolean treatNTZAsUTC;
+  private final boolean honorClientTZForTimestampNTZ;
+  private final String timestampMappedType;
 
   public static DataConversionContext fromConnection(
-      CoreDriverApi coreDriverApi, ConnectionHandle handle) {
+      CoreDriverApi coreDriverApi, ConnectionHandle handle, Properties clientProperties) {
     Map<String, String> params;
     try {
       ConnectionGetAllParametersResponse response =
@@ -75,6 +83,33 @@ public final class SessionDataConversionContext implements DataConversionContext
     boolean treatTimeAsWallClockTime =
         parseBoolean(params.get("CLIENT_TREAT_TIME_AS_WALL_CLOCK_TIME"), false);
 
+    // Timestamp output formatters: each per-type format falls back to the generic
+    // TIMESTAMP_OUTPUT_FORMAT when unset/empty, which itself falls back to its hard default.
+    // Mirrors
+    // snowflake-jdbc's ResultUtil.specializedFormatter +
+    // SnowflakeDateTimeFormat.effectiveSpecializedTimestampFormat.
+    String genericTimestampFormat =
+        orDefault(params.get("TIMESTAMP_OUTPUT_FORMAT"), DEFAULT_TIMESTAMP_OUTPUT_FORMAT);
+    SnowflakeDateTimeFormat timestampNTZFormatter =
+        buildTimestampFormatter(params.get("TIMESTAMP_NTZ_OUTPUT_FORMAT"), genericTimestampFormat);
+    SnowflakeDateTimeFormat timestampLTZFormatter =
+        buildTimestampFormatter(params.get("TIMESTAMP_LTZ_OUTPUT_FORMAT"), genericTimestampFormat);
+    SnowflakeDateTimeFormat timestampTZFormatter =
+        buildTimestampFormatter(params.get("TIMESTAMP_TZ_OUTPUT_FORMAT"), genericTimestampFormat);
+    // CLIENT_HONOR_CLIENT_TZ_FOR_TIMESTAMP_NTZ and CLIENT_TIMESTAMP_TYPE_MAPPING are server-echoed
+    // session parameters (defaults true / TIMESTAMP_LTZ).
+    boolean honorClientTZForTimestampNTZ =
+        parseBoolean(params.get("CLIENT_HONOR_CLIENT_TZ_FOR_TIMESTAMP_NTZ"), true);
+    String timestampMappedType =
+        orDefault(params.get("CLIENT_TIMESTAMP_TYPE_MAPPING"), "TIMESTAMP_LTZ");
+    // JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC is client-side in snowflake-jdbc (SessionUtil reads it from
+    // the Properties bag). We read the client Properties first, then the server param map (the
+    // reference driver applies the server-echoed value, which ALTER SESSION drives), then the
+    // default — so a customer override wins and, absent one, we match the server value
+    // (SNOW-3243330).
+    boolean treatNTZAsUTC =
+        clientThenServer(clientProperties, params, "JDBC_TREAT_TIMESTAMP_NTZ_AS_UTC", false);
+
     return new SessionDataConversionContext(
         dateFormatter,
         sessionTimeZone,
@@ -83,34 +118,67 @@ public final class SessionDataConversionContext implements DataConversionContext
         getDateUseNullTimezone,
         timeFormatter,
         useSessionTimezone,
-        treatTimeAsWallClockTime);
+        treatTimeAsWallClockTime,
+        timestampNTZFormatter,
+        timestampLTZFormatter,
+        timestampTZFormatter,
+        treatNTZAsUTC,
+        honorClientTZForTimestampNTZ,
+        timestampMappedType);
   }
 
   static boolean parseBoolean(String value, boolean defaultValue) {
-    if (value == null || value.isEmpty()) {
+    if (StringUtil.isNullOrEmpty(value)) {
       return defaultValue;
     }
     return Boolean.parseBoolean(value.trim());
   }
 
+  /**
+   * TODO revisit this in the near future Resolve a boolean session flag client-property-first, then
+   * the server parameter map, then the default. Mirrors snowflake-jdbc, where a client-only
+   * property (set in the {@link Properties} bag) takes precedence and otherwise the server-echoed
+   * session value applies. Property keys are matched case-insensitively (the JDBC {@code
+   * Properties} bag uses the documented mixed casing).
+   */
+  static boolean clientThenServer(
+      Properties clientProperties, Map<String, String> params, String key, boolean defaultValue) {
+    if (clientProperties != null) {
+      String clientValue = clientProperties.getProperty(key);
+      if (clientValue == null) {
+        clientValue = clientProperties.getProperty(key.toLowerCase());
+      }
+      if (clientValue != null && !clientValue.isEmpty()) {
+        return Boolean.parseBoolean(clientValue.trim());
+      }
+    }
+    return parseBoolean(params.get(key), defaultValue);
+  }
+
   static SnowflakeDateTimeFormat buildDateFormatter(String snowflakeFormat) {
-    String format =
-        (snowflakeFormat == null || snowflakeFormat.isEmpty())
-            ? DEFAULT_DATE_OUTPUT_FORMAT
-            : snowflakeFormat;
-    return SnowflakeDateTimeFormat.fromSqlFormat(format);
+    return SnowflakeDateTimeFormat.fromSqlFormat(
+        orDefault(snowflakeFormat, DEFAULT_DATE_OUTPUT_FORMAT));
   }
 
   static TimeZone buildSessionTimeZone(String timezone) {
-    String tz = (timezone == null || timezone.isEmpty()) ? DEFAULT_SESSION_TIMEZONE : timezone;
-    return TimeZone.getTimeZone(tz);
+    return TimeZone.getTimeZone(orDefault(timezone, DEFAULT_SESSION_TIMEZONE));
   }
 
   static SnowflakeDateTimeFormat buildTimeFormatter(String snowflakeFormat) {
-    String format =
-        (snowflakeFormat == null || snowflakeFormat.isEmpty())
-            ? DEFAULT_TIME_OUTPUT_FORMAT
-            : snowflakeFormat;
-    return SnowflakeDateTimeFormat.fromSqlFormat(format);
+    return SnowflakeDateTimeFormat.fromSqlFormat(
+        orDefault(snowflakeFormat, DEFAULT_TIME_OUTPUT_FORMAT));
+  }
+
+  /**
+   * Build a per-type timestamp formatter, falling back to the (already-resolved) generic
+   * TIMESTAMP_OUTPUT_FORMAT when the specialized format is null/empty. Mirrors snowflake-jdbc's
+   * {@code SnowflakeDateTimeFormat.effectiveSpecializedTimestampFormat}.
+   */
+  static SnowflakeDateTimeFormat buildTimestampFormatter(String specializedFormat, String generic) {
+    return SnowflakeDateTimeFormat.fromSqlFormat(orDefault(specializedFormat, generic));
+  }
+
+  private static String orDefault(String value, String defaultValue) {
+    return StringUtil.isNullOrEmpty(value) ? defaultValue : value;
   }
 }

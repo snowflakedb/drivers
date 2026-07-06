@@ -172,7 +172,12 @@ class ArrowRowReader implements RowReader {
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
-    return convertColumn(columnIndex, (converter, idx) -> converter.toTimestamp(idx, null));
+    return getTimestamp(columnIndex, null);
+  }
+
+  @Override
+  public Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException {
+    return convertColumn(columnIndex, (converter, idx) -> converter.toTimestamp(idx, tz));
   }
 
   @Override

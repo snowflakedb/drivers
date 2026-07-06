@@ -89,6 +89,19 @@ public class ResultSetFactory {
     return new SnowflakeResultSetImpl(statement, queryID, convertingReader, metaData, true);
   }
 
+  /** Creates a result set backed by pre-built in-memory rows. */
+  public static InternalResultSet createFromRows(
+      SnowflakeStatementImpl statement,
+      SnowflakeResultSetMetaDataImpl metaData,
+      Object[][] rows,
+      boolean ownsStatement)
+      throws SQLException {
+    String queryId = metaData.getQueryID();
+    String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
+    InMemoryRowReader rowReader = new InMemoryRowReader(names, rows);
+    return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, ownsStatement);
+  }
+
   /** Creates a result set with the given metadata and no rows. */
   public static InternalResultSet createEmpty(
       SnowflakeStatementImpl statement,
@@ -97,7 +110,7 @@ public class ResultSetFactory {
       throws SQLException {
     String queryId = metaData.getQueryID();
     String[] names = metaData.getColumnNames().toArray(new String[metaData.getColumnCount()]);
-    EmptyRowReader rowReader = new EmptyRowReader(names);
+    InMemoryRowReader rowReader = new InMemoryRowReader(names, new Object[][] {});
     return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, ownsStatement);
   }
 
@@ -118,9 +131,13 @@ public class ResultSetFactory {
 
   private static DataConversionContext buildConversionContext(SnowflakeStatementImpl statement)
       throws SQLException {
+    // unwrap() returns the caller's live connection, not a new one; this method borrows it rather
+    // than owning it, so it must not be closed here (try-with-resources would close the user's
+    // connection before any rows are read).
+    InternalSnowflakeConnection connection =
+        statement.getConnection().unwrap(InternalSnowflakeConnection.class);
     return SessionDataConversionContext.fromConnection(
-        ProtobufApis.coreDriverApi,
-        statement.getConnection().unwrap(InternalSnowflakeConnection.class).getHandle());
+        ProtobufApis.coreDriverApi, connection.getHandle(), connection.getResolvedProperties());
   }
 
   private static ResultSetGetStreamResponse fetchStreamAndRelease(

@@ -10,10 +10,10 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "WiremockClient.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
+#include "test_setup.hpp"
 
 static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env, const WiremockClient& wm) {
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
@@ -33,6 +33,7 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
   wm.add_mapping_file("auth/login_success_any.json");
   wm.add_mapping_file("session/logout_success.json");
 
+  ensure_driver_installed();
   auto env = Connection::initEnv();
   auto dbc = connect_to_wiremock(env, wm);
 
@@ -65,6 +66,7 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout][flak
   wm.add_mapping_file("auth/login_success_any.json");
   wm.add_mapping_file("session/logout_success.json");
 
+  ensure_driver_installed();
   auto env = Connection::initEnv();
   auto dbc = connect_to_wiremock(env, wm);
 
@@ -117,6 +119,7 @@ TEST_CASE("should succeed even when server returns error during logout", "[sessi
   // And Server will return 500 on logout
   wm.add_mapping_file("session/logout_500_always.json");
 
+  ensure_driver_installed();
   auto env = Connection::initEnv();
   auto dbc = connect_to_wiremock(env, wm);
 

@@ -73,6 +73,7 @@ pub struct StageInfoRefreshContext {
 /// dispatch site via `read_use_s3_regional_url_session_param`). When `true`,
 /// it ORs into the S3 regional-URL decision, matching the Python connector,
 /// JDBC, and libsnowflakeclient behavior.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
@@ -81,6 +82,7 @@ pub(super) async fn perform_put_get_transfer(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
+    tls_config: crate::tls::config::TlsConfig,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -95,7 +97,7 @@ pub(super) async fn perform_put_get_transfer(
 
     match command {
         "UPLOAD" => {
-            let file_upload_data = data
+            let mut file_upload_data = data
                 .to_file_upload_data(
                     wrapper_presets.put_get_resultset_flavor.clone(),
                     wrapper_presets.legacy_odbc_compression_autodetect,
@@ -103,6 +105,7 @@ pub(super) async fn perform_put_get_transfer(
                     use_s3_regional_url_session_param,
                 )
                 .context(FileTransferPreparationSnafu)?;
+            file_upload_data.stage_info.tls_config = tls_config.clone();
             let upload_results =
                 upload_files(&file_upload_data, put_get_max_attempts, refresher_handle)
                     .await
@@ -110,7 +113,7 @@ pub(super) async fn perform_put_get_transfer(
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
-            let file_download_data = data
+            let mut file_download_data = data
                 .to_file_download_data(
                     &wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url_session_param,
@@ -122,6 +125,7 @@ pub(super) async fn perform_put_get_transfer(
                         FileTransferPreparationSnafu.into_error(e)
                     }
                 })?;
+            file_download_data.stage_info.tls_config = tls_config;
             let download_results =
                 download_files(file_download_data, put_get_max_attempts, refresher_handle)
                     .await
@@ -377,6 +381,7 @@ pub(super) async fn build_reader_from_rowset_data(
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
+    nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data {
         RowsetData::Upload(results) => {
@@ -384,7 +389,7 @@ pub(super) async fn build_reader_from_rowset_data(
         }
         RowsetData::Download(results) => download_results_reader(results, wrapper_presets)
             .context(DownloadResultsConversionSnafu),
-        _ => read_batches(data, http_client, prefetch_config)
+        _ => read_batches(data, http_client, prefetch_config, nullable_flags)
             .await
             .context(BatchReadingSnafu),
     }
@@ -394,11 +399,12 @@ pub(super) async fn read_batches(
     data: &RowsetData,
     http_client: Client,
     prefetch_config: &PrefetchConfig,
+    nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
         RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            single_chunk_reader(chunk_base64).context(ChunkReadingSnafu)
+            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadingSnafu)
         }
         RowsetData::ArrowMultiChunk {
             initial_base64_opt,
@@ -408,6 +414,7 @@ pub(super) async fn read_batches(
             chunk_download_data.clone().into(),
             http_client.clone(),
             prefetch_config,
+            nullable_flags,
         )
         .await
         .context(ChunkReadingSnafu),

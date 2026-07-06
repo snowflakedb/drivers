@@ -1935,6 +1935,16 @@ pub fn set_stmt_attr(
             inner.ird.array_status_ptr = ptr;
             Ok(())
         }
+        StmtAttr::RowOperationPtr => {
+            // SQL_DESC_ARRAY_STATUS_PTR on the ARD. Stored for retrieval; not
+            // consulted because Snowflake cursors are forward-only (no SQLSetPos).
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: RowOperationPtr = {:?}", ptr);
+            inner.with_active_ard_mut(|ard| {
+                ard.array_status_ptr = ptr;
+            });
+            Ok(())
+        }
         StmtAttr::RowsFetchedPtr => {
             let ptr = value_ptr as *mut sql::ULen;
             tracing::debug!("set_stmt_attr: RowsFetchedPtr = {:?}", ptr);
@@ -2026,7 +2036,10 @@ pub fn set_stmt_attr(
             }
             Ok(())
         }
-        StmtAttr::SnowflakeLastQueryId | StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
+        StmtAttr::SnowflakeLastQueryId
+        | StmtAttr::ImpRowDesc
+        | StmtAttr::ImpParamDesc
+        | StmtAttr::RowNumber => {
             tracing::warn!("set_stmt_attr: {:?} is read-only", attr);
             ReadOnlyAttributeSnafu { attribute }.fail()
         }
@@ -2352,6 +2365,31 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::RowBindOffsetPtr => {
             inner.with_active_ard(|ard| unsafe {
                 *(value_ptr as *mut *mut sql::Len) = ard.bind_offset_ptr;
+            });
+            Ok(())
+        }
+        StmtAttr::RowNumber => {
+            // Read-only: 1-based position of the current row while the cursor is
+            // positioned (Fetching); 0 before the first fetch, after end-of-data,
+            // and in error states. `rows_returned` is the running fetch count —
+            // exact for the common array_size == 1 case; for block cursors it
+            // reports rows returned so far (Snowflake serves forward-only).
+            let row_number = if matches!(inner.state.as_ref(), StatementState::Fetching { .. }) {
+                inner.rows_returned
+            } else {
+                0
+            };
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = row_number;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::RowOperationPtr => {
+            inner.with_active_ard(|ard| unsafe {
+                *(value_ptr as *mut *mut u16) = ard.array_status_ptr;
             });
             Ok(())
         }

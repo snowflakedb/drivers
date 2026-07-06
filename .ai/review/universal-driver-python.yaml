@@ -553,3 +553,16 @@ rules:
       await cursor.set_statement_parameter(StatementParameterName.ASYNC_EXECUTION, True)
       self._set_statement_parameter(StatementParameterName.MULTI_STATEMENT_COUNT, num_statements)
       ```
+
+  - id: ud-py-review-comment-actionability
+    rule: |
+      **OBJECTIVE**: Ensure Python rule findings are actionable and proportional to impact.
+
+      **REQUIREMENT**: When flagging Python test or connector code, include:
+      - The specific line or pattern violated
+      - A concrete fix (not just "consider adding")
+      - Priority calibrated to impact: flaky-test risk → High; telemetry/docstring consistency → Low
+
+      **CONSOLIDATION**: One comment per rule violation category per file per PR.
+
+      **SEVERITY NOTE**: Style and convention findings (missing telemetry on internal helpers, docstring examples) should use Low priority unless they affect production behavior or test reliability.
