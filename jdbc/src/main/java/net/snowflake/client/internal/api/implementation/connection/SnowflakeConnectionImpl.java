@@ -5,6 +5,7 @@ import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
 import java.sql.Clob;
+import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
@@ -342,12 +343,21 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void setTransactionIsolation(int level) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setTransactionIsolation not supported");
+    checkClosed();
+    // Snowflake always runs at READ COMMITTED and ignores the requested level, so this is a
+    // no-op. We still reject levels the driver doesn't advertise, deferring to
+    // DatabaseMetaData.supportsTransactionIsolationLevel so the accepted set (NONE,
+    // READ_COMMITTED) lives in a single place rather than being duplicated here.
+    if (!getMetaData().supportsTransactionIsolationLevel(level)) {
+      throw new SQLFeatureNotSupportedException(
+          "Transaction Isolation " + level + " not supported.");
+    }
   }
 
   @Override
   public int getTransactionIsolation() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return Connection.TRANSACTION_READ_COMMITTED;
   }
 
   @Override

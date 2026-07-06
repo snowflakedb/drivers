@@ -18,6 +18,7 @@ import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.concurrent.CyclicBarrier;
@@ -467,6 +468,70 @@ class SnowflakeConnectionImplTest {
         // Cache reflects the new value despite the failed RPC; matches snowflake-jdbc parity.
         assertFalse(conn.getAutoCommit());
       }
+    }
+  }
+
+  @Nested
+  class TransactionIsolation {
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = stubConnectionMock();
+    }
+
+    private Connection createConnection() throws SQLException {
+      return openConnection(mockCoreApi);
+    }
+
+    @Test
+    void shouldDefaultToReadCommitted() throws Exception {
+      try (Connection conn = createConnection()) {
+        assertEquals(Connection.TRANSACTION_READ_COMMITTED, conn.getTransactionIsolation());
+      }
+    }
+
+    @Test
+    void shouldStillReportReadCommittedAfterSettingReadCommitted() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+        assertEquals(Connection.TRANSACTION_READ_COMMITTED, conn.getTransactionIsolation());
+      }
+    }
+
+    @Test
+    void shouldAcceptNoneAsNoOpButStillReportReadCommitted() throws Exception {
+      try (Connection conn = createConnection()) {
+        conn.setTransactionIsolation(Connection.TRANSACTION_NONE);
+        assertEquals(Connection.TRANSACTION_READ_COMMITTED, conn.getTransactionIsolation());
+      }
+    }
+
+    @Test
+    void shouldRejectUnsupportedLevel() throws Exception {
+      try (Connection conn = createConnection()) {
+        assertThrows(
+            SQLFeatureNotSupportedException.class,
+            () -> conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE));
+        assertEquals(Connection.TRANSACTION_READ_COMMITTED, conn.getTransactionIsolation());
+      }
+    }
+
+    @Test
+    void shouldThrowOnGetAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertThrows(SQLException.class, conn::getTransactionIsolation);
+    }
+
+    @Test
+    void shouldThrowOnSetAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertThrows(
+          SQLException.class,
+          () -> conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED));
     }
   }
 
