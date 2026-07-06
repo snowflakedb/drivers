@@ -177,8 +177,6 @@ pub struct SingleDownloadData {
     pub presigned_url: Option<String>,
     pub flavor: PutGetResultsetFlavor,
     pub multipart: MultipartParams,
-    /// Forwarded from `DownloadData.unsafe_file_write`; see that field for
-    /// semantics.
     pub unsafe_file_write: bool,
 }
 

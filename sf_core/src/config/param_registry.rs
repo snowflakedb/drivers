@@ -120,10 +120,6 @@ pub mod param_names {
     pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
     // PUT/GET file transfer configuration
     pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
-    /// When `true`, downloaded files are created with the process-default umask
-    /// permissions (`0o666 & ~umask`) instead of the secure owner-only mode
-    /// (`0o600`). Mirrors Python's `unsafe_file_write` connection parameter
-    /// (SNOW-1944208). Default `false` (safe). Unix-only; ignored on Windows.
     pub const UNSAFE_FILE_WRITE: ParamKey = ParamKey("unsafe_file_write");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
@@ -1175,7 +1171,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::UNSAFE_FILE_WRITE.as_str(),
-        aliases: &["unsafe_file_write"],
+        aliases: &[],
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,

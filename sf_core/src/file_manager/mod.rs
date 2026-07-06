@@ -685,7 +685,8 @@ pub async fn download_single_file(
     // — the user-visible destination only ever appears as a complete, verified
     // artefact, even if a concurrent FS observer is racing.
     // Extract enc_material and unsafe_file_write before the match so all three
-    // arms can move them into their spawn_blocking closures.
+    // arms can move them into their spawn_blocking closures
+    // (EncryptionMaterial is not Clone).
     let enc_material = data.encryption_material.take();
     let unsafe_file_write = data.unsafe_file_write;
     let (cloud_byte_count, output_byte_len) = match data.stage_info.location_type {
@@ -966,28 +967,24 @@ pub async fn download_single_file(
     })
 }
 
-/// Creates the `.part` output file for a GET download, applying owner-only
-/// permissions (`0o600`) on Unix when `unsafe_file_write` is `false`.
-///
-/// On Unix with `unsafe_file_write = false`, the file is opened with mode
-/// `0o600` so that neither the written bytes nor any partially-written state
-/// are ever readable by other users — even briefly between `File::create` and
-/// a separate `chmod`. On Windows, or when `unsafe_file_write` is `true`, the
-/// process-default umask governs the mode (matching Python's behaviour when
-/// `unsafe_file_write=True`).
+/// Creates the `.part` output file for a GET download.
+/// On Unix with `unsafe_file_write = false`, forces mode `0o600`; otherwise uses the process umask.
 fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
     #[cfg(unix)]
     if !unsafe_file_write {
-        use std::os::unix::fs::OpenOptionsExt;
-        return std::fs::OpenOptions::new()
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path);
+            .open(path)?;
+        // O_CREAT only sets the mode on newly-created files; if a stale .part
+        // file exists its permissions are left untouched by truncate.  fchmod
+        // (via set_permissions on the fd) covers that case.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        return Ok(file);
     }
-    // Windows, or unsafe_file_write=true: fall back to the standard create.
-    #[allow(unused_variables)]
     let _ = unsafe_file_write;
     File::create(path)
 }
@@ -2233,7 +2230,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn should_create_output_file_with_owner_only_permissions_by_default() {
+    fn create_output_file_uses_owner_only_mode_when_unsafe_file_write_is_false() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_owned();
@@ -2242,13 +2239,33 @@ mod tests {
         create_output_file(&path, false).unwrap();
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        // Mask off the file-type bits; only the permission bits matter.
         assert_eq!(mode & 0o777, 0o600);
     }
 
     #[cfg(unix)]
     #[test]
-    fn should_create_output_file_with_umask_permissions_when_unsafe_file_write_is_true() {
+    fn create_output_file_uses_owner_only_mode_on_stale_part_file() {
+        use std::os::unix::fs::PermissionsExt;
+        // Pre-create a .part file with loose permissions to simulate a stale
+        // leftover from a previous failed download.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp);
+        let stale = File::create(&path).unwrap();
+        stale
+            .set_permissions(std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        drop(stale);
+
+        create_output_file(&path, false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_umask_mode_when_unsafe_file_write_is_true() {
         use std::os::unix::fs::PermissionsExt;
 
         // Baseline: mode produced by standard File::create (umask-dependent).
