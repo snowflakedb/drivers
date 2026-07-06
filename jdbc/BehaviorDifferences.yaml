@@ -276,3 +276,24 @@ behavior_differences:
 
       The universal driver fixes the legacy bug; callers that accidentally relied on the old
       end-index semantics need to adjust len when offset > 0.
+  18:
+    name: "Connection.getTransactionIsolation() always returns READ_COMMITTED; legacy round-trips the set value and defaults to NONE"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Snowflake supports exactly one isolation level, READ COMMITTED, and never acts on the value
+      passed to setTransactionIsolation. Legacy snowflake-jdbc stores that value and returns it,
+      defaulting to TRANSACTION_NONE before any call — which misrepresents the connection, since
+      TRANSACTION_NONE means "transactions not supported" yet the same driver's DatabaseMetaData
+      reports supportsTransactions() == true and getDefaultTransactionIsolation() == READ_COMMITTED.
+
+      The universal driver does not store the value: getTransactionIsolation() always returns
+      TRANSACTION_READ_COMMITTED, and setTransactionIsolation is a validating no-op that accepts
+      NONE and READ_COMMITTED (per supportsTransactionIsolationLevel) and rejects other levels with
+      SQLFeatureNotSupportedException.
+
+
+
