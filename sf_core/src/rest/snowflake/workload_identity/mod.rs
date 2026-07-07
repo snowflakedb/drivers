@@ -6,6 +6,7 @@
 //! login-request body by [`crate::rest::snowflake::auth_request_data`].
 
 mod aws;
+mod azure;
 mod oidc;
 
 use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
@@ -14,7 +15,7 @@ use snafu::{Location, ResultExt, Snafu};
 
 /// Resolved identity token to be forwarded to Snowflake GS.
 ///
-/// `provider` is the wire string (`AWS`, `OIDC`) sent
+/// `provider` is the wire string (`AWS`, `AZURE`, `OIDC`) sent
 /// in the `PROVIDER` field of the login-request body.
 /// `token` is the raw JWT or attested credential string sent in `TOKEN`.
 /// The field is `SensitiveString` to prevent the token from appearing in
@@ -30,12 +31,23 @@ pub struct Attestation {
 /// Each variant wraps the provider-specific error type so the underlying
 /// failure (and its captured call-site location) is preserved in the
 /// [`error_trace::ErrorTrace`] chain.
+// The shared `…AttestationFailed` postfix is intentional: each variant is a
+// per-provider wrapper around that provider's domain error, named in the
+// past-tense failure style the project convention asks for. The common suffix
+// is meaningful, so opt out of the enum-variant-name lint.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum AttestationError {
     #[snafu(display("AWS attestation failed"))]
     AwsAttestationFailed {
         source: aws::AwsAttestationError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Azure attestation failed"))]
+    AzureAttestationFailed {
+        source: azure::AzureAttestationError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -62,6 +74,15 @@ pub async fn create_attestation(
                 .context(AwsAttestationFailedSnafu)?;
             Ok(Attestation {
                 provider: WifProvider::Aws.as_wire_str(),
+                token: SensitiveString::from(token),
+            })
+        }
+        WifProvider::Azure => {
+            let token = azure::get_managed_identity_token(client, config)
+                .await
+                .context(AzureAttestationFailedSnafu)?;
+            Ok(Attestation {
+                provider: WifProvider::Azure.as_wire_str(),
                 token: SensitiveString::from(token),
             })
         }

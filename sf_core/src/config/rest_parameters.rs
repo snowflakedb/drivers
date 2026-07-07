@@ -412,6 +412,7 @@ pub struct OAuthClientCredentialsConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WifProvider {
     Aws,
+    Azure,
     Oidc,
 }
 
@@ -420,6 +421,7 @@ impl WifProvider {
     pub fn as_wire_str(&self) -> &'static str {
         match self {
             WifProvider::Aws => "AWS",
+            WifProvider::Azure => "AZURE",
             WifProvider::Oidc => "OIDC",
         }
     }
@@ -428,6 +430,7 @@ impl WifProvider {
     pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_ascii_uppercase().as_str() {
             "AWS" => Some(WifProvider::Aws),
+            "AZURE" => Some(WifProvider::Azure),
             "OIDC" => Some(WifProvider::Oidc),
             _ => None,
         }
@@ -435,7 +438,7 @@ impl WifProvider {
 
     /// Comma-separated list of accepted provider names for error messages.
     pub fn allowed_values() -> &'static str {
-        "AWS, OIDC"
+        "AWS, AZURE, OIDC"
     }
 }
 
