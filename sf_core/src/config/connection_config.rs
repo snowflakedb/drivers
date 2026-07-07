@@ -1017,6 +1017,26 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     code: ValidationCode::MissingRequired,
                 });
             }
+            // Azure impersonation is single-hop: exactly one SP client_id allowed
+            if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
+                && WifProvider::parse_str(&provider_str) == Some(WifProvider::Azure)
+                && let Some(path_str) = settings.get_string(WORKLOAD_IDENTITY_IMPERSONATION_PATH)
+                && !path_str.is_empty()
+            {
+                let hop_count = path_str.split(',').count();
+                if hop_count != 1 {
+                    issues.push(ValidationIssue {
+                        severity: ValidationSeverity::Error,
+                        parameter: WORKLOAD_IDENTITY_IMPERSONATION_PATH.into(),
+                        message: format!(
+                            "Azure WIF impersonation only supports a single service principal \
+                             (single-hop). 'workload_identity_impersonation_path' must contain \
+                             exactly one client_id, got {hop_count}."
+                        ),
+                        code: ValidationCode::InvalidValue,
+                    });
+                }
+            }
         }
         _ if auth_upper.starts_with("HTTPS://") => {
             if Url::parse(&authenticator).is_err() {
@@ -2718,7 +2738,7 @@ mod tests {
 
     #[test]
     fn validate_wif_providers_accepted_case_insensitive() {
-        for provider in &["aws", "AWS", "oidc", "OIDC"] {
+        for provider in &["aws", "AWS", "Azure", "oidc", "OIDC"] {
             let mut settings = wif_base_settings(provider);
             if provider.eq_ignore_ascii_case("OIDC") {
                 settings.push(("token", Setting::String("tok".into())));
@@ -2818,6 +2838,82 @@ mod tests {
                     || i.message.contains("workload_identity_provider")
             }),
             "Error message should mention workload_identity_provider: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn build_wif_azure_with_entra_resource() {
+        let mut pairs = wif_base_settings("AZURE");
+        pairs.push((
+            "workload_identity_entra_resource",
+            Setting::String("api://my-custom-app".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.provider,
+                    crate::config::rest_parameters::WifProvider::Azure
+                );
+                assert_eq!(cfg.entra_resource.as_deref(), Some("api://my-custom-app"));
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_azure_impersonation_single_hop_accepted() {
+        let mut pairs = wif_base_settings("AZURE");
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("my-sp-client-id".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(cfg.impersonation_path, vec!["my-sp-client-id".to_string()]);
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+        let issues = validate_settings(&settings);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.parameter == "workload_identity_impersonation_path"),
+            "Single-hop Azure impersonation should pass validation, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_azure_impersonation_multi_hop_rejected() {
+        let mut pairs = wif_base_settings("AZURE");
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("sp-client-id-1,sp-client-id-2".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_impersonation_path"
+                    && i.code == ValidationCode::InvalidValue
+                    && i.message.contains("single-hop")
+            }),
+            "Multi-hop Azure impersonation should fail validation with InvalidValue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_azure_no_impersonation_accepted() {
+        let settings = settings_from(&wif_base_settings("AZURE"));
+        let issues = validate_settings(&settings);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.parameter == "workload_identity_impersonation_path"),
+            "Azure without impersonation should pass, got: {issues:?}"
         );
     }
 }
