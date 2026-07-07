@@ -282,6 +282,25 @@ enum MetaDataResultSetFormat {
           Types.INTEGER,
           Types.INTEGER,
           Types.VARCHAR,
+          Types.VARCHAR)),
+
+  GET_TABLE_PRIVILEGES(
+      Arrays.asList(
+          "TABLE_CAT",
+          "TABLE_SCHEM",
+          "TABLE_NAME",
+          "GRANTOR",
+          "GRANTEE",
+          "PRIVILEGE",
+          "IS_GRANTABLE"),
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
           Types.VARCHAR));
 
   private final List<String> columnNames;

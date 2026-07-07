@@ -3,6 +3,7 @@ package net.snowflake.client.api.metadata;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1247,8 +1248,81 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     void shouldReturnPrivilegesForColumnPrivileges() {}
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnPrivilegesForTablePrivileges() {}
+    void shouldReturnTablePrivilegesForGetTablePrivileges() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String targetTable = "PRIVTEST_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute("create or replace table " + targetTable + "(C1 int)");
+          try {
+            try (ResultSet resultSet =
+                metaData.getTablePrivileges(currentDatabase, currentSchema, targetTable)) {
+              ResultSetMetaData rsMeta = resultSet.getMetaData();
+              assertEquals(7, rsMeta.getColumnCount());
+              assertMetadataColumn(rsMeta, 1, "TABLE_CAT");
+              assertMetadataColumn(rsMeta, 2, "TABLE_SCHEM");
+              assertMetadataColumn(rsMeta, 3, "TABLE_NAME");
+              assertMetadataColumn(rsMeta, 4, "GRANTOR");
+              assertMetadataColumn(rsMeta, 5, "GRANTEE");
+              assertMetadataColumn(rsMeta, 6, "PRIVILEGE");
+              assertMetadataColumn(rsMeta, 7, "IS_GRANTABLE");
+
+              assertTrue(resultSet.next());
+              assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+              assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+              assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+              String grantor = resultSet.getString("GRANTOR");
+              assertNotNull(grantor);
+              assertFalse(grantor.isEmpty());
+              String grantee = resultSet.getString("GRANTEE");
+              assertNotNull(grantee);
+              assertFalse(grantee.isEmpty());
+              assertEquals("OWNERSHIP", resultSet.getString("PRIVILEGE"));
+              assertEquals("YES", resultSet.getString("IS_GRANTABLE"));
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getTablePrivileges(currentDatabase, currentSchema, "%")) {
+              Set<String> tables = new HashSet<>();
+              while (resultSet.next()) {
+                assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+                assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+                tables.add(resultSet.getString("TABLE_NAME"));
+              }
+              assertTrue(tables.contains(targetTable));
+            }
+
+            try (ResultSet resultSet = metaData().getTablePrivileges(null, null, null)) {
+              assertEquals(7, resultSet.getMetaData().getColumnCount());
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getTablePrivileges("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getTablePrivileges(conn.getCatalog(), "SCHEMA\\_NOT\\_EXIST", "%")) {
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getTablePrivileges(
+                    conn.getCatalog(), currentSchema, "TBL\\_NOT\\_EXIST")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + targetTable);
+          }
+        }
+      }
+    }
 
     @Test
     @Disabled("requires query against Snowflake; happy-path test pending")
