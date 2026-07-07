@@ -16,7 +16,6 @@ import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDat
 import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects.ForeignKeyKind;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.util.DelegatingWrapper;
-import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeDatabaseMetaDataImpl
     implements DatabaseMetaData, SnowflakeDatabaseMetaData, DelegatingWrapper {
@@ -680,7 +679,7 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getColumnPrivileges(
       String catalog, String schema, String table, String columnNamePattern) throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getColumnPrivileges(catalog, schema, table, columnNamePattern);
   }
 
   @Override
@@ -755,7 +754,8 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getIndexInfo(
       String catalog, String schema, String table, boolean unique, boolean approximate)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getIndexInfo(catalog, schema, table, unique, approximate);
   }
 
   @Override
@@ -823,7 +823,7 @@ public class SnowflakeDatabaseMetaDataImpl
       String catalog, String schemaPattern, String typeNamePattern, int[] types)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getUDTs(catalog, schemaPattern, typeNamePattern, types);
   }
 
   @Override
@@ -974,7 +974,8 @@ public class SnowflakeDatabaseMetaDataImpl
   @Override
   public ResultSet getStreams(String catalog, String schemaPattern, String streamName)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getStreams(catalog, schemaPattern, streamName);
   }
 
   @Override

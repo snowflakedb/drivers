@@ -349,6 +349,101 @@ enum MetaDataResultSetFormat {
           Types.SMALLINT,
           Types.VARCHAR,
           Types.VARCHAR,
+          Types.SMALLINT)),
+
+  GET_STREAMS(
+      Arrays.asList(
+          "STREAM_NAME",
+          "DATABASE_NAME",
+          "SCHEMA_NAME",
+          "OWNER",
+          "COMMENT",
+          "TABLE_NAME",
+          "SOURCE_TYPE",
+          "BASE_TABLES",
+          "TYPE",
+          "STALE",
+          "MODE"),
+      Arrays.asList(
+          "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR)),
+
+  GET_COLUMN_PRIVILEGES(
+      Arrays.asList(
+          "TABLE_CAT",
+          "TABLE_SCHEM",
+          "TABLE_NAME",
+          "COLUMN_NAME",
+          "GRANTOR",
+          "GRANTEE",
+          "PRIVILEGE",
+          "IS_GRANTABLE"),
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR)),
+
+  GET_INDEX_INFO(
+      Arrays.asList(
+          "TABLE_CAT",
+          "TABLE_SCHEM",
+          "TABLE_NAME",
+          "NON_UNIQUE",
+          "INDEX_QUALIFIER",
+          "INDEX_NAME",
+          "TYPE",
+          "ORDINAL_POSITION",
+          "COLUMN_NAME",
+          "ASC_OR_DESC",
+          "CARDINALITY",
+          "PAGES",
+          "FILTER_CONDITION"),
+      Arrays.asList(
+          "TEXT", "TEXT", "TEXT", "BOOLEAN", "TEXT", "TEXT", "SHORT", "SHORT", "TEXT", "TEXT",
+          "INTEGER", "INTEGER", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.BOOLEAN,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.SMALLINT,
+          Types.SMALLINT,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.INTEGER,
+          Types.INTEGER,
+          Types.VARCHAR)),
+
+  GET_UDTS(
+      Arrays.asList(
+          "TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "CLASS_NAME", "DATA_TYPE", "REMARKS", "BASE_TYPE"),
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "INTEGER", "TEXT", "SHORT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.INTEGER,
+          Types.VARCHAR,
           Types.SMALLINT));
 
   private final List<String> columnNames;

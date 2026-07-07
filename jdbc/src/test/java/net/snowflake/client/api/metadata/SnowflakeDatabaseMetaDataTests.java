@@ -24,9 +24,9 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import net.snowflake.client.api.connection.SnowflakeDatabaseMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.TestParameters;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -35,9 +35,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>These tests use only the public JDBC API so they run against both this module and the legacy
  * {@code snowflake-jdbc} JAR via the {@code referenceTest} task. They cover happy-path values for
- * methods that don't issue a query against Snowflake. ResultSet-returning methods and methods that
- * universal-driver has not yet implemented are present as {@link Disabled} stubs to be filled in
- * follow-up PRs.
+ * methods that don't issue a query against Snowflake.
  */
 class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
@@ -1244,8 +1242,21 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnPrivilegesForColumnPrivileges() {}
+    void shouldReturnEmptyResultForColumnPrivileges() throws Exception {
+      try (ResultSet resultSet = metaData().getColumnPrivileges(null, null, "T", "%")) {
+        ResultSetMetaData rsMeta = resultSet.getMetaData();
+        assertEquals(8, rsMeta.getColumnCount());
+        assertMetadataColumn(rsMeta, 1, "TABLE_CAT");
+        assertMetadataColumn(rsMeta, 2, "TABLE_SCHEM");
+        assertMetadataColumn(rsMeta, 3, "TABLE_NAME");
+        assertMetadataColumn(rsMeta, 4, "COLUMN_NAME");
+        assertMetadataColumn(rsMeta, 5, "GRANTOR");
+        assertMetadataColumn(rsMeta, 6, "GRANTEE");
+        assertMetadataColumn(rsMeta, 7, "PRIVILEGE");
+        assertMetadataColumn(rsMeta, 8, "IS_GRANTABLE");
+        assertFalse(resultSet.next());
+      }
+    }
 
     @Test
     void shouldReturnTablePrivilegesForGetTablePrivileges() throws Exception {
@@ -1318,6 +1329,80 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
               assertFalse(resultSet.next());
             }
           } finally {
+            stmt.execute("drop table if exists " + targetTable);
+          }
+        }
+      }
+    }
+
+    @Test
+    void shouldReturnStreamsForGetStreams() throws Exception {
+      try (Connection conn = openConnection()) {
+        SnowflakeDatabaseMetaData metaData =
+            conn.getMetaData().unwrap(SnowflakeDatabaseMetaData.class);
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String targetTable = "T0_" + suffix;
+        String targetStream = "S0_" + suffix;
+        String tableName = currentDatabase + "." + currentSchema + "." + targetTable;
+
+        try (Statement stmt = conn.createStatement()) {
+          try {
+            stmt.execute("create or replace table " + targetTable + "(C1 int)");
+            stmt.execute("create or replace stream " + targetStream + " on table " + targetTable);
+
+            String owner;
+            try (ResultSet roleRs = stmt.executeQuery("SELECT CURRENT_ROLE()")) {
+              assertTrue(roleRs.next());
+              owner = roleRs.getString(1);
+            }
+            try (ResultSet resultSet = metaData.getStreams(currentDatabase, currentSchema, "%")) {
+              ResultSetMetaData rsMeta = resultSet.getMetaData();
+              assertEquals(11, rsMeta.getColumnCount());
+              assertMetadataColumn(rsMeta, 1, "STREAM_NAME");
+              assertMetadataColumn(rsMeta, 2, "DATABASE_NAME");
+              assertMetadataColumn(rsMeta, 3, "SCHEMA_NAME");
+              assertMetadataColumn(rsMeta, 4, "OWNER");
+              assertMetadataColumn(rsMeta, 5, "COMMENT");
+              assertMetadataColumn(rsMeta, 6, "TABLE_NAME");
+              assertMetadataColumn(rsMeta, 7, "SOURCE_TYPE");
+              assertMetadataColumn(rsMeta, 8, "BASE_TABLES");
+              assertMetadataColumn(rsMeta, 9, "TYPE");
+              assertMetadataColumn(rsMeta, 10, "STALE");
+              assertMetadataColumn(rsMeta, 11, "MODE");
+
+              Set<String> streams = new HashSet<>();
+              while (resultSet.next()) {
+                streams.add(resultSet.getString("STREAM_NAME"));
+              }
+              assertTrue(streams.contains(targetStream));
+            }
+
+            try (ResultSet resultSet =
+                metaData.getStreams(currentDatabase, currentSchema, targetStream)) {
+              assertTrue(resultSet.next());
+              assertEquals(targetStream, resultSet.getString("STREAM_NAME"));
+              assertEquals(currentDatabase, resultSet.getString("DATABASE_NAME"));
+              assertEquals(currentSchema, resultSet.getString("SCHEMA_NAME"));
+              assertEquals(owner, resultSet.getString("OWNER"));
+              assertEquals("", resultSet.getString("COMMENT"));
+              assertEquals(tableName, resultSet.getString("TABLE_NAME"));
+              assertEquals("Table", resultSet.getString("SOURCE_TYPE"));
+              assertEquals(tableName, resultSet.getString("BASE_TABLES"));
+              assertEquals("DELTA", resultSet.getString("TYPE"));
+              assertEquals("false", resultSet.getString("STALE"));
+              assertEquals("DEFAULT", resultSet.getString("MODE"));
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getStreams("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop stream if exists " + targetStream);
             stmt.execute("drop table if exists " + targetTable);
           }
         }
@@ -1726,12 +1811,42 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnIndexDescriptorsForIndexInfo() {}
+    void shouldReturnEmptyResultForIndexInfo() throws Exception {
+      try (ResultSet resultSet = metaData().getIndexInfo(null, null, "T", false, true)) {
+        ResultSetMetaData rsMeta = resultSet.getMetaData();
+        assertEquals(13, rsMeta.getColumnCount());
+        assertMetadataColumn(rsMeta, 1, "TABLE_CAT", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 2, "TABLE_SCHEM", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 3, "TABLE_NAME", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 4, "NON_UNIQUE", Types.BOOLEAN);
+        assertMetadataColumn(rsMeta, 5, "INDEX_QUALIFIER", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 6, "INDEX_NAME", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 7, "TYPE", Types.SMALLINT);
+        assertMetadataColumn(rsMeta, 8, "ORDINAL_POSITION", Types.SMALLINT);
+        assertMetadataColumn(rsMeta, 9, "COLUMN_NAME", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 10, "ASC_OR_DESC", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 11, "CARDINALITY", Types.INTEGER);
+        assertMetadataColumn(rsMeta, 12, "PAGES", Types.INTEGER);
+        assertMetadataColumn(rsMeta, 13, "FILTER_CONDITION", Types.VARCHAR);
+        assertFalse(resultSet.next());
+      }
+    }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnUserDefinedTypesForUDTs() {}
+    void shouldReturnEmptyResultForUDTs() throws Exception {
+      try (ResultSet resultSet = metaData().getUDTs(null, null, "%", null)) {
+        ResultSetMetaData rsMeta = resultSet.getMetaData();
+        assertEquals(7, rsMeta.getColumnCount());
+        assertMetadataColumn(rsMeta, 1, "TYPE_CAT", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 2, "TYPE_SCHEM", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 3, "TYPE_NAME", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 4, "CLASS_NAME", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 5, "DATA_TYPE", Types.INTEGER);
+        assertMetadataColumn(rsMeta, 6, "REMARKS", Types.VARCHAR);
+        assertMetadataColumn(rsMeta, 7, "BASE_TYPE", Types.SMALLINT);
+        assertFalse(resultSet.next());
+      }
+    }
 
     @Test
     void shouldReturnProceduresForProcedures() throws Exception {
@@ -2078,9 +2193,7 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
 
   private static void assertMetadataColumn(ResultSetMetaData rsMeta, int col, String name)
       throws Exception {
-    assertEquals(name, rsMeta.getColumnName(col));
-    assertEquals(name, rsMeta.getColumnLabel(col));
-    assertEquals(Types.VARCHAR, rsMeta.getColumnType(col));
+    assertMetadataColumn(rsMeta, col, name, Types.VARCHAR);
     assertEquals("TEXT", rsMeta.getColumnTypeName(col));
     assertEquals("", rsMeta.getCatalogName(col));
     assertEquals("", rsMeta.getSchemaName(col));
@@ -2088,9 +2201,20 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     assertEquals(25, rsMeta.getColumnDisplaySize(col));
     assertEquals(9, rsMeta.getPrecision(col));
     assertEquals(9, rsMeta.getScale(col));
+  }
+
+  private static void assertMetadataColumn(ResultSetMetaData rsMeta, int col, String name, int type)
+      throws Exception {
+    assertEquals(name, rsMeta.getColumnName(col));
+    assertEquals(name, rsMeta.getColumnLabel(col));
+    assertEquals(type, rsMeta.getColumnType(col));
     assertEquals(ResultSetMetaData.columnNullableUnknown, rsMeta.isNullable(col));
     assertFalse(rsMeta.isAutoIncrement(col));
-    assertFalse(rsMeta.isSigned(col));
+    if (type == Types.INTEGER) {
+      assertTrue(rsMeta.isSigned(col));
+    } else {
+      assertFalse(rsMeta.isSigned(col));
+    }
     assertTrue(rsMeta.isSearchable(col));
     assertTrue(rsMeta.isReadOnly(col));
     assertFalse(rsMeta.isWritable(col));

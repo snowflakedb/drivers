@@ -818,6 +818,71 @@ public class MetaDataObjects {
     }
   }
 
+  public ResultSet getStreams(
+      String originalCatalog, String originalSchemaPattern, String streamName) throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("streams")
+            .like(streamName)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_STREAMS);
+    }
+
+    logger.debug("SQL query in getStreams: {}", sqlQuery);
+
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
+    Pattern compiledStreamNamePattern = Wildcard.toRegexPattern(streamName, true);
+    RowConverter rowConverter =
+        row -> {
+          String name = row.getString("name");
+          String schemaName = row.getString("schema_name");
+          if (matches(compiledStreamNamePattern, name)
+              && matches(compiledSchemaPattern, schemaName)) {
+            return new Object[] {
+              name,
+              row.getString("database_name"),
+              schemaName,
+              row.getString("owner"),
+              row.getString("comment"),
+              row.getString("table_name"),
+              row.getString("source_type"),
+              row.getString("base_tables"),
+              row.getString("type"),
+              row.getString("stale"),
+              row.getString("mode")
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_STREAMS);
+  }
+
+  public ResultSet getColumnPrivileges(
+      String catalog, String schema, String table, String columnNamePattern) throws SQLException {
+    return emptyResultSet(MetaDataResultSetFormat.GET_COLUMN_PRIVILEGES);
+  }
+
+  public ResultSet getIndexInfo(
+      String catalog, String schema, String table, boolean unique, boolean approximate)
+      throws SQLException {
+    return emptyResultSet(MetaDataResultSetFormat.GET_INDEX_INFO);
+  }
+
+  public ResultSet getUDTs(
+      String catalog, String schemaPattern, String typeNamePattern, int[] types)
+      throws SQLException {
+    return emptyResultSet(MetaDataResultSetFormat.GET_UDTS);
+  }
+
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
   static Integer getColumnSize(SnowflakeColumnMetadata columnMetadata) {
     switch (columnMetadata.getType()) {
