@@ -7,7 +7,7 @@ import lombok.experimental.UtilityClass;
 class MatchingUtils {
 
   static boolean matches(Pattern nullablePattern, String input) {
-    return nullablePattern == null || nullablePattern.matcher(input).matches();
+    return nullablePattern == null || (input != null && nullablePattern.matcher(input).matches());
   }
 
   static boolean isPatternMatchingAll(String pattern) {

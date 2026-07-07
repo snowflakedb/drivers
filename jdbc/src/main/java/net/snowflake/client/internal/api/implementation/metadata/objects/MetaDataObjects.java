@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
@@ -524,6 +525,297 @@ public class MetaDataObjects {
         };
 
     return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
+  }
+
+  public ResultSet getPrimaryKeys(String originalCatalog, String originalSchema, String table)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchema);
+    String catalog = contextAware.getDatabase();
+    String schema = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware).show("primary keys").in(catalog, schema, table).build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_PRIMARY_KEYS);
+    }
+
+    logger.debug("SQL query in getPrimaryKeys: {}", sqlQuery);
+
+    boolean patternSearch = params.isEnablePatternSearch();
+    // Patterns are only consulted when enablePatternSearch=true; otherwise exact equality is used.
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schema, true);
+    Pattern compiledTablePattern = Wildcard.toRegexPattern(table, true);
+
+    RowConverter rowConverter =
+        row -> {
+          String tableCat = row.getString(2);
+          String tableSchem = row.getString(3);
+          String tableName = row.getString(4);
+          String columnName = row.getString(5);
+          int keySeq = row.getInt(6);
+          String pkName = row.getString(7);
+
+          // Catalog is always matched by exact equality, mirroring the legacy driver.
+          boolean catalogMatches = catalog == null || catalog.equals(tableCat);
+          boolean schemaMatches;
+          boolean tableMatches;
+          if (patternSearch) {
+            schemaMatches = matches(compiledSchemaPattern, tableSchem);
+            tableMatches = matches(compiledTablePattern, tableName);
+          } else {
+            schemaMatches = schema == null || schema.equals(tableSchem);
+            tableMatches = table == null || table.equals(tableName);
+          }
+
+          if (catalogMatches && schemaMatches && tableMatches) {
+            return new Object[] {
+              tableCat, tableSchem, tableName, columnName, keySeq, pkName,
+            };
+          }
+          return null;
+        };
+
+    // TODO(SNOW-3695645): Rows are returned in SHOW PRIMARY KEYS order (key sequence).
+    //  The JDBC spec says COLUMN_NAME order, but snowflake-jdbc also omits the sort.
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_PRIMARY_KEYS);
+  }
+
+  @RequiredArgsConstructor
+  public enum ForeignKeyKind {
+    IMPORTED("imported keys"),
+    // Exported and cross-reference both emit "exported keys" and post-filter on the primary table
+    // (cross-reference additionally filters on the foreign table).
+    EXPORTED("exported keys"),
+    CROSS_REFERENCE("exported keys");
+
+    private final String showType;
+  }
+
+  public ResultSet getForeignKeys(
+      ForeignKeyKind kind,
+      String originalParentCatalog,
+      String originalParentSchema,
+      String parentTable,
+      String foreignCatalog,
+      String foreignSchema,
+      String foreignTable)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalParentCatalog, originalParentSchema);
+    String parentCatalog = contextAware.getDatabase();
+    String parentSchema = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show(kind.showType)
+            .in(parentCatalog, parentSchema, parentTable)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_FOREIGN_KEYS);
+    }
+
+    logger.debug("SQL query in getForeignKeys: {}", sqlQuery);
+
+    boolean patternSearch = params.isEnablePatternSearch();
+    // Patterns are only consulted when enablePatternSearch=true; otherwise exact equality is used.
+    Pattern compiledSchemaPattern = Wildcard.toRegexPattern(parentSchema, true);
+    Pattern compiledParentTablePattern = Wildcard.toRegexPattern(parentTable, true);
+    Pattern compiledForeignSchemaPattern = Wildcard.toRegexPattern(foreignSchema, true);
+    Pattern compiledForeignTablePattern = Wildcard.toRegexPattern(foreignTable, true);
+
+    RowConverter rowConverter =
+        row -> {
+          String pktableCat = row.getString(2);
+          String pktableSchem = row.getString(3);
+          String pktableName = row.getString(4);
+          String pkcolumnName = row.getString(5);
+          String fktableCat = row.getString(6);
+          String fktableSchem = row.getString(7);
+          String fktableName = row.getString(8);
+          String fkcolumnName = row.getString(9);
+          int keySeq = row.getInt(10);
+          short updateRule = getForeignKeyConstraintProperty("update", row.getString(11));
+          short deleteRule = getForeignKeyConstraintProperty("delete", row.getString(12));
+          String fkName = row.getString(13);
+          String pkName = row.getString(14);
+          short deferrability = getForeignKeyConstraintProperty("deferrability", row.getString(15));
+
+          boolean passedFilter;
+          if (patternSearch) {
+            passedFilter =
+                foreignKeyPatternMatch(
+                    kind,
+                    parentCatalog,
+                    compiledSchemaPattern,
+                    compiledParentTablePattern,
+                    foreignCatalog,
+                    compiledForeignSchemaPattern,
+                    compiledForeignTablePattern,
+                    pktableCat,
+                    pktableSchem,
+                    pktableName,
+                    fktableCat,
+                    fktableSchem,
+                    fktableName);
+          } else {
+            passedFilter =
+                foreignKeyExactMatch(
+                    kind,
+                    parentCatalog,
+                    parentSchema,
+                    parentTable,
+                    foreignCatalog,
+                    foreignSchema,
+                    foreignTable,
+                    pktableCat,
+                    pktableSchem,
+                    pktableName,
+                    fktableCat,
+                    fktableSchem,
+                    fktableName);
+          }
+
+          if (passedFilter) {
+            return new Object[] {
+              pktableCat,
+              pktableSchem,
+              pktableName,
+              pkcolumnName,
+              fktableCat,
+              fktableSchem,
+              fktableName,
+              fkcolumnName,
+              keySeq,
+              updateRule,
+              deleteRule,
+              fkName,
+              pkName,
+              deferrability,
+            };
+          }
+          return null;
+        };
+
+    // TODO(SNOW-3695645): Rows are returned in SHOW ... KEYS order (key sequence).
+    //  The JDBC spec says order by FK table columns + KEY_SEQ, but snowflake-jdbc omits the sort.
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_FOREIGN_KEYS);
+  }
+
+  private static boolean foreignKeyExactMatch(
+      ForeignKeyKind kind,
+      String parentCatalog,
+      String parentSchema,
+      String parentTable,
+      String foreignCatalog,
+      String foreignSchema,
+      String foreignTable,
+      String pktableCat,
+      String pktableSchem,
+      String pktableName,
+      String fktableCat,
+      String fktableSchem,
+      String fktableName) {
+    switch (kind) {
+      case IMPORTED:
+        // For imported keys, filter on the foreign key table.
+        return (parentCatalog == null || parentCatalog.equals(fktableCat))
+            && (parentSchema == null || parentSchema.equals(fktableSchem))
+            && (parentTable == null || parentTable.equals(fktableName));
+      case EXPORTED:
+        // For exported keys, filter on the primary key table.
+        return (parentCatalog == null || parentCatalog.equals(pktableCat))
+            && (parentSchema == null || parentSchema.equals(pktableSchem))
+            && (parentTable == null || parentTable.equals(pktableName));
+      case CROSS_REFERENCE:
+        // For cross references, filter on both the primary key and foreign key table.
+        return (parentCatalog == null || parentCatalog.equals(pktableCat))
+            && (parentSchema == null || parentSchema.equals(pktableSchem))
+            && (parentTable == null || parentTable.equals(pktableName))
+            && (foreignCatalog == null || foreignCatalog.equals(fktableCat))
+            && (foreignSchema == null || foreignSchema.equals(fktableSchem))
+            && (foreignTable == null || foreignTable.equals(fktableName));
+      default:
+        return false;
+    }
+  }
+
+  private static boolean foreignKeyPatternMatch(
+      ForeignKeyKind kind,
+      String parentCatalog,
+      Pattern compiledSchemaPattern,
+      Pattern compiledParentTablePattern,
+      String foreignCatalog,
+      Pattern compiledForeignSchemaPattern,
+      Pattern compiledForeignTablePattern,
+      String pktableCat,
+      String pktableSchem,
+      String pktableName,
+      String fktableCat,
+      String fktableSchem,
+      String fktableName) {
+    switch (kind) {
+      case IMPORTED:
+        // For imported keys, filter on the foreign key table.
+        return (parentCatalog == null || parentCatalog.equals(fktableCat))
+            && matches(compiledSchemaPattern, fktableSchem)
+            && matches(compiledParentTablePattern, fktableName);
+      case EXPORTED:
+        // For exported keys, filter on the primary key table.
+        return (parentCatalog == null || parentCatalog.equals(pktableCat))
+            && matches(compiledSchemaPattern, pktableSchem)
+            && matches(compiledParentTablePattern, pktableName);
+      case CROSS_REFERENCE:
+        // For cross references, filter on both the primary key and foreign key table.
+        return (parentCatalog == null || parentCatalog.equals(pktableCat))
+            && matches(compiledSchemaPattern, pktableSchem)
+            && matches(compiledParentTablePattern, pktableName)
+            && (foreignCatalog == null || foreignCatalog.equals(fktableCat))
+            && matches(compiledForeignSchemaPattern, fktableSchem)
+            && matches(compiledForeignTablePattern, fktableName);
+      default:
+        return false;
+    }
+  }
+
+  /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
+  private static short getForeignKeyConstraintProperty(String propertyName, String property) {
+    if (property == null) {
+      return 0;
+    }
+    switch (propertyName) {
+      case "update":
+      case "delete":
+        switch (property) {
+          case "NO ACTION":
+            return DatabaseMetaData.importedKeyNoAction;
+          case "CASCADE":
+            return DatabaseMetaData.importedKeyCascade;
+          case "SET NULL":
+            return DatabaseMetaData.importedKeySetNull;
+          case "SET DEFAULT":
+            return DatabaseMetaData.importedKeySetDefault;
+          case "RESTRICT":
+            return DatabaseMetaData.importedKeyRestrict;
+          default:
+            return 0;
+        }
+      case "deferrability":
+        switch (property) {
+          case "INITIALLY DEFERRED":
+            return DatabaseMetaData.importedKeyInitiallyDeferred;
+          case "INITIALLY IMMEDIATE":
+            return DatabaseMetaData.importedKeyInitiallyImmediate;
+          case "NOT DEFERRABLE":
+            return DatabaseMetaData.importedKeyNotDeferrable;
+          default:
+            return 0;
+        }
+      default:
+        return 0;
+    }
   }
 
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */

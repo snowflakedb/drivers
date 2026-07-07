@@ -13,6 +13,7 @@ import net.snowflake.client.internal.api.implementation.metadata.capabilities.Me
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataIdentity;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
 import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects;
+import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects.ForeignKeyKind;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.NotImplementedException;
@@ -704,19 +705,24 @@ public class SnowflakeDatabaseMetaDataImpl
 
   @Override
   public ResultSet getPrimaryKeys(String catalog, String schema, String table) throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getPrimaryKeys(catalog, schema, table);
   }
 
   @Override
   public ResultSet getImportedKeys(String catalog, String schema, String table)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getForeignKeys(
+        ForeignKeyKind.IMPORTED, catalog, schema, table, null, null, null);
   }
 
   @Override
   public ResultSet getExportedKeys(String catalog, String schema, String table)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getForeignKeys(
+        ForeignKeyKind.EXPORTED, catalog, schema, table, null, null, null);
   }
 
   @Override
@@ -728,7 +734,15 @@ public class SnowflakeDatabaseMetaDataImpl
       String foreignSchema,
       String foreignTable)
       throws SQLException {
-    throw new NotImplementedException();
+    connection.checkClosed();
+    return objects.getForeignKeys(
+        ForeignKeyKind.CROSS_REFERENCE,
+        parentCatalog,
+        parentSchema,
+        parentTable,
+        foreignCatalog,
+        foreignSchema,
+        foreignTable);
   }
 
   @Override
