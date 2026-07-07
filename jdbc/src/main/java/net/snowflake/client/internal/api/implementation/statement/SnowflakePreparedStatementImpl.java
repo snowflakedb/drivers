@@ -61,7 +61,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private final PreparedBatch batch = new PreparedBatch();
 
   /** Cached prepare result from the server, populated lazily on the first metadata request. */
-  // TODO(SNOW-3695645): should we replace proto message with POJO?
+  // TODO(SNOW-3740751): should we replace proto message with POJO?
   private PrepareResult prepareResult;
 
   /** Lazily resolved session conversion context, used for TIME binding semantics. */
@@ -513,7 +513,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     PrepareResult result = getPrepareResult();
-    return SnowflakeResultSetMetaDataImpl.from(result.getQueryId(), result.getColumnsList());
+    return SnowflakeResultSetMetaDataImpl.from(
+        result.getQueryId(), result.getColumnsList(), conversionContext());
   }
 
   @Override

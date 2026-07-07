@@ -123,8 +123,9 @@ public class ResultSetFactory {
     byte[] streamPointerBytes = response.getStream().getValue().toByteArray();
     long pointer = ArrowStreamFactory.pointerFromBytes(streamPointerBytes);
     ArrowResources arrowResources = ArrowStreamFactory.createFromPointer(pointer);
-    SnowflakeResultSetMetaDataImpl metaData = SnowflakeResultSetMetaDataImpl.from(queryId, columns);
     DataConversionContext conversionContext = buildConversionContext(statement);
+    SnowflakeResultSetMetaDataImpl metaData =
+        SnowflakeResultSetMetaDataImpl.from(queryId, columns, conversionContext);
     ArrowRowReader rowReader = new ArrowRowReader(arrowResources, conversionContext);
     return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, false);
   }
