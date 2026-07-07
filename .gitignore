@@ -50,6 +50,15 @@ jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDr
 jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverService.java
 jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverServiceClient.java
 
+# Generated protobuf C# code (built on the fly via `dotnet msbuild -t:RegenerateProto`)
+dotnet/src/Snowflake.Data.Proto/DatabaseDriverV1.cs
+dotnet/src/Snowflake.Data.Proto/ICoreTransport.cs
+dotnet/src/Snowflake.Data.Proto/TransportResponse.cs
+dotnet/src/Snowflake.Data.Proto/DatabaseDriver/IDatabaseDriverService.cs
+dotnet/src/Snowflake.Data.Proto/DatabaseDriver/ServiceClient.cs
+dotnet/src/Snowflake.Data.Proto/Exceptions/ServiceException.cs
+dotnet/src/Snowflake.Data.Proto/Exceptions/TransportException.cs
+
 .DS_Store
 tests/test_data/generated_test_data/chunks/
 

@@ -42,6 +42,28 @@ jobs:
         run: dotnet restore
         working-directory: dotnet
 
+      - name: Restore Cargo cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "proto-generator"
+
+      - name: Regenerate proto files
+        run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
+        working-directory: dotnet
+
+      - name: Save Cargo cache
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "proto-generator"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
       - name: Build
         run: dotnet build --no-restore
         working-directory: dotnet
@@ -83,6 +105,28 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
         working-directory: dotnet
+
+      - name: Restore Cargo cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "proto-generator"
+
+      - name: Regenerate proto files
+        run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
+        working-directory: dotnet
+
+      - name: Save Cargo cache
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "proto-generator"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Build
         run: dotnet build --no-restore
