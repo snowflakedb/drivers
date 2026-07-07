@@ -1088,30 +1088,32 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
               assertEquals("REMARKS", rsMeta.getColumnName(5));
             }
 
-            // TABLE type filter
+            // TABLE type filter. The schema is shared, so "%" returns tables created by other
+            // tests too; the "TABLE" filter also matches transient tables (reported as
+            // TABLE_TYPE=TRANSIENT). Scope the per-row assertions to the table this test created
+            // rather than asserting a type on every unrelated row in the schema.
             try (ResultSet resultSet =
                 metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"TABLE"})) {
-              Set<String> tables = new HashSet<>();
+              Map<String, String> tableTypes = new HashMap<>();
               while (resultSet.next()) {
-                assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
-                assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
-                assertEquals("TABLE", resultSet.getString("TABLE_TYPE"));
-                tables.add(resultSet.getString("TABLE_NAME"));
+                tableTypes.put(
+                    resultSet.getString("TABLE_NAME"), resultSet.getString("TABLE_TYPE"));
               }
-              assertTrue(tables.contains(targetTable));
-              assertFalse(tables.contains(targetView));
+              assertTrue(tableTypes.containsKey(targetTable));
+              assertEquals("TABLE", tableTypes.get(targetTable));
+              assertFalse(tableTypes.containsKey(targetView));
             }
 
-            // VIEW type filter
+            // VIEW type filter (scoped to this test's objects; schema is shared)
             try (ResultSet resultSet =
                 metaData.getTables(currentDatabase, currentSchema, "%", new String[] {"VIEW"})) {
-              Set<String> views = new HashSet<>();
+              Map<String, String> viewTypes = new HashMap<>();
               while (resultSet.next()) {
-                assertEquals("VIEW", resultSet.getString("TABLE_TYPE"));
-                views.add(resultSet.getString("TABLE_NAME"));
+                viewTypes.put(resultSet.getString("TABLE_NAME"), resultSet.getString("TABLE_TYPE"));
               }
-              assertTrue(views.contains(targetView));
-              assertFalse(views.contains(targetTable));
+              assertTrue(viewTypes.containsKey(targetView));
+              assertEquals("VIEW", viewTypes.get(targetView));
+              assertFalse(viewTypes.containsKey(targetTable));
             }
 
             // exact name match
@@ -1528,8 +1530,119 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnProcedureColumnsForProcedureColumns() {}
+    void shouldReturnProcedureColumnsForProcedureColumns() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String procName = "TEST_PROC_COL_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "CREATE OR REPLACE PROCEDURE "
+                  + procName
+                  + "(N FLOAT, S VARCHAR) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return S + N;'");
+          try {
+            try (ResultSet rs =
+                metaData.getProcedureColumns(currentDatabase, currentSchema, procName, "%")) {
+              ResultSetMetaData rsMeta = rs.getMetaData();
+              assertEquals(20, rsMeta.getColumnCount());
+              assertEquals("PROCEDURE_CAT", rsMeta.getColumnName(1));
+              assertEquals("PROCEDURE_SCHEM", rsMeta.getColumnName(2));
+              assertEquals("PROCEDURE_NAME", rsMeta.getColumnName(3));
+              assertEquals("COLUMN_NAME", rsMeta.getColumnName(4));
+              assertEquals("COLUMN_TYPE", rsMeta.getColumnName(5));
+              assertEquals("DATA_TYPE", rsMeta.getColumnName(6));
+              assertEquals("TYPE_NAME", rsMeta.getColumnName(7));
+
+              // Row 0: return type (VARCHAR)
+              assertTrue(rs.next());
+              assertEquals(currentDatabase, rs.getString("PROCEDURE_CAT"));
+              assertEquals(currentSchema, rs.getString("PROCEDURE_SCHEM"));
+              assertEquals(procName, rs.getString("PROCEDURE_NAME"));
+              assertEquals("", rs.getString("COLUMN_NAME"));
+              assertEquals(DatabaseMetaData.procedureColumnReturn, rs.getShort("COLUMN_TYPE"));
+              assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
+              assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
+              assertEquals(0, rs.getInt("PRECISION"));
+              assertEquals(0, rs.getInt("LENGTH"));
+              assertNull(rs.getObject("SCALE"));
+              assertEquals(10, rs.getShort("RADIX"));
+              assertEquals(DatabaseMetaData.procedureNullable, rs.getShort("NULLABLE"));
+              assertNull(rs.getString("COLUMN_DEF"));
+              assertEquals(0, rs.getInt("SQL_DATA_TYPE"));
+              assertEquals(0, rs.getInt("SQL_DATETIME_SUB"));
+              assertTrue(
+                  rs.getInt("CHAR_OCTET_LENGTH") > 0,
+                  "CHAR_OCTET_LENGTH for VARCHAR return should be > 0");
+              assertEquals(0, rs.getInt("ORDINAL_POSITION"));
+              assertEquals("YES", rs.getString("IS_NULLABLE"));
+              String specificName = rs.getString("SPECIFIC_NAME");
+              assertTrue(
+                  specificName != null && specificName.contains(procName),
+                  () -> "SPECIFIC_NAME should contain procedure name, got: " + specificName);
+
+              // Row 1: N FLOAT parameter
+              assertTrue(rs.next());
+              assertEquals(currentDatabase, rs.getString("PROCEDURE_CAT"));
+              assertEquals(currentSchema, rs.getString("PROCEDURE_SCHEM"));
+              assertEquals(procName, rs.getString("PROCEDURE_NAME"));
+              assertEquals("N", rs.getString("COLUMN_NAME"));
+              assertEquals(DatabaseMetaData.procedureColumnIn, rs.getShort("COLUMN_TYPE"));
+              assertEquals(Types.FLOAT, rs.getInt("DATA_TYPE"));
+              assertEquals("FLOAT", rs.getString("TYPE_NAME"));
+              assertEquals(38, rs.getInt("PRECISION"));
+              assertEquals(0, rs.getInt("LENGTH"));
+              assertEquals(0, rs.getShort("SCALE"));
+              assertEquals(10, rs.getShort("RADIX"));
+              assertEquals(DatabaseMetaData.procedureNullableUnknown, rs.getShort("NULLABLE"));
+              assertNull(rs.getString("COLUMN_DEF"));
+              assertEquals(0, rs.getInt("SQL_DATA_TYPE"));
+              assertEquals(0, rs.getInt("SQL_DATETIME_SUB"));
+              assertNull(rs.getObject("CHAR_OCTET_LENGTH"));
+              assertEquals(1, rs.getInt("ORDINAL_POSITION"));
+              assertEquals("", rs.getString("IS_NULLABLE"));
+              assertEquals(specificName, rs.getString("SPECIFIC_NAME"));
+
+              // Row 2: S VARCHAR parameter
+              assertTrue(rs.next());
+              assertEquals(currentDatabase, rs.getString("PROCEDURE_CAT"));
+              assertEquals(currentSchema, rs.getString("PROCEDURE_SCHEM"));
+              assertEquals(procName, rs.getString("PROCEDURE_NAME"));
+              assertEquals("S", rs.getString("COLUMN_NAME"));
+              assertEquals(DatabaseMetaData.procedureColumnIn, rs.getShort("COLUMN_TYPE"));
+              assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
+              assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
+              assertEquals(0, rs.getInt("PRECISION"));
+              assertEquals(0, rs.getInt("LENGTH"));
+              assertNull(rs.getObject("SCALE"));
+              assertEquals(10, rs.getShort("RADIX"));
+              assertEquals(DatabaseMetaData.procedureNullableUnknown, rs.getShort("NULLABLE"));
+              assertNull(rs.getString("COLUMN_DEF"));
+              assertEquals(0, rs.getInt("SQL_DATA_TYPE"));
+              assertEquals(0, rs.getInt("SQL_DATETIME_SUB"));
+              assertTrue(
+                  rs.getInt("CHAR_OCTET_LENGTH") > 0,
+                  "CHAR_OCTET_LENGTH for VARCHAR param should be > 0");
+              assertEquals(2, rs.getInt("ORDINAL_POSITION"));
+              assertEquals("", rs.getString("IS_NULLABLE"));
+              assertEquals(specificName, rs.getString("SPECIFIC_NAME"));
+
+              assertFalse(rs.next());
+            }
+
+            // non-existent db returns empty
+            try (ResultSet rs =
+                metaData.getProcedureColumns("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
+              assertFalse(rs.next());
+            }
+          } finally {
+            stmt.execute("DROP PROCEDURE IF EXISTS " + procName + "(FLOAT, VARCHAR)");
+          }
+        }
+      }
+    }
 
     @Test
     void shouldReturnFunctionsForFunctions() throws Exception {
@@ -1594,8 +1707,110 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnFunctionColumnsForFunctionColumns() {}
+    void shouldReturnFunctionColumnsForFunctionColumns() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String funcName = "TEST_FUNC_COL_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "CREATE OR REPLACE FUNCTION "
+                  + funcName
+                  + "(N FLOAT, S VARCHAR) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return S + N;'");
+          try {
+            try (ResultSet rs =
+                metaData.getFunctionColumns(currentDatabase, currentSchema, funcName, "%")) {
+              ResultSetMetaData rsMeta = rs.getMetaData();
+              assertEquals(17, rsMeta.getColumnCount());
+              assertEquals("FUNCTION_CAT", rsMeta.getColumnName(1));
+              assertEquals("FUNCTION_SCHEM", rsMeta.getColumnName(2));
+              assertEquals("FUNCTION_NAME", rsMeta.getColumnName(3));
+              assertEquals("COLUMN_NAME", rsMeta.getColumnName(4));
+              assertEquals("COLUMN_TYPE", rsMeta.getColumnName(5));
+              assertEquals("DATA_TYPE", rsMeta.getColumnName(6));
+              assertEquals("TYPE_NAME", rsMeta.getColumnName(7));
+
+              // Row 0: return type (VARCHAR)
+              assertTrue(rs.next());
+              assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
+              assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+              assertEquals(funcName, rs.getString("FUNCTION_NAME"));
+              assertEquals("", rs.getString("COLUMN_NAME"));
+              assertEquals(DatabaseMetaData.functionReturn, rs.getShort("COLUMN_TYPE"));
+              assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
+              assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
+              assertEquals(0, rs.getInt("PRECISION"));
+              assertEquals(0, rs.getInt("LENGTH"));
+              assertNull(rs.getObject("SCALE"));
+              assertEquals(10, rs.getShort("RADIX"));
+              assertEquals(DatabaseMetaData.functionNullableUnknown, rs.getShort("NULLABLE"));
+              assertTrue(
+                  rs.getInt("CHAR_OCTET_LENGTH") > 0,
+                  "CHAR_OCTET_LENGTH for VARCHAR return should be > 0");
+              assertEquals(0, rs.getInt("ORDINAL_POSITION"));
+              assertEquals("", rs.getString("IS_NULLABLE"));
+              String funcSpecificName = rs.getString("SPECIFIC_NAME");
+              assertTrue(
+                  funcSpecificName != null && funcSpecificName.contains(funcName),
+                  () -> "SPECIFIC_NAME should contain function name, got: " + funcSpecificName);
+
+              // Row 1: N FLOAT parameter
+              assertTrue(rs.next());
+              assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
+              assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+              assertEquals(funcName, rs.getString("FUNCTION_NAME"));
+              assertEquals("N", rs.getString("COLUMN_NAME"));
+              assertEquals(DatabaseMetaData.functionColumnIn, rs.getShort("COLUMN_TYPE"));
+              assertEquals(Types.FLOAT, rs.getInt("DATA_TYPE"));
+              assertEquals("FLOAT", rs.getString("TYPE_NAME"));
+              assertEquals(0, rs.getInt("PRECISION"));
+              assertEquals(0, rs.getInt("LENGTH"));
+              assertNull(rs.getObject("SCALE"));
+              assertEquals(10, rs.getShort("RADIX"));
+              assertEquals(DatabaseMetaData.functionNullableUnknown, rs.getShort("NULLABLE"));
+              assertNull(rs.getObject("CHAR_OCTET_LENGTH"));
+              assertEquals(1, rs.getInt("ORDINAL_POSITION"));
+              assertEquals("", rs.getString("IS_NULLABLE"));
+              assertEquals(funcSpecificName, rs.getString("SPECIFIC_NAME"));
+
+              // Row 2: S VARCHAR parameter
+              assertTrue(rs.next());
+              assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
+              assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+              assertEquals(funcName, rs.getString("FUNCTION_NAME"));
+              assertEquals("S", rs.getString("COLUMN_NAME"));
+              assertEquals(DatabaseMetaData.functionColumnIn, rs.getShort("COLUMN_TYPE"));
+              assertEquals(Types.VARCHAR, rs.getInt("DATA_TYPE"));
+              assertEquals("VARCHAR", rs.getString("TYPE_NAME"));
+              assertEquals(0, rs.getInt("PRECISION"));
+              assertEquals(0, rs.getInt("LENGTH"));
+              assertNull(rs.getObject("SCALE"));
+              assertEquals(10, rs.getShort("RADIX"));
+              assertEquals(DatabaseMetaData.functionNullableUnknown, rs.getShort("NULLABLE"));
+              assertTrue(
+                  rs.getInt("CHAR_OCTET_LENGTH") > 0,
+                  "CHAR_OCTET_LENGTH for VARCHAR param should be > 0");
+              assertEquals(2, rs.getInt("ORDINAL_POSITION"));
+              assertEquals("", rs.getString("IS_NULLABLE"));
+              assertEquals(funcSpecificName, rs.getString("SPECIFIC_NAME"));
+
+              assertFalse(rs.next());
+            }
+
+            // non-existent db returns empty
+            try (ResultSet rs =
+                metaData.getFunctionColumns("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", "%", "%")) {
+              assertFalse(rs.next());
+            }
+          } finally {
+            stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT, VARCHAR)");
+          }
+        }
+      }
+    }
   }
 
   private static void assertMetadataColumn(ResultSetMetaData rsMeta, int col, String name)

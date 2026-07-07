@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import static java.sql.ResultSetMetaData.columnNoNulls;
 import static java.sql.ResultSetMetaData.columnNullable;
+import static net.snowflake.client.internal.api.implementation.metadata.objects.ErrorUtils.isMissingMetadataObject;
 import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.matches;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -9,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,6 +21,7 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
+import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.RowConverter;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
@@ -46,13 +49,6 @@ public class MetaDataObjects {
 
   private static final ObjectMapper mapper = new ObjectMapper();
 
-  /** Snowflake vendor code for "Object does not exist, or operation cannot be performed." */
-  private static final int OBJECT_DOES_NOT_EXIST_VENDOR_CODE = 2043;
-
-  // Legacy snowflake-jdbc executeAndReturnEmptyResultIfNotFound() SQL states.
-  private static final String SQL_STATE_NO_DATA = "02000";
-  private static final String SQL_STATE_BASE_TABLE_OR_VIEW_NOT_FOUND = "42S02";
-
   private static final String TABLE_TYPE_TABLE = "TABLE";
   private static final String TABLE_TYPE_VIEW = "VIEW";
   private static final List<String> SUPPORTED_TABLE_TYPES =
@@ -60,10 +56,12 @@ public class MetaDataObjects {
 
   private final SnowflakeConnectionImpl connection;
   private final MetaDataParams params;
+  private final MetaDataLimits limits;
 
   public MetaDataObjects(SnowflakeConnectionImpl connection, CoreDriverApi coreDriverApi) {
     this.connection = connection;
     this.params = new MetaDataParams(connection, coreDriverApi);
+    this.limits = new MetaDataLimits(connection, coreDriverApi);
   }
 
   public ResultSet getCatalogs() throws SQLException {
@@ -421,6 +419,72 @@ public class MetaDataObjects {
     return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_FUNCTIONS);
   }
 
+  public ResultSet getProcedureColumns(
+      String originalCatalog,
+      String originalSchemaPattern,
+      String procedureNamePattern,
+      String columnNamePattern)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("procedures")
+            .like(procedureNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_PROCEDURE_COLUMNS);
+    }
+
+    logger.debug("SQL query in getProcedureColumns: {}", sqlQuery);
+
+    try (Statement stmt = connection.createStatement()) {
+      Object[][] rows =
+          new ObjectsByDescribe(limits, stmt, sqlQuery)
+              .showAndDescribeProcedures(
+                  catalog, schemaPattern, procedureNamePattern, columnNamePattern);
+      return createResultSet(rows, MetaDataResultSetFormat.GET_PROCEDURE_COLUMNS);
+    }
+  }
+
+  public ResultSet getFunctionColumns(
+      String originalCatalog,
+      String originalSchemaPattern,
+      String functionNamePattern,
+      String columnNamePattern)
+      throws SQLException {
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware)
+            .show("functions")
+            .like(functionNamePattern)
+            .in(catalog, schemaPattern)
+            .build();
+
+    if (sqlQuery == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_FUNCTION_COLUMNS);
+    }
+
+    logger.debug("SQL query in getFunctionColumns: {}", sqlQuery);
+
+    try (Statement stmt = connection.createStatement()) {
+      Object[][] rows =
+          new ObjectsByDescribe(limits, stmt, sqlQuery)
+              .showAndDescribeFunctions(
+                  catalog, schemaPattern, functionNamePattern, columnNamePattern);
+      return createResultSet(rows, MetaDataResultSetFormat.GET_FUNCTION_COLUMNS);
+    }
+  }
+
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
   static Integer getColumnSize(SnowflakeColumnMetadata columnMetadata) {
     switch (columnMetadata.getType()) {
@@ -507,33 +571,6 @@ public class MetaDataObjects {
       statement.close();
       throw e;
     }
-  }
-
-  private static boolean isMissingMetadataObject(Throwable error) {
-    for (SQLException sqlException = findSQLException(error);
-        sqlException != null;
-        sqlException = sqlException.getNextException()) {
-      if (sqlException.getErrorCode() == OBJECT_DOES_NOT_EXIST_VENDOR_CODE) {
-        return true;
-      }
-      String sqlState = sqlException.getSQLState();
-      if (SQL_STATE_NO_DATA.equals(sqlState)
-          || SQL_STATE_BASE_TABLE_OR_VIEW_NOT_FOUND.equals(sqlState)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private static SQLException findSQLException(Throwable error) {
-    Throwable current = error;
-    while (current != null) {
-      if (current instanceof SQLException) {
-        return (SQLException) current;
-      }
-      current = current.getCause();
-    }
-    return null;
   }
 
   private static List<String> validateTableTypes(String[] types) {
