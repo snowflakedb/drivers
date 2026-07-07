@@ -206,7 +206,7 @@ pub struct NameValueParameter {
     pub value: serde_json::Value,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct RowType {
     #[serde(rename = "name")]
     pub name: String,
@@ -229,6 +229,28 @@ pub struct RowType {
     /// Number of elements in a VECTOR column. Only set for VECTOR columns.
     #[serde(rename = "vectorDimension")]
     pub vector_dimension: Option<u64>,
+
+    /// Dimension for catalog metadata (e.g. `SHOW COLUMNS`).
+    #[serde(rename = "dimension", default)]
+    pub dimension: Option<u64>,
+
+    #[serde(rename = "fixed", default)]
+    pub fixed: Option<bool>,
+
+    #[serde(rename = "database", default)]
+    pub database: Option<String>,
+
+    #[serde(rename = "schema", default)]
+    pub schema: Option<String>,
+
+    #[serde(rename = "table", default)]
+    pub table: Option<String>,
+
+    #[serde(rename = "isAutoIncrement", default)]
+    pub is_auto_increment: Option<bool>,
+
+    #[serde(rename = "outputType", default)]
+    pub output_type: Option<String>,
 
     #[serde(rename = "fields")]
     pub fields: Option<Vec<FieldMetadata>>,
@@ -1451,7 +1473,7 @@ mod tests {
             byte_length: Some(4096),
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1476,7 +1498,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1501,7 +1523,7 @@ mod tests {
             byte_length: Some(2048),
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1956,7 +1978,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -1981,7 +2003,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -2004,7 +2026,7 @@ mod tests {
             byte_length: Some(134_217_728),
             ext_type_name: Some("GEOGRAPHY".to_string()),
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -2029,7 +2051,7 @@ mod tests {
             byte_length: None,
             ext_type_name: Some("GEOGRAPHY".to_string()),
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -2054,7 +2076,7 @@ mod tests {
             byte_length: Some(67_108_864),
             ext_type_name: Some("GEOGRAPHY".to_string()),
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -2078,7 +2100,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -2093,13 +2115,7 @@ mod tests {
             name: name.to_string(),
             type_: type_.to_string(),
             nullable,
-            scale: None,
-            precision: None,
-            length: None,
-            byte_length: None,
-            ext_type_name: None,
-            vector_dimension: None,
-            fields: None,
+            ..Default::default()
         }
     }
 
@@ -2196,7 +2212,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -2221,7 +2237,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -2246,7 +2262,7 @@ mod tests {
             byte_length: Some(100),
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -2271,7 +2287,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -2297,7 +2313,7 @@ mod tests {
             byte_length: None,
             ext_type_name: Some("GEOGRAPHY".to_string()),
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -2324,7 +2340,7 @@ mod tests {
             byte_length: Some(400),
             ext_type_name: Some("".to_string()),
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -2405,7 +2421,7 @@ mod tests {
             byte_length: None,
             ext_type_name: None,
             vector_dimension: None,
-            fields: None,
+            ..Default::default()
         };
 
         let result: crate::query_types::RowType = (&row_type)

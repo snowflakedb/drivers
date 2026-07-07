@@ -23,6 +23,14 @@ pub struct ColumnMetadata {
     pub length: Option<i64>,
     pub byte_length: Option<i64>,
     pub nullable: bool,
+    pub dimension: Option<i64>,
+    pub fixed: bool,
+    pub column_src_database: String,
+    pub column_src_schema: String,
+    pub column_src_table: String,
+    pub is_auto_increment: bool,
+    pub ext_col_type_name: String,
+    pub udt_output_type: String,
 }
 
 /// Metadata for a single result set (maps to proto ResultSetDescriptor).
@@ -249,19 +257,39 @@ pub(super) fn response_to_descriptor(
 fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
     row_types
         .iter()
-        .map(|rt| ColumnMetadata {
-            name: rt.name.clone(),
-            r#type: rt
-                .ext_type_name
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .cloned()
-                .unwrap_or_else(|| rt.type_.clone()),
-            precision: rt.precision.map(|v| v as i64),
-            scale: rt.scale.map(|v| v as i64),
-            length: rt.length.map(|v| v as i64),
-            byte_length: rt.byte_length.map(|v| v as i64),
-            nullable: rt.nullable,
+        .map(|rt| {
+            let dimension = rt
+                .dimension
+                .filter(|&d| d > 0)
+                .or(rt.vector_dimension)
+                .map(|v| v as i64);
+            ColumnMetadata {
+                name: rt.name.clone(),
+                r#type: rt
+                    .ext_type_name
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| rt.type_.clone()),
+                precision: rt.precision.map(|v| v as i64),
+                scale: rt.scale.map(|v| v as i64),
+                length: rt.length.map(|v| v as i64),
+                byte_length: rt.byte_length.map(|v| v as i64),
+                nullable: rt.nullable,
+                dimension,
+                fixed: rt.fixed.unwrap_or(false),
+                column_src_database: rt.database.clone().unwrap_or_default(),
+                column_src_schema: rt.schema.clone().unwrap_or_default(),
+                column_src_table: rt.table.clone().unwrap_or_default(),
+                is_auto_increment: rt.is_auto_increment.unwrap_or(false),
+                ext_col_type_name: rt
+                    .ext_type_name
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_default(),
+                udt_output_type: rt.output_type.clone().unwrap_or_default(),
+            }
         })
         .collect()
 }
@@ -686,5 +714,27 @@ mod tests {
 
         assert_id_name_reader(reader);
         drop(runtime);
+    }
+
+    #[test]
+    fn row_types_to_columns_prefers_ext_type_name_for_type() {
+        use crate::rest::snowflake::query_response::RowType;
+
+        let row_types = vec![RowType {
+            name: "geo_col".to_string(),
+            type_: "object".to_string(),
+            nullable: true,
+            ext_type_name: Some("GEOGRAPHY".to_string()),
+            output_type: Some("binary".to_string()),
+            ..Default::default()
+        }];
+
+        let columns = row_types_to_columns(&row_types);
+
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].name, "geo_col");
+        assert_eq!(columns[0].r#type, "GEOGRAPHY");
+        assert_eq!(columns[0].ext_col_type_name, "GEOGRAPHY");
+        assert_eq!(columns[0].udt_output_type, "binary");
     }
 }

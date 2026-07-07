@@ -242,6 +242,14 @@ impl From<NativeColumnMetadata> for ColumnMetadata {
             length: meta.length,
             byte_length: meta.byte_length,
             nullable: meta.nullable,
+            dimension: meta.dimension,
+            fixed: meta.fixed,
+            column_src_database: meta.column_src_database,
+            column_src_schema: meta.column_src_schema,
+            column_src_table: meta.column_src_table,
+            is_auto_increment: meta.is_auto_increment,
+            ext_col_type_name: meta.ext_col_type_name,
+            udt_output_type: meta.udt_output_type,
         }
     }
 }
@@ -256,6 +264,14 @@ impl From<ColumnMetadata> for NativeColumnMetadata {
             length: meta.length,
             byte_length: meta.byte_length,
             nullable: meta.nullable,
+            dimension: meta.dimension,
+            fixed: meta.fixed,
+            column_src_database: meta.column_src_database,
+            column_src_schema: meta.column_src_schema,
+            column_src_table: meta.column_src_table,
+            is_auto_increment: meta.is_auto_increment,
+            ext_col_type_name: meta.ext_col_type_name,
+            udt_output_type: meta.udt_output_type,
         }
     }
 }
@@ -274,8 +290,23 @@ pub(super) fn column_metadata_to_row_type(
         byte_length: column_metadata.byte_length.map(|v| v as u64),
         length: column_metadata.length.map(|v| v as u64),
         precision: column_metadata.precision.map(|v| v as u64),
-        ext_type_name: None,
-        vector_dimension: None,
+        ext_type_name: if column_metadata.ext_col_type_name.is_empty() {
+            None
+        } else {
+            Some(column_metadata.ext_col_type_name.clone())
+        },
+        vector_dimension: column_metadata.dimension.map(|v| v as u64),
+        dimension: column_metadata.dimension.map(|v| v as u64),
+        fixed: Some(column_metadata.fixed),
+        database: Some(column_metadata.column_src_database.clone()),
+        schema: Some(column_metadata.column_src_schema.clone()),
+        table: Some(column_metadata.column_src_table.clone()),
+        is_auto_increment: Some(column_metadata.is_auto_increment),
+        output_type: if column_metadata.udt_output_type.is_empty() {
+            None
+        } else {
+            Some(column_metadata.udt_output_type.clone())
+        },
         fields: None,
     };
     (&temp_row_type)

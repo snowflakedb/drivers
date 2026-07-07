@@ -140,6 +140,14 @@ message ColumnMetadata {
   optional int64 length = 5;
   optional int64 byte_length = 6;
   bool nullable = 7;
+  optional int64 dimension = 8;
+  bool fixed = 9;
+  string column_src_database = 10;
+  string column_src_schema = 11;
+  string column_src_table = 12;
+  bool is_auto_increment = 13;
+  string ext_col_type_name = 14;
+  string udt_output_type = 15;
 }
 
 // DML operation statistics
