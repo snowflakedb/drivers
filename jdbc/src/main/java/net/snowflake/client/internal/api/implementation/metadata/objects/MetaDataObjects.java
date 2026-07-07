@@ -485,6 +485,47 @@ public class MetaDataObjects {
     }
   }
 
+  public ResultSet getTablePrivileges(
+      String originalCatalog, String originalSchemaPattern, String tableNamePattern)
+      throws SQLException {
+    if (tableNamePattern == null) {
+      return emptyResultSet(MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
+    }
+    ContextAwareMetadataSearch contextAware =
+        params.applySessionContext(originalCatalog, originalSchemaPattern);
+    String catalog = contextAware.getDatabase();
+    String schemaPattern = contextAware.getSchema();
+
+    String sqlQuery =
+        queryBuilder(contextAware).showTablePrivileges(catalog, schemaPattern, tableNamePattern);
+
+    RowConverter rowConverter =
+        row -> {
+          String table_cat = row.getString("TABLE_CATALOG");
+          String table_schema = row.getString("TABLE_SCHEMA");
+          String table_name = row.getString("TABLE_NAME");
+          String grantor = row.getString("GRANTOR");
+          String grantee = row.getString("GRANTEE");
+          String privilege = row.getString("PRIVILEGE_TYPE");
+          String is_grantable = row.getString("IS_GRANTABLE");
+
+          // TODO(SNOW-3695645): why do we have custom matching here? different from other methods
+          if ((catalog == null || catalog.trim().equals("%") || catalog.trim().equals(table_cat))
+              && (schemaPattern == null
+                  || schemaPattern.trim().equals("%")
+                  || schemaPattern.trim().equals(table_schema))
+              && (tableNamePattern.trim().equals(table_name)
+                  || tableNamePattern.trim().equals("%"))) {
+            return new Object[] {
+              table_cat, table_schema, table_name, grantor, grantee, privilege, is_grantable,
+            };
+          }
+          return null;
+        };
+
+    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
+  }
+
   /** Ported from snowflake-jdbc SnowflakeDatabaseMetaDataImpl. */
   static Integer getColumnSize(SnowflakeColumnMetadata columnMetadata) {
     switch (columnMetadata.getType()) {

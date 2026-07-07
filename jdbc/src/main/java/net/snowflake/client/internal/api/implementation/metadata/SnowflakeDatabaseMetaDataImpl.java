@@ -686,7 +686,7 @@ public class SnowflakeDatabaseMetaDataImpl
   public ResultSet getTablePrivileges(String catalog, String schemaPattern, String tableNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return objects.getTablePrivileges(catalog, schemaPattern, tableNamePattern);
   }
 
   @Override

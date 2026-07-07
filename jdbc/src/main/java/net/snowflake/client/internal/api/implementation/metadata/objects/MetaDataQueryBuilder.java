@@ -2,8 +2,11 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.isPatternMatchingAll;
 
+import lombok.AccessLevel;
+import lombok.RequiredArgsConstructor;
 import net.snowflake.common.util.Wildcard;
 
+@RequiredArgsConstructor(access = AccessLevel.PACKAGE)
 class MetaDataQueryBuilder {
 
   private final StringBuilder builder = new StringBuilder();
@@ -11,15 +14,6 @@ class MetaDataQueryBuilder {
   private final boolean useSessionSchema;
   private final boolean enableWildcardsInShowMetadataCommands;
   private boolean earlyExit = false;
-
-  MetaDataQueryBuilder(
-      boolean isExactSchema,
-      boolean useSessionSchema,
-      boolean enableWildcardsInShowMetadataCommands) {
-    this.isExactSchema = isExactSchema;
-    this.useSessionSchema = useSessionSchema;
-    this.enableWildcardsInShowMetadataCommands = enableWildcardsInShowMetadataCommands;
-  }
 
   MetaDataQueryBuilder show(String type) {
     builder.append("show ").append(type);
@@ -102,6 +96,33 @@ class MetaDataQueryBuilder {
       return null;
     }
     return builder.toString();
+  }
+
+  String showTablePrivileges(String catalog, String schema, String table) {
+    String sqlQuery = "select * from ";
+
+    if (catalog != null
+        && !catalog.isEmpty()
+        && !catalog.trim().equals("%")
+        && !catalog.trim().equals(".*")) {
+      sqlQuery += "\"" + escapeSqlQuotes(catalog) + "\".";
+    }
+    sqlQuery += "information_schema.table_privileges";
+
+    if (!isPatternMatchingAll(table)) {
+      sqlQuery += " where table_name = '" + table + "'";
+    }
+
+    if (!isPatternMatchingAll(schema)) {
+      String unescapedSchema = isExactSchema ? schema : unescapeChars(schema);
+      if (sqlQuery.contains("where table_name")) {
+        sqlQuery += " and table_schema = '" + unescapedSchema + "'";
+      } else {
+        sqlQuery += " where table_schema = '" + unescapedSchema + "'";
+      }
+    }
+    sqlQuery += " order by table_catalog, table_schema, table_name, privilege_type";
+    return sqlQuery;
   }
 
   private boolean isSchemaNameWildcardPattern(String inputString) {
