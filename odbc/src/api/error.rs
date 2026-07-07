@@ -111,6 +111,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid transaction operation code: {completion_type}"))]
+    InvalidTransactionOperationCode {
+        completion_type: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid descriptor kind: {kind}"))]
     InvalidDescriptorKind {
         kind: u16,
@@ -656,6 +663,7 @@ impl OdbcError {
             OdbcError::InvalidHandle { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidUseOfImplicitDescriptor { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidHandleType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidTransactionOperationCode { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDescriptorKind { .. } => ErrorSource::ApiMisuse,
             OdbcError::NullPointer { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidBufferLength { .. } => ErrorSource::ApiMisuse,
@@ -809,6 +817,9 @@ impl OdbcError {
                 SqlState::InvalidUseOfAutomaticallyAllocatedDescriptorHandle
             }
             OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::InvalidTransactionOperationCode { .. } => {
+                SqlState::InvalidTransactionOperationCode
+            }
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidDescriptorKind { .. } => SqlState::GeneralError,
             OdbcError::InvalidBufferLength { .. } => SqlState::InvalidStringOrBufferLength,

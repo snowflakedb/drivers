@@ -308,6 +308,34 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Can be called after con
   SQLDisconnect(dbc_handle());
 }
 
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLEndTran as supported",
+                 "[odbc-api][getfunctions][driver_info]") {
+  // Regression guard: SQLEndTran is implemented and exported by the driver, so
+  // SQLGetFunctions must report it supported. When SQLEndTran was left out of
+  // the driver's supported-function bitmap, unixODBC (which gates dispatch on
+  // that bitmap) refused to call the driver's SQLEndTran and returned
+  // SQL_ERROR, while iODBC/Windows dispatched regardless - so the regression
+  // only surfaced under unixODBC. The comprehensive coverage tests above are
+  // gated behind SKIP_NEW_DRIVER_NOT_IMPLEMENTED and so do not cover this on
+  // the new driver; this focused case does.
+  //
+  // iODBC answers SQLGetFunctions from its own static table without a driver
+  // round-trip, so the driver-answer assertion only holds off iODBC (matching
+  // the SQL_API_SQLEXECDIRECT round-trip case above).
+  SKIP_IODBC("iODBC DM answers SQLGetFunctions from its static table regardless of the driver's bitmap");
+
+  const std::string dsn = dsn_name();
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT supported = SQL_FALSE;
+  ret = SQLGetFunctions(dbc_handle(), SQL_API_SQLENDTRAN, &supported);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(supported == SQL_TRUE);
+
+  SQLDisconnect(dbc_handle());
+}
+
 // ============================================================================
 // SQLGetFunctions - Comprehensive Function Coverage Test
 // ============================================================================
