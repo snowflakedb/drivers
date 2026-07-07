@@ -1,5 +1,4 @@
-use std::io::{Cursor, Write as _};
-
+use crate::conversion::int_fmt;
 use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
@@ -451,47 +450,48 @@ fn format_timestamp_string_into<'a>(
     buf: &'a mut [u8; 48],
 ) -> Result<&'a str, WriteOdbcError> {
     let nanos = dt.nanosecond();
-    let len = {
-        let mut cur = Cursor::new(&mut buf[..]);
-        let write_result = write!(
-            cur,
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-            dt.year(),
-            dt.month(),
-            dt.day(),
-            dt.hour(),
-            dt.minute(),
-            dt.second()
-        )
-        .and_then(|()| {
-            if nanos != 0 {
-                write!(cur, ".{nanos:09}")
-            } else {
-                Ok(())
-            }
-        });
-        if write_result.is_err() {
-            return NumericValueOutOfRangeSnafu {
-                reason: format!(
-                    "timestamp value does not fit in the {}-byte format buffer",
-                    buf.len()
-                ),
-            }
-            .fail();
+    // Hand-rolled digit writes instead of `write!`/`core::fmt`, which was the
+    // dominant per-cell cost of TIMESTAMP→CHAR conversion. `put_year` is
+    // byte-identical to the old `{:04}`; the bounded calendar fields use
+    // exactly 2 digits.
+    //
+    // Max length is `year_width` (≤7 for chrono's representable range) + 15 for
+    // `-MM-DD HH:MM:SS` + 10 for `.` and 9 fractional digits = ≤32 ≤ 48. Guard
+    // anyway so a hypothetically wider year returns a typed error rather than
+    // panicking on an out-of-bounds index across the FFI boundary.
+    let needed = int_fmt::year_width(dt.year()) + 15 + if nanos != 0 { 10 } else { 0 };
+    if needed > buf.len() {
+        return NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "timestamp value does not fit in the {}-byte format buffer",
+                buf.len()
+            ),
         }
-        cur.position() as usize
-    };
-    // Trim trailing zeros from the fractional part (matching the previous
-    // `.trim_end_matches('0')` behavior). Skip the scan entirely when we
-    // know no fractional part was written.
-    let mut end = len;
+        .fail();
+    }
+
+    let mut p = int_fmt::put_year(buf, 0, dt.year());
+    buf[p] = b'-';
+    p = int_fmt::put_padded(buf, p + 1, dt.month(), 2);
+    buf[p] = b'-';
+    p = int_fmt::put_padded(buf, p + 1, dt.day(), 2);
+    buf[p] = b' ';
+    p = int_fmt::put_padded(buf, p + 1, dt.hour(), 2);
+    buf[p] = b':';
+    p = int_fmt::put_padded(buf, p + 1, dt.minute(), 2);
+    buf[p] = b':';
+    p = int_fmt::put_padded(buf, p + 1, dt.second(), 2);
     if nanos != 0 {
-        while end > 0 && buf[end - 1] == b'0' {
-            end -= 1;
+        buf[p] = b'.';
+        p = int_fmt::put_padded(buf, p + 1, nanos, 9);
+        // Trim trailing zeros from the fractional part (matching the old
+        // `.trim_end_matches('0')` behavior).
+        while buf[p - 1] == b'0' {
+            p -= 1;
         }
     }
     // SAFETY: only ASCII digits, '-', ':', ' ', and '.' were written above.
-    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..end]) })
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..p]) })
 }
 
 /// Format a `TzInstant` as a wall-clock literal followed by the requested
@@ -516,33 +516,35 @@ fn format_timestamp_tz_string_into<'a>(
     let abs_minutes = value.offset_minutes.unsigned_abs();
     let hours = abs_minutes / 60;
     let minutes = abs_minutes % 60;
-    let sign = if value.offset_minutes < 0 { '-' } else { '+' };
+    let sign = if value.offset_minutes < 0 { b'-' } else { b'+' };
 
-    let len = {
-        let mut cur = Cursor::new(&mut buf[..]);
-        let result = cur.write_all(wall.as_bytes()).and_then(|()| match fmt {
-            TzOffsetFormat::Colon => write!(cur, " {sign}{hours:02}:{minutes:02}"),
-            TzOffsetFormat::NoColon => write!(cur, " {sign}{hours:02}{minutes:02}"),
-            TzOffsetFormat::HourOnly if minutes == 0 => {
-                write!(cur, " {sign}{hours:02}")
-            }
-            // Sub-hour offset: fall back to `+HH:MM` so we don't drop the
-            // minutes silently. Server does the same for the `TZH` token.
-            TzOffsetFormat::HourOnly => write!(cur, " {sign}{hours:02}:{minutes:02}"),
-        });
-        if result.is_err() {
-            return NumericValueOutOfRangeSnafu {
-                reason: format!(
-                    "TIMESTAMP_TZ value does not fit in the {}-byte format buffer",
-                    buf.len()
-                ),
-            }
-            .fail();
+    // Hand-rolled digit writes (see `format_timestamp_string_into`). Length is
+    // wall (≤32) + ` ±HH[:MM]` (≤7) = ≤39 ≤ 64, so writes stay in-bounds; the
+    // `?` above already surfaced any wall-clock overflow as a typed error.
+    let wall_len = wall.len();
+    buf[..wall_len].copy_from_slice(wall.as_bytes());
+    let mut p = wall_len;
+    buf[p] = b' ';
+    buf[p + 1] = sign;
+    p = int_fmt::put_padded(buf, p + 2, hours, 2);
+    match fmt {
+        TzOffsetFormat::Colon => {
+            buf[p] = b':';
+            p = int_fmt::put_padded(buf, p + 1, minutes, 2);
         }
-        cur.position() as usize
-    };
+        TzOffsetFormat::NoColon => {
+            p = int_fmt::put_padded(buf, p, minutes, 2);
+        }
+        // `TZH` token: hour-only unless there is a sub-hour component, in
+        // which case fall back to `±HH:MM` rather than dropping the minutes.
+        TzOffsetFormat::HourOnly if minutes == 0 => {}
+        TzOffsetFormat::HourOnly => {
+            buf[p] = b':';
+            p = int_fmt::put_padded(buf, p + 1, minutes, 2);
+        }
+    }
     // SAFETY: only ASCII digits, '-', '+', ':', ' ', and '.' were written.
-    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..p]) })
 }
 
 impl TzInstant {

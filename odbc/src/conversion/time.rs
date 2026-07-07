@@ -1,5 +1,3 @@
-use std::io::{Cursor, Write as _};
-
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::ArrowPrimitiveType;
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
@@ -12,6 +10,7 @@ use crate::conversion::error::{
     InvalidArrowValueSnafu, InvalidDatetimeValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::int_fmt;
 use crate::conversion::param_binding::{
     parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
@@ -27,30 +26,26 @@ const TIME_CHAR_EXPECTED_FORMAT: &str = "HH:MM:SS[.fffffffff]";
 /// heap allocation. 32 bytes is ample for the widest output (`HH:MM:SS.` + 9
 /// fractional digits = 18 bytes).
 fn format_time_ascii<'a>(time: &NaiveTime, buf: &'a mut [u8; 32]) -> &'a str {
-    let len = {
-        let mut cursor = Cursor::new(&mut buf[..]);
-        let _ = write!(
-            cursor,
-            "{:02}:{:02}:{:02}",
-            time.hour(),
-            time.minute(),
-            time.second()
-        );
-        let nanos = time.nanosecond();
-        if nanos != 0 {
-            let _ = write!(cursor, ".{nanos:09}");
-        }
-        cursor.position() as usize
-    };
-    // Trim trailing zeros from the optional fractional part.
-    let mut end = len;
-    if buf[..end].contains(&b'.') {
-        while end > 0 && buf[end - 1] == b'0' {
-            end -= 1;
+    // Hand-rolled digit writes rather than `write!`/`core::fmt`, the dominant
+    // per-cell cost for temporal SQL_C_CHAR rendering.
+    let mut p = int_fmt::put_padded(buf, 0, time.hour(), 2);
+    buf[p] = b':';
+    p = int_fmt::put_padded(buf, p + 1, time.minute(), 2);
+    buf[p] = b':';
+    p = int_fmt::put_padded(buf, p + 1, time.second(), 2);
+    // Snowflake TIME fractions are < 1e9 (scale ≤ 9, no leap seconds), so the
+    // fraction is exactly 9 digits — matching the old `{:09}` — before
+    // trailing zeros are trimmed.
+    let nanos = time.nanosecond();
+    if nanos != 0 {
+        buf[p] = b'.';
+        p = int_fmt::put_padded(buf, p + 1, nanos, 9);
+        while buf[p - 1] == b'0' {
+            p -= 1;
         }
     }
     // SAFETY: only ASCII digits, `:`, and `.` written above.
-    unsafe { std::str::from_utf8_unchecked(&buf[..end]) }
+    unsafe { std::str::from_utf8_unchecked(&buf[..p]) }
 }
 
 pub(crate) struct SnowflakeTime {
@@ -338,5 +333,31 @@ impl WriteWire for SnowflakeTime {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Time
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveTime;
+
+    fn fmt(h: u32, m: u32, s: u32, nano: u32) -> String {
+        let t = NaiveTime::from_hms_nano_opt(h, m, s, nano).unwrap();
+        let mut buf = [0u8; 32];
+        format_time_ascii(&t, &mut buf).to_string()
+    }
+
+    #[test]
+    fn format_time_ascii_matches_expected() {
+        // No fraction — bounded fields are always two digits.
+        assert_eq!(fmt(0, 0, 0, 0), "00:00:00");
+        assert_eq!(fmt(1, 2, 3, 0), "01:02:03");
+        assert_eq!(fmt(23, 59, 59, 0), "23:59:59");
+        // Fractions render as up to 9 digits (matching the old `{:09}`) with
+        // trailing zeros trimmed.
+        assert_eq!(fmt(12, 34, 56, 1), "12:34:56.000000001");
+        assert_eq!(fmt(12, 34, 56, 123_000_000), "12:34:56.123");
+        assert_eq!(fmt(12, 34, 56, 123_456_789), "12:34:56.123456789");
+        assert_eq!(fmt(12, 34, 56, 900_000_000), "12:34:56.9");
     }
 }
