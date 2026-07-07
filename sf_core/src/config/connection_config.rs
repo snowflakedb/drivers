@@ -13,6 +13,7 @@ use crate::config::param_names::*;
 use crate::config::rest_parameters::{
     ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
+    WifProvider, WorkloadIdentityConfig,
 };
 use crate::config::settings::{Setting, Settings};
 use crate::config::{
@@ -105,6 +106,10 @@ pub enum AuthConfig {
         master_token: SensitiveString,
         master_validity_in_seconds: Option<u64>,
     },
+    /// Workload Identity Federation. The driver fetches an identity token from
+    /// the cloud provider's metadata service and presents it to GS under
+    /// `AUTHENTICATOR=WORKLOAD_IDENTITY`.
+    WorkloadIdentity(WorkloadIdentityConfig),
 }
 
 #[derive(Debug)]
@@ -467,6 +472,44 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
                 .unwrap_or(false),
         }),
+        "WORKLOAD_IDENTITY" => {
+            let provider_str = settings
+                .get_string(WORKLOAD_IDENTITY_PROVIDER)
+                .filter(|s| !s.is_empty())
+                .context(MissingParameterSnafu {
+                    parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
+                })?;
+            let provider = WifProvider::parse_str(&provider_str).ok_or_else(|| {
+                InvalidParameterValueSnafu {
+                    parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
+                    value: provider_str.clone(),
+                    explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
+                }
+                .build()
+            })?;
+            let entra_resource = settings
+                .get_string(WORKLOAD_IDENTITY_ENTRA_RESOURCE)
+                .filter(|s| !s.is_empty());
+            let impersonation_path = settings
+                .get_string(WORKLOAD_IDENTITY_IMPERSONATION_PATH)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    s.split(',')
+                        .map(|p| p.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let oidc_token = settings
+                .get_sensitive_string(TOKEN)
+                .filter(|s| !s.reveal().is_empty());
+            Ok(AuthConfig::WorkloadIdentity(WorkloadIdentityConfig {
+                provider,
+                entra_resource,
+                impersonation_path,
+                oidc_token,
+            }))
+        }
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
             value: authenticator,
@@ -650,6 +693,14 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             master_token: master_token.clone(),
             master_validity_in_seconds: *master_validity_in_seconds,
         },
+        AuthConfig::WorkloadIdentity(cfg) => {
+            LoginMethod::WorkloadIdentity(WorkloadIdentityConfig {
+                provider: cfg.provider,
+                entra_resource: cfg.entra_resource.clone(),
+                impersonation_path: cfg.impersonation_path.clone(),
+                oidc_token: cfg.oidc_token.clone(),
+            })
+        }
     }
 }
 
@@ -749,22 +800,22 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         });
     }
 
+    // --- Auth-specific checks based on authenticator ---
+    let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
+    let auth_upper = authenticator.to_ascii_uppercase();
+
     // --- MissingRequired: user ---
     // SNOW-3647715: token-based authenticators waive the `user`
     // requirement — the principal is encoded in the IdP-issued token
-    // (or PAT) and resolved by GS at login time. The match below only
-    // appends per-authenticator issues; the `user` check is short-
-    // circuited here to keep the contract self-documenting.
-    let authenticator_for_user_check = settings
-        .get_string(AUTHENTICATOR)
-        .unwrap_or_default()
-        .to_ascii_uppercase();
+    // (or PAT) and resolved by GS at login time. WIF also waives the
+    // user requirement since the cloud identity is resolved server-side.
     let user_optional = matches!(
-        authenticator_for_user_check.as_str(),
+        auth_upper.as_str(),
         "OAUTH"
             | "OAUTH_AUTHORIZATION_CODE"
             | "OAUTH_CLIENT_CREDENTIALS"
             | "PROGRAMMATIC_ACCESS_TOKEN"
+            | "WORKLOAD_IDENTITY"
     );
     if !user_optional && non_empty_string(settings, USER).is_none() {
         issues.push(ValidationIssue {
@@ -774,10 +825,6 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             code: ValidationCode::MissingRequired,
         });
     }
-
-    // --- Auth-specific checks based on authenticator ---
-    let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
-    let auth_upper = authenticator.to_ascii_uppercase();
     match auth_upper.as_str() {
         "" if has_private_key_params(settings) => {
             // Empty authenticator + private key params → auto-JWT, no password needed
@@ -924,6 +971,52 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         }
         "EXTERNALBROWSER" => {
             // no validation required; user is already validated above.
+        }
+        "WORKLOAD_IDENTITY" => {
+            // provider is required
+            if settings
+                .get_string(WORKLOAD_IDENTITY_PROVIDER)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: WORKLOAD_IDENTITY_PROVIDER.into(),
+                    message: format!(
+                        "Missing required parameter 'workload_identity_provider' for \
+                              WORKLOAD_IDENTITY authentication. \
+                              Allowed values: {}",
+                        WifProvider::allowed_values()
+                    ),
+                    code: ValidationCode::MissingRequired,
+                });
+            } else if let Some(p) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
+                && WifProvider::parse_str(&p).is_none()
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: WORKLOAD_IDENTITY_PROVIDER.into(),
+                    message: format!(
+                        "Invalid workload_identity_provider '{p}'. \
+                             Allowed values: {}",
+                        WifProvider::allowed_values()
+                    ),
+                    code: ValidationCode::InvalidValue,
+                });
+            }
+            // OIDC provider requires token
+            if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
+                && WifProvider::parse_str(&provider_str) == Some(WifProvider::Oidc)
+                && settings.get_string(TOKEN).is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: TOKEN.into(),
+                    message: "Missing required parameter 'token' for OIDC workload \
+                                      identity authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
         }
         _ if auth_upper.starts_with("HTTPS://") => {
             if Url::parse(&authenticator).is_err() {
@@ -2533,6 +2626,198 @@ mod tests {
         assert_eq!(
             config.server.server_url,
             "https://myaccount.snowflakecomputing.com"
+        );
+    }
+
+    // ── WIF tests ──────────────────────────────────────────────────────
+
+    fn wif_base_settings(provider: &str) -> Vec<(&'static str, Setting)> {
+        vec![
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("authenticator", Setting::String("WORKLOAD_IDENTITY".into())),
+            (
+                "workload_identity_provider",
+                Setting::String(provider.into()),
+            ),
+        ]
+    }
+
+    #[test]
+    fn validate_wif_missing_provider_reports_issue() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("authenticator", Setting::String("WORKLOAD_IDENTITY".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_provider"
+                    && i.code == ValidationCode::MissingRequired
+            }),
+            "Expected MissingRequired for missing workload_identity_provider, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_invalid_provider_reports_issue() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("authenticator", Setting::String("WORKLOAD_IDENTITY".into())),
+            (
+                "workload_identity_provider",
+                Setting::String("CLOUD9".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_provider"
+                    && i.code == ValidationCode::InvalidValue
+            }),
+            "Expected InvalidValue for unknown provider, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_oidc_requires_token() {
+        let settings = settings_from(&wif_base_settings("OIDC"));
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .any(|i| { i.parameter == "token" && i.code == ValidationCode::MissingRequired }),
+            "Expected MissingRequired for token with OIDC provider, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_user_not_required() {
+        let settings = settings_from(&wif_base_settings("AWS"));
+        let issues = validate_settings(&settings);
+        let user_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.parameter == "user" && i.code == ValidationCode::MissingRequired)
+            .collect();
+        assert!(
+            user_errors.is_empty(),
+            "WORKLOAD_IDENTITY should not require 'user', got: {user_errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_providers_accepted_case_insensitive() {
+        for provider in &["aws", "AWS", "oidc", "OIDC"] {
+            let mut settings = wif_base_settings(provider);
+            if provider.eq_ignore_ascii_case("OIDC") {
+                settings.push(("token", Setting::String("tok".into())));
+            }
+            let settings = settings_from(&settings);
+            let issues = validate_settings(&settings);
+            let provider_errors: Vec<_> = issues
+                .iter()
+                .filter(|i| {
+                    i.parameter == "workload_identity_provider"
+                        && i.code == ValidationCode::InvalidValue
+                })
+                .collect();
+            assert!(
+                provider_errors.is_empty(),
+                "Provider '{provider}' should be valid (case-insensitive), got: {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_wif_aws_auth() {
+        let settings = settings_from(&wif_base_settings("AWS"));
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.provider,
+                    crate::config::rest_parameters::WifProvider::Aws
+                );
+                assert!(cfg.impersonation_path.is_empty());
+                assert!(cfg.entra_resource.is_none());
+                assert!(cfg.oidc_token.is_none());
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wif_aws_with_impersonation_path() {
+        let mut pairs = wif_base_settings("AWS");
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("arn:aws:iam::123:role/A,arn:aws:iam::456:role/B".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.impersonation_path,
+                    vec![
+                        "arn:aws:iam::123:role/A".to_string(),
+                        "arn:aws:iam::456:role/B".to_string(),
+                    ]
+                );
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wif_oidc_with_token() {
+        let mut pairs = wif_base_settings("OIDC");
+        pairs.push(("token", Setting::String("my-oidc-jwt".into())));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.provider,
+                    crate::config::rest_parameters::WifProvider::Oidc
+                );
+                assert_eq!(
+                    cfg.oidc_token.as_ref().map(|t| t.reveal().to_string()),
+                    Some("my-oidc-jwt".to_string())
+                );
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_wif_error_message_mentions_allowed_values() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("authenticator", Setting::String("WORKLOAD_IDENTITY".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.message.contains("WORKLOAD_IDENTITY")
+                    || i.message.contains("workload_identity_provider")
+            }),
+            "Error message should mention workload_identity_provider: {issues:?}"
         );
     }
 }

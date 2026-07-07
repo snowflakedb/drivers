@@ -405,6 +405,117 @@ pub struct OAuthClientCredentialsConfig {
     pub flow_options: OAuthFlowOptions,
 }
 
+/// Cloud provider used for Workload Identity Federation attestation.
+///
+/// The string representation (`as_wire_str`) is what Snowflake GS expects in
+/// the `PROVIDER` field of the login-request body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifProvider {
+    Aws,
+    Oidc,
+}
+
+impl WifProvider {
+    /// Wire-format string sent in the `PROVIDER` field of the login-request body.
+    pub fn as_wire_str(&self) -> &'static str {
+        match self {
+            WifProvider::Aws => "AWS",
+            WifProvider::Oidc => "OIDC",
+        }
+    }
+
+    /// Parse from a connection-string value (case-insensitive).
+    pub fn parse_str(s: &str) -> Option<Self> {
+        match s.to_ascii_uppercase().as_str() {
+            "AWS" => Some(WifProvider::Aws),
+            "OIDC" => Some(WifProvider::Oidc),
+            _ => None,
+        }
+    }
+
+    /// Comma-separated list of accepted provider names for error messages.
+    pub fn allowed_values() -> &'static str {
+        "AWS, OIDC"
+    }
+}
+
+impl fmt::Display for WifProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_wire_str())
+    }
+}
+
+/// Default Azure Entra resource URI for managed-identity token requests.
+///
+/// All other Snowflake drivers use this as the `resource` parameter when
+/// requesting a managed-identity access token from the Azure IMDS or Azure
+/// Functions identity endpoint.
+pub const DEFAULT_AZURE_ENTRA_RESOURCE: &str = "api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad";
+
+/// Fully-validated Workload Identity Federation configuration.
+///
+/// Created by [`WorkloadIdentityConfig::from_settings`] and carried in
+/// [`AuthConfig::WorkloadIdentity`] / [`LoginMethod::WorkloadIdentity`].
+#[derive(Debug)]
+pub struct WorkloadIdentityConfig {
+    /// Attestation provider. Determines which cloud metadata service the
+    /// driver calls to acquire the identity token.
+    pub provider: WifProvider,
+    /// Azure Entra resource URI for the managed-identity token request.
+    /// `None` ⇒ use [`DEFAULT_AZURE_ENTRA_RESOURCE`]. Azure provider only.
+    pub entra_resource: Option<String>,
+    /// Ordered impersonation chain.
+    /// AWS: IAM role ARNs to `AssumeRole` in order.
+    /// GCP: service account emails to impersonate via IAM Credentials API.
+    /// Empty ⇒ no impersonation (use the ambient identity directly).
+    pub impersonation_path: Vec<String>,
+    /// Pre-acquired OIDC JWT (OIDC provider only). Forwarded verbatim to GS
+    /// as the `TOKEN` field. Stored as `None` for all other providers.
+    pub oidc_token: Option<SensitiveString>,
+}
+
+impl WorkloadIdentityConfig {
+    pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
+        let provider_str = settings
+            .get_string("workload_identity_provider")
+            .filter(|s| !s.is_empty())
+            .context(MissingParameterSnafu {
+                parameter: "workload_identity_provider",
+            })?;
+        let provider = WifProvider::parse_str(&provider_str).ok_or_else(|| {
+            InvalidParameterValueSnafu {
+                parameter: "workload_identity_provider",
+                value: provider_str.clone(),
+                explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
+            }
+            .build()
+        })?;
+        let entra_resource = settings
+            .get_string("workload_identity_entra_resource")
+            .filter(|s| !s.is_empty());
+        let impersonation_path = settings
+            .get_string("workload_identity_impersonation_path")
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let oidc_token = settings
+            .get_string("token")
+            .filter(|s| !s.is_empty())
+            .map(SensitiveString::from);
+        Ok(Self {
+            provider,
+            entra_resource,
+            impersonation_path,
+            oidc_token,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub enum LoginMethod {
     Password {
@@ -454,6 +565,10 @@ pub enum LoginMethod {
         master_token: SensitiveString,
         master_validity_in_seconds: Option<u64>,
     },
+    /// Workload Identity Federation. The driver acquires an identity token
+    /// from the cloud provider's metadata service, then presents it to GS
+    /// under `AUTHENTICATOR=WORKLOAD_IDENTITY`.
+    WorkloadIdentity(WorkloadIdentityConfig),
 }
 
 pub(crate) fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<String> {
@@ -951,6 +1066,9 @@ impl LoginMethod {
                     ),
                 })
             }
+            "WORKLOAD_IDENTITY" => Ok(Self::WorkloadIdentity(
+                WorkloadIdentityConfig::from_settings(settings)?,
+            )),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,

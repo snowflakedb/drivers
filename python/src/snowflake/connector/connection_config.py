@@ -277,6 +277,17 @@ class ConnectionConfig(ConnectionConfigMixin):
     verify_hostname: bool | None = True
     """Whether to verify the server hostname in TLS. Default: True"""
 
+    workload_identity_entra_resource: str | None = None
+    """Azure Entra resource URI for managed-identity token (Azure only; defaults to
+    api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad)
+    """
+
+    workload_identity_impersonation_path: str | None = None
+    """Comma-separated impersonation chain for WIF (AWS role ARNs or GCP service account emails)"""
+
+    workload_identity_provider: str | None = None
+    """Cloud provider for WIF attestation (AWS, AZURE, GCP, OIDC). Required when authenticator=WORKLOAD_IDENTITY"""
+
     # -- Session parameters --------------------------------------------------
     client_memory_limit: int | None = 1536
     """Memory budget in MB for chunk prefetch buffer (0 = unlimited). Default: 1536"""

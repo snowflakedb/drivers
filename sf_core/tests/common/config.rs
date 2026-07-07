@@ -66,6 +66,19 @@ pub struct Parameters {
     pub oauth_access_token: Option<String>,
     #[serde(default, rename = "SNOWFLAKE_TEST_PAT")]
     pub pat: Option<String>,
+    // Workload Identity Federation (WIF) parameters.
+    // Populated for the cloud VM / serverless runner under which the WIF
+    // identity (AWS role, Azure MI, GCP SA, or OIDC token) is available.
+    #[serde(default, rename = "SNOWFLAKE_TEST_WIF_PROVIDER")]
+    pub wif_provider: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_WIF_ENTRA_RESOURCE")]
+    pub wif_entra_resource: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH")]
+    pub wif_impersonation_path: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_WIF_ACCOUNT")]
+    pub wif_account: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_WIF_USER")]
+    pub wif_user: Option<String>,
 }
 
 impl Parameters {

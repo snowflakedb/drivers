@@ -209,6 +209,10 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             method: "SessionToken",
         }
         .fail(),
+        LoginMethod::WorkloadIdentity(_) => UnsupportedLoginMethodSnafu {
+            method: "WorkloadIdentity",
+        }
+        .fail(),
     }
 }
 
