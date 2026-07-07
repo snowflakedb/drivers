@@ -166,6 +166,28 @@ pub mod param_names {
     pub const SESSION_TOKEN: ParamKey = ParamKey("session_token");
     pub const MASTER_TOKEN: ParamKey = ParamKey("master_token");
     pub const MASTER_VALIDITY_IN_SECONDS: ParamKey = ParamKey("master_validity_in_seconds");
+
+    // ── Workload Identity Federation (WIF) ────────────────────────────
+    /// Cloud provider used for WIF attestation token acquisition.
+    /// Required when authenticator = WORKLOAD_IDENTITY.
+    /// Accepted values (case-insensitive): `AWS`, `AZURE`, `GCP`, `OIDC`.
+    pub const WORKLOAD_IDENTITY_PROVIDER: ParamKey = ParamKey("workload_identity_provider");
+    /// Override the Azure Entra resource URI for the managed-identity token
+    /// request. Defaults to `api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad`
+    /// when absent.  Azure provider only.
+    pub const WORKLOAD_IDENTITY_ENTRA_RESOURCE: ParamKey =
+        ParamKey("workload_identity_entra_resource");
+    /// Comma-separated impersonation chain.
+    /// AWS: IAM role ARNs to assume in order (e.g. `arn:aws:iam::123:role/A`).
+    /// GCP: service account emails to impersonate in order.
+    /// Not supported for AZURE or OIDC providers.
+    pub const WORKLOAD_IDENTITY_IMPERSONATION_PATH: ParamKey =
+        ParamKey("workload_identity_impersonation_path");
+    /// Pre-acquired OIDC JWT forwarded directly to Snowflake.
+    /// Required when `workload_identity_provider = OIDC`.
+    /// Reuses the existing `token` param key for OIDC so callers that
+    /// already set `token` do not need a separate key.
+    pub const WORKLOAD_IDENTITY_TOKEN: ParamKey = ParamKey("token");
 }
 
 /// Default `put_get_max_attempts` (mirrors the `ParamDef`).
@@ -1424,6 +1446,49 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: true,
         mutable_after_connect: false,
     },
+    // ── Workload Identity Federation (WIF) ────────────────────────────
+    ParamDef {
+        canonical_name: param_names::WORKLOAD_IDENTITY_PROVIDER.as_str(),
+        aliases: &["WORKLOAD_IDENTITY_PROVIDER"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::WhenAuthMethod("WORKLOAD_IDENTITY"),
+        default: None,
+        sensitive: false,
+        description: "Cloud provider for WIF attestation (AWS, AZURE, GCP, OIDC)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::WORKLOAD_IDENTITY_ENTRA_RESOURCE.as_str(),
+        aliases: &["WORKLOAD_IDENTITY_ENTRA_RESOURCE"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Azure Entra resource URI for managed-identity token (Azure only; defaults to api://fd3f753b-eed3-462c-b6a7-a4b5bb650aad)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str(),
+        aliases: &["WORKLOAD_IDENTITY_IMPERSONATION_PATH"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Comma-separated impersonation chain for WIF (AWS role ARNs or GCP service account emails)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
     // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
     ParamDef {
         canonical_name: param_names::PROXY.as_str(),
@@ -1653,6 +1718,16 @@ mod tests {
             ("PROXYWITHENV", "use_proxy_env"),
             ("ALLOW_EMPTY_PROXY", "allow_empty_proxy"),
             ("ALLOWEMPTYPROXY", "allow_empty_proxy"),
+            // WIF params
+            ("WORKLOAD_IDENTITY_PROVIDER", "workload_identity_provider"),
+            (
+                "WORKLOAD_IDENTITY_ENTRA_RESOURCE",
+                "workload_identity_entra_resource",
+            ),
+            (
+                "WORKLOAD_IDENTITY_IMPERSONATION_PATH",
+                "workload_identity_impersonation_path",
+            ),
         ];
         for (alias, expected_canonical) in cases {
             let def = r
@@ -1798,6 +1873,24 @@ mod tests {
         assert!(r.is_known("SERVER"));
         assert!(r.is_known("host"));
         assert!(!r.is_known("unknown_key"));
+    }
+
+    #[test]
+    fn wif_params_registered() {
+        let r = registry();
+        for key in [
+            "workload_identity_provider",
+            "WORKLOAD_IDENTITY_PROVIDER",
+            "workload_identity_entra_resource",
+            "WORKLOAD_IDENTITY_ENTRA_RESOURCE",
+            "workload_identity_impersonation_path",
+            "WORKLOAD_IDENTITY_IMPERSONATION_PATH",
+        ] {
+            assert!(
+                r.is_known(key),
+                "Expected WIF param '{key}' to be registered"
+            );
+        }
     }
 
     #[test]

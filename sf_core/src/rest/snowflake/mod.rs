@@ -8,6 +8,7 @@ pub mod logout;
 mod native_okta;
 mod oauth;
 pub mod prompt_lock;
+mod workload_identity;
 /// Re-export of the browser-launcher closure type so that
 /// `crate::config::rest_parameters::OAuthAuthorizationCodeConfig` can
 /// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory
@@ -605,6 +606,14 @@ pub async fn auth_request_data(
             data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
             // See AC branch above for why dpop_jwk_json is carried here.
             data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
+        LoginMethod::WorkloadIdentity(cfg) => {
+            let attestation = workload_identity::create_attestation(client, cfg)
+                .await
+                .context(WorkloadIdentityAttestationFailedSnafu)?;
+            data.authenticator = Some(authenticator::WORKLOAD_IDENTITY.to_string());
+            data.provider = Some(attestation.provider.to_string());
+            data.token = Some(attestation.token);
         }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
             Credentials::Password {
@@ -2138,6 +2147,12 @@ pub enum RestError {
     #[snafu(display("OAuth flow failed"))]
     OAuthFlow {
         source: oauth::OAuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Workload Identity Federation attestation failed: {source}"))]
+    WorkloadIdentityAttestationFailed {
+        source: workload_identity::AttestationError,
         #[snafu(implicit)]
         location: Location,
     },

@@ -1,0 +1,50 @@
+@Library('pipeline-utils')
+import com.snowflake.DevEnvUtils
+
+// Coverage image carries the Rust toolchain + C/C++ build deps. We build the
+// WIF e2e binary here, then ship it to the bare WIF cloud VMs (which have no
+// toolchain) and run it there in a public runtime container.
+def E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+
+def e2eDockerSetup(String image) {
+  new DevEnvUtils().withSfCli {
+    sh "sf artifact oci auth"
+  }
+  sh label: 'Docker Pull', script: "docker pull ${image}"
+}
+
+timestamps {
+  node('parallelizable-snowos') {
+    stage('Checkout') {
+      scmInfo = checkout scm
+      env.GIT_BRANCH = scmInfo.GIT_BRANCH
+      env.GIT_COMMIT = scmInfo.GIT_COMMIT
+    }
+
+    stage('Build WIF artifacts') {
+      e2eDockerSetup(E2E_DOCKER_IMAGE)
+      docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+        // Rocky Linux rotates dnf metadata hashes weekly, which breaks
+        // pre-built images shipping stale caches. Refresh before installing.
+        sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
+        // jq parses cargo's --message-format=json output; unzip extracts the
+        // protoc release the sf_core build script downloads; the perl-* modules
+        // are required by openssl-src's Configure when building vendored
+        // OpenSSL 3.x from source (Time::Piece, IPC::Cmd, Data::Dumper).
+        sh label: 'Install build deps', script: 'yum install -y jq unzip perl-Time-Piece perl-IPC-Cmd perl-Data-Dumper'
+        sh label: 'Build WIF test binary', script: '$WORKSPACE/ci/build_wif_artifacts.sh'
+      }
+    }
+
+    stage('Test WIF') {
+      withCredentials([
+        string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+      ]) {
+        sh '''\
+        |#!/bin/bash -e
+        |$WORKSPACE/ci/test_wif.sh
+        '''.stripMargin()
+      }
+    }
+  }
+}
