@@ -9,7 +9,6 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.TimeZone;
 import java.util.stream.Stream;
-import net.snowflake.jdbc.utils.SkipNewDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,7 +19,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /** Tests ResultSetMetaData precision and display size for temporal types under various formats. */
 @Isolated("sets JVM default timezone - must not run concurrently with other tests")
-@SkipNewDriver("not yet implemented - calculating display size & precision")
 class SnowflakeResultSetMetaDataImplTemporalTypesTest extends SnowflakeIntegrationTestBase
     implements WithMetaDataAssertions {
 

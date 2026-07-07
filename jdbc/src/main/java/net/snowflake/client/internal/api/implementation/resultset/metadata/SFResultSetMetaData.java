@@ -1,11 +1,15 @@
 package net.snowflake.client.internal.api.implementation.resultset.metadata;
 
 import java.sql.ResultSetMetaData;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.resultset.FieldMetadata;
@@ -117,9 +121,7 @@ class SFResultSetMetaData {
     this.dateFormatter = dateFormatter;
     this.timeFormatter = timeFormatter;
     this.enableReturnTimestampWithTimeZone = enableReturnTimestampWithTimeZone;
-    // TODO(SNOW-3695645): port calculateDateTimeStringLength() to compute accurate display sizes
-    // from the configured formatters. It previously built SFTimestamp/SFTime samples
-    // and measured their formatted length. For now we keep the default lengths (30/30/30/18/10).
+    calculateDateTimeStringLength();
 
     this.columnNames = new ArrayList<>(this.columnCount);
     this.columnTypeNames = new ArrayList<>(this.columnCount);
@@ -227,6 +229,35 @@ class SFResultSetMetaData {
         return 5;
       default:
         return 25;
+    }
+  }
+
+  // Ported from snowflake-jdbc SFResultSetMetaData.calculateDateTimeStringLength().
+  // Formats sample temporal values with the configured formatters to measure display size.
+  private void calculateDateTimeStringLength() {
+    Timestamp ts = new Timestamp(System.currentTimeMillis());
+    ts.setNanos(123456789);
+    TimeZone tz = TimeZone.getDefault();
+    try {
+      if (timestampNTZFormatter != null) {
+        timestampNTZStringLength = timestampNTZFormatter.format(ts, tz, 9).length();
+      }
+      if (timestampLTZFormatter != null) {
+        timestampLTZStringLength = timestampLTZFormatter.format(ts, tz, 9).length();
+      }
+      if (timestampTZFormatter != null) {
+        timestampTZStringLength = timestampTZFormatter.format(ts, tz, 9).length();
+      }
+      if (timeFormatter != null) {
+        timeStringLength = timeFormatter.format(ts, tz, 9).length();
+      }
+      if (dateFormatter != null) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(2015, Calendar.DECEMBER, 11);
+        dateStringLength = dateFormatter.format(new Date(calendar.getTimeInMillis()), tz).length();
+      }
+    } catch (Exception e) {
+      logger.debug("Failed to calculate date/time string lengths, using defaults", e);
     }
   }
 

@@ -11,6 +11,7 @@ import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.SnowflakeUtil;
@@ -33,12 +34,14 @@ public class SnowflakeResultSetMetaDataImpl
    *
    * @param queryId the query id this metadata belongs to
    * @param columns the protobuf result-column metadata
+   * @param conversionContext the data conversion context providing formatters for display size
    * @return the assembled metadata
    */
-  public static SnowflakeResultSetMetaDataImpl from(String queryId, List<ColumnMetadata> columns)
+  public static SnowflakeResultSetMetaDataImpl from(
+      String queryId, List<ColumnMetadata> columns, DataConversionContext conversionContext)
       throws SnowflakeSQLException {
     // TODO(SNOW-3695645): source jdbcTreatDecimalAsInt, isResultColumnCaseInsensitive,
-    //  enableReturnTimestampWithTimeZone and the date/time formatters from connection parameters
+    //  and enableReturnTimestampWithTimeZone from connection parameters
     boolean jdbcTreatDecimalAsInt = false;
     List<SnowflakeColumnMetadata> columnMetadata = new ArrayList<>(columns.size());
     for (ColumnMetadata column : columns) {
@@ -50,11 +53,11 @@ public class SnowflakeResultSetMetaDataImpl
             queryId,
             /* isResultColumnCaseInsensitive= */ false,
             /* enableReturnTimestampWithTimeZone= */ true,
-            /* timestampNTZFormatter= */ null,
-            /* timestampLTZFormatter= */ null,
-            /* timestampTZFormatter= */ null,
-            /* dateFormatter= */ null,
-            /* timeFormatter= */ null);
+            conversionContext.getTimestampNTZFormatter(),
+            conversionContext.getTimestampLTZFormatter(),
+            conversionContext.getTimestampTZFormatter(),
+            conversionContext.getDateFormatter(),
+            conversionContext.getTimeFormatter());
     return new SnowflakeResultSetMetaDataImpl(sfResultSetMetaData, queryId, QueryType.SYNC);
   }
 
@@ -156,7 +159,7 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getSchemaName(int column) throws SQLException {
-    // TODO(SNOW-3695645): : is it correct behavior?
+    // TODO(SNOW-3740747): : is it correct behavior?
     if (this.queryType == QueryType.SYNC) {
       return resultSetMetaData.getSchemaName(column);
     }
@@ -175,7 +178,7 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getTableName(int column) throws SQLException {
-    // TODO(SNOW-3695645): : is it correct behavior?
+    // TODO(SNOW-3740747): : is it correct behavior?
     if (this.queryType == QueryType.SYNC) {
       return resultSetMetaData.getTableName(column);
     }
@@ -184,7 +187,7 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getCatalogName(int column) throws SQLException {
-    // TODO(SNOW-3695645): : is it correct behavior?
+    // TODO(SNOW-3740747): : is it correct behavior?
     if (this.queryType == QueryType.SYNC) {
       return resultSetMetaData.getCatalogName(column);
     }
