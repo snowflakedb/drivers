@@ -75,8 +75,8 @@ mod tests {
 
     /// The macOS installer default must appear LAST so the per-user files
     /// (config_dir + ~/.snowflake) take precedence - anything else and a
-    /// user-managed `DriverManagerEncoding=UTF-16` would be shadowed by
-    /// the .pkg's `DriverManagerEncoding=UTF-32`.
+    /// user-managed `DriverManagerEncoding=UTF-32` (needed for iODBC) would
+    /// be shadowed by the .pkg's `DriverManagerEncoding=UTF-16`.
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_installer_path_is_last_and_pinned() {

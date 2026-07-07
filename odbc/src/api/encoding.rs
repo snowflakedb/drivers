@@ -836,6 +836,35 @@ pub(crate) fn write_string_bytes_i32<E: OdbcEncoding>(
 mod tests {
     use super::*;
 
+    // ---------- shipped installer default (SNOW-3741307) ------------------
+
+    /// The macOS `.pkg` ships `odbc/installer/mac/sf.odbc.ini` as the
+    /// last-resort `DriverManagerEncoding` fallback. It MUST negotiate to
+    /// UTF-16. Shipping UTF-32 (4-byte SQLWCHAR) crashes every unixODBC user
+    /// (2-byte SQLWCHAR): wide-string writes overrun the DM's buffer by 2x
+    /// and abort the process inside `extract_diag_error_w` (SNOW-3741307).
+    /// UTF-16 degrades the iODBC mismatch to a safe under-write instead.
+    ///
+    /// This mirrors `negotiate_from_config` exactly (same key lookup, same
+    /// parser, same default) so it fails if the shipped value regresses.
+    #[test]
+    fn shipped_macos_default_ini_negotiates_safe_utf16() {
+        let ini = sf_core::config::IniConfig::from_ini_content(include_str!(
+            "../../installer/mac/sf.odbc.ini"
+        ))
+        .expect("shipped macOS sf.odbc.ini must parse");
+        let enc = ini
+            .get(DRIVER_MANAGER_ENCODING_KEY)
+            .and_then(parse_wchar_encoding_value)
+            .unwrap_or(WCharEncoding::Utf16);
+        assert_eq!(
+            enc,
+            WCharEncoding::Utf16,
+            "shipped macOS default must negotiate UTF-16 — UTF-32 overflows \
+             unixODBC's 2-byte SQLWCHAR buffers and aborts the process (SNOW-3741307)"
+        );
+    }
+
     // ---------- mask_non_ascii_characters ---------------------------------
 
     #[test]
