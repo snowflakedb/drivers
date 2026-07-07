@@ -8,8 +8,9 @@ use crate::api::error::Required;
 use crate::api::error::{
     AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
-    InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
+    InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidPortSnafu,
+    InvalidTransactionOperationCodeSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::get_info_bitmasks::{
     AGGREGATE_FUNCTIONS, BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY,
@@ -24,12 +25,12 @@ use crate::api::get_info_bitmasks::{
     STATIC_CURSOR_ATTRIBUTES1, STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS,
     SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, synthesize,
 };
-use crate::api::handle_registry::HandleGuard;
+use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_path;
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
+    ConnectionState, GetDataExtensions, OdbcError, OdbcResult, conn_from_handle, env_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
 };
 use crate::conversion::warning::{Warning, Warnings};
@@ -778,6 +779,151 @@ fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResul
             .await?;
         Ok(resp.value)
     })
+}
+
+// SQLEndTran completion-type codes (odbc_sys::CompletionType: Commit = 0, Rollback = 1).
+const SQL_COMMIT: sql::SmallInt = 0;
+const SQL_ROLLBACK: sql::SmallInt = 1;
+
+/// Operation effected by `SQLEndTran`.
+#[derive(Copy, Clone, Debug)]
+enum TxnOp {
+    Commit,
+    Rollback,
+}
+
+/// Parse a `SQLEndTran` completion type into a `TxnOp`. Returns HY012
+/// (invalid transaction operation code) for anything other than
+/// `SQL_COMMIT` / `SQL_ROLLBACK`.
+fn parse_completion_type(completion_type: sql::SmallInt) -> OdbcResult<TxnOp> {
+    match completion_type {
+        SQL_COMMIT => Ok(TxnOp::Commit),
+        SQL_ROLLBACK => Ok(TxnOp::Rollback),
+        _ => InvalidTransactionOperationCodeSnafu { completion_type }.fail(),
+    }
+}
+
+/// End the current transaction on a connection (`SQLEndTran` with `SQL_HANDLE_DBC`).
+pub fn end_tran(connection_handle: sql::Handle, completion_type: sql::SmallInt) -> OdbcResult<()> {
+    let op = parse_completion_type(completion_type)?;
+    let dbc = conn_from_handle(connection_handle)?;
+    commit_or_rollback(&dbc, op)
+}
+
+/// End the current transaction on every connection owned by an environment
+/// (`SQLEndTran` with `SQL_HANDLE_ENV`). Per the ODBC spec this attempts to
+/// commit/rollback every connection owned by the environment, so we keep going
+/// on failure and surface the first error after the loop rather than leaving
+/// later connections with their transactions still open. Connections that are
+/// disconnected by the time `commit_or_rollback` runs are silently skipped; we
+/// detect that from its `Disconnected` error rather than pre-checking the
+/// state, which would race with a concurrent disconnect.
+pub fn end_tran_env(env_handle: sql::Handle, completion_type: sql::SmallInt) -> OdbcResult<()> {
+    let op = parse_completion_type(completion_type)?;
+    let env = env_from_handle(env_handle)?;
+    let conn_ids: Vec<HandleId> = env.environment.lock().connections.clone();
+    let mut result: OdbcResult<()> = Ok(());
+    for conn_id in conn_ids {
+        let Ok(dbc) = conn_from_handle(conn_id.into()) else {
+            continue;
+        };
+        // Skip connections already disconnected by the time we reach them.
+        // Treating Err(Disconnected) from commit_or_rollback as a skip (rather
+        // than pre-checking the state) avoids a TOCTOU race with a concurrent
+        // disconnect. Other errors are aggregated: keep going and surface the
+        // first one after the loop.
+        match commit_or_rollback(&dbc, op) {
+            Ok(()) | Err(OdbcError::Disconnected { .. }) => {}
+            Err(e) if result.is_ok() => result = Err(e),
+            Err(_) => {}
+        }
+    }
+    result
+}
+
+/// Commit or rollback the transaction on one connection, then close any open
+/// cursors on its statements per `SQL_CB_CLOSE`.
+///
+/// Returns 08003 if the connection is closed and HY010 if any statement on the
+/// connection is awaiting data-at-execution.
+fn commit_or_rollback(dbc: &Dbc, op: TxnOp) -> OdbcResult<()> {
+    let connection = dbc.connection.lock();
+    let conn_handle = match &connection.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+
+    let g = global().context(OdbcRuntimeSnafu)?;
+    let child_ids: Vec<HandleId> = connection.child_statements.clone();
+    // HY010 if any statement on the connection is mid data-at-execution.
+    for &child_id in &child_ids {
+        if let Ok(stmt_guard) = g.stmt_registry.get(child_id)
+            && stmt_guard.inner.lock().state.as_ref().is_need_data()
+        {
+            return InvalidDuringDaeSnafu.fail();
+        }
+    }
+
+    // Hold `connection` across the RPC and the cursor cleanup below. SQLExecute
+    // (`statement::execute`) also holds `dbc.connection` for the whole duration
+    // of its query, so keeping it locked here serializes the transaction
+    // boundary against statement execution on the same connection: a running
+    // statement blocks this call until it finishes, and no new statement can
+    // start while the commit/rollback RPC is in flight. Same lock order
+    // (`connection` -> `stmt.inner`) as `execute`, so no deadlock; the RPC only
+    // touches the sf_core connection, not `dbc.connection`.
+    g.block_on(async |c| -> OdbcResult<()> {
+        match op {
+            TxnOp::Commit => {
+                c.connection_commit(ConnectionCommitRequest {
+                    conn_handle: Some(conn_handle),
+                })
+                .await?;
+            }
+            TxnOp::Rollback => {
+                c.connection_rollback(ConnectionRollbackRequest {
+                    conn_handle: Some(conn_handle),
+                })
+                .await?;
+            }
+        }
+        Ok(())
+    })?;
+
+    close_open_cursors(&child_ids);
+    Ok(())
+}
+
+/// Close any open cursors on each statement in `child_ids`, mirroring
+/// `SQLFreeStmt(SQL_CLOSE)`. Prepared statements return to `Prepared` so they
+/// stay re-executable; directly-executed ones return to `Created`. This is the
+/// `SQL_CB_CLOSE` cursor behavior `SQLEndTran` advertises via `SQLGetInfo`.
+fn close_open_cursors(child_ids: &[HandleId]) {
+    let Ok(g) = global() else {
+        return;
+    };
+    for &child_id in child_ids {
+        let Ok(stmt_guard) = g.stmt_registry.get(child_id) else {
+            continue;
+        };
+        let mut inner = stmt_guard.inner.lock();
+        let next = match inner.state.as_ref() {
+            StatementState::QueryExecuted { origin, .. }
+            | StatementState::Fetching { origin, .. }
+            | StatementState::DdlExecuted { origin, .. }
+            | StatementState::DmlExecuted { origin, .. }
+            | StatementState::Done { origin, .. } => origin.restore_state(),
+            _ => continue,
+        };
+        let desc_count = match &next {
+            StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
+            _ => 0,
+        };
+        inner.state.set(next);
+        inner.ird.desc_count = desc_count;
+        inner.get_data_state = None;
+        inner.used_extended_fetch = false;
+    }
 }
 
 /// Set a connection attribute (SQLSetConnectAttr / SQLSetConnectAttrW).
@@ -1770,7 +1916,6 @@ impl OdbcFunction {
                 | Self::CopyDesc
                 | Self::DataSources
                 | Self::Drivers
-                | Self::EndTran
                 | Self::ForeignKeys
                 | Self::GetCursorName
                 | Self::ParamOptions
@@ -2668,6 +2813,52 @@ mod tests {
     fn parse_connection_string_rejects_chars_after_closing_brace() {
         let result = parse_connection_string("PWD={val}extra;UID=admin");
         assert!(result.is_err());
+    }
+
+    // ---- SQLGetFunctions supported-function bitmap -------------------------
+
+    /// Read a function-support bit out of the ODBC 3.x bitmap the same way the
+    /// `SQL_FUNC_EXISTS` driver-manager macro does: `word = id >> 4`,
+    /// `bit = id & 0x000F`.
+    fn odbc3_bit_set(bitmap: &[sql::USmallInt], function_id: u16) -> bool {
+        let word = (function_id >> 4) as usize;
+        let bit = function_id & 0x000F;
+        bitmap[word] & (1 << bit) != 0
+    }
+
+    /// `SQLEndTran` is implemented and exported in `c_api.rs`, so
+    /// `SQLGetFunctions` must report it as supported. If it is left in the
+    /// `is_supported` exclusion list, strict driver managers (unixODBC) consult
+    /// the bitmap and refuse to dispatch `SQLEndTran`, returning `SQL_ERROR`
+    /// before the driver's entry point ever runs (iODBC / Windows dispatch
+    /// regardless, which is why the regression only showed up under unixODBC).
+    #[test]
+    fn end_tran_is_reported_supported() {
+        assert!(
+            OdbcFunction::EndTran.is_supported(),
+            "SQLEndTran is exported in c_api.rs; SQLGetFunctions must report it supported"
+        );
+    }
+
+    #[test]
+    fn odbc3_bitmap_marks_end_tran_supported() {
+        let mut bitmap = [0 as sql::USmallInt; SQL_API_ODBC3_ALL_FUNCTIONS_SIZE];
+        fill_odbc3_bitmap(bitmap.as_mut_ptr());
+        // SQL_API_SQLENDTRAN == 1005
+        assert!(
+            odbc3_bit_set(&bitmap, OdbcFunction::EndTran as u16),
+            "SQL_API_SQLENDTRAN bit must be set in the ODBC3 all-functions bitmap"
+        );
+    }
+
+    #[test]
+    fn odbc2_array_marks_supported_functions_below_100() {
+        let mut array = [SQL_TRUE_U16; 100];
+        fill_odbc2_array(array.as_mut_ptr());
+        // ExecDirect (11) is supported and < 100, so it must be SQL_TRUE; an
+        // unsupported low id like SetPos (68) must be SQL_FALSE.
+        assert_eq!(array[OdbcFunction::ExecDirect as usize], SQL_TRUE_U16);
+        assert_eq!(array[OdbcFunction::SetPos as usize], SQL_FALSE_U16);
     }
 
     #[cfg(not(windows))]

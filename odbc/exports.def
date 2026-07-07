@@ -17,6 +17,7 @@ EXPORTS
     SQLDescribeColW
     SQLDisconnect
     SQLDriverConnectW
+    SQLEndTran
     SQLExecDirectW
     SQLExecute
     SQLExtendedFetch
