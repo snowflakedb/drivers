@@ -1325,20 +1325,209 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
     }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnKeyColumnsForPrimaryKeys() {}
+    void shouldReturnKeyColumnsForPrimaryKeys() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String targetTable = "PKTEST_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "create or replace table " + targetTable + "(C1 int primary key, C2 string)");
+          try {
+            try (ResultSet resultSet =
+                metaData.getPrimaryKeys(currentDatabase, currentSchema, targetTable)) {
+              ResultSetMetaData rsMeta = resultSet.getMetaData();
+              assertEquals(6, rsMeta.getColumnCount());
+              assertMetadataColumn(rsMeta, 1, "TABLE_CAT");
+              assertMetadataColumn(rsMeta, 2, "TABLE_SCHEM");
+              assertMetadataColumn(rsMeta, 3, "TABLE_NAME");
+              assertMetadataColumn(rsMeta, 4, "COLUMN_NAME");
+              assertEquals("KEY_SEQ", rsMeta.getColumnName(5));
+              assertMetadataColumn(rsMeta, 6, "PK_NAME");
+
+              assertTrue(resultSet.next());
+              assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+              assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+              assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+              assertEquals("C1", resultSet.getString("COLUMN_NAME"));
+              assertEquals(1, resultSet.getInt("KEY_SEQ"));
+              String pkName = resultSet.getString("PK_NAME");
+              assertNotNull(pkName);
+              assertFalse(pkName.isEmpty());
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getPrimaryKeys("DB_NOT_EXIST", "SCHEMA\\_NOT\\_EXIST", targetTable)) {
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getPrimaryKeys(currentDatabase, currentSchema, "TBL\\_NOT\\_EXIST")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + targetTable);
+          }
+        }
+      }
+    }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnForeignKeysForImportedKeys() {}
+    void shouldReturnForeignKeysForImportedKeys() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String pkTable = "FKPK_" + suffix;
+        String fkTable = "FKFK_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute("create or replace table " + pkTable + "(C1 int primary key)");
+          stmt.execute(
+              "create or replace table "
+                  + fkTable
+                  + "(C1 int, C2 int references "
+                  + pkTable
+                  + "(C1))");
+          try {
+            try (ResultSet resultSet =
+                metaData.getImportedKeys(currentDatabase, currentSchema, fkTable)) {
+              ResultSetMetaData rsMeta = resultSet.getMetaData();
+              assertEquals(14, rsMeta.getColumnCount());
+              assertMetadataColumn(rsMeta, 1, "PKTABLE_CAT");
+              assertMetadataColumn(rsMeta, 3, "PKTABLE_NAME");
+              assertMetadataColumn(rsMeta, 7, "FKTABLE_NAME");
+              assertEquals("KEY_SEQ", rsMeta.getColumnName(9));
+              assertEquals("UPDATE_RULE", rsMeta.getColumnName(10));
+              assertEquals("DELETE_RULE", rsMeta.getColumnName(11));
+              assertEquals("DEFERRABILITY", rsMeta.getColumnName(14));
+
+              assertTrue(resultSet.next());
+              assertEquals(currentDatabase, resultSet.getString("PKTABLE_CAT"));
+              assertEquals(currentSchema, resultSet.getString("PKTABLE_SCHEM"));
+              assertEquals(pkTable, resultSet.getString("PKTABLE_NAME"));
+              assertEquals("C1", resultSet.getString("PKCOLUMN_NAME"));
+              assertEquals(fkTable, resultSet.getString("FKTABLE_NAME"));
+              assertEquals("C2", resultSet.getString("FKCOLUMN_NAME"));
+              assertEquals(1, resultSet.getInt("KEY_SEQ"));
+              assertEquals(DatabaseMetaData.importedKeyNoAction, resultSet.getShort("UPDATE_RULE"));
+              assertEquals(DatabaseMetaData.importedKeyNoAction, resultSet.getShort("DELETE_RULE"));
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getImportedKeys(currentDatabase, currentSchema, "TBL\\_NOT\\_EXIST")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + fkTable);
+            stmt.execute("drop table if exists " + pkTable);
+          }
+        }
+      }
+    }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnForeignKeysForExportedKeys() {}
+    void shouldReturnForeignKeysForExportedKeys() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String pkTable = "EKPK_" + suffix;
+        String fkTable = "EKFK_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute("create or replace table " + pkTable + "(C1 int primary key)");
+          stmt.execute(
+              "create or replace table "
+                  + fkTable
+                  + "(C1 int, C2 int references "
+                  + pkTable
+                  + "(C1))");
+          try {
+            try (ResultSet resultSet =
+                metaData.getExportedKeys(currentDatabase, currentSchema, pkTable)) {
+              assertEquals(14, resultSet.getMetaData().getColumnCount());
+              assertTrue(resultSet.next());
+              assertEquals(pkTable, resultSet.getString("PKTABLE_NAME"));
+              assertEquals("C1", resultSet.getString("PKCOLUMN_NAME"));
+              assertEquals(fkTable, resultSet.getString("FKTABLE_NAME"));
+              assertEquals("C2", resultSet.getString("FKCOLUMN_NAME"));
+              assertEquals(1, resultSet.getInt("KEY_SEQ"));
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getExportedKeys(currentDatabase, currentSchema, "TBL\\_NOT\\_EXIST")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + fkTable);
+            stmt.execute("drop table if exists " + pkTable);
+          }
+        }
+      }
+    }
 
     @Test
-    @Disabled("requires query against Snowflake; happy-path test pending")
-    void shouldReturnRelationshipsForCrossReference() {}
+    void shouldReturnRelationshipsForCrossReference() throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String pkTable = "XRPK_" + suffix;
+        String fkTable = "XRFK_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute("create or replace table " + pkTable + "(C1 int primary key)");
+          stmt.execute(
+              "create or replace table "
+                  + fkTable
+                  + "(C1 int, C2 int references "
+                  + pkTable
+                  + "(C1))");
+          try {
+            try (ResultSet resultSet =
+                metaData.getCrossReference(
+                    currentDatabase,
+                    currentSchema,
+                    pkTable,
+                    currentDatabase,
+                    currentSchema,
+                    fkTable)) {
+              assertEquals(14, resultSet.getMetaData().getColumnCount());
+              assertTrue(resultSet.next());
+              assertEquals(pkTable, resultSet.getString("PKTABLE_NAME"));
+              assertEquals("C1", resultSet.getString("PKCOLUMN_NAME"));
+              assertEquals(fkTable, resultSet.getString("FKTABLE_NAME"));
+              assertEquals("C2", resultSet.getString("FKCOLUMN_NAME"));
+              assertFalse(resultSet.next());
+            }
+
+            try (ResultSet resultSet =
+                metaData.getCrossReference(
+                    currentDatabase,
+                    currentSchema,
+                    pkTable,
+                    currentDatabase,
+                    currentSchema,
+                    "TBL\\_NOT\\_EXIST")) {
+              assertFalse(resultSet.next());
+            }
+          } finally {
+            stmt.execute("drop table if exists " + fkTable);
+            stmt.execute("drop table if exists " + pkTable);
+          }
+        }
+      }
+    }
 
     @Test
     void shouldReturnSupportedTypesForTypeInfo() throws Exception {

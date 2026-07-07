@@ -301,7 +301,55 @@ enum MetaDataResultSetFormat {
           Types.VARCHAR,
           Types.VARCHAR,
           Types.VARCHAR,
-          Types.VARCHAR));
+          Types.VARCHAR)),
+
+  GET_PRIMARY_KEYS(
+      Arrays.asList("TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "KEY_SEQ", "PK_NAME"),
+      // TODO(SNOW-3695645): KEY_SEQ type name is "INTEGER" here but "SHORT" in GET_FOREIGN_KEYS,
+      //  even though both map to Types.SMALLINT
+      Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "INTEGER", "TEXT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.SMALLINT,
+          Types.VARCHAR)),
+
+  GET_FOREIGN_KEYS(
+      Arrays.asList(
+          "PKTABLE_CAT",
+          "PKTABLE_SCHEM",
+          "PKTABLE_NAME",
+          "PKCOLUMN_NAME",
+          "FKTABLE_CAT",
+          "FKTABLE_SCHEM",
+          "FKTABLE_NAME",
+          "FKCOLUMN_NAME",
+          "KEY_SEQ",
+          "UPDATE_RULE",
+          "DELETE_RULE",
+          "FK_NAME",
+          "PK_NAME",
+          "DEFERRABILITY"),
+      Arrays.asList(
+          "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "SHORT", "SHORT", "SHORT",
+          "TEXT", "TEXT", "SHORT"),
+      Arrays.asList(
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.SMALLINT,
+          Types.SMALLINT,
+          Types.SMALLINT,
+          Types.VARCHAR,
+          Types.VARCHAR,
+          Types.SMALLINT));
 
   private final List<String> columnNames;
   private final List<String> columnTypeNames;
