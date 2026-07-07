@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.core.arrow;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -67,6 +68,67 @@ public class ArrowDateUtil {
    */
   public static long dateToBindMillis(java.util.Date date, TimeZone tz) {
     return date.getTime() + tz.getOffset(date.getTime()) - msDiffJulianToGregorian(date);
+  }
+
+  /**
+   * Compute the wire value for a plain {@code setTimestamp(int, Timestamp)} bind: the instant as an
+   * epoch-nanoseconds decimal string, with the Julian→Gregorian correction backed out for
+   * pre-1582-10-05 instants. No client-side timezone is applied — {@code TIMESTAMP_LTZ} and {@code
+   * TIMESTAMP_NTZ} produce the identical numeric string; only the bind type name differs. Mirrors
+   * snowflake-jdbc's {@code SnowflakePreparedStatementV1.setTimestampWithType}.
+   *
+   * @param ts the timestamp to bind (must be non-null)
+   * @return epoch-nanoseconds decimal string to send to the server
+   */
+  public static String timestampToBindString(Timestamp ts) {
+    return String.valueOf(
+        BigDecimal.valueOf((ts.getTime() - msDiffJulianToGregorian(ts)) / 1000)
+            .scaleByPowerOfTen(9)
+            .add(BigDecimal.valueOf(ts.getNanos())));
+  }
+
+  /**
+   * Compute the wire value for a {@code setTimestamp(int, Timestamp, Calendar)} bind that resolves
+   * to {@code TIMESTAMP_LTZ} or {@code TIMESTAMP_NTZ}: the instant is shifted by the Calendar
+   * timezone's offset before being encoded as an epoch-nanoseconds decimal string. Unlike the plain
+   * setter, the Calendar overload applies <b>no</b> Julian→Gregorian correction. Mirrors
+   * snowflake-jdbc's {@code SnowflakePreparedStatementV1.setTimestamp(int, Timestamp, Calendar)}
+   * (non-TZ branch).
+   *
+   * @param ts the timestamp to bind (must be non-null)
+   * @param tz the Calendar's timezone
+   * @return epoch-nanoseconds decimal string to send to the server
+   */
+  public static String timestampWithCalendarToBindString(Timestamp ts, TimeZone tz) {
+    long milliSecSinceEpoch = ts.getTime() + tz.getOffset(ts.getTime());
+    return String.valueOf(
+        BigDecimal.valueOf(milliSecSinceEpoch / 1000)
+            .scaleByPowerOfTen(9)
+            .add(BigDecimal.valueOf(ts.getNanos())));
+  }
+
+  /**
+   * Compute the wire value for a {@code setTimestamp(int, Timestamp, Calendar)} bind that resolves
+   * to {@code TIMESTAMP_TZ}: {@code "<epoch_nanos> <offsetCode>"}, where the instant is <b>not</b>
+   * shifted (only encoded as epoch-nanoseconds) and {@code offsetCode = offsetMinutesFromUtc +
+   * 1440}. The {@code +1440} bias must match the read-side decode in the timestamp-with-timezone
+   * converter. This is the only way to bind a {@code TIMESTAMP_TZ}. Applies no Julian→Gregorian
+   * correction. Mirrors snowflake-jdbc's {@code SnowflakePreparedStatementV1.setTimestamp(int,
+   * Timestamp, Calendar)} (TZ branch).
+   *
+   * @param ts the timestamp to bind (must be non-null)
+   * @param tz the Calendar's timezone, whose offset at the instant becomes the stored offset
+   * @return {@code "<epoch_nanos> <offsetCode>"} to send to the server
+   */
+  public static String timestampTzToBindString(Timestamp ts, TimeZone tz) {
+    long milliSecSinceEpoch = ts.getTime();
+    String value =
+        String.valueOf(
+            BigDecimal.valueOf(milliSecSinceEpoch / 1000)
+                .scaleByPowerOfTen(9)
+                .add(BigDecimal.valueOf(ts.getNanos())));
+    int offset = tz.getOffset(milliSecSinceEpoch) / 60000 + 1440;
+    return value + " " + offset;
   }
 
   /**

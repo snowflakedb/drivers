@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -129,7 +130,7 @@ final class PreparedBatch {
 
   private void commit(int parameterIndex, Map<Integer, ParameterValue> currentValues) {
     ParameterValue parameterValue = currentValues.get(parameterIndex);
-    String newType = parameterValue.bindType();
+    SnowflakeType newType = parameterValue.bindType();
     String stringValue = (String) parameterValue.value();
     ParameterValue existing = columns.get(parameterIndex);
     if (existing == null) {
@@ -140,12 +141,12 @@ final class PreparedBatch {
     }
     @SuppressWarnings("unchecked")
     List<String> values = (List<String>) existing.value();
-    String prevType = existing.bindType();
+    SnowflakeType prevType = existing.bindType();
     // Promote ANY (or all-null column) → real type on first non-null. Safe — no existing
     // data is reinterpreted.
     if (stringValue != null
-        && !prevType.equalsIgnoreCase(newType)
-        && ("ANY".equalsIgnoreCase(prevType) || allNullsSoFar(values))) {
+        && prevType != newType
+        && (prevType == SnowflakeType.ANY || allNullsSoFar(values))) {
       columns.put(parameterIndex, new ParameterValue(newType, values));
     }
     values.add(stringValue);

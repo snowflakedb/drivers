@@ -69,6 +69,7 @@ add_odbc_test(e2e_session_session_parameters session/session_parameters.cpp)
 add_odbc_test(e2e_session_connection_params session/connection_params.cpp)
 add_odbc_test(e2e_session_logout session/logout.cpp)
 add_odbc_test(e2e_session_proxy session/proxy.cpp)
+add_odbc_test(e2e_session_transaction session/transaction.cpp)
 
 # types
 add_odbc_test(e2e_types_binary types/binary.cpp)

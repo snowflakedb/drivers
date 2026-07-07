@@ -60,3 +60,10 @@ ci/test_matrix/generated/
 .agents/
 # direnv / nix local env artifacts (machine-local)
 .direnv/
+
+# WIF e2e artifacts -- prebuilt binaries staged by ci/build_wif_artifacts.sh,
+# and decrypted secrets produced at runtime by ci/test_wif.sh
+ci/wif/artifacts/
+ci/wif/parameters/rsa_wif_aws_azure
+ci/wif/parameters/rsa_wif_gcp
+ci/wif/parameters/parameters_wif.json

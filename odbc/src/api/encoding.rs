@@ -75,6 +75,23 @@ static WCHAR_ENCODING: OnceLock<WCharEncoding> = OnceLock::new();
 
 static MISMATCH_WARNED: AtomicBool = AtomicBool::new(false);
 
+/// Latched by [`probe_driver_manager_identity`] when the driver manager
+/// actually loaded into the process disagrees with the configured
+/// `DriverManagerEncoding`. Once set, all subsequent wide-string writes
+/// short-circuit rather than blindly stomping past the caller's buffer — a
+/// UTF-32 driver writing 4-byte units into a unixODBC-provided
+/// 2-byte-per-slot buffer overruns by 2x and trips `__stack_chk_fail`
+/// inside the driver manager (SNOW-3741307).
+///
+/// Deliberately *not* latched from the wide-input byte-pattern heuristic
+/// ([`detect_wchar_encoding_from_bytes`]): that heuristic assumes
+/// ASCII-keyword input and mis-reads non-ASCII wide data (a bound UTF-32
+/// CJK parameter, whose second byte is non-zero, looks like UTF-16), so
+/// using it to drive an irreversible process-global kill switch produced
+/// false positives that silently dropped all wide output on
+/// correctly-configured iODBC. The heuristic is warn-only.
+static MISMATCH_DETECTED: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn negotiate_from_config() {
     let enc = sf_core::config::get_ini_config()
         .and_then(|ini| ini.get(DRIVER_MANAGER_ENCODING_KEY))
@@ -84,6 +101,82 @@ pub(crate) fn negotiate_from_config() {
     // negotiated DM-side wide width must remain stable for the life of
     // the process).
     let _ = WCHAR_ENCODING.set(enc);
+    // Now that the configured encoding is fixed, probe the driver
+    // manager we were actually loaded by. If its identity disagrees
+    // with `DriverManagerEncoding`, latch `MISMATCH_DETECTED` before
+    // any wide-string write can drive the caller into a stack overflow
+    // (SNOW-3741307). The probe is a best-effort dlsym+dladdr against
+    // the currently-loaded process image; if it can't identify the DM
+    // we leave detection to `detect_wchar_encoding_from_bytes`.
+    probe_driver_manager_identity(enc);
+}
+
+/// Runtime driver-manager identification via `dlsym`/`dladdr`. Returns
+/// the encoding the loaded DM appears to expect, or `None` when the DM
+/// path can't be resolved or doesn't match a known family.
+fn detect_loaded_dm_encoding() -> Option<WCharEncoding> {
+    #[cfg(unix)]
+    unsafe {
+        // Any symbol the DM exports works; `SQLAllocEnv` is defined by
+        // every ODBC 3 driver manager and is guaranteed to have been
+        // resolved into the driver's process image by the time we run.
+        let symbol_name = c"SQLAllocEnv";
+        let ptr = libc::dlsym(libc::RTLD_DEFAULT, symbol_name.as_ptr());
+        if ptr.is_null() {
+            return None;
+        }
+        let mut info: libc::Dl_info = std::mem::zeroed();
+        if libc::dladdr(ptr, &mut info) == 0 || info.dli_fname.is_null() {
+            return None;
+        }
+        let path = std::ffi::CStr::from_ptr(info.dli_fname)
+            .to_str()
+            .ok()?
+            .to_ascii_lowercase();
+        // iODBC ships as libiodbc.*.dylib / libiodbc.so. Its SQLWCHAR
+        // is `wchar_t` — 4 bytes on macOS and Linux.
+        if path.contains("libiodbc") || path.contains("/iodbc") {
+            return Some(WCharEncoding::Utf32);
+        }
+        // unixODBC ships as libodbc.*.dylib / libodbc.so.2. Its
+        // SQLWCHAR is `unsigned short` by default (2 bytes) unless
+        // built with `-DSQL_WCHART_CONVERT`.
+        if path.contains("libodbc.") || path.ends_with("libodbc") {
+            return Some(WCharEncoding::Utf16);
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+fn probe_driver_manager_identity(configured: WCharEncoding) {
+    let Some(detected) = detect_loaded_dm_encoding() else {
+        return;
+    };
+    if detected == configured {
+        return;
+    }
+    MISMATCH_DETECTED.store(true, Ordering::Relaxed);
+    if MISMATCH_WARNED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+    {
+        tracing::error!(
+            configured = %configured,
+            detected = %detected,
+            "The driver manager loaded into this process expects {detected} \
+             SQLWCHAR, but the driver is configured for {configured}. This causes \
+             a {}x stack-buffer overflow on every wide-string write to the DM and \
+             will abort the process inside `extract_diag_error_w` on the first \
+             error diagnostic. Wide writes are refused until the config is \
+             corrected. Set `{DRIVER_MANAGER_ENCODING_KEY}={detected}` in \
+             sf.odbc.ini and restart the driver.",
+            configured.byte_size() / detected.byte_size(),
+        );
+    }
 }
 
 fn parse_wchar_encoding_value(s: &str) -> Option<WCharEncoding> {
@@ -110,11 +203,30 @@ pub(crate) fn wchar_byte_size() -> usize {
     current_wchar_encoding().byte_size()
 }
 
+/// True once [`probe_driver_manager_identity`] has confirmed the loaded
+/// driver manager disagrees with the configured encoding. Wide-string
+/// writes short-circuit while this is set to avoid the stack-buffer
+/// overflow described on [`MISMATCH_DETECTED`].
+#[inline]
+pub(crate) fn wchar_mismatch_detected() -> bool {
+    MISMATCH_DETECTED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn set_mismatch_detected_for_test(v: bool) {
+    MISMATCH_DETECTED.store(v, Ordering::Relaxed);
+}
+
 /// Inspect the leading bytes of a wide-string buffer the driver manager
-/// has just handed us, and **warn once** if its byte pattern disagrees
-/// with the encoding the user configured.
+/// has just handed us and **warn once** if the byte pattern disagrees with
+/// the configured encoding.
 ///
-/// This is purely diagnostic: it never changes the global encoding.
+/// Purely diagnostic: it never latches [`MISMATCH_DETECTED`] and never
+/// changes the negotiated encoding. The inference assumes ASCII-keyword
+/// input (see below) and mis-classifies non-ASCII wide data, so it is
+/// unfit to gate the fatal kill switch — that job belongs to
+/// [`probe_driver_manager_identity`], which identifies the loaded DM
+/// directly rather than guessing from bytes.
 ///
 /// ODBC W-API string inputs always start with an ASCII keyword (`DRIVER=`,
 /// `DSN=`, `UID=`, …). For an ASCII-keyword string of two or more
@@ -138,6 +250,13 @@ fn detect_wchar_encoding_from_bytes(ptr: *const WideChar, length: sql::Integer) 
     if detected == configured {
         return;
     }
+    // Diagnostic only — do NOT latch `MISMATCH_DETECTED` here. This
+    // byte-pattern inference assumes ASCII-keyword input and is unreliable
+    // on arbitrary wide data (a bound UTF-32 CJK parameter reads back as
+    // UTF-16), so driving the irreversible kill switch from it silently
+    // dropped all wide output on correctly-configured iODBC. The
+    // authoritative mismatch latch lives in `probe_driver_manager_identity`,
+    // which identifies the loaded DM directly. Warn once and carry on.
     if MISMATCH_WARNED
         .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
@@ -146,8 +265,8 @@ fn detect_wchar_encoding_from_bytes(ptr: *const WideChar, length: sql::Integer) 
             configured = %configured,
             detected = %detected,
             "Wide-character buffer byte pattern looks like {detected}, but the driver \
-             is configured for {configured}. If decoding errors follow, set \
-             `{DRIVER_MANAGER_ENCODING_KEY}={detected}` in sf.odbc.ini and restart \
+             is configured for {configured}. If decoding errors follow, verify \
+             `{DRIVER_MANAGER_ENCODING_KEY}` matches the driver manager and restart \
              the driver."
         );
     }
@@ -277,6 +396,15 @@ pub(crate) unsafe fn write_wide_buffer_in(
     if max_units == 0 {
         return 0;
     }
+    // Refuse to write past this point once the driver manager's byte
+    // pattern has been shown to disagree with our configured encoding.
+    // Writing anyway would overflow the caller's buffer by 2x-4x and
+    // crash the process inside the DM's diag-record path (SNOW-3741307).
+    // Callers see zero units written, which surfaces to applications as
+    // an obviously-empty result rather than silent memory corruption.
+    if wchar_mismatch_detected() {
+        return 0;
+    }
     match enc {
         WCharEncoding::Utf16 => {
             let mut iter = s.encode_utf16().skip(offset_units).peekable();
@@ -331,6 +459,12 @@ pub(crate) unsafe fn write_wide_buffer(
 /// be a valid writable address.
 #[doc(hidden)]
 pub(crate) unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCharEncoding) {
+    // Match the short-circuit in [`write_wide_buffer_in`]. Writing a
+    // 4-byte UTF-32 null into a 2-byte-per-slot buffer still overflows
+    // by two bytes when `pos == 0` and the DM allocated only one slot.
+    if wchar_mismatch_detected() {
+        return;
+    }
     match enc {
         WCharEncoding::Utf16 => unsafe { std::ptr::write(buf.add(pos), 0) },
         WCharEncoding::Utf32 => unsafe {
@@ -836,6 +970,35 @@ pub(crate) fn write_string_bytes_i32<E: OdbcEncoding>(
 mod tests {
     use super::*;
 
+    // ---------- shipped installer default (SNOW-3741307) ------------------
+
+    /// The macOS `.pkg` ships `odbc/installer/mac/sf.odbc.ini` as the
+    /// last-resort `DriverManagerEncoding` fallback. It MUST negotiate to
+    /// UTF-16. Shipping UTF-32 (4-byte SQLWCHAR) crashes every unixODBC user
+    /// (2-byte SQLWCHAR): wide-string writes overrun the DM's buffer by 2x
+    /// and abort the process inside `extract_diag_error_w` (SNOW-3741307).
+    /// UTF-16 degrades the iODBC mismatch to a safe under-write instead.
+    ///
+    /// This mirrors `negotiate_from_config` exactly (same key lookup, same
+    /// parser, same default) so it fails if the shipped value regresses.
+    #[test]
+    fn shipped_macos_default_ini_negotiates_safe_utf16() {
+        let ini = sf_core::config::IniConfig::from_ini_content(include_str!(
+            "../../installer/mac/sf.odbc.ini"
+        ))
+        .expect("shipped macOS sf.odbc.ini must parse");
+        let enc = ini
+            .get(DRIVER_MANAGER_ENCODING_KEY)
+            .and_then(parse_wchar_encoding_value)
+            .unwrap_or(WCharEncoding::Utf16);
+        assert_eq!(
+            enc,
+            WCharEncoding::Utf16,
+            "shipped macOS default must negotiate UTF-16 — UTF-32 overflows \
+             unixODBC's 2-byte SQLWCHAR buffers and aborts the process (SNOW-3741307)"
+        );
+    }
+
     // ---------- mask_non_ascii_characters ---------------------------------
 
     #[test]
@@ -1266,5 +1429,91 @@ mod tests {
             buf.as_ptr() as sql::Pointer,
             buf.len() as sql::Integer,
         ));
+    }
+
+    // ---------- wchar_mismatch_detected fail-fast -------------------------
+
+    /// Once [`MISMATCH_DETECTED`] is set, `write_wide_buffer_in` must
+    /// refuse to write anything and return zero units — regardless of
+    /// requested encoding — so a UTF-32 driver against a unixODBC
+    /// (2-byte SQLWCHAR) manager can't drive its stack-buffer overflow
+    /// (SNOW-3741307).
+    #[test]
+    fn write_wide_buffer_in_refuses_writes_after_mismatch_utf32() {
+        set_mismatch_detected_for_test(true);
+        let mut buf = [0u16; 32];
+        let n = unsafe {
+            write_wide_buffer_in(
+                "DRIVER=Snowflake",
+                buf.as_mut_ptr(),
+                16,
+                0,
+                WCharEncoding::Utf32,
+            )
+        };
+        set_mismatch_detected_for_test(false);
+        assert_eq!(n, 0);
+        assert!(
+            buf.iter().all(|&u| u == 0),
+            "buffer must not have been touched"
+        );
+    }
+
+    /// Same guarantee for UTF-16 — the fail-fast is unconditional once
+    /// the flag is latched, not just for the UTF-32 code path.
+    #[test]
+    fn write_wide_buffer_in_refuses_writes_after_mismatch_utf16() {
+        set_mismatch_detected_for_test(true);
+        let mut buf = [0u16; 32];
+        let n =
+            unsafe { write_wide_buffer_in("Hi!", buf.as_mut_ptr(), 32, 0, WCharEncoding::Utf16) };
+        set_mismatch_detected_for_test(false);
+        assert_eq!(n, 0);
+        assert!(buf.iter().all(|&u| u == 0));
+    }
+
+    /// `write_wide_null_in` must also short-circuit — a 4-byte UTF-32
+    /// null at `pos == 0` still overflows a 1-slot 2-byte-per-unit
+    /// buffer by two bytes.
+    #[test]
+    fn write_wide_null_in_refuses_writes_after_mismatch() {
+        set_mismatch_detected_for_test(true);
+        let mut buf = [0xAAu16; 4];
+        unsafe { write_wide_null_in(buf.as_mut_ptr(), 0, WCharEncoding::Utf32) };
+        set_mismatch_detected_for_test(false);
+        assert_eq!(buf, [0xAA, 0xAA, 0xAA, 0xAA]);
+    }
+
+    /// Sanity check: the accessor round-trips through the same atomic
+    /// the write functions consult.
+    #[test]
+    fn wchar_mismatch_detected_round_trip() {
+        set_mismatch_detected_for_test(false);
+        assert!(!wchar_mismatch_detected());
+        set_mismatch_detected_for_test(true);
+        assert!(wchar_mismatch_detected());
+        set_mismatch_detected_for_test(false);
+    }
+
+    /// Root-cause regression for the iODBC false-positive (SNOW-3741307
+    /// follow-up): the byte-pattern heuristic mis-reads non-ASCII UTF-32
+    /// input as UTF-16. "日本" (U+65E5 U+672C) in UTF-32 LE is
+    /// `E5 65 00 00 2C 67 00 00`; the non-zero second byte (0x65) matches
+    /// the UTF-16 `XX 00 YY 00` shape, so the inference returns UTF-16 for
+    /// what is really UTF-32. Because bound wide parameters are routinely
+    /// non-ASCII, this heuristic is unsound as a mismatch signal and must
+    /// stay diagnostic-only — it must never gate the irreversible
+    /// `MISMATCH_DETECTED` kill switch (which silently dropped all wide
+    /// output when it did).
+    #[test]
+    fn byte_pattern_misclassifies_non_ascii_utf32_as_utf16() {
+        // [u16; 4] on a little-endian host lays out as the UTF-32 LE bytes above.
+        let utf32_cjk: [WideChar; 4] = [0x65E5, 0x0000, 0x672C, 0x0000];
+        assert_eq!(
+            inspect_wchar_byte_pattern(utf32_cjk.as_ptr(), utf32_cjk.len() as sql::Integer),
+            Some(WCharEncoding::Utf16),
+            "non-ASCII UTF-32 is mis-inferred as UTF-16, so the heuristic is unfit \
+             to gate the fatal kill switch"
+        );
     }
 }

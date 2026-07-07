@@ -122,4 +122,22 @@ public class ArrowResultUtil {
   public static boolean isTimestampOverflow(long seconds) {
     return seconds < Long.MIN_VALUE / powerOfTen(3) || seconds > Long.MAX_VALUE / powerOfTen(3);
   }
+
+  /**
+   * Decode a {@code TIMESTAMP_TZ} timezone index into the fixed-offset {@link TimeZone} it stands
+   * for. The index is biased by {@code 1440} (minutes in a day), so {@code offsetMinutes = index -
+   * 1440}; e.g. {@code 1440} → {@code GMT+00:00}, {@code 1140} → {@code GMT-05:00}, {@code 1770} →
+   * {@code GMT+05:30}. The resulting {@code GMT±HH:MM} name is what the TZ formatter's {@code
+   * TZH:TZM}/{@code TZHTZM} tokens render, so the construction must match the server bias exactly.
+   * Ported verbatim from snowflake-common's {@code SFTimestamp.convertTimezoneIndexToTimeZone}.
+   */
+  public static TimeZone convertTimezoneIndexToTimeZone(int timezoneIndex) {
+    timezoneIndex -= 1440;
+    boolean negate = (timezoneIndex < 0);
+    timezoneIndex = Math.abs(timezoneIndex);
+    int hour = timezoneIndex / 60;
+    int min = timezoneIndex % 60;
+    String tzName = String.format("GMT%s%02d:%02d", negate ? "-" : "+", hour, min);
+    return TimeZone.getTimeZone(tzName);
+  }
 }

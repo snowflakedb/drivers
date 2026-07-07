@@ -1404,6 +1404,90 @@ mod tests {
         .await;
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn put_object_streams_multichunk_sse_file_with_crc32_trailer() {
+        use std::io::Write;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use wiremock::Request;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&vec![b'x'; 100 * 1024]).unwrap(); // >64 KiB → multiple body frames
+        tmp.flush().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let seen_crc32_trailer = Arc::new(AtomicBool::new(false));
+        let seen_unsigned_payload = Arc::new(AtomicBool::new(false));
+        let crc32_c = seen_crc32_trailer.clone();
+        let unsigned_c = seen_unsigned_payload.clone();
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(move |req: &Request| {
+                crc32_c.store(
+                    req.headers
+                        .get("x-amz-trailer")
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|v| v.contains("x-amz-checksum-crc32")),
+                    Ordering::SeqCst,
+                );
+                unsigned_c.store(
+                    req.headers
+                        .get("x-amz-content-sha256")
+                        .and_then(|v| v.to_str().ok())
+                        == Some("STREAMING-UNSIGNED-PAYLOAD-TRAILER"),
+                    Ordering::SeqCst,
+                );
+                ResponseTemplate::new(200)
+            })
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage_info = StageInfo {
+            location_type: crate::file_manager::types::LocationType::S3,
+            bucket: "test-bucket".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "us-east-1".to_string(),
+            creds: s3_creds("AKIA-TEST"),
+            endpoint: Some(mock.uri()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
+            tls_config: crate::tls::config::TlsConfig::default(),
+        };
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            upload_to_s3_or_skip(
+                PreparedUpload {
+                    source: crate::file_manager::types::PreparedSource::Path(path),
+                    digest: "0".repeat(64),
+                    cse: None,
+                },
+                &stage_info,
+                "f.dat",
+                true,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                &mut None,
+            ),
+        )
+        .await
+        .expect("multi-chunk SSE upload hung — aws-chunked Content-Length regressed")
+        .expect("multi-chunk SSE file upload should succeed against the mock");
+
+        assert!(
+            seen_unsigned_payload.load(Ordering::SeqCst),
+            "the streamed body must be payload-unsigned (STREAMING-UNSIGNED-PAYLOAD-TRAILER)",
+        );
+        assert!(
+            seen_crc32_trailer.load(Ordering::SeqCst),
+            "the streamed body must carry a CRC32 trailer for S3 to verify on receipt",
+        );
+    }
+
     // Pins the wire contract for the lazy encrypting `SdkBody`: the SDK streams
     // it under `aws-chunked` with a CRC32 trailer (so S3 verifies integrity on
     // receipt) while conveying the exact ciphertext length analytically via

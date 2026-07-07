@@ -22,6 +22,7 @@ pub mod authenticator {
     pub const SNOWFLAKE_JWT: &str = "SNOWFLAKE_JWT";
     pub const PROGRAMMATIC_ACCESS_TOKEN: &str = "PROGRAMMATIC_ACCESS_TOKEN";
     pub const USERNAME_PASSWORD_MFA: &str = "USERNAME_PASSWORD_MFA";
+    pub const WORKLOAD_IDENTITY: &str = "WORKLOAD_IDENTITY";
 }
 
 // TODO: Delete all unused fields when we are sure they are not needed

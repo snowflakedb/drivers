@@ -20,6 +20,9 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
   /** Struct child holding the sub-second nanosecond fraction. */
   static final String FIELD_NAME_FRACTION = "fraction";
 
+  /** Struct child holding the {@code TIMESTAMP_TZ} timezone index (biased by 1440). */
+  static final String FIELD_NAME_TIMEZONE = "timezone";
+
   protected String logicalTypeStr;
   private final ValueVector valueVector;
   protected final DataConversionContext context;

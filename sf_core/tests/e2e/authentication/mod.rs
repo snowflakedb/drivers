@@ -8,3 +8,4 @@ mod spcs_token;
 mod user_password;
 #[cfg(feature = "auth_mfa_e2e")]
 mod user_password_mfa;
+mod workload_identity;

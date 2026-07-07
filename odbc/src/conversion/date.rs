@@ -1,5 +1,3 @@
-use std::io::{Cursor, Write as _};
-
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
 use chrono::{Datelike, NaiveDate, NaiveTime};
@@ -15,6 +13,7 @@ use crate::conversion::error::{
     ConversionError, DatetimeOutOfSqlRangeSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::int_fmt;
 use crate::conversion::param_binding::{
     parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
@@ -29,19 +28,18 @@ const DATE_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD";
 
 /// Format a `NaiveDate` as `YYYY-MM-DD` into a stack buffer without heap
 /// allocation. 32 bytes is sufficient for any year chrono can represent.
+///
+/// Uses hand-rolled digit writes rather than `write!`/`core::fmt`, the
+/// dominant per-cell cost for temporal columns rendered as SQL_C_CHAR.
+/// `put_year` is byte-identical to the old `{:04}`.
 fn format_date_ascii<'a>(date: &NaiveDate, buf: &'a mut [u8; 32]) -> &'a str {
-    let mut cursor = Cursor::new(&mut buf[..]);
-    // Infallible: the buffer is large enough for any year chrono produces.
-    let _ = write!(
-        cursor,
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month(),
-        date.day()
-    );
-    let len = cursor.position() as usize;
+    let mut p = int_fmt::put_year(buf, 0, date.year());
+    buf[p] = b'-';
+    p = int_fmt::put_padded(buf, p + 1, date.month(), 2);
+    buf[p] = b'-';
+    p = int_fmt::put_padded(buf, p + 1, date.day(), 2);
     // SAFETY: we only wrote ASCII digits and '-' above.
-    unsafe { std::str::from_utf8_unchecked(&buf[..len]) }
+    unsafe { std::str::from_utf8_unchecked(&buf[..p]) }
 }
 
 pub(crate) struct SnowflakeDate;

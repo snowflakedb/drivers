@@ -1,0 +1,128 @@
+id: universal-driver-security-disclosure
+friendly_name: "Universal Driver Security Disclosure Rules"
+status: enabled
+allowed_folders:
+  - "."
+  - "adr"
+  - "doc"
+  - "sf_core"
+  - "python"
+  - "nodejs"
+  - "odbc"
+  - "odbc_tests"
+  - "jdbc"
+  - "tests"
+  - "error_trace"
+  - "proto_utils"
+  - "proto_generator"
+  - "odbc_trace_tool"
+  - "jdbc_bridge"
+excluded_folders:
+  - "_internal"
+  - ".ai"
+  - ".cursor"
+  - ".claude"
+  - ".buildkite"
+  - ".ci"
+  - ".github"
+  - "ci"
+  - "scripts"
+allowed_file_extensions:
+  - ".rs"
+  - ".java"
+  - ".py"
+  - ".js"
+  - ".ts"
+  - ".cpp"
+  - ".c"
+  - ".h"
+  - ".go"
+  - ".toml"
+  - ".md"
+  - ".rst"
+  - ".txt"
+  - ".yaml"
+  - ".yml"
+rules:
+  - id: ud-no-security-issue-disclosure-in-comments
+    rule: |
+      **OBJECTIVE**: Prevent code comments from disclosing exploitable weaknesses in
+      older driver versions. Attackers monitor public repositories; a comment that
+      explains *how* a past bug worked gives them a ready-made attack recipe against
+      users who have not yet upgraded.
+
+      **REQUIREMENT**: Flag any comment (inline `//`, `#`, block `/* */`, `/** */`,
+      docstring, or changelog entry) that:
+
+      1. Describes **how** a security issue could be triggered or exploited in a
+         prior version (e.g. "before this fix, an attacker could forge X by sending
+         Y", "versions < 2.3 accept any token here").
+      2. Explains a bypass route or workaround around a security control
+         (authentication, token validation, input sanitisation, TLS verification).
+      3. Identifies a specific driver version or release as affected by a security
+         weakness, in a way that tells readers where the vulnerability window is.
+
+      **WHAT IS FINE**: Comments that describe *what* the correct behaviour is,
+      *what* the fix does at a high level, or *why* a particular assertion or check
+      is needed — without naming the attack vector or affected versions. For example,
+      "validate the nonce to prevent replay attacks" is fine; "before 3.1.0, the
+      nonce was not validated so replay was possible" is not.
+
+      **SCOPE**: Also apply this rule to the PR title and description when reviewing
+      the diff as a whole.
+
+      ❌ **BAD (comment reveals attack vector and affected version range):**
+      ```rust
+      // Fix: older versions skipped signature verification on responses from
+      // /session/token-request, so a MITM could inject an arbitrary session token.
+      ```
+
+      ✅ **GOOD (describes only the correct behaviour):**
+      ```rust
+      // Verify the signature on token-request responses.
+      ```
+
+  - id: ud-no-cwe-cve-vulnerability-descriptions
+    rule: |
+      **OBJECTIVE**: Keep CWE/CVE identifiers and verbose vulnerability descriptions
+      out of the public codebase and PR descriptions. These identifiers are indexed
+      by security scanners; their presence in source code or docs makes it trivial
+      for attackers to cross-reference the exact weakness and target unpatched
+      deployments.
+
+      **REQUIREMENT**: Flag any occurrence of:
+
+      1. **CWE identifiers** — patterns matching `CWE-\d+` (case-insensitive),
+         e.g. `CWE-89`, `CWE-79`, `cwe-416`.
+      2. **CVE identifiers** — patterns matching `CVE-\d{4}-\d+` (case-insensitive),
+         e.g. `CVE-2024-12345`.
+      3. **Vulnerability category names paired with a version or fix context** — e.g.
+         "SQL injection in 2.x", "buffer overflow fixed in this PR", "path traversal
+         vulnerability", "SSRF when the proxy URL is user-controlled". Generic
+         educational mentions without a version or fix context are acceptable (e.g.,
+         a README section titled "Security" that says "always use TLS").
+
+      **SCOPE**: Apply to all code files, documentation, changelogs, and — when
+      reviewing the diff as a whole — to the PR title and description.
+
+      ❌ **BAD:**
+      ```
+      // Fixes CWE-295: improper certificate validation in versions < 4.2
+      // CVE-2024-98765: attacker-controlled redirect URI bypass
+      ```
+
+      ```markdown
+      ## Security
+      Addressed a SQL injection vulnerability (CWE-89) present in the query builder
+      prior to this release.
+      ```
+
+      ✅ **GOOD:**
+      ```
+      // Enforce certificate validation on all outbound TLS connections.
+      ```
+
+      ```markdown
+      ## Security
+      Improved input handling in the query builder.
+      ```

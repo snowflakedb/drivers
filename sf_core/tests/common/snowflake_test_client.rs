@@ -604,6 +604,17 @@ impl SnowflakeTestClient {
         assert!(!error_msg.is_empty(), "Error message should not be empty");
     }
 
+    pub fn assert_invalid_parameter_error(&self, result: Result<(), String>, parameter: &str) {
+        let error_msg = result.expect_err("Expected error");
+
+        assert!(
+            (error_msg.contains("InvalidParameterValue") || error_msg.contains("Invalid"))
+                && error_msg.contains(parameter),
+            "Error message should report an invalid {parameter} value: {error_msg}"
+        );
+        assert!(!error_msg.is_empty(), "Error message should not be empty");
+    }
+
     /// Sets up JWT authentication configuration and returns a private key file
     fn setup_jwt_auth(&mut self) -> PrivateKeyFile {
         self.set_connection_option("authenticator", "SNOWFLAKE_JWT");

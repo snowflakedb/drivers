@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .api_client.client_api import async_core_driver, core_driver
+from .decorators import backward_compatibility
 
 
 if TYPE_CHECKING:
@@ -56,6 +57,13 @@ class TelemetryClient:
             )
         except Exception:
             logger.debug("Failed to send wrapper_error telemetry", exc_info=True)
+
+    @backward_compatibility
+    def send_log_batch(self) -> None:
+        """No-op: the Universal Driver sends telemetry via RPC immediately; there is no batch to flush."""
+
+    # Backward-compatibility alias: snowflake-connector-python named this _log_batch.
+    _log_batch = send_log_batch
 
 
 class AsyncTelemetryClient:

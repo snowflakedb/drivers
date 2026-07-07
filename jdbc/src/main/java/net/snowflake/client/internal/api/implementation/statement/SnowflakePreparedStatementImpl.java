@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.function.Function;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
@@ -122,69 +123,70 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   public void setNull(int parameterIndex, int sqlType) throws SQLException {
     checkClosed();
     // ANY is the sentinel; addBatch promotes the column to a real type on first non-null.
-    setParameter(parameterIndex, "ANY", null);
+    setParameter(parameterIndex, SnowflakeType.ANY, null);
   }
 
   @Override
   public void setBoolean(int parameterIndex, boolean x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "BOOLEAN", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.BOOLEAN, String.valueOf(x));
   }
 
   @Override
   public void setByte(int parameterIndex, byte x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "FIXED", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
   public void setShort(int parameterIndex, short x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "FIXED", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
   public void setInt(int parameterIndex, int x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "FIXED", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
   public void setLong(int parameterIndex, long x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "FIXED", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
   public void setFloat(int parameterIndex, float x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "REAL", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.REAL, String.valueOf(x));
   }
 
   @Override
   public void setDouble(int parameterIndex, double x) throws SQLException {
     checkClosed();
-    setParameter(parameterIndex, "REAL", String.valueOf(x));
+    setParameter(parameterIndex, SnowflakeType.REAL, String.valueOf(x));
   }
 
   @Override
   public void setBigDecimal(int parameterIndex, BigDecimal x) throws SQLException {
     checkClosed();
     setNullableParameter(
-        parameterIndex, Types.DECIMAL, "FIXED", x, decimal -> String.valueOf(decimal));
+        parameterIndex, Types.DECIMAL, SnowflakeType.FIXED, x, decimal -> String.valueOf(decimal));
   }
 
   @Override
   public void setString(int parameterIndex, String x) throws SQLException {
     checkClosed();
-    setNullableParameter(parameterIndex, Types.VARCHAR, "TEXT", x, stringValue -> stringValue);
+    setNullableParameter(
+        parameterIndex, Types.VARCHAR, SnowflakeType.TEXT, x, stringValue -> stringValue);
   }
 
   @Override
   public void setBytes(int parameterIndex, byte[] x) throws SQLException {
     checkClosed();
     setNullableParameter(
-        parameterIndex, Types.BINARY, "BINARY", x, bytes -> HexUtil.bytesToHex(bytes));
+        parameterIndex, Types.BINARY, SnowflakeType.BINARY, x, bytes -> HexUtil.bytesToHex(bytes));
   }
 
   @Override
@@ -200,7 +202,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     setNullableParameter(
         parameterIndex,
         Types.TIME,
-        "TIME",
+        SnowflakeType.TIME,
         x,
         time -> String.valueOf(context.timeToNanosOfDay(time)));
   }
@@ -236,7 +238,37 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void setTimestamp(int parameterIndex, Timestamp x) throws SQLException {
     checkClosed();
-    throw new SQLFeatureNotSupportedException("setTimestamp not supported");
+    setTimestampWithType(parameterIndex, x, Types.TIMESTAMP);
+  }
+
+  /**
+   * Binds a TIMESTAMP value with an explicit Snowflake target type, mirroring snowflake-jdbc's
+   * {@code SnowflakePreparedStatementV1.setTimestampWithType}. The value is the instant as an
+   * epoch-nanoseconds decimal string (see {@link ArrowDateUtil#timestampToBindString}); {@code
+   * TIMESTAMP_LTZ} and {@code TIMESTAMP_NTZ} share the identical numeric string and differ only in
+   * the bind type name. A bare {@link Types#TIMESTAMP} resolves to the session's {@code
+   * CLIENT_TIMESTAMP_TYPE_MAPPING} (default {@code TIMESTAMP_LTZ}).
+   *
+   * @param snowflakeType {@link Types#TIMESTAMP} for the mapped default, or {@link
+   *     SnowflakeType#EXTRA_TYPES_TIMESTAMP_LTZ} / {@link SnowflakeType#EXTRA_TYPES_TIMESTAMP_NTZ}
+   *     to force that type
+   */
+  private void setTimestampWithType(int parameterIndex, Timestamp x, int snowflakeType)
+      throws SQLException {
+    SnowflakeType bindType;
+    switch (snowflakeType) {
+      case SnowflakeType.EXTRA_TYPES_TIMESTAMP_LTZ:
+        bindType = SnowflakeType.TIMESTAMP_LTZ;
+        break;
+      case SnowflakeType.EXTRA_TYPES_TIMESTAMP_NTZ:
+        bindType = SnowflakeType.TIMESTAMP_NTZ;
+        break;
+      default:
+        bindType = mappedTimestampBindType();
+        break;
+    }
+    setNullableParameter(
+        parameterIndex, Types.TIMESTAMP, bindType, x, ArrowDateUtil::timestampToBindString);
   }
 
   @Override
@@ -302,8 +334,23 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       setTimestamp(parameterIndex, (Timestamp) x);
       return;
     }
-    String bindType = sqlTypeToBindType(targetSqlType);
-    if ("BINARY".equals(bindType) && x instanceof byte[]) {
+    // EXTRA_TYPES_TIMESTAMP_LTZ / _NTZ force that concrete timestamp type. Legacy has no
+    // EXTRA_TYPES_TIMESTAMP_TZ branch here — a TZ is only bindable via the Calendar overload — so
+    // it is intentionally absent (SnowflakePreparedStatementV1.setObject :470-472).
+    if (targetSqlType == SnowflakeType.EXTRA_TYPES_TIMESTAMP_LTZ
+        || targetSqlType == SnowflakeType.EXTRA_TYPES_TIMESTAMP_NTZ) {
+      if (!(x instanceof Timestamp)) {
+        throw new SQLException(
+            "Invalid parameter type for TIMESTAMP at index "
+                + parameterIndex
+                + ": "
+                + x.getClass().getCanonicalName());
+      }
+      setTimestampWithType(parameterIndex, (Timestamp) x, targetSqlType);
+      return;
+    }
+    SnowflakeType bindType = sqlTypeToBindType(targetSqlType);
+    if (bindType == SnowflakeType.BINARY && x instanceof byte[]) {
       setBytes(parameterIndex, (byte[]) x);
       return;
     }
@@ -359,6 +406,13 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     }
     if (x instanceof Time) {
       setTime(parameterIndex, (Time) x);
+      return;
+    }
+    // java.sql.Timestamp is NOT a java.sql.Date (both extend java.util.Date), so it does not match
+    // the instanceof Date branch above; it binds as the mapped TIMESTAMP type, mirroring legacy's
+    // dedicated instanceof Timestamp branch (SnowflakePreparedStatementV1.setObject :553).
+    if (x instanceof Timestamp) {
+      setTimestamp(parameterIndex, (Timestamp) x);
       return;
     }
     logger.warn(
@@ -478,7 +532,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     setNullableParameter(
         parameterIndex,
         Types.DATE,
-        "DATE",
+        SnowflakeType.DATE,
         x,
         date -> String.valueOf(ArrowDateUtil.dateToBindMillis(date, tz)));
   }
@@ -488,9 +542,30 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     setTime(parameterIndex, x);
   }
 
+  /**
+   * Binds a TIMESTAMP value using the given Calendar's timezone, mirroring snowflake-jdbc's {@code
+   * SnowflakePreparedStatementV1.setTimestamp(int, Timestamp, Calendar)}. The target type is the
+   * session's {@code CLIENT_TIMESTAMP_TYPE_MAPPING} (default {@code TIMESTAMP_LTZ}); the Calendar
+   * overload never accepts an explicit type. For {@code TIMESTAMP_TZ} the instant is kept as-is and
+   * the Calendar offset is stored as a separate offset code (the only way to bind a TZ); for {@code
+   * TIMESTAMP_LTZ}/{@code TIMESTAMP_NTZ} the instant is shifted by the Calendar offset. Neither
+   * branch applies the Julian→Gregorian correction. A null Calendar falls back to the JVM default
+   * zone, matching {@link #setDate(int, Date, Calendar)}.
+   */
   @Override
   public void setTimestamp(int parameterIndex, Timestamp x, Calendar cal) throws SQLException {
-    setTimestamp(parameterIndex, x);
+    checkClosed();
+    SnowflakeType bindType = mappedTimestampBindType();
+    TimeZone tz = cal == null ? TimeZone.getDefault() : cal.getTimeZone();
+    String value;
+    if (x == null) {
+      value = null;
+    } else if (bindType == SnowflakeType.TIMESTAMP_TZ) {
+      value = ArrowDateUtil.timestampTzToBindString(x, tz);
+    } else {
+      value = ArrowDateUtil.timestampWithCalendarToBindString(x, tz);
+    }
+    setParameter(parameterIndex, bindType, value);
   }
 
   @Override
@@ -608,7 +683,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     throw new SQLFeatureNotSupportedException("setNClob not supported");
   }
 
-  private void setParameter(int parameterIndex, String bindType, Object value) throws SQLException {
+  private void setParameter(int parameterIndex, SnowflakeType bindType, Object value)
+      throws SQLException {
     if (parameterIndex < 1) {
       logger.warn(
           "Invalid prepared parameter index: index={}, placeholders={}",
@@ -641,7 +717,11 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   private <T> void setNullableParameter(
-      int parameterIndex, int sqlType, String bindType, T value, Function<T, String> serializer)
+      int parameterIndex,
+      int sqlType,
+      SnowflakeType bindType,
+      T value,
+      Function<T, String> serializer)
       throws SQLException {
     if (value == null) {
       // Preserve the typed bind type for the typed setX-with-null path. The generic
@@ -654,29 +734,44 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     setParameter(parameterIndex, bindType, serializer.apply(value));
   }
 
-  private static String sqlTypeToBindType(int sqlType) {
+  /**
+   * Resolves the session's {@code CLIENT_TIMESTAMP_TYPE_MAPPING} to the bind type for a bare {@code
+   * TIMESTAMP} (only ever {@link SnowflakeType#TIMESTAMP_LTZ} or {@link
+   * SnowflakeType#TIMESTAMP_NTZ}; defaults to LTZ).
+   */
+  private SnowflakeType mappedTimestampBindType() {
+    return SnowflakeType.valueOf(conversionContext().getTimestampMappedType());
+  }
+
+  private static SnowflakeType sqlTypeToBindType(int sqlType) {
     switch (sqlType) {
       case Types.BOOLEAN:
       case Types.BIT:
-        return "BOOLEAN";
+        return SnowflakeType.BOOLEAN;
       case Types.TINYINT:
       case Types.SMALLINT:
       case Types.INTEGER:
       case Types.BIGINT:
       case Types.NUMERIC:
       case Types.DECIMAL:
-        return "FIXED";
+        return SnowflakeType.FIXED;
       case Types.FLOAT:
       case Types.REAL:
       case Types.DOUBLE:
-        return "REAL";
+        return SnowflakeType.REAL;
       case Types.BINARY:
       case Types.VARBINARY:
       case Types.LONGVARBINARY:
       case Types.BLOB:
-        return "BINARY";
+        return SnowflakeType.BINARY;
+      case SnowflakeType.EXTRA_TYPES_TIMESTAMP_LTZ:
+        return SnowflakeType.TIMESTAMP_LTZ;
+      case SnowflakeType.EXTRA_TYPES_TIMESTAMP_NTZ:
+        return SnowflakeType.TIMESTAMP_NTZ;
+      case SnowflakeType.EXTRA_TYPES_TIMESTAMP_TZ:
+        return SnowflakeType.TIMESTAMP_TZ;
       default:
-        return "TEXT";
+        return SnowflakeType.TEXT;
     }
   }
 

@@ -1174,6 +1174,56 @@ pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> s
     record_err!(sql::HandleType::Dbc, connection_handle, result);
     result.to_sql_code()
 }
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+///
+/// `SQLEndTran` commits or rolls back the open transaction. It accepts
+/// **SQL_HANDLE_DBC** (the connection) and **SQL_HANDLE_ENV** (every
+/// connection on the environment). **SQL_HANDLE_STMT** / **SQL_HANDLE_DESC**
+/// are rejected with SQLSTATE HY092; a null handle returns
+/// `SQL_INVALID_HANDLE`; an invalid completion type yields HY012 (posted by
+/// `end_tran`/`end_tran_env`).
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLEndTran(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    completion_type: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(handle_type, handle, "SQLEndTran");
+    if handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    match handle_type {
+        sql::HandleType::Dbc => {
+            api::diagnostic::clear_diag_info(handle_type, handle);
+            let result = api::connection::end_tran(handle, completion_type);
+            api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+            record_err!(handle_type, handle, result);
+            result.to_sql_code()
+        }
+        sql::HandleType::Env => {
+            api::diagnostic::clear_diag_info(handle_type, handle);
+            let result = api::connection::end_tran_env(handle, completion_type);
+            api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+            record_err!(handle_type, handle, result);
+            result.to_sql_code()
+        }
+        // SQL_HANDLE_STMT / SQL_HANDLE_DESC are not valid transaction handles.
+        sql::HandleType::Stmt | sql::HandleType::Desc => {
+            api::diagnostic::clear_diag_info(handle_type, handle);
+            let result: api::OdbcResult<()> = api::error::InvalidHandleTypeSnafu {
+                handle_type: handle_type as i16,
+            }
+            .fail();
+            api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+            record_err!(handle_type, handle, result);
+            result.to_sql_code()
+        }
+        _ => sql::SqlReturn::INVALID_HANDLE.0,
+    }
+}
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]

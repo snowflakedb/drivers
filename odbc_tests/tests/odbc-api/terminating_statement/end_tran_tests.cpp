@@ -21,8 +21,6 @@
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit persists inserted data",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -76,8 +74,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit persists inserted
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback discards inserted data",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -125,8 +121,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback discards insert
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit on environment handle",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -179,8 +173,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit on environment ha
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback on environment handle",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -228,8 +220,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback on environment 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit closes open cursors",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -260,8 +250,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit closes open cursors"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback closes open cursors",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -294,8 +282,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback closes open cursor
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit in autocommit mode",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // In autocommit mode the Driver Manager intercepts SQLEndTran and returns
   // SQL_SUCCESS without forwarding to the driver.
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
@@ -304,8 +290,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit in autocommit mode",
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback in autocommit mode does not undo committed data",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret =
       SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE ENDTRAN_AC_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -342,8 +326,6 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback in autocommit m
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Statement reusable after commit",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -378,8 +360,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Statement reusable after co
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Prepared statement survives commit",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -417,8 +397,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Prepared statement survives
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Prepared statement survives rollback",
                  "[odbc-api][endtran][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -460,24 +438,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Prepared statement survives
 
 TEST_CASE("SQLEndTran: SQL_INVALID_HANDLE for null connection handle",
           "[odbc-api][endtran][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_DBC, SQL_NULL_HDBC, SQL_COMMIT);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE("SQLEndTran: SQL_INVALID_HANDLE for null environment handle",
           "[odbc-api][endtran][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_ENV, SQL_NULL_HENV, SQL_COMMIT);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY012 - Invalid completion type",
                  "[odbc-api][endtran][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -488,13 +460,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY012 - Invalid completion 
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), 999);
-  OLD_IODBC_ONLY("BD#70") {
-    // The old driver under iODBC rejects the invalid completion type with
-    //   SQL_ERROR but does not post any diagnostic record (the diag-record
-    //   allocation is gated on the iODBC dispatch path's own validation
-    //   firing first), so SQLGetDiagRec returns SQL_NO_DATA and a SQLSTATE
-    //   check has nothing to compare. The new driver posts the spec-mandated
-    //   HY012 record itself before the iODBC dispatch path executes.
+  IODBC_ONLY {
+    // iODBC's DM validates the completion type before dispatching and rejects
+    //   the invalid code with SQL_ERROR without posting a diagnostic record
+    //   (SQLGetDiagRec returns SQL_NO_DATA). The DM short-circuits the call, so
+    //   the driver's own HY012 mapping never runs — this holds for both the old
+    //   and new drivers. unixODBC forwards to the driver, which posts HY012.
     REQUIRE(ret == SQL_ERROR);
     const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
     REQUIRE(records.empty());
@@ -512,21 +483,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY012 - Invalid completion 
 
 TEST_CASE_METHOD(DbcFixture, "SQLEndTran: 08003 - Connection not open",
                  "[odbc-api][endtran][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
   REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY092 - Invalid handle type",
                  "[odbc-api][endtran][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_STMT, stmt_handle(), SQL_COMMIT);
-  OLD_IODBC_ONLY("BD#70") {
+  IODBC_ONLY {
     // iODBC's DM validates the HandleType enum before dispatching and rejects
     //   SQL_HANDLE_STMT for SQLEndTran with SQL_INVALID_HANDLE (no diagnostic
-    //   records); the new driver does the HY092 mapping itself.
+    //   records) before the driver is ever called, for both the old and new
+    //   drivers. unixODBC forwards to the driver, which maps it to HY092.
     REQUIRE(ret == SQL_INVALID_HANDLE);
   }
   else {
@@ -536,8 +504,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY092 - Invalid handle type
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][endtran][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
