@@ -41,10 +41,10 @@ import net.snowflake.common.util.Wildcard;
  */
 public class MetaDataObjects {
 
-  // TODO(SNOW-3695645): maybe we should use rpc GetConnectionObjects instead of querying
+  // TODO(SNOW-3740738): maybe we should use rpc GetConnectionObjects instead of querying
   //  Then we can move escaping, etc. to the core and avoid those operations in wrapper.
 
-  // TODO(SNOW-3695645): using column labels is cleaner than positional arguments, consider changing
+  // TODO(SNOW-3740739): using column labels is cleaner than positional arguments, consider changing
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(MetaDataObjects.class);
 
@@ -164,7 +164,7 @@ public class MetaDataObjects {
             comment = row.getString(6);
           }
 
-          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          // TODO(SNOW-3740734): why don't we have exact schema matching case here?
           if (matches(compiledTablePattern, tableName)
               && matches(compiledSchemaPattern, schemaName)) {
             return new Object[] {
@@ -222,6 +222,8 @@ public class MetaDataObjects {
           String columnName = row.getString(3);
           String dataTypeStr = row.getString(4);
           String defaultValue = row.getString(6);
+          // in the legacy driver trim() result was discarded and null default value caused NPE,
+          // anyway - no difference in practice for data returned by backend
           if (defaultValue != null) {
             defaultValue = defaultValue.trim();
           }
@@ -237,7 +239,7 @@ public class MetaDataObjects {
           String catalogName = row.getString(10);
           String autoIncrement = row.getString(11);
 
-          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          // TODO(SNOW-3740734): why don't we have exact schema matching case here?
           if (matches(compiledTablePattern, tableName)
               && matches(compiledSchemaPattern, schemaName)
               && matches(compiledColumnPattern, columnName)) {
@@ -404,7 +406,7 @@ public class MetaDataObjects {
               ("Y".equals(row.getString(12))
                   ? DatabaseMetaData.functionReturnsTable
                   : DatabaseMetaData.functionNoTable);
-          // TODO(SNOW-3695645): getProcedures has correct behavior of using getString("arguments")
+          // TODO(SNOW-3740737): getProcedures has correct behavior of using getString("arguments")
           //  for "specificName", consider to fix it here as well
           String specificName = functionName;
           if (matches(compiledFunctionPattern, functionName)
@@ -459,6 +461,8 @@ public class MetaDataObjects {
       String functionNamePattern,
       String columnNamePattern)
       throws SQLException {
+    // BD#19: result rows used raw params instead of session-resolved values.
+    // null catalog produced null FUNCTION_CAT even when session context had a real database
     ContextAwareMetadataSearch contextAware =
         params.applySessionContext(originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
@@ -489,6 +493,8 @@ public class MetaDataObjects {
   public ResultSet getTablePrivileges(
       String originalCatalog, String originalSchemaPattern, String tableNamePattern)
       throws SQLException {
+    // TODO(SNOW-3740736): only this method null-guards tableNamePattern; others pass null to the
+    //  query builder. Align in one direction or the other.
     if (tableNamePattern == null) {
       return emptyResultSet(MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
     }
@@ -510,7 +516,8 @@ public class MetaDataObjects {
           String privilege = row.getString("PRIVILEGE_TYPE");
           String is_grantable = row.getString("IS_GRANTABLE");
 
-          // TODO(SNOW-3695645): why do we have custom matching here? different from other methods
+          // TODO(SNOW-3740736): unlike other methods, this post-filters with string equality + "%"
+          //  literal, not Wildcard.toRegexPattern() + matches(). Patterns like "MY_SCHEMA%" fail.
           if ((catalog == null || catalog.trim().equals("%") || catalog.trim().equals(table_cat))
               && (schemaPattern == null
                   || schemaPattern.trim().equals("%")
@@ -543,6 +550,9 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getPrimaryKeys: {}", sqlQuery);
 
+    // TODO(SNOW-3740735): getPrimaryKeys and getForeignKeys gate pattern matching on
+    //  enablePatternSearch, while all other methods use isExactSchema (via contextAware). These are
+    //  different session parameters and produce different behavior for the same inputs.
     boolean patternSearch = params.isEnablePatternSearch();
     // Patterns are only consulted when enablePatternSearch=true; otherwise exact equality is used.
     Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schema, true);
@@ -569,6 +579,7 @@ public class MetaDataObjects {
             tableMatches = table == null || table.equals(tableName);
           }
 
+          // Pattern.equals(String) guards were always false (dead code); removed.
           if (catalogMatches && schemaMatches && tableMatches) {
             return new Object[] {
               tableCat, tableSchem, tableName, columnName, keySeq, pkName,
@@ -619,6 +630,7 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getForeignKeys: {}", sqlQuery);
 
+    // TODO(SNOW-3740735): see getPrimaryKeys - same enablePatternSearch vs isExactSchema mismatch.
     boolean patternSearch = params.isEnablePatternSearch();
     // Patterns are only consulted when enablePatternSearch=true; otherwise exact equality is used.
     Pattern compiledSchemaPattern = Wildcard.toRegexPattern(parentSchema, true);
@@ -742,6 +754,7 @@ public class MetaDataObjects {
     }
   }
 
+  // Pattern.equals(String) guards were always false (dead code) for all three FK kinds; removed.
   private static boolean foreignKeyPatternMatch(
       ForeignKeyKind kind,
       String parentCatalog,
@@ -844,6 +857,7 @@ public class MetaDataObjects {
         row -> {
           String name = row.getString("name");
           String schemaName = row.getString("schema_name");
+          // TODO(SNOW-3740734): why don't we have exact schema matching case here?
           if (matches(compiledStreamNamePattern, name)
               && matches(compiledSchemaPattern, schemaName)) {
             return new Object[] {
