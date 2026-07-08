@@ -559,19 +559,3 @@ behavior_differences:
       BD#10 in jdbc/ and BD#81 in odbc_tests/ BehaviorDifferences.yaml. Callers that configured
       a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
       to `https://`.
-
-  39:
-    name: "Connection.expired / is_expired() makes an RPC call; legacy attribute is a plain bool"
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `SnowflakeConnection.expired` is a plain Python bool attribute written directly by
-      internal driver code. Reading it is free (no I/O), always succeeds, and never raises.
-    new_driver_behavior: |
-      `Connection.expired` (sync) and `aio.Connection.is_expired()` (async) make an RPC
-      call to sf_core on every access. If the RPC raises (e.g. the connection handle has
-      already been released), the method silently returns `False` rather than propagating
-      the exception. Callers that read `expired` in a tight loop pay one RPC per call.
