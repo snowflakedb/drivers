@@ -1,0 +1,18 @@
+{
+  "name": "Token refresh returns GS 390111 (session already gone, not master-token expiry)",
+  "request": {
+    "urlPathPattern": "/session/token-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": false,
+      "code": "390111",
+      "message": "Session no longer exists. New login required to continue using Snowflake."
+    }
+  }
+}
