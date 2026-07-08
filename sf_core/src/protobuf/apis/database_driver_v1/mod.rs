@@ -270,6 +270,21 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionIsClosedResponse { is_closed })
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_is_expired", skip(self, input))]
+    async fn connection_is_expired(
+        &self,
+        input: ConnectionIsExpiredRequest,
+    ) -> Result<ConnectionIsExpiredResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let is_expired = self
+            .driver
+            .connection_is_expired(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionIsExpiredResponse { is_expired })
+    }
+
     #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(self, input))]
     async fn connection_get_info(
         &self,
@@ -1141,6 +1156,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionIsClosedRequest,
     ) -> BlockingProtoResult<ConnectionIsClosedResponse>;
+    fn connection_is_expired_blocking(
+        &self,
+        input: ConnectionIsExpiredRequest,
+    ) -> BlockingProtoResult<ConnectionIsExpiredResponse>;
     fn connection_get_info_blocking(
         &self,
         input: ConnectionGetInfoRequest,
@@ -1284,6 +1303,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionIsClosedRequest,
     ) -> BlockingProtoResult<ConnectionIsClosedResponse> {
         block_on_client_call(self.connection_is_closed(input))
+    }
+
+    fn connection_is_expired_blocking(
+        &self,
+        input: ConnectionIsExpiredRequest,
+    ) -> BlockingProtoResult<ConnectionIsExpiredResponse> {
+        block_on_client_call(self.connection_is_expired(input))
     }
 
     fn connection_get_info_blocking(

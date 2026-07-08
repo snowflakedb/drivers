@@ -320,6 +320,14 @@ message ConnectionIsClosedResponse {
   bool is_closed = 1;
 }
 
+message ConnectionIsExpiredRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionIsExpiredResponse {
+  bool is_expired = 1;
+}
+
 message ConnectionGetInfoRequest {
   ConnectionHandle conn_handle = 1;
   repeated InfoCode info_codes = 2;
@@ -882,6 +890,7 @@ service DatabaseDriver {
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
   rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
   rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);
+  rpc ConnectionIsExpired(ConnectionIsExpiredRequest) returns (ConnectionIsExpiredResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
   rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);

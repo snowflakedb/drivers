@@ -84,6 +84,9 @@ pub const SESSION_GONE: i32 = 390111;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the master token has expired.
+/// Full re-authentication is required; the session can never be renewed.
+pub const MASTER_TOKEN_EXPIRED: i32 = 390114;
 /// GS error code returned when the OAuth access token presented at login is
 /// invalid. Treated cross-driver as a signal to evict the cached access
 /// token and replay the OAuth flow.
@@ -2088,6 +2091,15 @@ where
         return SessionExpiredSnafu.fail();
     }
 
+    // 2xx with `success:false, code:"390114"` means the master token has expired.
+    // The session can never be renewed; surface it so RefreshContext can set
+    // `is_expired = true` and propagate `MasterTokenExpired` to the caller.
+    if !parsed.success
+        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(MASTER_TOKEN_EXPIRED)
+    {
+        return MasterTokenExpiredSnafu.fail();
+    }
+
     Ok(parsed)
 }
 
@@ -2307,6 +2319,11 @@ pub enum SnowflakeResponseError {
     },
     #[snafu(display("Session expired - reauthentication required"))]
     SessionExpired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Master token expired - full re-authentication required (GS code 390114)"))]
+    MasterTokenExpired {
         #[snafu(implicit)]
         location: Location,
     },
