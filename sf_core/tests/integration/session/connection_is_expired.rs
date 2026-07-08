@@ -111,6 +111,161 @@ fn test_connection_is_expired_invalid_handle() {
     assert!(result.is_err(), "Should return error for invalid handle");
 }
 
+/// A 500 server error on a query must NOT set the expired flag — 500 is a
+/// transient infrastructure error, not a session-state change.
+#[tokio::test]
+async fn should_not_set_is_expired_on_query_500() {
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(500))
+        .named("query_500")
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
+
+    let conn_handle = client.conn_handle;
+    let _ = tokio::task::spawn_blocking(move || client.execute_query_no_unwrap("SELECT 1"))
+        .await
+        .unwrap();
+
+    let check_client = database_driver_client();
+    let is_expired = check_client
+        .connection_is_expired_blocking(ConnectionIsExpiredRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .unwrap()
+        .is_expired;
+    assert!(
+        !is_expired,
+        "is_expired must stay false after a 500 server error"
+    );
+}
+
+/// GS 390111 (session_gone) returned during token refresh must NOT set the expired
+/// flag — the master token is still valid; the session simply no longer exists on the
+/// server side. Full re-auth is required, but the reason is different from 390114.
+#[tokio::test]
+async fn should_not_set_is_expired_when_token_request_returns_session_gone() {
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(401))
+        .named("query_401")
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/token-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390111",
+            "message": "Session no longer exists. New login required to continue using Snowflake."
+        })))
+        .named("refresh_390111")
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
+
+    let conn_handle = client.conn_handle;
+    let _ = tokio::task::spawn_blocking(move || client.execute_query_no_unwrap("SELECT 1"))
+        .await
+        .unwrap();
+
+    let check_client = database_driver_client();
+    let is_expired = check_client
+        .connection_is_expired_blocking(ConnectionIsExpiredRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .unwrap()
+        .is_expired;
+    assert!(
+        !is_expired,
+        "is_expired must stay false when token refresh returns 390111 (session_gone)"
+    );
+}
+
+/// A successful token refresh must NOT set the expired flag. The session is
+/// renewed and the connection is still usable (the subsequent query failing with
+/// a 500 is unrelated to session state).
+#[tokio::test]
+async fn should_not_set_is_expired_on_successful_token_refresh() {
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    // First query returns 401 once → triggers the refresh path
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(401))
+        .up_to_n_times(1)
+        .named("query_first_401")
+        .mount(&server)
+        .await;
+
+    // After the refresh, any further query attempts get 500 (server error, not
+    // a session problem — prevents the test from looping)
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(500))
+        .named("query_after_refresh_500")
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/token-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "sessionToken": "new-session-token",
+                "masterToken": "new-master-token",
+                "sessionId": 12345
+            }
+        })))
+        .named("refresh_success")
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
+
+    let conn_handle = client.conn_handle;
+    let _ = tokio::task::spawn_blocking(move || client.execute_query_no_unwrap("SELECT 1"))
+        .await
+        .unwrap();
+
+    let check_client = database_driver_client();
+    let is_expired = check_client
+        .connection_is_expired_blocking(ConnectionIsExpiredRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .unwrap()
+        .is_expired;
+    assert!(
+        !is_expired,
+        "is_expired must stay false after a successful token refresh"
+    );
+}
+
 /// When the server returns GS code 390114 during a token refresh, the connection
 /// must be marked expired. This proves the four `is_expired.store(true)` sites in
 /// RefreshContext::try_refresh are reachable and wired to the flag.
