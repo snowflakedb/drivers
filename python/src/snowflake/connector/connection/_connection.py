@@ -24,7 +24,7 @@ from .._internal.connection import (
     ConnectionMixin,
     requires_open,
 )
-from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
+from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249, snowpark_compat
 from .._internal.errorcode import ER_INVALID_VALUE
 from .._internal.logging import safe_log
 from .._internal.logout_config_mapping import (
@@ -46,7 +46,7 @@ from .._internal.text_utils import split_statements
 from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
-from ..errors import Error, ProgrammingError
+from ..errors import Error, NotSupportedError, ProgrammingError
 from ..telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ..version import __version__
 from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
@@ -131,7 +131,10 @@ class Connection(ConnectionMixin):
         # Set session parameters if provided (before connection_init)
         session_params = self.config.session_parameters
         if session_params:
-            core_driver.connection_set_session_parameters(conn_handle=self.conn_handle, parameters=session_params)
+            # proto field is map<string, string>; values may be int/bool, so cast.
+            core_driver.connection_set_session_parameters(
+                conn_handle=self.conn_handle, parameters={k: str(v) for k, v in session_params.items()}
+            )
 
         # Initialise close-lifecycle state before ``_connect()`` so that the
         # ``__del__`` / atexit fail-safes always observe a sane object even
@@ -519,6 +522,7 @@ class Connection(ConnectionMixin):
             include_master_token=include_master_token,
         )
 
+    @property
     @internal_api
     @backward_compatibility
     def _telemetry(self) -> _BackwardCompatTelemetryClient:
@@ -571,6 +575,18 @@ class Connection(ConnectionMixin):
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
+
+    # ------------------------------------------------------------------
+    # File-transfer stub (Snowpark compatibility only)
+    # ------------------------------------------------------------------
+
+    @snowpark_compat
+    def upload_stream(self, *args: Any, **kwargs: Any) -> None:
+        """Noop stub — Snowpark calls this on the connection for streaming PUT.
+
+        File transfer is not yet supported by the Universal Driver.
+        """
+        raise NotSupportedError("upload_stream is not yet supported by the Universal Driver.")
 
 
 # Backward compatibility alias
