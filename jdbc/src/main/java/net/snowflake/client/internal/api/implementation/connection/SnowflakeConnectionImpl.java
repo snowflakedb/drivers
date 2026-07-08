@@ -616,7 +616,12 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public String getSessionID() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    ConnectionGetInfoResponse info = coreDriverApi.connectionGetInfo(connectionHandle);
+    if (!info.hasSessionId()) {
+      return null;
+    }
+    return Long.toString(info.getSessionId());
   }
 
   @Override
