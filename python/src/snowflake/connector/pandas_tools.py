@@ -13,14 +13,16 @@ from collections.abc import Callable, Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
+from ._internal.decorators import snowpark_compat
 from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy
 from ._internal.write_pandas_operation import (
     WritePandasConfig,
     WritePandasOperation,
     WritePandasResult,
+    qualify_name,
 )
-from .errors import Error, ProgrammingError
+from .errors import Error, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -85,6 +87,7 @@ def write_pandas(
     quote_identifiers: bool = True,
     infer_schema: bool = False,
     auto_create_table: bool = False,
+    create_temp_table: bool = False,
     overwrite: bool = False,
     table_type: Literal["", "temp", "temporary", "transient"] = "",
     use_logical_type: bool | None = None,
@@ -98,6 +101,10 @@ def write_pandas(
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
     """
+    # ``create_temp_table`` is the legacy boolean spelling of ``table_type="temp"``;
+    # Snowpark still passes it. Translate it and do not forward it to the config.
+    if create_temp_table and not table_type:
+        table_type = "temp"
     try:
         cfg = WritePandasConfig(
             conn,
@@ -125,6 +132,26 @@ def write_pandas(
         # TODO: consider a function-level errorhandler decorator
         #  if more free functions need this pattern in the future.
         route_exception(conn, None, exc)
+
+
+# ------------------------------------------------------------------
+# Snowpark import surface: snowpark's analyzer_utils imports these three names
+# directly from snowflake.connector.pandas_tools.
+# ------------------------------------------------------------------
+
+# Legacy name for a fully-qualified object name; identical to qualify_name, so
+# alias rather than duplicate the escaping logic.
+build_location_helper = qualify_name
+
+
+@snowpark_compat
+def _create_temp_stage(*args: Any, **kwargs: Any) -> str:
+    raise NotSupportedError("_create_temp_stage is not supported by the Universal Driver (no PUT/staging yet).")
+
+
+@snowpark_compat
+def _create_temp_file_format(*args: Any, **kwargs: Any) -> str:
+    raise NotSupportedError("_create_temp_file_format is not supported by the Universal Driver (no PUT/staging yet).")
 
 
 @requires_dependency(pandas, sqlalchemy)
