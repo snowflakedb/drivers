@@ -52,6 +52,11 @@ def pep249(func: F) -> F:
     return func
 
 
+def snowpark_compat(func: F) -> F:
+    """No-op marker: method/property added only for Snowpark's private-API surface (like :func:`pep249`)."""
+    return func
+
+
 class _AsyncContextManagerLike(Protocol):
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any: ...
 
