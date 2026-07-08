@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -16,7 +17,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.CallableStatement;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
@@ -652,6 +656,294 @@ class SnowflakeConnectionImplTest {
       Connection conn = createConnection();
       conn.close();
       assertThrows(SQLException.class, conn::rollback);
+    }
+  }
+
+  @Nested
+  class CreateAndPrepareStatement {
+
+    private CoreDriverApi mockCoreApi;
+    private StatementHandle stmtHandle;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = stubConnectionMock();
+      stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
+      when(mockCoreApi.statementNew(any()))
+          .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
+      when(mockCoreApi.statementRelease(any()))
+          .thenReturn(StatementReleaseResponse.getDefaultInstance());
+    }
+
+    // createStatement() overloads
+
+    @Test
+    void shouldCreateStatementWithDefaultArgs() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          Statement stmt = conn.createStatement()) {
+        assertInstanceOf(Statement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldCreateStatementWhenTypeAndConcurrencyAreSupported() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          Statement stmt =
+              conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+        assertInstanceOf(Statement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldCreateStatementWhenAllThreeHoldabilityArgsAreSupported() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          Statement stmt =
+              conn.createStatement(
+                  ResultSet.TYPE_FORWARD_ONLY,
+                  ResultSet.CONCUR_READ_ONLY,
+                  ResultSet.CLOSE_CURSORS_AT_COMMIT)) {
+        assertInstanceOf(Statement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldThrowOnUnsupportedResultSetType() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.createStatement(
+                        ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowOnUnsupportedResultSetConcurrency() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowOnUnsupportedHoldability() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.createStatement(
+                        ResultSet.TYPE_FORWARD_ONLY,
+                        ResultSet.CONCUR_READ_ONLY,
+                        ResultSet.HOLD_CURSORS_OVER_COMMIT));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    // prepareStatement() overloads
+
+    @Test
+    void shouldPrepareStatementWithSqlOnly() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          PreparedStatement stmt = conn.prepareStatement("SELECT 1")) {
+        assertInstanceOf(PreparedStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldPrepareStatementWhenTypeAndConcurrencyAreSupported() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          PreparedStatement stmt =
+              conn.prepareStatement(
+                  "SELECT 1", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+        assertInstanceOf(PreparedStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldPrepareStatementWhenAllThreeHoldabilityArgsAreSupported() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          PreparedStatement stmt =
+              conn.prepareStatement(
+                  "SELECT 1",
+                  ResultSet.TYPE_FORWARD_ONLY,
+                  ResultSet.CONCUR_READ_ONLY,
+                  ResultSet.CLOSE_CURSORS_AT_COMMIT)) {
+        assertInstanceOf(PreparedStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareStatementWithUnsupportedResultSetType() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.prepareStatement(
+                        "SELECT 1", ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareStatementWithUnsupportedResultSetConcurrency() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.prepareStatement(
+                        "SELECT 1", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareStatementWithUnsupportedHoldability() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.prepareStatement(
+                        "SELECT 1",
+                        ResultSet.TYPE_FORWARD_ONLY,
+                        ResultSet.CONCUR_READ_ONLY,
+                        ResultSet.HOLD_CURSORS_OVER_COMMIT));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldPrepareStatementWhenAutoGeneratedKeysIsNoGeneratedKeys() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          PreparedStatement stmt =
+              conn.prepareStatement("INSERT INTO t VALUES (1)", Statement.NO_GENERATED_KEYS)) {
+        assertInstanceOf(PreparedStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareStatementWithReturnGeneratedKeys() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        assertThrows(
+            SQLFeatureNotSupportedException.class,
+            () ->
+                conn.prepareStatement("INSERT INTO t VALUES (1)", Statement.RETURN_GENERATED_KEYS));
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareStatementWithColumnIndexes() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        assertThrows(
+            SQLFeatureNotSupportedException.class,
+            () -> conn.prepareStatement("INSERT INTO t VALUES (1)", new int[] {1}));
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareStatementWithColumnNames() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        assertThrows(
+            SQLFeatureNotSupportedException.class,
+            () -> conn.prepareStatement("INSERT INTO t VALUES (1)", new String[] {"id"}));
+      }
+    }
+
+    // prepareCall() overloads
+
+    @Test
+    void shouldPrepareCallWithSqlOnly() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          CallableStatement stmt = conn.prepareCall("{call my_proc()}")) {
+        assertInstanceOf(CallableStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldPrepareCallWhenTypeAndConcurrencyAreSupported() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          CallableStatement stmt =
+              conn.prepareCall(
+                  "{call my_proc()}", ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+        assertInstanceOf(CallableStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldPrepareCallWhenAllThreeHoldabilityArgsAreSupported() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi);
+          CallableStatement stmt =
+              conn.prepareCall(
+                  "{call my_proc()}",
+                  ResultSet.TYPE_FORWARD_ONLY,
+                  ResultSet.CONCUR_READ_ONLY,
+                  ResultSet.CLOSE_CURSORS_AT_COMMIT)) {
+        assertInstanceOf(CallableStatement.class, stmt);
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareCallWithUnsupportedResultSetType() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.prepareCall(
+                        "{call my_proc()}",
+                        ResultSet.TYPE_SCROLL_INSENSITIVE,
+                        ResultSet.CONCUR_READ_ONLY));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareCallWithUnsupportedResultSetConcurrency() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.prepareCall(
+                        "{call my_proc()}",
+                        ResultSet.TYPE_FORWARD_ONLY,
+                        ResultSet.CONCUR_UPDATABLE));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldThrowOnPrepareCallWithUnsupportedHoldability() throws Exception {
+      try (Connection conn = openConnection(mockCoreApi)) {
+        SQLFeatureNotSupportedException ex =
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () ->
+                    conn.prepareCall(
+                        "{call my_proc()}",
+                        ResultSet.TYPE_FORWARD_ONLY,
+                        ResultSet.CONCUR_READ_ONLY,
+                        ResultSet.HOLD_CURSORS_OVER_COMMIT));
+        assertEquals("0A000", ex.getSQLState());
+        assertEquals(200035, ex.getErrorCode());
+      }
     }
   }
 
