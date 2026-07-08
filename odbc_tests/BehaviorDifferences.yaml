@@ -1431,3 +1431,17 @@ behavior_differences:
       on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
       on the legacy driver so a token cached by the preceding happy-path test cannot mask the
       expected token-exchange failure.
+
+  86:
+    name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
+    status: allowed
+    type: bug
+    reviewed: false
+    impact: high
+    is_breaking_change: true
+    old_driver_behavior: |
+      When SQLCancel is called from S10 (PutDataCalled) during a data-at-execution sequence, the old driver retains accumulated SQLPutData data. If the application re-enters DAE and provides new data, the final parameter value is the concatenation of the old and new chunks.
+    new_driver_behavior: |
+      SQLCancel from any DAE state (S8/S9/S10) fully resets the pending operation, discarding all accumulated SQLPutData. On re-entry the parameter starts fresh, matching the ODBC 3.5 spec requirement that cancel aborts the pending operation.
+    description: |
+      Applications that cancel mid-DAE and retry will get clean parameter values instead of stale concatenated data.
