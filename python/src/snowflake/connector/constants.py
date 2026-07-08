@@ -23,7 +23,8 @@ class QueryStatus(Enum):
     NO_DATA = 12
 
 
-# backward compatibility constant
+# backward compatibility constants
+ENV_VAR_PARTNER = "SF_PARTNER"
 UTF8 = "utf-8"
 
 
