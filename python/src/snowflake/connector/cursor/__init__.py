@@ -20,8 +20,13 @@ from ._snowflake_cursor import SnowflakeCursor
 CursorType = type[SnowflakeCursor] | type[DictCursor]
 CursorInstance = SnowflakeCursor | DictCursor
 
+# Snowpark imports this async-poll backoff schedule from the connector's cursor
+# package (async_job.py); kept here for parity with snowflake-connector-python.
+ASYNC_RETRY_PATTERN = [1, 1, 2, 3, 4, 8, 10]
+
 
 __all__ = [
+    "ASYNC_RETRY_PATTERN",
     "CursorInstance",
     "CursorType",
     "DictCursor",

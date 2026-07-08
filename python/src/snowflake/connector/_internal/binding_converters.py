@@ -30,11 +30,13 @@ from .extras import numpy as np
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
 
 
-class ParamStyle(Enum):
+class ParamStyle(str, Enum):
     """PEP 249 parameter binding style enumeration.
 
-    Supports parsing from string and provides methods to determine
-    whether the style requires client-side or server-side binding.
+    Inherits from ``str`` so members behave as their string value — this gives
+    Snowpark's ``connection.paramstyle.lower()`` for free without a hand-rolled
+    method. Supports parsing from string and determining client- vs server-side
+    binding.
     """
 
     QMARK = "qmark"  # Server-side: ? placeholders
