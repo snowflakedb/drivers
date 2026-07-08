@@ -3171,12 +3171,15 @@ fn execute_dae(
 ///
 /// Checks `Statement::cancel_token` first to signal any in-flight
 /// sync or async operation without touching `inner`. Falls back to
-/// restoring NeedData state (single-threaded DAE scenarios).
+/// restoring NeedData state (single-threaded DAE scenarios): from S8/S9/S10
+/// the statement is restored to its pre-execute state (`Prepared` for
+/// `SQLExecute` origin, `Created` for `SQLExecDirect`). Column and parameter
+/// bindings are preserved; accumulated SQLPutData is discarded.
 ///
 /// Per ODBC 3.5 spec, cross-thread `SQLCancel` does not clear or post
 /// diagnostic records.
 pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
-    tracing::debug!("cancel: statement_handle={:?}", statement_handle);
+    tracing::debug!("cancel: statement_handle={statement_handle:?}");
     let guard = stmt_from_handle(statement_handle)?;
 
     // Fast path: cancel any in-flight execution via the token.
