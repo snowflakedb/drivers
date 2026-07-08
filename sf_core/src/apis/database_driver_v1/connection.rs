@@ -25,9 +25,7 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
 use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{
-    DEFAULT_PUT_GET_MAX_ATTEMPTS, ParamKey, ParamScope, param_names,
-};
+use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
@@ -423,12 +421,18 @@ impl DatabaseDriverV1 {
                     None
                 };
 
+                let retry_policy = {
+                    let conn = conn_ptr.lock().await;
+                    RetryPolicy::http(&conn.connection_seed)
+                };
+
                 let login_result = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
                     token_cache.map(|c| c as &dyn TokenCache),
                     Some(&self.prompt_locks),
+                    &retry_policy,
                 )
                 .await;
 
@@ -1026,16 +1030,6 @@ impl Connection {
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
     }
 
-    /// Reads `put_get_max_attempts` from the connection seed; falls back to
-    /// `DEFAULT_PUT_GET_MAX_ATTEMPTS` for unset or out-of-range values.
-    pub(crate) fn put_get_max_attempts(&self) -> u32 {
-        self.connection_seed
-            .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
-            .filter(|v| *v > 0 && *v <= u32::MAX as i64)
-            .map(|v| v as u32)
-            .unwrap_or(DEFAULT_PUT_GET_MAX_ATTEMPTS)
-    }
-
     /// The resolved TLS config for this connection, read from the established
     /// [`ClientInfo`]. Falls back to the default `TlsConfig` before login
     /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP
@@ -1094,6 +1088,7 @@ impl Connection {
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
+        self.retry_policy = RetryPolicy::http(&self.connection_seed);
         self.host = host;
         self.port = port;
         self.server_url = Some(server_url);
@@ -2630,44 +2625,6 @@ mod tests {
         );
         drop(conn);
         ds.connection_release(handle).unwrap();
-    }
-
-    #[test]
-    fn put_get_max_attempts_unset_yields_default() {
-        let conn = Connection::new();
-        assert_eq!(conn.put_get_max_attempts(), DEFAULT_PUT_GET_MAX_ATTEMPTS);
-    }
-
-    #[test]
-    fn put_get_max_attempts_returns_user_value() {
-        let mut conn = Connection::new();
-        conn.set_option(
-            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
-            Setting::Int(25),
-        );
-        assert_eq!(conn.put_get_max_attempts(), 25);
-
-        conn.set_option(
-            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
-            Setting::Int(1),
-        );
-        assert_eq!(conn.put_get_max_attempts(), 1);
-    }
-
-    #[test]
-    fn put_get_max_attempts_out_of_range_falls_back_to_default() {
-        let mut conn = Connection::new();
-        for bad in [0i64, -1, (u32::MAX as i64) + 1] {
-            conn.set_option(
-                param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
-                Setting::Int(bad),
-            );
-            assert_eq!(
-                conn.put_get_max_attempts(),
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-                "bad value: {bad}"
-            );
-        }
     }
 
     #[tokio::test]

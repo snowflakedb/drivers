@@ -482,6 +482,7 @@ pub async fn auth_request_data(
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<&dyn TokenCache>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
+    retry_policy: &RetryPolicy,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -496,9 +497,8 @@ pub async fn auth_request_data(
 
     match &login_parameters.login_method {
         LoginMethod::NativeOkta(okta_config) => {
-            let retry_policy = RetryPolicy::default();
             let saml_html =
-                fetch_native_okta_saml(client, login_parameters, &retry_policy, okta_config)
+                fetch_native_okta_saml(client, login_parameters, retry_policy, okta_config)
                     .await
                     .context(NativeOktaSnafu)?;
 
@@ -546,6 +546,7 @@ pub async fn auth_request_data(
                     username,
                     *authentication_timeout_secs,
                     &DefaultBrowserOpener,
+                    retry_policy,
                 )
                 .await
                 .context(ExternalBrowserSnafu)?;
@@ -712,13 +713,23 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters, session_parameters, None, None).await
+    let policy = RetryPolicy::default();
+    snowflake_login_with_client(
+        &client,
+        login_parameters,
+        session_parameters,
+        None,
+        None,
+        &policy,
+    )
+    .await
 }
 
 async fn send_login_request(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     login_request: &AuthRequest,
+    policy: &RetryPolicy,
 ) -> Result<AuthResponse, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
 
@@ -787,9 +798,8 @@ async fn send_login_request(
     };
 
     let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
-    let policy = RetryPolicy::default();
 
-    let response = execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+    let response = execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
         .await
         .context(HttpRetrySnafu {
             context: "login request",
@@ -810,7 +820,13 @@ struct DPoPSigner {
 }
 
 #[tracing::instrument(
-    skip(client, login_parameters, session_parameters, token_cache),
+    skip(
+        client,
+        login_parameters,
+        session_parameters,
+        token_cache,
+        retry_policy
+    ),
     fields(account_name, login_name)
 )]
 pub async fn snowflake_login_with_client(
@@ -819,6 +835,7 @@ pub async fn snowflake_login_with_client(
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<&dyn TokenCache>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
+    retry_policy: &RetryPolicy,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -928,6 +945,7 @@ pub async fn snowflake_login_with_client(
         session_parameters,
         token_cache,
         prompt_locks,
+        retry_policy,
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -942,7 +960,8 @@ pub async fn snowflake_login_with_client(
     );
 
     // Send the actual login request
-    let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
+    let mut auth_response =
+        send_login_request(client, login_parameters, &login_request, retry_policy).await?;
 
     // Revoke cached token and retry if cached token caused failure
     if !auth_response.success {
@@ -981,11 +1000,13 @@ pub async fn snowflake_login_with_client(
                     session_parameters,
                     token_cache,
                     prompt_locks,
+                    retry_policy,
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
                 auth_response =
-                    send_login_request(client, login_parameters, &retry_request).await?;
+                    send_login_request(client, login_parameters, &retry_request, retry_policy)
+                        .await?;
             }
         }
         // OAuth refresh-on-failure: when GS rejects the OAuth access token
@@ -1033,11 +1054,13 @@ pub async fn snowflake_login_with_client(
                     session_parameters,
                     token_cache,
                     prompt_locks,
+                    retry_policy,
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
                 auth_response =
-                    send_login_request(client, login_parameters, &retry_request).await?;
+                    send_login_request(client, login_parameters, &retry_request, retry_policy)
+                        .await?;
             }
         }
     }
@@ -2745,7 +2768,14 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
@@ -2772,7 +2802,14 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
             .unwrap();
 
         assert_eq!(data.client_app_id, "PythonConnector");
@@ -2791,7 +2828,14 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
@@ -2814,7 +2858,14 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
-            .block_on(auth_request_data(&client, &login_params, None, None, None))
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
             .unwrap();
 
         assert_eq!(
@@ -2876,7 +2927,8 @@ mod tests {
                 },
             };
 
-            let result = send_login_request(&client, &params, &auth_req).await;
+            let result =
+                send_login_request(&client, &params, &auth_req, &RetryPolicy::default()).await;
 
             assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
             assert_eq!(

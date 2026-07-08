@@ -4,7 +4,7 @@ use super::types::{
     MaterialDescription, PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json,
     percent_encode_path,
 };
-use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
+use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::sensitive::SensitiveString;
 use reqwest::Method;
@@ -348,26 +348,10 @@ async fn upload_to_azure(
 ///
 /// Azure treats 403 as retryable (SAS token clock skew / replication delays),
 /// matching JDBC/ODBC behavior.
-///
-/// Single source of truth for the production policy: built once at the
-/// dispatch layer (`file_manager::mod`) and passed by `&RetryPolicy` into the
-/// transfer fns, so HEAD/GET/PUT share one policy and tests can inject a
-/// zero-backoff variant (`internal::azure_test_retry_policy`).
-pub(crate) fn azure_retry_policy(max_attempts: u32) -> RetryPolicy {
-    RetryPolicy {
-        max_attempts,
-        backoff: BackoffConfig {
-            base: Duration::from_secs(1),
-            factor: 2.0,
-            cap: Duration::from_secs(16),
-            jitter: Jitter::None,
-        },
-        // Must exceed REQUEST_TIMEOUT_SECS (300s) to allow at least one full
-        // request + retries. 600s accommodates ~2 full-timeout attempts plus backoff.
-        max_elapsed: Duration::from_secs(600),
-        extra_retryable_statuses: vec![403],
-        ..RetryPolicy::default()
-    }
+pub(crate) fn azure_retry_policy(base: &RetryPolicy) -> RetryPolicy {
+    let mut policy = base.clone();
+    policy.extra_retryable_statuses.insert(403);
+    policy
 }
 
 /// Executes an Azure HTTP request with retry, then checks for Azure-specific status codes.
@@ -848,6 +832,7 @@ pub enum AzureDownloadError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+    use crate::config::retry::Jitter;
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
 
@@ -1013,9 +998,14 @@ mod tests {
     // 3. Retry policy configuration
     // ---------------------------------------------------------------
 
+    fn base_policy() -> RetryPolicy {
+        use crate::config::param_store::ParamStore;
+        RetryPolicy::put_get(&ParamStore::new())
+    }
+
     #[test]
     fn azure_retry_policy_includes_403() {
-        let policy = azure_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let policy = azure_retry_policy(&base_policy());
         assert!(
             policy.extra_retryable_statuses.contains(&403),
             "403 should be retryable (SAS token clock skew / replication delays)"
@@ -1024,7 +1014,7 @@ mod tests {
 
     #[test]
     fn azure_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = azure_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let policy = azure_retry_policy(&base_policy());
         assert_eq!(
             policy.max_elapsed,
             Duration::from_secs(600),
@@ -1038,13 +1028,16 @@ mod tests {
 
     #[test]
     fn azure_retry_policy_max_attempts() {
-        assert_eq!(azure_retry_policy(25).max_attempts, 25);
-        assert_eq!(azure_retry_policy(1).max_attempts, 1);
+        let mut base = base_policy();
+        base.max_attempts = 25;
+        assert_eq!(azure_retry_policy(&base).max_attempts, 25);
+        base.max_attempts = 1;
+        assert_eq!(azure_retry_policy(&base).max_attempts, 1);
     }
 
     #[test]
     fn azure_retry_policy_backoff_bounds() {
-        let p = azure_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let p = azure_retry_policy(&base_policy());
         assert_eq!(p.backoff.base, Duration::from_secs(1));
         assert_eq!(p.backoff.cap, Duration::from_secs(16));
         assert_eq!(p.backoff.factor, 2.0);
