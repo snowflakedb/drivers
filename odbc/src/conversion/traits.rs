@@ -156,6 +156,7 @@ impl BindingStrides {
             precision: base.precision,
             scale: base.scale,
             datetime_interval_precision: base.datetime_interval_precision,
+            length: base.length,
         })
     }
 }
@@ -202,6 +203,8 @@ pub struct Binding {
     /// SQLSetDescField(SQL_DESC_DATETIME_INTERVAL_PRECISION) on the ARD.
     /// ODBC default is 2 when not explicitly set.
     pub datetime_interval_precision: Option<i16>,
+    /// SQL_DESC_LENGTH — character count for character types.
+    pub length: sql::ULen,
 }
 
 impl Binding {

@@ -1913,7 +1913,6 @@ impl OdbcFunction {
             self,
             Self::BrowseConnect
                 | Self::BulkOperations
-                | Self::CopyDesc
                 | Self::DataSources
                 | Self::Drivers
                 | Self::ForeignKeys
@@ -1923,7 +1922,6 @@ impl OdbcFunction {
                 | Self::ProcedureColumns
                 | Self::Procedures
                 | Self::SetCursorName
-                | Self::SetDescRec
                 | Self::SetPos
                 | Self::SetScrollOptions
         )
