@@ -3,6 +3,8 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+use sf_core::config::param_store::ParamStore;
+use sf_core::config::retry::RetryPolicy;
 // Zero-backoff policy shared with the in-crate unit tests via `internal`, so
 // retry tests inject the real shape with backoff zeroed instead of sleeping.
 use sf_core::file_manager::internal::gcs_test_retry_policy as test_policy;
@@ -820,7 +822,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         multipart: MultipartParams::default(),
     };
 
-    let results = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
+    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
         .await
         .expect("multi-file presigned GET should succeed");
 
@@ -855,7 +857,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         multipart: MultipartParams::default(),
     };
 
-    let err = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, None)
+    let err = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
         .await
         .expect_err("download must fail when neither URL nor token is available");
     // Walk the error chain (snafu wraps the leaf `MissingGcsCredentials`
@@ -1786,9 +1788,13 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
     };
 
     let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
-    let results = download_files(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, refresher_opt)
-        .await
-        .expect("batch download should succeed after per-file URL refresh");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        refresher_opt,
+    )
+    .await
+    .expect("batch download should succeed after per-file URL refresh");
 
     assert_eq!(results.len(), 2, "both files must be reported");
     let dir = std::path::Path::new(&local_location);
