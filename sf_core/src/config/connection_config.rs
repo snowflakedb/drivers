@@ -2738,7 +2738,9 @@ mod tests {
 
     #[test]
     fn validate_wif_providers_accepted_case_insensitive() {
-        for provider in &["aws", "AWS", "Azure", "oidc", "OIDC"] {
+        for provider in &[
+            "aws", "AWS", "azure", "Azure", "AZURE", "gcp", "GCP", "oidc", "OIDC",
+        ] {
             let mut settings = wif_base_settings(provider);
             if provider.eq_ignore_ascii_case("OIDC") {
                 settings.push(("token", Setting::String("tok".into())));
@@ -2793,6 +2795,53 @@ mod tests {
                     vec![
                         "arn:aws:iam::123:role/A".to_string(),
                         "arn:aws:iam::456:role/B".to_string(),
+                    ]
+                );
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wif_gcp_auth() {
+        let settings = settings_from(&wif_base_settings("GCP"));
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.provider,
+                    crate::config::rest_parameters::WifProvider::Gcp
+                );
+                assert!(cfg.impersonation_path.is_empty());
+                assert!(cfg.entra_resource.is_none());
+                assert!(cfg.oidc_token.is_none());
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_wif_gcp_auth_with_impersonation_path() {
+        let mut pairs = wif_base_settings("GCP");
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String(
+                "sa-a@proj.iam.gserviceaccount.com,sa-b@proj.iam.gserviceaccount.com".into(),
+            ),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(
+                    cfg.provider,
+                    crate::config::rest_parameters::WifProvider::Gcp
+                );
+                assert_eq!(
+                    cfg.impersonation_path,
+                    vec![
+                        "sa-a@proj.iam.gserviceaccount.com".to_string(),
+                        "sa-b@proj.iam.gserviceaccount.com".to_string(),
                     ]
                 );
             }
