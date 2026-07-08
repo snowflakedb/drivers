@@ -1,0 +1,58 @@
+id: universal-driver-logging-rust-rules
+friendly_name: "Universal Driver Logging Guidelines (Rust core)"
+status: enabled
+# Rust/core-specific logging mechanics. Language-agnostic logging policy lives in universal-driver-logging.yaml.
+allowed_folders:
+  - "sf_core/src"
+  - "odbc/src"
+  - "jdbc_bridge/src"
+excluded_folders:
+  - "sf_core/src/bin"
+allowed_file_extensions:
+  - ".rs"
+rules:
+  - id: ud-log-core-uses-tracing-not-stdio
+    rule: |
+      **OBJECTIVE**: The core emits all logs through the `tracing` ecosystem and never writes to stdout/stderr directly, so the host application stays in control of output. See `doc/logging/logging-architecture.md` § "stdout / stderr" and the `log` crate note.
+
+      **REQUIREMENT** (core — `sf_core/src` and the Rust bridges):
+      1. Emit logs via `tracing` macros (`trace!`/`debug!`/`info!`/`warn!`/`error!`). Do NOT use the `log` crate (`log::info!`, etc.) — `log` is not part of the pipeline.
+      2. Do NOT use `println!`, `print!`, `eprintln!`, or `eprint!` to surface diagnostics — all output must flow through the `tracing` pipeline.
+      3. The *sole* exception is logging-initialization failures inside the logging setup path (e.g. `log_manager.rs`), which occur before the pipeline exists and may use `eprintln!`, accompanied by a comment explaining the bootstrap exception.
+
+      ❌ **BAD:**
+      ```rust
+      use log::info;
+      info!("connection established");
+      eprintln!("retrying request to {host}");      // routine diagnostic, not an init failure
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      use tracing::info;
+      info!(%host, "connection established");
+
+      // logging bootstrap only — the pipeline does not exist yet:
+      eprintln!("failed to initialize logging: {e}");
+      ```
+
+  - id: ud-log-no-revealed-sensitive-in-macro
+    rule: |
+      **OBJECTIVE**: The Rust mechanism for keeping secrets out of logs — never feed a revealed `SensitiveString` into a `tracing` macro, and rely on its redacting `Debug`/`Display` everywhere else. This is the core-side enforcement of `ud-log-never-log-secrets` (general). See `doc/logging/logging-guidelines.md` § "What to never log" / "Object serialization".
+
+      **REQUIREMENT**:
+      1. Never call `.reveal()` (or otherwise unwrap `SensitiveString` / `Sensitive<_>`) inside the argument list of a `tracing` macro.
+      2. Never interpolate a plain `String`/`&str` field whose name matches the sensitive list (`password`, `token`, `passcode`, `private_key`, `*_pwd`, `secret`, ...) into a `tracing` macro — such values should be held as `SensitiveString` in the first place (see `ud-sensitive-data-must-use-sensitive-string` in the security ruleset).
+      3. Logging a `SensitiveString` field via `?`/`%` is fine — it renders `****`. Logging `{struct:?}` is fine only if every sensitive field is a `SensitiveString`.
+
+      ❌ **BAD:**
+      ```rust
+      info!("token={}", session_token.reveal());
+      debug!("auth request: {auth_request:?}");   // struct holds a plain String token
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      debug!(token = ?session_token, "refreshed session");   // prints ****
+      info!(%user, %authenticator, "login attempt");
+      ```

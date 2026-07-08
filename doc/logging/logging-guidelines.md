@@ -27,6 +27,11 @@ The driver supports **ERROR**, **WARN**, **INFO**, and **DEBUG**:
 - **INFO** - significant operational events that let a user or support engineer understand what the driver did without turning on DEBUG. Examples: HTTP round-trips, wrapper public API entry/exit, connection lifecycle, authentication steps, retries, token refresh, opt-in query text/parameters.
 - **DEBUG** - core API entry/exit, third-party error cause messages, verbose diagnostics.
 
+#### Rules
+
+- `.ai/review/universal-driver-logging-rust.yaml` (`ud-log-core-uses-tracing-not-stdio`) - core emits logs via
+  `tracing` (not the `log` crate) and never writes to stdout/stderr (except logging-init failures).
+
 ---
 
 ## What to never log
@@ -83,8 +88,10 @@ To enforce this at the code level, sensitive values in the core must be wrapped 
 ### Rules
 
 - `.ai/review/universal-driver-security.yaml` - enforces wrapping sensitive fields in `SensitiveString`.
-
-> [TODO]: add more.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-never-log-secrets`) - language-agnostic: flags any
+  logging call (core or wrapper) that emits a sensitive parameter's value.
+- `.ai/review/universal-driver-logging-rust.yaml` (`ud-log-no-revealed-sensitive-in-macro`) - Rust core: flags
+  `.reveal()` / plain sensitive fields interpolated into `tracing` macros.
 
 ---
 
@@ -104,7 +111,8 @@ Rules for both parameters:
 
 ### Rules
 
-> [TODO]: add more.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-query-text-and-params-gated`) - enforces that query text
+  and parameters are gated behind `log_query_text` / `log_query_parameters`, logged at INFO, with a risk warning.
 
 ---
 
@@ -121,7 +129,8 @@ Public API entry points should be logged on both entry and exit, so a single cal
 
 ### Rules
 
-> [TODO]: add more.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-public-api-entry-and-exit`) - wrapper entry points log
+  entry+exit at INFO; exposed core procedures log entry+exit at DEBUG.
 
 ---
 
@@ -167,8 +176,12 @@ When a URL is part of an error message, apply the same rule as [HTTP traffic](#h
 ### Rules
 
 - `.cursor/rules/rust-error-handling-rules.mdc` - enforces constructing core errors with `snafu`.
-
-> [TODO]: add more.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-underlying-error-cause-type-only`) - logs only the type
+  name of underlying/foreign error causes at the default level; raw message only at DEBUG.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-stack-trace-unhandled-only`) - stack traces only for
+  unhandled errors, frames only (no locals/args), at the exception's own level.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-url-in-error-host-and-path`) - error messages containing a
+  URL must include the host and path only - query strings and fragments stripped.
 
 ---
 
@@ -183,6 +196,8 @@ Every HTTP response code must be logged at the appropriate level, regardless of 
 
 ### Rules
 
-> [TODO]: add more.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-every-http-call-at-info`) - every outbound HTTP call must
+  be logged at INFO (host and path, query strings and fragments stripped); every response code must be logged at the
+  appropriate level.
 
 ---
