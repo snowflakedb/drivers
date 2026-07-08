@@ -286,6 +286,30 @@ class Connection(ConnectionMixin):
         except Exception:
             return True
 
+    async def is_expired(self) -> bool:
+        """
+        Return True if the connection's master token has expired.
+
+        Once True, the session can no longer be renewed and the connection
+        must be replaced; full re-authentication is required.
+
+        Set when the server returns GS code 390114, or when a time-based check
+        confirms master-token expiry just before a refresh attempt.
+
+        Matches the legacy snowflake-connector-python ``SnowflakeConnection.expired``
+        flag — intended as a read-only signal for external pool / application code.
+
+        Unlike the sync ``Connection.expired`` property, this is a coroutine
+        because the async client requires ``await`` for all RPC calls.
+        """
+        if self.conn_handle is None:
+            return False
+        try:
+            response = await async_core_driver.connection_is_expired(conn_handle=self.conn_handle)
+            return bool(response.is_expired)
+        except Exception:
+            return False
+
     async def is_valid(self) -> bool:
         if self.conn_handle is None or await self.is_closed():
             return False

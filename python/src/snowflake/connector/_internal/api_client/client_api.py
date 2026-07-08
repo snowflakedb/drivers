@@ -43,6 +43,8 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionInitResponse,
     ConnectionIsClosedRequest,
     ConnectionIsClosedResponse,
+    ConnectionIsExpiredRequest,
+    ConnectionIsExpiredResponse,
     ConnectionNewRequest,
     ConnectionNewResponse,
     ConnectionReleaseRequest,
@@ -361,6 +363,10 @@ class CoreDriver:
         request = ConnectionIsClosedRequest(conn_handle=conn_handle)
         return self.client.connection_is_closed(request)
 
+    def connection_is_expired(self, conn_handle: ConnectionHandle) -> ConnectionIsExpiredResponse:
+        request = ConnectionIsExpiredRequest(conn_handle=conn_handle)
+        return self.client.connection_is_expired(request)
+
     def connection_heartbeat(self, conn_handle: ConnectionHandle) -> ConnectionHeartbeatResponse:
         request = ConnectionHeartbeatRequest(conn_handle=conn_handle)
         return self.client.connection_heartbeat(request)
@@ -645,6 +651,9 @@ class AsyncCoreDriver:
 
     async def connection_is_closed(self, conn_handle: ConnectionHandle) -> ConnectionIsClosedResponse:
         return await self.client.connection_is_closed(ConnectionIsClosedRequest(conn_handle=conn_handle))
+
+    async def connection_is_expired(self, conn_handle: ConnectionHandle) -> ConnectionIsExpiredResponse:
+        return await self.client.connection_is_expired(ConnectionIsExpiredRequest(conn_handle=conn_handle))
 
     async def connection_heartbeat(self, conn_handle: ConnectionHandle) -> ConnectionHeartbeatResponse:
         return await self.client.connection_heartbeat(ConnectionHeartbeatRequest(conn_handle=conn_handle))
