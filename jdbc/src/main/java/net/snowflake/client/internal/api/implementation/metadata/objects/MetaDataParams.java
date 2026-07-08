@@ -119,6 +119,14 @@ class MetaDataParams {
       catalog = connection.getCatalog();
     }
 
+    // The second arm (!enableWildcards) forces isExactSchema=true even when the caller provided
+    // an explicit schema pattern. This is copied from the legacy driver and is effectively a no-op:
+    // - likeSchema() only escapes wildcards when isExactSchema && enableWildcards (both true),
+    //   so when wildcards are disabled the escaping branch is skipped anyway.
+    // - isSchemaNameWildcardPattern() independently returns false when wildcards are disabled,
+    //   so the IN-clause scoping doesn't depend on isExactSchema either.
+    // - schemaMatches() checks matches(compiledPattern, ...) first, which uses the same wildcard
+    //   semantics as SHOW's LIKE, so schemaMatchesExactly never widens the result set.
     boolean isExactSchema =
         (enableExactSchemaSearch() && useSessionSchema)
             || !isEnableWildcardsInShowMetadataCommands();

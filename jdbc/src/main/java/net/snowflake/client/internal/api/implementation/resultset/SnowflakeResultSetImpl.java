@@ -310,7 +310,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public int findColumn(String columnLabel) throws SQLException {
-    // TODO(SNOW-3695645): in SnowflakeResultSetMetaDataImpl::getColumnIndex session parameter
+    // TODO(SNOW-3740748): in SnowflakeResultSetMetaDataImpl::getColumnIndex session parameter
     //  "isResultColumnCaseInsensitive" is respect during the search, should we respect it here?
 
     checkClosed();
