@@ -1,0 +1,11 @@
+{
+  "name": "Query always returns 401 (unconditional, triggers session-token refresh)",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 401,
+    "body": "Session expired"
+  }
+}
