@@ -7,6 +7,7 @@
 
 mod aws;
 mod azure;
+mod gcp;
 mod oidc;
 
 use crate::config::rest_parameters::{WifProvider, WorkloadIdentityConfig};
@@ -15,7 +16,7 @@ use snafu::{Location, ResultExt, Snafu};
 
 /// Resolved identity token to be forwarded to Snowflake GS.
 ///
-/// `provider` is the wire string (`AWS`, `AZURE`, `OIDC`) sent
+/// `provider` is the wire string (`AWS`, `AZURE`, `GCP`, `OIDC`) sent
 /// in the `PROVIDER` field of the login-request body.
 /// `token` is the raw JWT or attested credential string sent in `TOKEN`.
 /// The field is `SensitiveString` to prevent the token from appearing in
@@ -51,6 +52,12 @@ pub enum AttestationError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("GCP attestation failed"))]
+    GcpAttestationFailed {
+        source: gcp::GcpAttestationError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("OIDC attestation failed"))]
     OidcAttestationFailed {
         source: oidc::OidcAttestationError,
@@ -83,6 +90,15 @@ pub async fn create_attestation(
                 .context(AzureAttestationFailedSnafu)?;
             Ok(Attestation {
                 provider: WifProvider::Azure.as_wire_str(),
+                token: SensitiveString::from(token),
+            })
+        }
+        WifProvider::Gcp => {
+            let token = gcp::get_identity_token(client, config)
+                .await
+                .context(GcpAttestationFailedSnafu)?;
+            Ok(Attestation {
+                provider: WifProvider::Gcp.as_wire_str(),
                 token: SensitiveString::from(token),
             })
         }
