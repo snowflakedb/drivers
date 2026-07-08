@@ -784,6 +784,8 @@ pub enum DescField {
     Precision = 1005,
     /// `SQL_DESC_SCALE` (1006) — numeric scale.
     Scale = 1006,
+    /// `SQL_DESC_DATETIME_INTERVAL_CODE` (1007) — datetime subcode for datetime/interval types.
+    DatetimeIntervalCode = 1007,
     /// `SQL_DESC_NULLABLE` (1008) — whether the column is nullable.
     Nullable = 1008,
     /// `SQL_DESC_INDICATOR_PTR` (1009) — pointer to the indicator buffer.
@@ -857,6 +859,7 @@ impl TryFrom<i16> for DescField {
             1004 => Ok(DescField::OctetLengthPtr),
             1005 => Ok(DescField::Precision),
             1006 => Ok(DescField::Scale),
+            1007 => Ok(DescField::DatetimeIntervalCode),
             1008 => Ok(DescField::Nullable),
             1009 => Ok(DescField::IndicatorPtr),
             1010 => Ok(DescField::DataPtr),
@@ -1217,6 +1220,8 @@ pub struct ApdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
+    pub array_status_ptr: *mut u16,
 }
 
 impl Default for ApdDescriptor {
@@ -1233,6 +1238,7 @@ impl ApdDescriptor {
             array_size: 1,
             bind_type: 0,
             bind_offset_ptr: std::ptr::null_mut(),
+            array_status_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -1433,7 +1439,7 @@ unsafe impl Send for Connection {}
 /// the pointer to the application's data buffer, its length, and the
 /// indicator/length pointer. Populated by `SQLBindParameter` or
 /// `SQLSetDescField` on the APD handle.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ApdRecord {
     pub value_type: CDataType,
     pub data_ptr: sql::Pointer,
@@ -1514,6 +1520,10 @@ pub struct IpdRecord {
     /// with `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}` to opt in to a non-default
     /// Snowflake logical type for the wire. `None` for every other binding.
     pub sf_subtype: Option<TimestampSubtype>,
+    /// `SQL_DESC_NAME` — the parameter name set via
+    /// `SQLSetDescField(IPD, SQL_DESC_NAME)`. `Some` ⇒ named (`SQL_DESC_UNNAMED`
+    /// reads back `SQL_NAMED`); `None` ⇒ unnamed (`SQL_UNNAMED`).
+    pub name: Option<String>,
 }
 
 impl IpdRecord {
@@ -1527,6 +1537,7 @@ impl IpdRecord {
             direction: sql::ParamType::Input as sql::SmallInt,
             nullable: 1, // SQL_NULLABLE — per ODBC spec
             sf_subtype: None,
+            name: None,
         }
     }
 }

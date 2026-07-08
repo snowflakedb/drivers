@@ -1821,6 +1821,7 @@ pub fn bind_col(
                     precision: None,
                     scale: None,
                     datetime_interval_precision: None,
+                    length: 0,
                 },
             );
         });

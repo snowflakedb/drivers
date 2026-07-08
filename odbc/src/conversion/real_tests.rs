@@ -71,6 +71,7 @@ mod tests {
             precision,
             scale,
             datetime_interval_precision: None,
+            length: 0,
         }
     }
 

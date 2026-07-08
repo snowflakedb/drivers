@@ -207,6 +207,25 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Cannot modify an implementation row descriptor"))]
+    CannotModifyIrd {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Inconsistent descriptor information: {reason}"))]
+    InconsistentDescriptorInfo {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("SQL_DESC_UNNAMED may only be set to SQL_UNNAMED, not SQL_NAMED"))]
+    CannotSetUnnamedToNamed {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Unsupported attribute: {attribute}"))]
     UnsupportedAttribute {
         attribute: i32,
@@ -677,6 +696,9 @@ impl OdbcError {
             OdbcError::UnknownAttribute { .. } => ErrorSource::ApiMisuse,
             OdbcError::ReadOnlyAttribute { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDescriptorFieldId { .. } => ErrorSource::ApiMisuse,
+            OdbcError::CannotModifyIrd { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InconsistentDescriptorInfo { .. } => ErrorSource::ApiMisuse,
+            OdbcError::CannotSetUnnamedToNamed { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnsupportedAttribute { .. } => ErrorSource::Unsupported,
             OdbcError::InvalidAttributeValue { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnsupportedInfoType { .. } => ErrorSource::Unsupported,
@@ -839,6 +861,11 @@ impl OdbcError {
             OdbcError::InvalidDescriptorFieldId { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
             }
+            OdbcError::CannotModifyIrd { .. } => SqlState::CannotModifyImplementationRowDescriptor,
+            OdbcError::InconsistentDescriptorInfo { .. } => {
+                SqlState::InconsistentDescriptorInformation
+            }
+            OdbcError::CannotSetUnnamedToNamed { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,

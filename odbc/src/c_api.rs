@@ -2309,6 +2309,57 @@ pub unsafe extern "system" fn SQLGetDescRecW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetDescRec(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    type_: sql::SmallInt,
+    sub_type: sql::SmallInt,
+    length: sql::Len,
+    precision: sql::SmallInt,
+    scale: sql::SmallInt,
+    data_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::Len,
+    indicator_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescRec");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
+    let result = api::descriptor::set_desc_rec(
+        descriptor_handle,
+        rec_number,
+        type_,
+        sub_type,
+        length,
+        precision,
+        scale,
+        data_ptr,
+        string_length_ptr,
+        indicator_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
+    record_err!(sql::HandleType::Desc, descriptor_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLCopyDesc(
+    source_desc_handle: sql::Handle,
+    target_desc_handle: sql::Handle,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Desc, source_desc_handle, "SQLCopyDesc");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, target_desc_handle);
+    let result = api::descriptor::copy_desc(source_desc_handle, target_desc_handle);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, target_desc_handle, &result);
+    record_err!(sql::HandleType::Desc, target_desc_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLSetDescField(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -2319,7 +2370,7 @@ pub unsafe extern "system" fn SQLSetDescField(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescField");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
-    let result = api::descriptor::set_desc_field(
+    let result = api::descriptor::set_desc_field::<Narrow>(
         descriptor_handle,
         rec_number,
         field_identifier,
@@ -2344,7 +2395,7 @@ pub unsafe extern "system" fn SQLSetDescFieldW(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescFieldW");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
-    let result = api::descriptor::set_desc_field(
+    let result = api::descriptor::set_desc_field::<Wide>(
         descriptor_handle,
         rec_number,
         field_identifier,
