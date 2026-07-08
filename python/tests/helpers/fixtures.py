@@ -18,6 +18,7 @@ def mock_db_api():
     from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
         ConnectionHandle,
         ConnectionIsClosedResponse,
+        ConnectionIsExpiredResponse,
         ConnectionSetOptionsResponse,
         DatabaseHandle,
     )
@@ -27,6 +28,7 @@ def mock_db_api():
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
     db_api.connection_get_parameter.return_value = MagicMock(value="")
     db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=False)
+    db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
     db_api.connection_set_options.return_value = ConnectionSetOptionsResponse(warnings=[])
 
     old_client = core_driver._client
