@@ -1949,7 +1949,6 @@ impl OdbcFunction {
                 | Self::ForeignKeys
                 | Self::GetCursorName
                 | Self::ParamOptions
-                | Self::PrimaryKeys
                 | Self::ProcedureColumns
                 | Self::Procedures
                 | Self::SetCursorName

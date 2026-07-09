@@ -345,6 +345,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("{command}: result set is missing the '{column}' column"))]
+    ShowKeysColumnMissing {
+        command: &'static str,
+        column: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("SHOW KEYS result: KEY_SEQ is missing, null, or not a valid SMALLINT"))]
+    ShowKeysInvalidKeySeq {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
         #[snafu(implicit)]
@@ -717,6 +731,8 @@ impl OdbcError {
             OdbcError::InvalidCursorPosition { .. } => ErrorSource::CursorState,
             OdbcError::MixedCursorFunctions { .. } => ErrorSource::CursorState,
             OdbcError::InternalError { .. } => ErrorSource::InternalError,
+            OdbcError::ShowKeysColumnMissing { .. } => ErrorSource::InternalError,
+            OdbcError::ShowKeysInvalidKeySeq { .. } => ErrorSource::InternalError,
             OdbcError::UnsupportedFeature { .. } => ErrorSource::Unsupported,
             OdbcError::FetchTypeOutOfRange { .. } => ErrorSource::CursorState,
             OdbcError::ExtendedFetchUsed { .. } => ErrorSource::CursorState,
@@ -885,6 +901,8 @@ impl OdbcError {
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::InternalError { .. } => SqlState::GeneralError,
+            OdbcError::ShowKeysColumnMissing { .. } => SqlState::GeneralError,
+            OdbcError::ShowKeysInvalidKeySeq { .. } => SqlState::GeneralError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
@@ -1049,6 +1067,17 @@ impl OdbcError {
         match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Application { query_id, .. } => query_id.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Server-provided SQLSTATE from a core application error, when present.
+    pub fn server_sql_state(&self) -> Option<&str> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { sql_state, .. } => sql_state.as_deref(),
                 _ => None,
             },
             _ => None,

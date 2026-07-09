@@ -1431,7 +1431,6 @@ behavior_differences:
       on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
       on the legacy driver so a token cached by the preceding happy-path test cannot mask the
       expected token-exchange failure.
-
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
     status: allowed
@@ -1445,3 +1444,31 @@ behavior_differences:
       SQLCancel from any DAE state (S8/S9/S10) fully resets the pending operation, discarding all accumulated SQLPutData. On re-entry the parameter starts fresh, matching the ODBC 3.5 spec requirement that cancel aborts the pending operation.
     description: |
       Applications that cancel mid-DAE and retry will get clean parameter values instead of stale concatenated data.
+  87:
+    name: "SQLPrimaryKeys/SQLForeignKeys case-fold unquoted identifiers in identifier mode"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
+      ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
+      preserves case). The universal driver folds unquoted catalog/schema/table identifiers to
+      uppercase before building the SHOW scope and re-filtering, matching how Snowflake stores
+      unquoted names. The legacy driver re-filters the SHOW result case-sensitively against the
+      caller's raw (lowercase) argument, so a lowercase identifier matches nothing. Tracked under
+      SNOW-3234772 (SQLPrimaryKeys) and SNOW-3234773 (SQLForeignKeys).
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE and a lowercase (unquoted) catalog/schema/table identifier,
+      the legacy driver compares the identifier case-sensitively against the uppercase names returned
+      by SHOW and drops every row, yielding an empty result set.
+    new_driver_behavior: |
+      Unquoted identifiers are folded to uppercase before the SHOW scope is built and before the
+      client-side re-filter, so a lowercase identifier matches the uppercase stored name and the
+      expected row(s) are returned. Double-quoted identifiers remain case-sensitive.
+    description: |
+      Applications that relied on the legacy case-sensitive behavior of unquoted identifiers under
+      identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
+      split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
+      legacy empty result set).

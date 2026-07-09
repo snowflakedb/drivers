@@ -689,11 +689,25 @@ pub fn make_converter(
     }
 }
 
+/// The `conciseSqlType` Arrow-metadata value that tags catalog SMALLINT columns
+/// as ODBC `SQL_SMALLINT`. Single source of truth for the write side
+/// (`catalog::catalog_key_seq_field`) and the read side (`sql_type_from_field`)
+/// so the two cannot drift apart.
+pub(crate) const SMALLINT_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::SMALLINT.0;
+
 /// Map a Snowflake Arrow field to the corresponding SQL data type.
 pub fn sql_type_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SqlDataType, ConversionError> {
+    if field
+        .metadata()
+        .get("conciseSqlType")
+        .and_then(|v| v.parse::<i16>().ok())
+        .is_some_and(|v| v == SMALLINT_CONCISE_SQL_TYPE)
+    {
+        return Ok(odbc_sys::SqlDataType::SMALLINT);
+    }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }
 
