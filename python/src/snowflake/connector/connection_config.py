@@ -252,6 +252,11 @@ class ConnectionConfig(ConnectionConfigMixin):
     retry_backoff_jitter: str | None = "decorrelated"
     """Backoff jitter strategy: 'none', 'full', or 'decorrelated'. Default: 'decorrelated'"""
 
+    retry_extra_status_codes: str | None = None
+    """Additional HTTP status codes (comma-separated) to retry on general HTTP and PUT/GET calls, beyond the built-in
+    408/429/307/308/5xx set
+    """
+
     retry_max_attempts: int | None = 6
     """Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry. Default: 6"""
 
