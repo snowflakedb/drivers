@@ -123,7 +123,11 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
         let _guard = tracing::dispatcher::set_default(&state.dispatch);
         let api = CStr::from_ptr(api).to_string_lossy().to_string();
         let method = CStr::from_ptr(method).to_string_lossy().to_string();
-        let message = std::slice::from_raw_parts(request, request_len);
+        let message = if request_len == 0 || request.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(request, request_len)
+        };
         state.runtime.block_on(
             state
                 .transport
