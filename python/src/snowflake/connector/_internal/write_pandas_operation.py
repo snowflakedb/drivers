@@ -112,6 +112,33 @@ def _drop_object(cursor: SnowflakeCursor, name: str, object_type: str) -> None:
     cursor.execute(f"DROP {object_type} IF EXISTS {name}")
 
 
+def _stage_sql(
+    name: str,
+    compression: str,
+    binary_as_text_false: bool,
+    use_scoped: bool = False,
+) -> str:
+    """Build CREATE [SCOPED] TEMPORARY STAGE SQL for a Parquet stage."""
+    mapped = VALID_COMPRESSIONS_MAP[compression]
+    temp_type = "SCOPED TEMPORARY" if use_scoped else "TEMPORARY"
+    fmt_opts = [f"TYPE=PARQUET COMPRESSION={mapped}"]
+    if binary_as_text_false:
+        fmt_opts.append("BINARY_AS_TEXT=FALSE")
+    return f"CREATE {temp_type} STAGE {name} FILE_FORMAT=({' '.join(fmt_opts)})"
+
+
+def _file_format_sql(
+    name: str,
+    compression: str,
+    use_logical_type_suffix: str = "",
+    use_scoped: bool = False,
+) -> str:
+    """Build CREATE [SCOPED] TEMPORARY FILE FORMAT SQL for Parquet."""
+    mapped = VALID_COMPRESSIONS_MAP[compression]
+    temp_type = "SCOPED TEMPORARY" if use_scoped else "TEMPORARY"
+    return f"CREATE {temp_type} FILE FORMAT {name} TYPE=PARQUET COMPRESSION={mapped}{use_logical_type_suffix}"
+
+
 # ---------------------------------------------------------------------------
 # WritePandasResult
 # ---------------------------------------------------------------------------
@@ -520,20 +547,12 @@ class WritePandasOperation:
     # -- Shared helpers --------------------------------------------------
 
     def _build_create_stage_sql(self, name: str) -> str:
-        cfg = self._cfg
-        mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
-        fmt_opts = [f"TYPE=PARQUET COMPRESSION={mapped}"]
-        if cfg.binary_as_text_false_on_stage:
-            fmt_opts.append("BINARY_AS_TEXT=FALSE")
-        return f"CREATE TEMPORARY STAGE {name} FILE_FORMAT=({' '.join(fmt_opts)})"
+        return _stage_sql(name, self._cfg.compression, self._cfg.binary_as_text_false_on_stage)
 
     def _build_create_file_format_sql(self, name: str) -> str:
         cfg = self._cfg
-        mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
-        parts = [f"CREATE TEMPORARY FILE FORMAT {name} TYPE=PARQUET COMPRESSION={mapped}"]
-        if cfg.use_logical_type is not None:
-            parts.append(f"USE_LOGICAL_TYPE={_sql_bool(cfg.use_logical_type)}")
-        return " ".join(parts)
+        suffix = f" USE_LOGICAL_TYPE={_sql_bool(cfg.use_logical_type)}" if cfg.use_logical_type is not None else ""
+        return _file_format_sql(name, cfg.compression, suffix)
 
     def _build_iceberg_config_sql(self) -> str:
         cfg = self._cfg

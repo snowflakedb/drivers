@@ -12,9 +12,11 @@ These lock in the contract Snowpark actually depends on, so the modules can't be
   helpers that snowpark's analyzer imports directly.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 
-from snowflake.connector.errors import MissingDependencyError, NotSupportedError
+from snowflake.connector.errors import MissingDependencyError, ProgrammingError
 from snowflake.connector.options import (
     MissingOptionalDependency,
     MissingPandas,
@@ -73,10 +75,57 @@ class TestPandasToolsSnowparkHelpers:
     def test_build_location_helper_omits_missing_parts_unquoted(self):
         assert build_location_helper(None, None, "t", False) == "t"
 
-    def test_create_temp_stage_raises_not_supported(self):
-        with pytest.raises(NotSupportedError, match="not supported"):
-            _create_temp_stage()
+    def test_create_temp_stage_executes_create_stage_sql(self):
+        cursor = MagicMock()
+        result = _create_temp_stage(cursor, "db", "sch", True, "gzip", False, False)
+        sql = cursor.execute.call_args[0][0]
+        assert "CREATE TEMPORARY STAGE" in sql
+        assert "TYPE=PARQUET COMPRESSION=auto" in sql
+        assert result.startswith('"db"."sch".')
 
-    def test_create_temp_file_format_raises_not_supported(self):
-        with pytest.raises(NotSupportedError, match="not supported"):
-            _create_temp_file_format()
+    def test_create_temp_stage_binary_as_text_false_when_auto_create(self):
+        cursor = MagicMock()
+        _create_temp_stage(cursor, None, None, False, "gzip", True, False)
+        sql = cursor.execute.call_args[0][0]
+        assert "BINARY_AS_TEXT=FALSE" in sql
+
+    def test_create_temp_stage_binary_as_text_false_when_overwrite(self):
+        cursor = MagicMock()
+        _create_temp_stage(cursor, None, None, False, "gzip", False, True)
+        sql = cursor.execute.call_args[0][0]
+        assert "BINARY_AS_TEXT=FALSE" in sql
+
+    def test_create_temp_stage_scoped(self):
+        cursor = MagicMock()
+        _create_temp_stage(cursor, None, None, False, "gzip", False, False, use_scoped_temp_object=True)
+        sql = cursor.execute.call_args[0][0]
+        assert "SCOPED TEMPORARY STAGE" in sql
+
+    def test_create_temp_stage_fallback_on_programming_error(self):
+        cursor = MagicMock()
+        cursor.execute.side_effect = [ProgrammingError(), None]
+        result = _create_temp_stage(cursor, "db", "sch", True, "gzip", False, False)
+        assert cursor.execute.call_count == 2
+        fallback_sql = cursor.execute.call_args_list[1][0][0]
+        assert '"db"."sch"' not in fallback_sql
+        assert '"db"."sch"' not in result
+
+    def test_create_temp_file_format_executes_create_file_format_sql(self):
+        cursor = MagicMock()
+        result = _create_temp_file_format(cursor, "db", "sch", True, "gzip", "")
+        sql = cursor.execute.call_args[0][0]
+        assert "CREATE TEMPORARY FILE FORMAT" in sql
+        assert "TYPE=PARQUET COMPRESSION=auto" in sql
+        assert result.startswith('"db"."sch".')
+
+    def test_create_temp_file_format_with_logical_type_suffix(self):
+        cursor = MagicMock()
+        _create_temp_file_format(cursor, None, None, False, "gzip", " USE_LOGICAL_TYPE=TRUE")
+        sql = cursor.execute.call_args[0][0]
+        assert "USE_LOGICAL_TYPE=TRUE" in sql
+
+    def test_create_temp_file_format_scoped(self):
+        cursor = MagicMock()
+        _create_temp_file_format(cursor, None, None, False, "gzip", "", use_scoped_temp_object=True)
+        sql = cursor.execute.call_args[0][0]
+        assert "SCOPED TEMPORARY FILE FORMAT" in sql
