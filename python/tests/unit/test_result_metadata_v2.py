@@ -1,0 +1,145 @@
+"""Unit tests for the real ResultMetadataV2 class (BD#39 partial fix).
+
+Verifies: property access matches legacy interface, vector_dimension is read
+from the proto dimension field, _is_nullable is a private attr (Snowpark reads
+it directly), and fields is always None (proto limitation).
+"""
+
+from unittest.mock import MagicMock
+
+from snowflake.connector._internal.cursor.result_metadata import ResultMetadata, ResultMetadataV2
+
+
+def _mock_column(
+    name: str = "col",
+    col_type: str = "TEXT",
+    nullable: bool = True,
+    length: int | None = None,
+    byte_length: int | None = None,
+    precision: int | None = None,
+    scale: int | None = None,
+    dimension: int | None = None,
+) -> MagicMock:
+    col = MagicMock()
+    col.name = name
+    col.type = col_type
+    col.nullable = nullable
+    col.HasField.side_effect = lambda f: {
+        "length": length is not None,
+        "byte_length": byte_length is not None,
+        "precision": precision is not None,
+        "scale": scale is not None,
+        "dimension": dimension is not None,
+    }.get(f, False)
+    col.length = length or 0
+    col.byte_length = byte_length or 0
+    col.precision = precision or 0
+    col.scale = scale or 0
+    col.dimension = dimension or 0
+    return col
+
+
+class TestResultMetadataV2IsDistinctClass:
+    def test_is_not_alias_of_result_metadata(self):
+        assert ResultMetadataV2 is not ResultMetadata
+
+    def test_is_not_a_named_tuple(self):
+        assert not issubclass(ResultMetadataV2, tuple)
+
+
+class TestResultMetadataV2Properties:
+    def test_all_properties_accessible(self):
+        v2 = ResultMetadataV2(
+            name="col",
+            type_code=2,
+            is_nullable=True,
+            display_size=None,
+            internal_size=16,
+            precision=10,
+            scale=2,
+            vector_dimension=3,
+            fields=None,
+        )
+        assert v2.name == "col"
+        assert v2.type_code == 2
+        assert v2.is_nullable is True
+        assert v2.display_size is None
+        assert v2.internal_size == 16
+        assert v2.precision == 10
+        assert v2.scale == 2
+        assert v2.vector_dimension == 3
+        assert v2.fields is None
+
+    def test_is_nullable_accessible_as_private_attr(self):
+        # Snowpark reads ._is_nullable directly on nested element metadata.
+        v2 = ResultMetadataV2(name=None, type_code=1, is_nullable=False)
+        assert v2._is_nullable is False
+        assert v2.is_nullable is False
+
+
+class TestResultMetadataV2FromColumn:
+    def test_vector_dimension_populated_from_dimension_field(self):
+        col = _mock_column(col_type="VECTOR", dimension=128)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.vector_dimension == 128
+
+    def test_vector_dimension_none_when_field_absent(self):
+        col = _mock_column(col_type="FIXED")
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.vector_dimension is None
+
+    def test_fields_always_none(self):
+        # Proto has no nested column list — BD#39 remainder.
+        col = _mock_column(col_type="OBJECT")
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.fields is None
+
+    def test_nullable_and_name_populated(self):
+        col = _mock_column(name="amount", col_type="FIXED", nullable=False)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.name == "amount"
+        assert v2.is_nullable is False
+
+    def test_precision_and_scale_populated(self):
+        col = _mock_column(col_type="FIXED", precision=18, scale=6)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.precision == 18
+        assert v2.scale == 6
+
+
+class TestResultMetadataV2CreateDescription:
+    def test_returns_none_for_none_result(self):
+        assert ResultMetadataV2.create_description(None) is None
+
+    def test_returns_none_for_result_with_no_columns(self):
+        result = MagicMock()
+        result.columns = []
+        assert ResultMetadataV2.create_description(result) is None
+
+    def test_returns_list_of_v2_objects(self):
+        col = _mock_column(col_type="TEXT", length=100)
+        result = MagicMock()
+        result.columns = [col]
+        desc = ResultMetadataV2.create_description(result)
+        assert desc is not None
+        assert len(desc) == 1
+        assert isinstance(desc[0], ResultMetadataV2)
+
+    def test_vector_dimension_in_create_description(self):
+        col = _mock_column(col_type="VECTOR", dimension=64)
+        result = MagicMock()
+        result.columns = [col]
+        desc = ResultMetadataV2.create_description(result)
+        assert desc[0].vector_dimension == 64
+
+
+class TestResultMetadataV2Equality:
+    def test_equal_instances(self):
+        a = ResultMetadataV2(name="x", type_code=2, is_nullable=True, precision=10, scale=0)
+        b = ResultMetadataV2(name="x", type_code=2, is_nullable=True, precision=10, scale=0)
+        assert a == b
+
+    def test_not_equal_when_vector_dimension_differs(self):
+        a = ResultMetadataV2(name="x", type_code=7, is_nullable=False, vector_dimension=3)
+        b = ResultMetadataV2(name="x", type_code=7, is_nullable=False, vector_dimension=4)
+        assert a != b

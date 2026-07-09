@@ -58,8 +58,145 @@ class ResultMetadata(NamedTuple):
         return None
 
 
-# Backward compatibility alias
-ResultMetadataV2 = ResultMetadata
+class ResultMetadataV2:
+    """New-format column description carrying ``vector_dimension`` and ``fields``.
+
+    Replaces the ``ResultMetadataV2 = ResultMetadata`` alias. Matches the
+    legacy ``snowflake-connector-python`` ``ResultMetadataV2`` interface so
+    Snowpark can read ``.name``, ``.type_code``, ``.is_nullable``,
+    ``.vector_dimension``, and ``.fields`` without connector-version guards.
+
+    ``fields`` is always ``None`` — the UD proto ``ColumnMetadata`` carries no
+    nested column list for structured types (OBJECT/ARRAY/MAP). BD#39 tracks
+    that gap; ``vector_dimension`` is fully populated from the ``dimension``
+    proto field.
+
+    Note: ``_is_nullable`` is stored as a private attribute (not just a
+    property) because Snowpark accesses it directly on nested ARRAY/MAP element
+    metadata objects.
+    """
+
+    __slots__ = (
+        "_name",
+        "_type_code",
+        "_is_nullable",
+        "_display_size",
+        "_internal_size",
+        "_precision",
+        "_scale",
+        "_vector_dimension",
+        "_fields",
+    )
+
+    def __init__(
+        self,
+        name: str | None,
+        type_code: int,
+        is_nullable: bool,
+        display_size: int | None = None,
+        internal_size: int | None = None,
+        precision: int | None = None,
+        scale: int | None = None,
+        vector_dimension: int | None = None,
+        fields: list[ResultMetadataV2] | None = None,
+    ) -> None:
+        self._name = name
+        self._type_code = type_code
+        self._is_nullable = is_nullable
+        self._display_size = display_size
+        self._internal_size = internal_size
+        self._precision = precision
+        self._scale = scale
+        self._vector_dimension = vector_dimension
+        self._fields = fields
+
+    @property
+    def name(self) -> str | None:
+        return self._name
+
+    @property
+    def type_code(self) -> int:
+        return self._type_code
+
+    @property
+    def is_nullable(self) -> bool:
+        return self._is_nullable
+
+    @property
+    def display_size(self) -> int | None:
+        return self._display_size
+
+    @property
+    def internal_size(self) -> int | None:
+        return self._internal_size
+
+    @property
+    def precision(self) -> int | None:
+        return self._precision
+
+    @property
+    def scale(self) -> int | None:
+        return self._scale
+
+    @property
+    def vector_dimension(self) -> int | None:
+        return self._vector_dimension
+
+    @property
+    def fields(self) -> list[ResultMetadataV2] | None:
+        return self._fields
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ResultMetadataV2):
+            return NotImplemented
+        return (
+            self._name == other._name
+            and self._type_code == other._type_code
+            and self._is_nullable == other._is_nullable
+            and self._display_size == other._display_size
+            and self._internal_size == other._internal_size
+            and self._precision == other._precision
+            and self._scale == other._scale
+            and self._vector_dimension == other._vector_dimension
+            and self._fields == other._fields
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"ResultMetadataV2(name={self._name!r}, type_code={self._type_code!r}, "
+            f"is_nullable={self._is_nullable!r}, vector_dimension={self._vector_dimension!r}, "
+            f"fields={self._fields!r})"
+        )
+
+    @classmethod
+    def from_column(cls, col: Any) -> ResultMetadataV2:
+        """Build from a proto ``ColumnMetadata`` message."""
+        type_code = get_type_code(col.type)
+        display_size = (
+            col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
+        )
+        internal_size = col.byte_length if col.HasField("byte_length") else None
+        precision = col.precision if col.HasField("precision") else None
+        scale = col.scale if col.HasField("scale") else None
+        vector_dimension = col.dimension if col.HasField("dimension") else None
+        return cls(
+            name=col.name,
+            type_code=type_code,
+            is_nullable=col.nullable,
+            display_size=display_size,
+            internal_size=internal_size,
+            precision=precision,
+            scale=scale,
+            vector_dimension=vector_dimension,
+            fields=None,  # proto has no nested field list — BD#39
+        )
+
+    @classmethod
+    def create_description(cls, result: PrepareResult | ResultSetDescriptor | None) -> list[ResultMetadataV2] | None:
+        """Build a V2 description list from a prepare/describe result."""
+        if result and result.columns:
+            return [cls.from_column(col) for col in result.columns]
+        return None
 
 
 class QueryResultStats(NamedTuple):

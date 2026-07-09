@@ -561,29 +561,27 @@ behavior_differences:
       to `https://`.
 
   39:
-    name: "ResultMetadataV2 lacks vector_dimension and fields attributes"
+    name: "ResultMetadataV2.fields is None for structured column types (OBJECT/ARRAY/MAP)"
     status: todo
     type: api_incompatibility
     reviewed: false
     is_breaking_change: false
-    impact: medium
+    impact: low
     old_driver_behavior: |
       `cursor._describe_internal()` returns `list[ResultMetadataV2]` where
-      `ResultMetadataV2` is a distinct class from `ResultMetadata` and carries two
-      additional attributes: `vector_dimension: int | None` (for VECTOR column types)
-      and `fields: list[ResultMetadataV2] | None` (for structured/object column types).
-      Snowpark and other callers read these attributes to handle VECTOR and structured
-      columns correctly.
+      `ResultMetadataV2` carries `vector_dimension: int | None` (populated for VECTOR
+      columns) and `fields: list[ResultMetadataV2] | None` (populated for OBJECT/ARRAY/MAP
+      columns with inline sub-field metadata).
     new_driver_behavior: |
-      The Universal Driver aliases `ResultMetadataV2 = ResultMetadata` (a NamedTuple).
-      The alias lacks `vector_dimension` and `fields`; accessing either attribute on a
-      result from `cursor._describe_internal()` raises `AttributeError`. As a result,
-      `cursor._describe_internal()` currently raises `NotImplementedError` to prevent
-      silent data loss for callers that read these fields.
-      Snowpark falls back to `cursor.description` (V1 path) for schema inference.
+      `cursor._describe_internal()` returns `list[ResultMetadataV2]` with a real
+      `ResultMetadataV2` class (not an alias). `vector_dimension` is fully populated from
+      the proto `ColumnMetadata.dimension` field. `fields` is always `None` because the
+      UD proto `ColumnMetadata` message carries no nested column list for structured types.
+      Snowpark uses `getattr(metadata, "fields", None)` for most structured-type paths so
+      falls back gracefully; recursive sub-field type inference for OBJECT/ARRAY/MAP
+      columns is unavailable until the proto schema is extended.
     description: |
-      Tracked as part of SNOW-2912540 Snowpark compatibility work. Proper fix requires
-      implementing a distinct `ResultMetadataV2` class in the UD with `vector_dimension`
-      and `fields` populated from the protobuf column descriptor, then wiring
-      `_describe_internal` to use it. Until then, VECTOR column schema inference and
-      structured-type introspection via `_describe_internal` are unsupported.
+      Partial fix landed in SNOW-2912540: `ResultMetadataV2` is now a distinct class with
+      `vector_dimension` populated. Remaining gap: `fields` requires extending the
+      `ColumnMetadata` proto message with a repeated `fields` sub-message and updating
+      `ResultMetadataV2.from_column` to recursively build the list.

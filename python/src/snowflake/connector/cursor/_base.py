@@ -488,12 +488,22 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         params: Sequence[Any] | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[ResultMetadataV2] | None:
-        """Describe-only path returning new-format metadata (see BD#39).
+        """Describe-only path returning new-format metadata.
 
-        Not implemented: UD's ResultMetadataV2 is an alias for ResultMetadata and
-        lacks vector_dimension / fields. Snowpark falls back to cursor.description.
+        Returns ``list[ResultMetadataV2]`` with ``vector_dimension`` populated
+        from the proto ``dimension`` field. ``fields`` is always ``None`` (UD
+        proto carries no nested column list for structured types — BD#39).
         """
-        raise NotImplementedError
+        parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
+        self.reset()
+        query, _ = self._prepare_query(operation, parameters)
+        prepare_result: PrepareResult | None = None
+        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            prepare_result = self._prepare(stmt_handle)
+        self._query_result = QueryResult.from_prepare_result(prepare_result)
+        if self._query_result.description:
+            self._rownumber = -1
+        return ResultMetadataV2.create_description(prepare_result)
 
     # ------------------------------------------------------------------
     # Fetch – shared implementation
