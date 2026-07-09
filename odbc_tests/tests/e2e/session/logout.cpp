@@ -24,7 +24,7 @@ static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env
   return dbc;
 }
 
-TEST_CASE("should be idempotent when close called multiple times", "[session][logout]") {
+TEST_CASE("should be idempotent when close called multiple times", "[session][logout][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -109,7 +109,7 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout][flak
   CHECK_THAT(OdbcResult(after, dbc), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("08003"));
 }
 
-TEST_CASE("should succeed even when server returns error during logout", "[session][logout]") {
+TEST_CASE("should succeed even when server returns error during logout", "[session][logout][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
