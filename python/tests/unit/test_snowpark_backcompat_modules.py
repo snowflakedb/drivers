@@ -7,9 +7,10 @@ drift below Snowpark's needs (see snowpark's ``mock/_telemetry.py`` and
 
 import logging
 
+from http.client import OK
+
 import pytest
 
-from snowflake.connector.compat import OK
 from snowflake.connector.constants import ENV_VAR_PARTNER
 from snowflake.connector.network import ReauthenticationRequest
 from snowflake.connector.secret_detector import SecretDetector
