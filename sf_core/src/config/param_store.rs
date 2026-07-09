@@ -52,6 +52,23 @@ impl ParamStore {
         }
     }
 
+    /// Extract a floating-point value for `key`.
+    ///
+    /// Returns `Some` for `Setting::Double` directly. Also accepts
+    /// `Setting::Int` (widened to `f64`) and `Setting::String` via a decimal
+    /// parse, mirroring [`get_int`](Self::get_int)'s tolerance for numeric
+    /// values that arrive as quoted strings from TOML files or connection
+    /// strings. Returns `None` if the key is absent, the string is
+    /// non-numeric, or the value is any other type.
+    pub fn get_double(&self, key: ParamKey) -> Option<f64> {
+        match self.get(key)? {
+            Setting::Double(d) => Some(*d),
+            Setting::Int(i) => Some(*i as f64),
+            Setting::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        }
+    }
+
     /// Extract a string value for `key` and wrap it in [`SensitiveString`],
     /// returning `None` if absent or not a string. Use for credential fields
     /// that must never appear in debug output.
@@ -131,5 +148,37 @@ impl Settings for ParamStore {
 
     fn set(&mut self, key: &str, value: Setting) {
         self.inner.insert(key.to_string(), value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::param_registry::param_names;
+
+    const KEY: ParamKey = param_names::RETRY_BACKOFF_FACTOR;
+
+    fn store_with(value: Setting) -> ParamStore {
+        let mut s = ParamStore::new();
+        s.insert(KEY.as_str().to_string(), value);
+        s
+    }
+
+    #[test]
+    fn get_double_coerces_numeric_forms_and_rejects_others() {
+        // Native double, widened int, and decimal-string forms all succeed.
+        assert_eq!(store_with(Setting::Double(1.5)).get_double(KEY), Some(1.5));
+        assert_eq!(store_with(Setting::Int(3)).get_double(KEY), Some(3.0));
+        assert_eq!(
+            store_with(Setting::String("2.25".to_string())).get_double(KEY),
+            Some(2.25)
+        );
+        // Non-numeric string, wrong type, and absent key return None.
+        assert_eq!(
+            store_with(Setting::String("abc".to_string())).get_double(KEY),
+            None
+        );
+        assert_eq!(store_with(Setting::Bool(true)).get_double(KEY), None);
+        assert_eq!(ParamStore::new().get_double(KEY), None);
     }
 }

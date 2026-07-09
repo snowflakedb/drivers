@@ -1764,10 +1764,10 @@ mod tests {
     #[test]
     fn gcs_retry_policy_backoff_bounds() {
         let p = gcs_retry_policy(false, &base_policy());
-        assert_eq!(p.backoff.base, Duration::from_secs(1));
+        assert_eq!(p.backoff.base, Duration::from_millis(250));
         assert_eq!(p.backoff.cap, Duration::from_secs(16));
         assert_eq!(p.backoff.factor, 2.0);
-        assert!(matches!(p.backoff.jitter, Jitter::None));
+        assert!(matches!(p.backoff.jitter, Jitter::Decorrelated));
     }
 
     #[test]

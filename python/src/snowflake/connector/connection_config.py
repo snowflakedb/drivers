@@ -240,6 +240,18 @@ class ConnectionConfig(ConnectionConfigMixin):
     put_get_max_attempts: int | None = 6
     """Maximum total attempts for a single PUT/GET file transfer (1 = no retry). Default: 6"""
 
+    retry_backoff_base_ms: int | None = 250
+    """Initial exponential-backoff delay in milliseconds between retry attempts. Default: 250"""
+
+    retry_backoff_cap_ms: int | None = 16000
+    """Maximum exponential-backoff delay in milliseconds between retry attempts. Default: 16000"""
+
+    retry_backoff_factor: float | None = 2
+    """Multiplier applied to the backoff delay after each retry attempt. Default: 2"""
+
+    retry_backoff_jitter: str | None = "decorrelated"
+    """Backoff jitter strategy: 'none', 'full', or 'decorrelated'. Default: 'decorrelated'"""
+
     retry_max_attempts: int | None = 6
     """Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry. Default: 6"""
 
