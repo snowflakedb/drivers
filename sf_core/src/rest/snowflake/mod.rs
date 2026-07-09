@@ -2093,7 +2093,7 @@ where
 
     // 2xx with `success:false, code:"390114"` means the master token has expired.
     // The session can never be renewed; surface it so RefreshContext can set
-    // `is_expired = true` and propagate `MasterTokenExpired` to the caller.
+    // `is_master_token_expired = true` and propagate `MasterTokenExpired` to the caller.
     if !parsed.success
         && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(MASTER_TOKEN_EXPIRED)
     {
