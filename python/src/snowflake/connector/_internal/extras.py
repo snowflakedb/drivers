@@ -36,10 +36,18 @@ class MissingOptionalDependency:
 
     The only thing this class is supposed to do is raise a MissingDependencyError when __getattr__ is called.
     This will be triggered whenever module.member is going to be called.
+
+    Supports two construction patterns:
+    - ``MissingOptionalDependency("pandas")`` — sets dep name from argument.
+    - No-arg subclass with a ``_dep_name`` class attribute (Snowpark pattern):
+      ``class MissingPandas(MissingOptionalDependency): _dep_name = "pandas"``
     """
 
-    def __init__(self, dep: str) -> None:
-        self._dep_name = dep
+    _dep_name: str = "not set"
+
+    def __init__(self, dep: str | None = None) -> None:
+        if dep is not None:
+            self._dep_name = dep
 
     def __getattr__(self, item: str) -> Any:
         raise errors.MissingDependencyError(self._dep_name)
