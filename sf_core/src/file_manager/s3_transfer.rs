@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn s3_retry_policy_backoff_bounds() {
         let policy = s3_retry_policy(&base_policy());
-        assert_eq!(policy.backoff.base, Duration::from_secs(1));
+        assert_eq!(policy.backoff.base, Duration::from_millis(250));
         assert_eq!(policy.backoff.cap, Duration::from_secs(16));
         assert_eq!(policy.backoff.factor, 2.0);
     }

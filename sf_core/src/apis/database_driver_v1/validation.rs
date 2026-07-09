@@ -13,6 +13,11 @@ fn setting_matches_value_type(setting: &Setting, expected: ValueType) -> bool {
         (Setting::String(_), ValueType::String)
             | (Setting::Int(_), ValueType::Int)
             | (Setting::Double(_), ValueType::Double)
+            // An integer is a valid floating-point value (numeric widening),
+            // mirroring `ParamStore::get_double`. Wrappers routinely send a
+            // whole-number Double param as an Int (e.g. Python renders the
+            // `retry_backoff_factor` default `2.0` as the int literal `2`).
+            | (Setting::Int(_), ValueType::Double)
             | (Setting::Bytes(_), ValueType::Bytes)
             | (Setting::Bool(_), ValueType::Bool)
     )
@@ -485,6 +490,24 @@ mod tests {
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
         assert_eq!(issues[0].code, ValidationCode::InvalidType);
         assert!(!resolved.contains_key("host"));
+    }
+
+    #[test]
+    fn int_is_accepted_for_a_double_param() {
+        // Whole-number Double params arrive as Int from wrappers (e.g. Python's
+        // `retry_backoff_factor` default `2.0` renders as `2`). This must not be
+        // rejected as a type mismatch.
+        let mut options = HashMap::new();
+        options.insert("retry_backoff_factor".to_string(), Setting::Int(2));
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(resolved.get("retry_backoff_factor"), Some(&Setting::Int(2)));
     }
 
     #[test]
