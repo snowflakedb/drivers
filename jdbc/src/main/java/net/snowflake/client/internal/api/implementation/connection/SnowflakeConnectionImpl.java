@@ -73,6 +73,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private String catalog;
   private String schema;
 
+  private SQLWarning sqlWarnings;
+
   private volatile String cachedDatabaseVersion;
   private final Object databaseVersionLock = new Object();
 
@@ -100,6 +102,9 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
       this.autoCommit = fetchAutoCommit(coreDriverApi, connHandle);
+      this.sqlWarnings =
+          ConnectionEstablishedWarnings.compute(
+              resolvedProperties, coreDriverApi.connectionGetInfo(connHandle));
     } catch (SQLException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
       throw e;
@@ -364,12 +369,14 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public SQLWarning getWarnings() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return sqlWarnings;
   }
 
   @Override
   public void clearWarnings() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    sqlWarnings = null;
   }
 
   @Override
