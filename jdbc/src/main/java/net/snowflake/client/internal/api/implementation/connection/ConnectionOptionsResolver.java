@@ -28,7 +28,6 @@ final class ConnectionOptionsResolver {
     }
 
     setIfAbsent(resolved, "host", parsed.getHost());
-    setIfAbsent(resolved, "protocol", parsed.getScheme());
     if (parsed.getPort() > 0) {
       setIfAbsentInt(resolved, "port", parsed.getPort());
     }
@@ -44,6 +43,12 @@ final class ConnectionOptionsResolver {
       }
       Object value = entry.getValue();
       setIfAbsent(resolved, normalizedKey, value.toString());
+    }
+
+    // Derive "protocol" from the scheme only when "ssl" is absent: sf_core derives the scheme from
+    // ssl itself and rejects ssl + protocol set together (ConflictingParameters).
+    if (!containsKeyIgnoreCase(resolved, "ssl")) {
+      setIfAbsent(resolved, "protocol", parsed.getScheme());
     }
   }
 
