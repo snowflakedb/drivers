@@ -52,6 +52,7 @@ EXPORTS
     SQLSetStmtAttrW
     SQLTablesW
     SQLColumnsW
+    SQLPrimaryKeysW
     SQLSpecialColumnsW
     SQLColumnPrivilegesW
     SQLTablePrivilegesW

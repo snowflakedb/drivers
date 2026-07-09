@@ -2,14 +2,15 @@ use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu,
-    CsvBindingSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu,
-    InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu,
-    InvalidDuringDaeSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
-    InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
-    OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
-    StillExecutingSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
+    ArrowArrayStreamReaderCreationSnafu, ArrowBatchConcatSnafu, ArrowBatchReadSnafu,
+    AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu, CsvBindingSnafu, CursorAlreadyOpenSnafu,
+    DaeRequiredSnafu, DisconnectedSnafu, InternalSnafu, InvalidAttributeValueSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required,
+    StatementNotExecutedSnafu, StillExecutingSnafu, UnsupportedAttributeSnafu,
+    UnsupportedFeatureSnafu,
 };
 use crate::api::handle_registry::HandleId;
 use crate::api::query_type::{QueryType, ResultKind};
@@ -23,6 +24,7 @@ use crate::api::{
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::{odbc_bindings_to_csv, odbc_bindings_to_json};
+use arrow::array::RecordBatch;
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -34,7 +36,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     StatementSetOptionsRequest, StatementSetSqlQueryRequest, config_setting,
     execute_query_response, query_bindings,
 };
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
@@ -1243,6 +1245,65 @@ fn release_result_set(rs_handle: ResultSetHandle) {
             .await
         });
     }
+}
+
+pub(crate) fn collect_nested_batch(
+    mut reader: Box<dyn RecordBatchReader + Send>,
+) -> OdbcResult<RecordBatch> {
+    let schema = reader.schema();
+    let mut batches = vec![];
+    for b in &mut *reader {
+        let batch = b.context(ArrowBatchReadSnafu)?;
+        batches.push(batch);
+    }
+    if batches.is_empty() {
+        Ok(RecordBatch::new_empty(schema))
+    } else if batches.len() == 1 {
+        Ok(batches.remove(0))
+    } else {
+        use arrow::compute::concat_batches;
+        concat_batches(&schema, &batches).context(ArrowBatchConcatSnafu)
+    }
+}
+
+pub(crate) fn execute_show_query_collect_batch(
+    stmt_handle: StatementHandle,
+    sql: &str,
+) -> OdbcResult<RecordBatch> {
+    let rt = global().context(OdbcRuntimeSnafu)?;
+    let response = rt.block_on(async |c| {
+        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            query: sql.to_string(),
+        })
+        .await?;
+        c.statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            bindings: None,
+            timeout_seconds: None,
+        })
+        .await
+    })?;
+
+    let rs_handle = match response.result.context(InternalSnafu {
+        message: "execute_show_query: missing execute result".to_string(),
+    })? {
+        execute_query_response::Result::Single(rs) => {
+            rs.result_set_handle.context(InternalSnafu {
+                message: "execute_show_query: missing result_set_handle".to_string(),
+            })?
+        }
+        execute_query_response::Result::Multi(_) => {
+            return InternalSnafu {
+                message: "execute_show_query: unexpected multi-statement result".to_string(),
+            }
+            .fail();
+        }
+    };
+
+    let stream = fetch_stream_and_release(rs_handle)?;
+    let reader = reader_from_protobuf_stream(stream)?;
+    collect_nested_batch(Box::new(reader))
 }
 
 fn create_execute_state_from_stream(
