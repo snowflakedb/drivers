@@ -128,6 +128,14 @@ pub mod param_names {
     pub const RETRY_BACKOFF_JITTER: ParamKey = ParamKey("retry_backoff_jitter");
     // PUT/GET file transfer configuration
     pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
+    /// When `true`, skip file permission checks on `config.toml` and
+    /// `connections.toml` during connection setup (SNOW-3548119). Use this
+    /// in environments where file permissions cannot be controlled (shared CI
+    /// runners, containers, mounted volumes). The `unsafe_` prefix signals that
+    /// skipping the check weakens protection against local tampering. Default
+    /// `false`. Unix-only; ignored on Windows.
+    pub const UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK: ParamKey =
+        ParamKey("unsafe_skip_config_file_permissions_check");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
     pub const CLIENT_APP_VERSION: ParamKey = ParamKey("client_app_version");
@@ -1279,6 +1287,22 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "When true, skip file permission checks on config.toml and connections.toml \
+                      during connection setup. Use in environments where permissions cannot be \
+                      controlled (CI runners, containers). Unix-only; ignored on Windows",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
         mutable_after_connect: false,
     },
     ParamDef {
