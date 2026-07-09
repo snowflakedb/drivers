@@ -1706,6 +1706,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gcs_retry_policy_preserves_user_configured_status_codes() {
+        use crate::config::param_registry::param_names;
+        use crate::config::param_store::ParamStore;
+        use crate::config::settings::Setting;
+
+        // A user-configured extra status code (via `retry_extra_status_codes`)
+        // must survive the GCS-specific additions rather than being replaced.
+        let mut params = ParamStore::new();
+        params.insert(
+            param_names::RETRY_EXTRA_STATUS_CODES.as_str().to_string(),
+            Setting::String("404".to_string()),
+        );
+        let policy = gcs_retry_policy(true, &RetryPolicy::put_get(&params));
+
+        assert!(
+            policy.extra_retryable_statuses.contains(&404),
+            "user-configured 404 should survive GCS policy construction"
+        );
+        assert!(
+            policy.extra_retryable_statuses.contains(&403),
+            "GCS should still add 403 on top of user-configured codes"
+        );
+    }
+
     // ---------------------------------------------------------------
     // 4. URL percent-encoding
     // ---------------------------------------------------------------

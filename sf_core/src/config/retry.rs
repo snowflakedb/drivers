@@ -145,8 +145,9 @@ impl RetryPolicy {
     /// Builds the retry policy for general HTTP calls (login, query, logout, etc.).
     ///
     /// Reads `retry_max_attempts` from the [`ParamStore`] (falling back to
-    /// [`DEFAULT_RETRY_MAX_ATTEMPTS`]) and the shared `retry_backoff_*` curve
-    /// via [`backoff_from_params`], leaving the remaining fields at their
+    /// [`DEFAULT_RETRY_MAX_ATTEMPTS`]), the shared `retry_backoff_*` curve via
+    /// [`backoff_from_params`], and `retry_extra_status_codes` for any
+    /// user-configured extra retryable statuses; remaining fields stay at their
     /// defaults.
     pub fn http(params: &ParamStore) -> Self {
         let max_attempts = params
@@ -158,6 +159,7 @@ impl RetryPolicy {
         Self {
             max_attempts,
             backoff: backoff_from_params(params),
+            extra_retryable_statuses: parse_extra_statuses(params),
             ..Self::default()
         }
     }
@@ -166,11 +168,13 @@ impl RetryPolicy {
     ///
     /// Reads `put_get_max_attempts` from the [`ParamStore`] (falling back to
     /// [`DEFAULT_PUT_GET_MAX_ATTEMPTS`] for absent or out-of-range values) and
-    /// the shared `retry_backoff_*` curve via [`backoff_from_params`]. Uses a
-    /// larger total budget (600s) than general HTTP calls.
+    /// the shared `retry_backoff_*` curve via [`backoff_from_params`], and seeds
+    /// user-configured `retry_extra_status_codes` into `extra_retryable_statuses`.
+    /// Uses a larger total budget (600s) than general HTTP calls.
     ///
-    /// Cloud-specific code clones this base and adds its own tweaks
-    /// (extra retryable statuses, per-request timeout).
+    /// Cloud-specific code clones this base and adds its own tweaks (extra
+    /// retryable statuses on top of the user-configured ones, per-request
+    /// timeout).
     pub fn put_get(params: &ParamStore) -> Self {
         let max_attempts = params
             .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
@@ -182,9 +186,37 @@ impl RetryPolicy {
             max_attempts,
             backoff: backoff_from_params(params),
             max_elapsed: Duration::from_secs(600),
+            extra_retryable_statuses: parse_extra_statuses(params),
             ..Self::default()
         }
     }
+}
+
+/// Parses `retry_extra_status_codes` (comma-separated) into a set of extra
+/// retryable HTTP statuses. Blank, non-numeric, and out-of-range (outside
+/// 100–599) tokens are skipped with a warning rather than failing the
+/// connection. Applied to both the general-HTTP and put/get policies;
+/// cloud-specific policies extend the result further (e.g. GCS/Azure add 403).
+fn parse_extra_statuses(params: &ParamStore) -> BTreeSet<u16> {
+    params
+        .get_string(param_names::RETRY_EXTRA_STATUS_CODES)
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .filter_map(|t| match t.parse::<u16>() {
+                    Ok(code) if (100..=599).contains(&code) => Some(code),
+                    _ => {
+                        tracing::warn!(
+                            token = t,
+                            "ignoring invalid retry_extra_status_codes entry"
+                        );
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -288,5 +320,52 @@ mod tests {
             RetryPolicy::put_get(&store).backoff.base,
             Duration::from_millis(42)
         );
+    }
+
+    fn store_with_status_codes(value: &str) -> ParamStore {
+        let mut params = ParamStore::new();
+        params.insert(
+            param_names::RETRY_EXTRA_STATUS_CODES.as_str().to_string(),
+            Setting::String(value.to_string()),
+        );
+        params
+    }
+
+    fn status_set(codes: &[u16]) -> BTreeSet<u16> {
+        codes.iter().copied().collect()
+    }
+
+    #[test]
+    fn http_reads_extra_status_codes() {
+        let policy = RetryPolicy::http(&store_with_status_codes("404, 425"));
+        assert_eq!(policy.extra_retryable_statuses, status_set(&[404, 425]));
+    }
+
+    #[test]
+    fn http_absent_extra_statuses_is_empty() {
+        let policy = RetryPolicy::http(&ParamStore::new());
+        assert!(policy.extra_retryable_statuses.is_empty());
+    }
+
+    #[test]
+    fn put_get_reads_extra_status_codes() {
+        let policy = RetryPolicy::put_get(&store_with_status_codes("404,425"));
+        assert_eq!(policy.extra_retryable_statuses, status_set(&[404, 425]));
+        // put_get keeps its larger total budget; the backoff shape is covered
+        // by `http_and_put_get_derive_from_the_common_backoff`.
+        assert_eq!(policy.max_elapsed, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn put_get_absent_extra_statuses_is_empty() {
+        let policy = RetryPolicy::put_get(&ParamStore::new());
+        assert!(policy.extra_retryable_statuses.is_empty());
+    }
+
+    #[test]
+    fn skips_blank_non_numeric_and_out_of_range_tokens() {
+        // Empty tokens, garbage, out-of-range (<100 and >599), and overflow are dropped.
+        let policy = RetryPolicy::http(&store_with_status_codes("404,abc,,600,99,700000"));
+        assert_eq!(policy.extra_retryable_statuses, status_set(&[404]));
     }
 }

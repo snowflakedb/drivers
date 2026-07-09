@@ -126,6 +126,7 @@ pub mod param_names {
     pub const RETRY_BACKOFF_CAP_MS: ParamKey = ParamKey("retry_backoff_cap_ms");
     pub const RETRY_BACKOFF_FACTOR: ParamKey = ParamKey("retry_backoff_factor");
     pub const RETRY_BACKOFF_JITTER: ParamKey = ParamKey("retry_backoff_jitter");
+    pub const RETRY_EXTRA_STATUS_CODES: ParamKey = ParamKey("retry_extra_status_codes");
     // PUT/GET file transfer configuration
     pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
     /// When `true`, skip file permission checks on `config.toml` and
@@ -1213,6 +1214,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64)),
         sensitive: false,
         description: "Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::RETRY_EXTRA_STATUS_CODES.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Additional HTTP status codes (comma-separated) to retry on general HTTP and PUT/GET calls, beyond the built-in 408/429/307/308/5xx set",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
