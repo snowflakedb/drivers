@@ -23,6 +23,7 @@ COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
+COPY tests/performance/drivers/core/app/Cargo.lock ./tests/performance/drivers/core/app/Cargo.lock
 COPY tests/performance/drivers/core/app/ ./tests/performance/drivers/core/app/
 
 # Modify sf_core/Cargo.toml to only build rlib (not dylib) to avoid linker issues
@@ -75,12 +76,12 @@ COPY --from=planner /workdir/tests/performance/drivers/core/app/recipe.json reci
 # Copy Cargo.lock to ensure cargo-chef uses pinned dependency versions
 # (without this, cargo resolves the latest versions which may require a newer rustc)
 COPY tests/performance/drivers/core/app/Cargo.lock Cargo.lock
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json --locked
 
 # Copy application source and build only the app (sf_core already compiled)
 COPY tests/performance/drivers/core/app/ ./
 
-RUN cargo build --release --bin core-perf-driver
+RUN cargo build --release --bin core-perf-driver --locked
 
 # Stage 4: Runtime - use minimal base image with newer GLIBC
 ARG BUILDPLATFORM=linux/amd64
