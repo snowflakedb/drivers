@@ -1,6 +1,6 @@
 use super::path_resolver::{ConfigPaths, get_config_paths};
 use super::settings::Setting;
-use super::toml_loader::load_toml_file;
+use super::toml_loader::{FilePermissionCheck, load_toml_file};
 use super::{ConfigError, ConnectionNotFoundSnafu};
 use std::collections::HashMap;
 
@@ -9,20 +9,25 @@ pub fn load_connection_config(
     connection_name: &str,
 ) -> Result<HashMap<String, Setting>, ConfigError> {
     let paths = get_config_paths()?;
-    load_connection_config_with_paths(connection_name, &paths)
+    load_connection_config_with_paths(connection_name, &paths, FilePermissionCheck::Enabled)
 }
 
-/// Load configuration for a specific connection using explicit config paths
+/// Load configuration for a specific connection using explicit config paths.
+///
+/// Pass `FilePermissionCheck::UnsafeDisabled` to bypass file-permission checks
+/// on `config.toml` and `connections.toml` (mirrors the
+/// `unsafe_skip_file_permissions_check` connection parameter).
 pub fn load_connection_config_with_paths(
     connection_name: &str,
     paths: &ConfigPaths,
+    permission_check: FilePermissionCheck,
 ) -> Result<HashMap<String, Setting>, ConfigError> {
     let mut settings = HashMap::new();
     let empty_toml = toml::Value::Table(toml::map::Map::new());
     let registry = super::param_registry::registry();
 
     let config_toml = match &paths.config_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => empty_toml.clone(),
     };
 
@@ -43,7 +48,7 @@ pub fn load_connection_config_with_paths(
     }
 
     let connections_toml = match &paths.connections_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => empty_toml,
     };
 
@@ -84,11 +89,16 @@ pub fn load_connection_config_with_paths(
 /// named `""`).  The universal driver's behavior is intentional: an empty env
 /// var is almost certainly a misconfiguration, and treating it as absent lets
 /// the next resolution step apply rather than immediately erroring.
+///
+/// `permission_check` controls whether file-permission checks are applied when
+/// reading `config.toml` (pass `UnsafeDisabled` only when
+/// `unsafe_skip_file_permissions_check` is set).
 pub(crate) fn get_default_connection_name_with_paths(
     paths: &ConfigPaths,
+    permission_check: FilePermissionCheck,
 ) -> Result<String, ConfigError> {
     let env_override = std::env::var("SNOWFLAKE_DEFAULT_CONNECTION_NAME").ok();
-    resolve_default_connection_name(paths, env_override)
+    resolve_default_connection_name(paths, env_override, permission_check)
 }
 
 /// Inner helper that takes the env value as a parameter for testability,
@@ -96,6 +106,7 @@ pub(crate) fn get_default_connection_name_with_paths(
 fn resolve_default_connection_name(
     paths: &ConfigPaths,
     env_override: Option<String>,
+    permission_check: FilePermissionCheck,
 ) -> Result<String, ConfigError> {
     if let Some(name) = env_override
         && !name.is_empty()
@@ -104,7 +115,7 @@ fn resolve_default_connection_name(
     }
 
     if let Some(config_path) = &paths.config_file {
-        let config_toml = load_toml_file(config_path)?;
+        let config_toml = load_toml_file(config_path, permission_check)?;
         if let Some(name) = config_toml
             .get("default_connection_name")
             .and_then(|v| v.as_str())
@@ -118,20 +129,23 @@ fn resolve_default_connection_name(
 }
 
 /// Load all connections from config files
-pub fn load_all_connections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
+pub fn load_all_connections(
+    permission_check: FilePermissionCheck,
+) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let paths = get_config_paths()?;
-    load_all_connections_with_paths(&paths)
+    load_all_connections_with_paths(&paths, permission_check)
 }
 
 /// Load all connections using explicit config paths
 pub fn load_all_connections_with_paths(
     paths: &ConfigPaths,
+    permission_check: FilePermissionCheck,
 ) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let mut all_connections = HashMap::new();
     let empty_toml = toml::Value::Table(toml::map::Map::new());
 
     let config_toml = match &paths.config_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => empty_toml.clone(),
     };
     if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table()) {
@@ -149,7 +163,7 @@ pub fn load_all_connections_with_paths(
     }
 
     let connections_toml = match &paths.connections_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => empty_toml,
     };
     if let Some(table) = connections_toml.as_table() {
@@ -190,18 +204,20 @@ fn toml_value_to_setting(value: &toml::Value) -> Option<Setting> {
 /// Returns None if the section doesn't exist or if it's a connections section
 pub fn load_config_section(
     section_name: &str,
+    permission_check: FilePermissionCheck,
 ) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
     let paths = get_config_paths()?;
-    load_config_section_with_paths(section_name, &paths)
+    load_config_section_with_paths(section_name, &paths, permission_check)
 }
 
 /// Load a specific section from config.toml using explicit config paths
 pub fn load_config_section_with_paths(
     section_name: &str,
     paths: &ConfigPaths,
+    permission_check: FilePermissionCheck,
 ) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
     let config_toml = match &paths.config_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => return Ok(None),
     };
 
@@ -238,7 +254,7 @@ pub fn load_config_section_with_paths(
 /// [`load_all_config_merged_toml_with_paths`].
 pub fn load_all_config_merged_toml() -> Result<toml::Value, ConfigError> {
     let paths = get_config_paths()?;
-    load_all_config_merged_toml_with_paths(&paths)
+    load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled)
 }
 
 /// Load and merge every config source using explicit config paths.
@@ -255,13 +271,16 @@ pub fn load_all_config_merged_toml() -> Result<toml::Value, ConfigError> {
 /// When a `connections_file` is present and contains at least one connection,
 /// its contents **replace** the `connections` table from `config_file` rather
 /// than merging, matching the precedence used elsewhere in the driver.
+///
+/// Pass `FilePermissionCheck::UnsafeDisabled` to bypass file-permission checks.
 pub fn load_all_config_merged_toml_with_paths(
     paths: &ConfigPaths,
+    permission_check: FilePermissionCheck,
 ) -> Result<toml::Value, ConfigError> {
     let empty_table = || toml::Value::Table(toml::map::Map::new());
 
     let mut merged = match &paths.config_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => empty_table(),
     };
 
@@ -271,7 +290,7 @@ pub fn load_all_config_merged_toml_with_paths(
     }
 
     let connections_toml = match &paths.connections_file {
-        Some(p) => load_toml_file(p)?,
+        Some(p) => load_toml_file(p, permission_check)?,
         None => empty_table(),
     };
 
@@ -352,7 +371,8 @@ password = "mypass"
 "#,
         );
 
-        let result = load_connection_config_with_paths("testconn", &paths);
+        let result =
+            load_connection_config_with_paths("testconn", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
 
         let settings = result.unwrap();
@@ -365,7 +385,8 @@ password = "mypass"
         let temp_dir = TempDir::new().unwrap();
         let paths = make_paths(&temp_dir);
 
-        let result = load_connection_config_with_paths("nonexistent", &paths);
+        let result =
+            load_connection_config_with_paths("nonexistent", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -392,7 +413,8 @@ account = "connections_account"
 "#,
         );
 
-        let result = load_connection_config_with_paths("testconn", &paths);
+        let result =
+            load_connection_config_with_paths("testconn", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
 
         let settings = result.unwrap();
@@ -425,7 +447,7 @@ account = "account2"
 "#,
         );
 
-        let result = load_all_connections_with_paths(&paths);
+        let result = load_all_connections_with_paths(&paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
 
         let all_conns = result.unwrap();
@@ -451,7 +473,7 @@ account = "myaccount"
 "#,
         );
 
-        let result = load_config_section_with_paths("log", &paths);
+        let result = load_config_section_with_paths("log", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
         let log_section = result.unwrap();
         assert!(log_section.is_some());
@@ -474,7 +496,8 @@ level = "info"
 "#,
         );
 
-        let result = load_config_section_with_paths("nonexistent", &paths);
+        let result =
+            load_config_section_with_paths("nonexistent", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
         let section = result.unwrap();
         assert!(section.is_none());
@@ -493,7 +516,8 @@ account = "myaccount"
 "#,
         );
 
-        let result = load_config_section_with_paths("connections", &paths);
+        let result =
+            load_config_section_with_paths("connections", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -519,7 +543,8 @@ account = "myaccount"
 "#,
         );
 
-        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let merged =
+            load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
         let table = merged.as_table().expect("root must be a table");
 
         assert_eq!(table["log"]["level"].as_str(), Some("debug"));
@@ -553,7 +578,8 @@ account = "test"
 "#,
         );
 
-        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let merged =
+            load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
         let table = merged.as_table().expect("root must be a table");
 
         assert_eq!(
@@ -586,7 +612,11 @@ min_size = 2
 "#,
         );
 
-        let result = load_config_section_with_paths("database.connection", &paths);
+        let result = load_config_section_with_paths(
+            "database.connection",
+            &paths,
+            FilePermissionCheck::Enabled,
+        );
         assert!(result.is_ok());
         let section = result.unwrap();
         assert!(section.is_some());
@@ -595,7 +625,8 @@ min_size = 2
         assert!(matches!(settings.get("timeout"), Some(Setting::Int(30))));
         assert!(matches!(settings.get("retry_count"), Some(Setting::Int(3))));
 
-        let result2 = load_config_section_with_paths("database.pool", &paths);
+        let result2 =
+            load_config_section_with_paths("database.pool", &paths, FilePermissionCheck::Enabled);
         assert!(result2.is_ok());
         let section2 = result2.unwrap();
         assert!(section2.is_some());
@@ -619,7 +650,8 @@ cert_path = "/etc/certs/server.crt"
 "#,
         );
 
-        let result = load_config_section_with_paths("app.server.tls", &paths);
+        let result =
+            load_config_section_with_paths("app.server.tls", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
         let section = result.unwrap();
         assert!(section.is_some());
@@ -645,11 +677,16 @@ timeout = 30
 "#,
         );
 
-        let result = load_config_section_with_paths("database.pool", &paths);
+        let result =
+            load_config_section_with_paths("database.pool", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
-        let result2 = load_config_section_with_paths("other.connection", &paths);
+        let result2 = load_config_section_with_paths(
+            "other.connection",
+            &paths,
+            FilePermissionCheck::Enabled,
+        );
         assert!(result2.is_ok());
         assert!(result2.unwrap().is_none());
     }
@@ -667,7 +704,11 @@ account = "myaccount"
 "#,
         );
 
-        let result = load_config_section_with_paths("connections.testconn", &paths);
+        let result = load_config_section_with_paths(
+            "connections.testconn",
+            &paths,
+            FilePermissionCheck::Enabled,
+        );
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -699,7 +740,7 @@ level = "debug"
 "#,
         );
 
-        let result = load_config_section_with_paths("log", &paths);
+        let result = load_config_section_with_paths("log", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
         let log_section = result.unwrap();
         assert!(log_section.is_some());
@@ -742,7 +783,8 @@ database = "overridden_database"
 "#,
         );
 
-        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let merged =
+            load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
         let connections = merged["connections"]
             .as_table()
             .expect("connections must be a table");
@@ -788,7 +830,8 @@ account = "acct"
 "#,
         );
 
-        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let merged =
+            load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
 
         // Root-level scalars are top-level keys.
         assert_eq!(merged["default_connection_name"].as_str(), Some("default"));
@@ -808,7 +851,8 @@ account = "acct"
         );
         write_config(&temp_dir, "connections.toml", "");
 
-        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let merged =
+            load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
         assert!(
             merged["connections"]
                 .as_table()
@@ -835,7 +879,8 @@ account = "acct"
         );
         // connections.toml does not exist on disk
 
-        let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+        let merged =
+            load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
         assert!(
             merged["connections"]
                 .as_table()
@@ -857,7 +902,12 @@ account = "acct"
             r#"default_connection_name = "from_file""#,
         );
 
-        let name = resolve_default_connection_name(&paths, Some("from_env".to_owned())).unwrap();
+        let name = resolve_default_connection_name(
+            &paths,
+            Some("from_env".to_owned()),
+            FilePermissionCheck::Enabled,
+        )
+        .unwrap();
         assert_eq!(name, "from_env");
     }
 
@@ -871,7 +921,8 @@ account = "acct"
             r#"default_connection_name = "from_file""#,
         );
 
-        let name = resolve_default_connection_name(&paths, None).unwrap();
+        let name =
+            resolve_default_connection_name(&paths, None, FilePermissionCheck::Enabled).unwrap();
         assert_eq!(name, "from_file");
     }
 
@@ -881,7 +932,8 @@ account = "acct"
         let paths = make_paths(&temp_dir);
         // No config.toml written
 
-        let name = resolve_default_connection_name(&paths, None).unwrap();
+        let name =
+            resolve_default_connection_name(&paths, None, FilePermissionCheck::Enabled).unwrap();
         assert_eq!(name, "default");
     }
 
@@ -901,7 +953,12 @@ account = "acct"
             r#"default_connection_name = "from_file""#,
         );
 
-        let name = resolve_default_connection_name(&paths, Some(String::new())).unwrap();
+        let name = resolve_default_connection_name(
+            &paths,
+            Some(String::new()),
+            FilePermissionCheck::Enabled,
+        )
+        .unwrap();
         assert_eq!(name, "from_file");
     }
 
@@ -930,7 +987,7 @@ account = "acct"
         let _lock = ENV_MUTEX.lock().unwrap();
         // SAFETY: test-only; serialised by ENV_MUTEX.
         unsafe { std::env::set_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "from_env_var") };
-        let result = get_default_connection_name_with_paths(&paths);
+        let result = get_default_connection_name_with_paths(&paths, FilePermissionCheck::Enabled);
         // SAFETY: test-only; serialised by ENV_MUTEX.
         unsafe { std::env::remove_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME") };
         drop(_lock);
@@ -958,7 +1015,8 @@ private_key_file_pwd = "supersecret"
 "#,
         );
 
-        let result = load_connection_config_with_paths("test", &paths);
+        let result =
+            load_connection_config_with_paths("test", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok(), "load failed: {:?}", result.err());
 
         let settings = result.unwrap();
@@ -995,7 +1053,8 @@ private_key_password = "supersecret"
 "#,
         );
 
-        let result = load_connection_config_with_paths("test", &paths);
+        let result =
+            load_connection_config_with_paths("test", &paths, FilePermissionCheck::Enabled);
         assert!(result.is_ok(), "load failed: {:?}", result.err());
 
         let settings = result.unwrap();
