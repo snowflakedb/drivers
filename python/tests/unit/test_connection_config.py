@@ -507,3 +507,27 @@ class TestClassVariables:
 
     def test_all_fields_superset_of_python_only(self):
         assert ConnectionConfig._PYTHON_ONLY.issubset(ConnectionConfig._all_field_names())
+
+
+class TestUnsafeSkipFilePermissionsCheck:
+    """Tests for the unsafe_skip_config_file_permissions_check connection parameter."""
+
+    def test_default_is_false(self):
+        config = ConnectionConfig()
+        assert config.unsafe_skip_config_file_permissions_check is False
+
+    def test_accepted_from_kwargs(self):
+        config = ConnectionConfig.from_kwargs(unsafe_skip_config_file_permissions_check=True)
+        assert config.unsafe_skip_config_file_permissions_check is True
+
+    def test_included_in_proto_options(self):
+        config = ConnectionConfig.from_kwargs(unsafe_skip_config_file_permissions_check=True)
+        opts = config.to_proto_options()
+        assert "unsafe_skip_config_file_permissions_check" in opts
+        assert opts["unsafe_skip_config_file_permissions_check"].bool_value is True
+
+    def test_false_value_included_in_proto_options(self):
+        config = ConnectionConfig.from_kwargs(unsafe_skip_config_file_permissions_check=False)
+        opts = config.to_proto_options()
+        assert "unsafe_skip_config_file_permissions_check" in opts
+        assert opts["unsafe_skip_config_file_permissions_check"].bool_value is False

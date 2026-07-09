@@ -277,6 +277,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
 
+    unsafe_skip_config_file_permissions_check: bool | None = False
+    """When true, skip file permission checks on config.toml and connections.toml during connection setup. Use in
+    environments where permissions cannot be controlled (CI runners, containers). Unix-only; ignored on Windows.
+
+    Default: False
+    """
+
     use_proxy_env: bool | None = False
     """Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set. Default: False"""
 

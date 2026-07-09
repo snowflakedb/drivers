@@ -513,7 +513,8 @@ tests:
   - test_name: test_truncate_stats
     ud_tests: []
   - test_name: test_unsafe_skip_file_permissions_check_skips_config_permissions_check
-    ud_tests: []
+    ud_tests:
+      - python/tests/integ/config/test_config_manager.py::TestSkipFilePermissionsCheck
   - test_name: test_update_with_dml_duplicates
     ud_tests: []
   - test_name: test_uppercase_privatelink_ocsp_url_creation
@@ -1625,7 +1626,8 @@ tests:
   - test_name: test_truncate_stats
     ud_tests: []
   - test_name: test_unsafe_skip_file_permissions_check_skips_config_permissions_check
-    ud_tests: []
+    ud_tests:
+      - python/tests/integ/config/test_config_manager.py::TestSkipFilePermissionsCheck
   - test_name: test_update_with_dml_duplicates
     ud_tests: []
   - test_name: test_uppercase_privatelink_ocsp_url_creation
@@ -3694,13 +3696,15 @@ tests:
   - test_name: test_cache_dir_incorrect_permissions
     ud_tests: []
   - test_name: test_cache_dir_incorrect_permissions_with_skip_file_permissions_check
-    ud_tests: []
+    ud_tests:
+      - python/tests/integ/config/test_config_manager.py::TestSkipFilePermissionsCheck::test_world_writable_connections_toml_succeeds_with_skip
   - test_name: test_cache_dir_is_not_a_directory
     ud_tests: []
   - test_name: test_cache_dir_xdg_cache_home
     ud_tests: []
   - test_name: test_cache_file_incorrect_permission_with_skip_file_permissions_check
-    ud_tests: []
+    ud_tests:
+      - python/tests/integ/config/test_config_manager.py::TestSkipFilePermissionsCheck::test_world_writable_config_file_succeeds_with_skip
   - test_name: test_cache_file_incorrect_permissions
     ud_tests: []
   - test_name: test_delete_specific_item
