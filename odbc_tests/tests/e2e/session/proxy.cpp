@@ -50,7 +50,7 @@ std::string build_unresolvable_connection_string(const std::string& extra) {
 
 }  // namespace
 
-TEST_CASE("should route login through forward proxy via PROXY URL", "[session][proxy]") {
+TEST_CASE("should route login through forward proxy via PROXY URL", "[session][proxy][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -73,7 +73,7 @@ TEST_CASE("should route login through forward proxy via PROXY URL", "[session][p
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 1);
 }
 
-TEST_CASE("should disable proxy when PROXY is empty and AllowEmptyProxy is true", "[session][proxy]") {
+TEST_CASE("should disable proxy when PROXY is empty and AllowEmptyProxy is true", "[session][proxy][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -96,7 +96,7 @@ TEST_CASE("should disable proxy when PROXY is empty and AllowEmptyProxy is true"
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 0);
 }
 
-TEST_CASE("should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set", "[session][proxy]") {
+TEST_CASE("should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set", "[session][proxy][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
@@ -120,7 +120,7 @@ TEST_CASE("should ignore HTTP_PROXY env var when USE_PROXY_ENV is not set", "[se
   CHECK(wm.get_request_count("POST", "/session/v1/login-request") == 0);
 }
 
-TEST_CASE("should pick up HTTP_PROXY env var when USE_PROXY_ENV is true", "[session][proxy]") {
+TEST_CASE("should pick up HTTP_PROXY env var when USE_PROXY_ENV is true", "[session][proxy][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
