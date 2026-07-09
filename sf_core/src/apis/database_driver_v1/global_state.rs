@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use super::connection::Connection;
+use super::connection::{Connection, WrapperIdentity};
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
@@ -141,6 +141,20 @@ impl DatabaseDriverV1 {
         let conn_ptr = self.connections.get_obj(conn_handle)?;
         let conn = conn_ptr.lock().await;
         conn.session_id
+    }
+
+    /// Read both `session_id` and `wrapper_identity` under a single lock guard,
+    /// eliminating the TOCTOU window that exists when the two fields are fetched
+    /// with separate awaits.
+    pub(crate) async fn session_id_and_identity_for_conn(
+        &self,
+        conn_handle: Handle,
+    ) -> (Option<i64>, Option<WrapperIdentity>) {
+        let Some(conn_ptr) = self.connections.get_obj(conn_handle) else {
+            return (None, None);
+        };
+        let conn = conn_ptr.lock().await;
+        (conn.session_id, conn.wrapper_identity.clone())
     }
 
     /// Resolve the Snowflake session id for a statement handle by traversing

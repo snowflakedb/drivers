@@ -80,6 +80,8 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     ``/telemetry/send`` with ``message.type == 'api_call'`` and
     ``message.api_method == 'Connection.cursor'``.
     """
+    from snowflake.connector.version import __version__
+
     wiremock.add_mapping("auth/login_success_jwt.json")
     wiremock.add_mapping("telemetry/telemetry_send_success.json")
 
@@ -123,12 +125,16 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     # -> sessionId). The `code.*`, `busy_ns`, `idle_ns`, `thread.id`
     # attributes are auto-populated by `tracing::info_span!` at the FFI
     # entry-point where the per-call wrapper_api_usage span is opened.
+    # The `service.*` / `process.runtime.*` attributes come from the wrapper
+    # identity stamped on the span by `record_wrapper_identity_on_span`.
     expected_exact = {
         "type": "api_call",
         "api_method": "Connection.cursor",
         "snowflake.session.id": 12345,
         "db.system": "snowflake",
         "event_kind": "event",
+        "service.name": "PythonConnector",
+        "service.version": __version__,
     }
     for key, expected in expected_exact.items():
         assert message.get(key) == expected, (
@@ -152,15 +158,34 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
             f"api_call message[{key!r}] expected int, got {type(message.get(key)).__name__}: {message.get(key)!r}"
         )
 
+    # Verify wrapper identity fields are present and non-empty strings.
+    # process.runtime.name and process.runtime.version are runtime-dependent
+    # (Python implementation and version) so we type-check rather than pin.
+    identity_string_attrs = {"process.runtime.name", "process.runtime.version"}
+    for key in identity_string_attrs:
+        assert isinstance(message.get(key), str) and message[key], (
+            f"api_call message[{key!r}] expected non-empty string, got: {message.get(key)!r}. Full message: {message}"
+        )
+
     # `thread.name` is present when the span runs on a named thread (e.g. a
     # tokio worker via the async FFI path) but absent when `block_on` runs on
     # the calling Python thread (sync FFI path). Accept both.
-    expected_keys = set(expected_exact.keys()) | numeric_attrs | {"code.filepath", "code.namespace"}
+    # `process.runtime.compiler` is present when platform.python_compiler()
+    # returns a non-empty string (the common case), absent otherwise.
+    expected_keys = (
+        set(expected_exact.keys()) | numeric_attrs | {"code.filepath", "code.namespace", *identity_string_attrs}
+    )
     if "thread.name" in message:
         assert isinstance(message["thread.name"], str) and message["thread.name"], (
             f"thread.name must be a non-empty string when present, got: {message['thread.name']!r}"
         )
         expected_keys.add("thread.name")
+    if "process.runtime.compiler" in message:
+        compiler = message["process.runtime.compiler"]
+        assert isinstance(compiler, str) and compiler, (
+            f"process.runtime.compiler must be a non-empty string when present, got: {compiler!r}"
+        )
+        expected_keys.add("process.runtime.compiler")
     assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
 
 
