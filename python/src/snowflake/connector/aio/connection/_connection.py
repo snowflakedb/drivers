@@ -308,7 +308,7 @@ class Connection(ConnectionMixin):
             response = await async_core_driver.connection_is_expired(conn_handle=self.conn_handle)
             return bool(response.is_expired)
         except Exception:
-            return False
+            return True
 
     async def is_valid(self) -> bool:
         if self.conn_handle is None or await self.is_closed():
