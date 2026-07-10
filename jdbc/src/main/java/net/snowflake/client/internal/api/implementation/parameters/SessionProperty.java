@@ -1,4 +1,4 @@
-package net.snowflake.client.internal.api.implementation.datasource;
+package net.snowflake.client.internal.api.implementation.parameters;
 
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -6,7 +6,8 @@ import lombok.RequiredArgsConstructor;
 
 @Getter
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
-enum SnowflakeSessionProperty {
+public enum SessionProperty implements Property {
+  URL("url"),
   USER("user"),
   PASSWORD("password"),
   ACCOUNT("account"),
@@ -33,5 +34,5 @@ enum SnowflakeSessionProperty {
   OAUTH_SCOPE("oauth_scope"),
   OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS("oauth_enable_single_use_refresh_tokens");
 
-  private final String propertyKey;
+  private final String key;
 }

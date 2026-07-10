@@ -1,13 +1,16 @@
-package net.snowflake.client.internal.api.implementation.connection;
+package net.snowflake.client.internal.api.implementation.parameters;
 
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
+import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 
-final class ConnectionOptionsResolver {
-  private ConnectionOptionsResolver() {}
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public final class ConnectionOptionsResolver {
 
-  static Properties resolve(String url, Properties properties) {
+  public static Properties resolve(String url, Properties properties) {
     Properties resolved = new Properties();
     if (properties != null) {
       resolved.putAll(properties);

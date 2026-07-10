@@ -1,10 +1,13 @@
 package net.snowflake.client.internal.api.implementation.metadata.capabilities;
 
 import java.sql.SQLException;
-import java.util.Properties;
+import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.driver.SnowflakeDriver;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.parameters.SessionProperty;
 
+@RequiredArgsConstructor
 public final class MetaDataIdentity {
   private static final String DATABASE_PRODUCT_NAME = "Snowflake";
   private static final char SEARCH_STRING_ESCAPE = '\\';
@@ -88,22 +91,17 @@ public final class MetaDataIdentity {
           "VECTOR",
           "VIEW");
 
-  private final SnowflakeConnectionImpl connection;
-  private final Properties properties;
-
-  public MetaDataIdentity(SnowflakeConnectionImpl connection, Properties properties) {
-    this.connection = connection;
-    this.properties = properties;
-  }
+  private final InternalSnowflakeConnection connection;
 
   public String getURL() throws SQLException {
     connection.checkClosed();
-    return properties.getProperty("url");
+    return connection.getParameters().getOrThrow(SessionProperty.URL);
   }
 
   public String getUserName() throws SQLException {
     connection.checkClosed();
-    return properties.getProperty("user");
+    // USER is probably always populated during connection setup, but the spec allows null in theory
+    return connection.getParameters().get(SessionProperty.USER, null);
   }
 
   public String getDatabaseProductName() throws SQLException {
