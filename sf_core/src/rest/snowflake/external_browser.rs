@@ -53,7 +53,9 @@ impl BrowserOpener for DefaultBrowserOpener {
             );
             return Ok(());
         }
-        webbrowser::open(url).map_err(|e| e.to_string())
+        // Route through the WSL-safe launcher (SNOW-3649282); off WSL this
+        // defers to the `webbrowser` crate.
+        super::browser::open_url(url)
     }
 }
 
@@ -155,14 +157,11 @@ pub(crate) async fn external_browser_authenticate(
     let proof_key = idp_data.proof_key;
     tracing::debug!("Received SSO URL and proof key from Snowflake");
 
-    if !idp_data.sso_url.starts_with("https://") {
-        return BrowserOpenSnafu {
-            reason: format!(
-                "SSO URL must use https scheme, got: {}",
-                idp_data.sso_url.chars().take(50).collect::<String>()
-            ),
-        }
-        .fail();
+    // Validate the SSO URL before handing it to the system browser: reject
+    // non-https URLs and URLs carrying characters unsafe to pass to a
+    // launcher. See SNOW-3649282.
+    if let Err(reason) = super::browser::validate_browser_url(&idp_data.sso_url) {
+        return BrowserOpenSnafu { reason }.fail();
     }
 
     // Unconditionally print the SSO URL to stderr so the user can manually
