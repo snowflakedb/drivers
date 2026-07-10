@@ -33,6 +33,10 @@ import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
+import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
+import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
+import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
@@ -42,11 +46,9 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.LegacyKeyNormalizer;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
@@ -67,7 +69,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private final CoreDriverApi coreDriverApi;
   private final DatabaseHandle databaseHandle;
   private final ConnectionHandle connectionHandle;
-  private final Properties resolvedProperties;
+  private final ParametersRegistry parametersRegistry;
 
   private boolean autoCommit;
   private String catalog;
@@ -84,7 +86,6 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
       throws SQLException {
-    this.resolvedProperties = ConnectionOptionsResolver.resolve(url, properties);
     this.coreDriverApi = coreDriverApi;
 
     DatabaseHandle dbHandle = null;
@@ -94,34 +95,20 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       coreDriverApi.databaseInit(dbHandle);
       connHandle = coreDriverApi.connectionNew().getConnHandle();
 
-      setOptions(connHandle, resolvedProperties);
+      SQLWarning sqlWarnings = setOptions(connHandle, url, properties);
 
       WrapperIdentity identity = wrapperIdentity();
       coreDriverApi.connectionInit(connHandle, dbHandle, identity);
 
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
-      this.autoCommit = fetchAutoCommit(coreDriverApi, connHandle);
-      this.sqlWarnings =
-          ConnectionEstablishedWarnings.compute(
-              resolvedProperties, coreDriverApi.connectionGetInfo(connHandle));
+      this.sqlWarnings = sqlWarnings;
+      this.parametersRegistry = new ParametersRegistry(coreDriverApi, connHandle);
+      this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
     } catch (SQLException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
       throw e;
     }
-  }
-
-  private static boolean fetchAutoCommit(CoreDriverApi coreDriverApi, ConnectionHandle connHandle) {
-    try {
-      ConnectionGetParameterResponse response =
-          coreDriverApi.connectionGetParameter(connHandle, "AUTOCOMMIT");
-      if (response.hasValue()) {
-        return Boolean.parseBoolean(response.getValue());
-      }
-    } catch (SQLException e) {
-      logger.warn("Failed to read AUTOCOMMIT session parameter; defaulting to true", e);
-    }
-    return true;
   }
 
   private WrapperIdentity wrapperIdentity() {
@@ -140,32 +127,43 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     return identityBuilder.build();
   }
 
-  private void setOptions(ConnectionHandle connHandle, Properties connectionOptions)
+  private SQLWarning setOptions(ConnectionHandle connHandle, String url, Properties properties)
       throws SQLException {
-    Map<String, ConfigSetting> optionsMap = new HashMap<>();
+    Properties resolvedProperties = ConnectionOptionsResolver.resolve(url, properties);
+    Map<String, ConfigSetting> options = new HashMap<>();
 
     // JDBC convention: Connection.close() must not throw on logout failure.
     // Users can opt into Strict via the "logout_error_strategy" connection property.
-    optionsMap.put(
+    options.put(
         "logout_error_strategy", ConfigSetting.newBuilder().setStringValue("best_effort").build());
 
-    connectionOptions.forEach(
+    resolvedProperties.forEach(
         (key, value) -> {
           if (!(key instanceof String)) {
             return;
           }
-          String keyStr = LegacyKeyNormalizer.normalize((String) key);
+          String keyStr = ParameterKeyNormalizer.normalize((String) key);
           ConfigSetting configSetting = ConfigSettingFactory.from(value);
           if (configSetting != null) {
-            optionsMap.put(keyStr, configSetting);
+            options.put(keyStr, configSetting);
           }
         });
 
-    if (!optionsMap.isEmpty()) {
+    if (!options.isEmpty()) {
       ConnectionSetOptionsResponse response =
-          coreDriverApi.connectionSetOptions(connHandle, optionsMap);
-      logConnectionOptionWarnings(response);
+          coreDriverApi.connectionSetOptions(connHandle, options);
+      for (ValidationIssue warning : response.getWarningsList()) {
+        logger.warn(
+            "Connection option warning: severity={}, parameter={}, code={}, message={}",
+            warning.getSeverity(),
+            warning.getParameter(),
+            warning.getCode(),
+            warning.getMessage());
+      }
     }
+
+    return ConnectionEstablishedWarnings.compute(
+        resolvedProperties, coreDriverApi.connectionGetInfo(connHandle));
   }
 
   @Override
@@ -174,9 +172,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   @Override
-  public Properties getResolvedProperties() {
-    // Return a copy so callers can't mutate the connection's resolved properties.
-    return (Properties) resolvedProperties.clone();
+  public ParametersRegistry getParameters() {
+    return parametersRegistry;
   }
 
   @Override
@@ -207,17 +204,6 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   public String nativeSQL(String sql) throws SQLException {
     checkClosed();
     return sql;
-  }
-
-  private static void logConnectionOptionWarnings(ConnectionSetOptionsResponse response) {
-    for (ValidationIssue warning : response.getWarningsList()) {
-      logger.warn(
-          "Connection option warning: severity={}, parameter={}, code={}, message={}",
-          warning.getSeverity(),
-          warning.getParameter(),
-          warning.getCode(),
-          warning.getMessage());
-    }
   }
 
   @Override
@@ -311,7 +297,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public DatabaseMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new SnowflakeDatabaseMetaDataImpl(this, resolvedProperties, coreDriverApi);
+    return new SnowflakeDatabaseMetaDataImpl(this);
   }
 
   @Override

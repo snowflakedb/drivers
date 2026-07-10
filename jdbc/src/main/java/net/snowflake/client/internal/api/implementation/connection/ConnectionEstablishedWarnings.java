@@ -3,10 +3,11 @@ package net.snowflake.client.internal.api.implementation.connection;
 import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP;
 
 import java.sql.SQLWarning;
-import java.util.Locale;
 import java.util.Properties;
 import lombok.experimental.UtilityClass;
 import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
+import net.snowflake.client.internal.api.implementation.parameters.SessionProperty;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 
 /**
@@ -17,7 +18,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
  * Schema, Role, Warehouse to match the legacy driver.
  */
 @UtilityClass
-final class ConnectionEstablishedWarnings {
+class ConnectionEstablishedWarnings {
   /** Builds the warning chain for a freshly-established session. */
   static SQLWarning compute(Properties requestedProperties, ConnectionGetInfoResponse sessionInfo) {
     SQLWarning head = null;
@@ -25,26 +26,26 @@ final class ConnectionEstablishedWarnings {
         appendIfMismatch(
             head,
             "Database",
-            requestedProperty(requestedProperties, "database", "db"),
-            actualValue(sessionInfo, "database"));
+            requestedProperty(requestedProperties, SessionProperty.DATABASE),
+            actualValue(sessionInfo, SessionProperty.DATABASE));
     head =
         appendIfMismatch(
             head,
             "Schema",
-            requestedProperty(requestedProperties, "schema"),
-            actualValue(sessionInfo, "schema"));
+            requestedProperty(requestedProperties, SessionProperty.SCHEMA),
+            actualValue(sessionInfo, SessionProperty.SCHEMA));
     head =
         appendIfMismatch(
             head,
             "Role",
-            requestedProperty(requestedProperties, "role"),
-            actualValue(sessionInfo, "role"));
+            requestedProperty(requestedProperties, SessionProperty.ROLE),
+            actualValue(sessionInfo, SessionProperty.ROLE));
     head =
         appendIfMismatch(
             head,
             "Warehouse",
-            requestedProperty(requestedProperties, "warehouse"),
-            actualValue(sessionInfo, "warehouse"));
+            requestedProperty(requestedProperties, SessionProperty.WAREHOUSE),
+            actualValue(sessionInfo, SessionProperty.WAREHOUSE));
     return head;
   }
 
@@ -66,33 +67,38 @@ final class ConnectionEstablishedWarnings {
     return head;
   }
 
-  /** Case-insensitive lookup of the first present requested value among the given property keys. */
-  private static String requestedProperty(Properties requestedProperties, String... keys) {
-    for (String key : keys) {
-      for (Object k : requestedProperties.keySet()) {
-        if (k instanceof String && ((String) k).equalsIgnoreCase(key)) {
-          String value = requestedProperties.getProperty((String) k);
-          if (value != null && !value.isEmpty()) {
-            return value;
-          }
+  /**
+   * Case-insensitive lookup of the requested value for the given property. Legacy aliases (e.g.
+   * {@code db} → {@code database}) are resolved through {@link ParameterKeyNormalizer} so the
+   * canonical {@link SessionProperty} key matches whichever alias the caller supplied.
+   */
+  private static String requestedProperty(
+      Properties requestedProperties, SessionProperty property) {
+    String canonicalKey = property.getKey();
+    for (Object k : requestedProperties.keySet()) {
+      if (k instanceof String
+          && ParameterKeyNormalizer.normalize((String) k).equalsIgnoreCase(canonicalKey)) {
+        String value = requestedProperties.getProperty((String) k);
+        if (value != null && !value.isEmpty()) {
+          return value;
         }
       }
     }
     return null;
   }
 
-  private static String actualValue(ConnectionGetInfoResponse info, String property) {
+  private static String actualValue(ConnectionGetInfoResponse info, SessionProperty property) {
     if (info == null) {
       return null;
     }
-    switch (property.toLowerCase(Locale.ROOT)) {
-      case "database":
+    switch (property) {
+      case DATABASE:
         return info.hasDatabase() && !info.getDatabase().isEmpty() ? info.getDatabase() : null;
-      case "schema":
+      case SCHEMA:
         return info.hasSchema() && !info.getSchema().isEmpty() ? info.getSchema() : null;
-      case "role":
+      case ROLE:
         return info.hasRole() && !info.getRole().isEmpty() ? info.getRole() : null;
-      case "warehouse":
+      case WAREHOUSE:
         return info.hasWarehouse() && !info.getWarehouse().isEmpty() ? info.getWarehouse() : null;
       default:
         return null;

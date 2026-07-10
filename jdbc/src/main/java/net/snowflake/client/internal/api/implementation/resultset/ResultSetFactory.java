@@ -14,7 +14,6 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
@@ -137,8 +136,7 @@ public class ResultSetFactory {
     // connection before any rows are read).
     InternalSnowflakeConnection connection =
         statement.getConnection().unwrap(InternalSnowflakeConnection.class);
-    return SessionDataConversionContext.fromConnection(
-        ProtobufApis.coreDriverApi, connection.getHandle(), connection.getResolvedProperties());
+    return SessionDataConversionContext.fromConnection(connection.getParameters());
   }
 
   private static ResultSetGetStreamResponse fetchStreamAndRelease(

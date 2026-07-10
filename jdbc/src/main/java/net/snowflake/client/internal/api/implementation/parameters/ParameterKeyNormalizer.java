@@ -1,4 +1,4 @@
-package net.snowflake.client.internal.unicore;
+package net.snowflake.client.internal.api.implementation.parameters;
 
 import java.util.HashMap;
 import java.util.Locale;
@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
  * {@code oktausername} → {@code okta_username}).
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
-public final class LegacyKeyNormalizer {
+public final class ParameterKeyNormalizer {
 
   /** Keys are stored lowercased; lookups are case-insensitive (JDBC accepts props in any case). */
   private static final Map<String, String> LEGACY_KEY_ALIASES;
