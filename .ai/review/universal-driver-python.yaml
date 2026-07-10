@@ -499,31 +499,44 @@ rules:
               return tmp.name
       ```
 
-  - id: ud-py-sql-identifier-parameterization
+  - id: ud-py-sql-parameterization
     rule: |
-      **OBJECTIVE**: Prevent SQL injection in identifier positions and ensure correct quoting by using Snowflake's `IDENTIFIER(?)` pseudo-function with server-side binding instead of f-string interpolation for SQL object names.
+      **OBJECTIVE**: Never interpolate variable values into SQL strings via f-strings or concatenation. Every variable value must reach the server as a binding, not as part of the query text.
 
-      **REQUIREMENT**: When a `cursor.execute(...)` call places a database object name — table, schema, stage, file format, view, or column — into a SQL statement by interpolating a variable, use `IDENTIFIER(?)` with `params=` and `_force_qmark_paramstyle=True` instead of an f-string. `_force_qmark_paramstyle=True` is required because the connector's default paramstyle may be `pyformat` (`%s`); `IDENTIFIER()` only works with the `?`/qmark form that routes through server-side binding.
+      **REQUIREMENT**: Any `cursor.execute(...)` call that includes a non-constant variable value in the SQL string is a finding. The correction depends on the position:
 
-      Apply this rule when:
-      - The identifier comes from user input, configuration, or an earlier query result.
-      - The SQL statement operates on a named database object (`TABLE`, `SCHEMA`, `STAGE`, `FILE FORMAT`, `VIEW`, etc.).
+      **Identifiers** (table, schema, stage, file format, view, column name):
+      Use `IDENTIFIER(?)` with `params=` and `_force_qmark_paramstyle=True`. The `_force_qmark_paramstyle=True` flag is required because the connector defaults to `pyformat`; `IDENTIFIER(?)` only works through server-side `?` binding.
 
-      Exemptions (raw interpolation remains acceptable):
-      - The value is a **hard-coded literal constant** in the same file (e.g. `"PARQUET"`, `"AUTO_DETECT"`).
-      - The position is a **SQL keyword or clause option**, not an identifier (e.g. `AUTO_COMPRESS=FALSE`, or an `on_error` value validated against an allowlist before reaching the query).
-      - DDL clauses whose syntax does not support `IDENTIFIER(?)` (e.g. `PUT`/`COPY INTO @stage` path arguments — use manual escaping there instead).
+      **Option / clause values** (e.g. `ON_ERROR=`, `COMPRESSION=` settings, any keyword-position value that varies at runtime):
+      Use a bare `?` placeholder with `params=` and `_force_qmark_paramstyle=True`. Even if the value looks like a keyword, treat it as a binding. The server validates accepted values; the driver should not rely on client-side allowlists as the sole defence.
 
-      Smell to search for: `f"…{` inside a `cursor.execute(` argument where the interpolated token is a table, schema, stage, or column name.
+      **When binding is not possible** (syntax does not support it — e.g. `PUT`/`GET` stage-path arguments, `@stage` references inside `COPY INTO FROM`):
+      Leave the interpolation in place but add an inline comment explaining why binding cannot be used and noting the mitigating factor (e.g. internally-generated name, escaping applied). Do not silently interpolate without justification.
+
+      **How to spot violations**: search for `f"` or `+` inside a `cursor.execute(` argument where the interpolated value is not a hard-coded literal constant defined in the same file.
+
+      Exemptions — raw interpolation remains acceptable **without a comment**:
+      - The interpolated token is a **hard-coded string literal** in the same file (e.g. `f"TYPE=PARQUET COMPRESSION={VALID_COMPRESSIONS_MAP[cfg.compression]}"` where the map lookup is over a validated constant set).
+      - The token is a pure **Python boolean / integer** converted to a SQL keyword (`TRUE`/`FALSE`, a numeric literal) via a typed helper like `_sql_bool(bool_val)` — the Python type system guarantees it is a safe keyword or numeric literal.
+      - A SQL **structural keyword** (e.g. `CREATE TEMPORARY`, `IF NOT EXISTS`, an iceberg prefix from a `bool` flag) assembled purely from hard-coded string fragments with no variable interpolation.
 
       ❌ **BAD:**
       ```python
+      # Identifier interpolated directly
       cursor.execute(f"ALTER TABLE {target_location} RENAME TO {original}")
       cursor.execute(f"TRUNCATE TABLE IF EXISTS {target_location}")
+
+      # Option value interpolated directly — no binding, no comment
+      cursor.execute(f"COPY INTO ... PURGE=TRUE ON_ERROR={cfg.on_error}")
+
+      # Auto-generated name still interpolated — vulnerable if secrets module is mocked
+      cursor.execute(f"CREATE TEMPORARY STAGE {stage_name} FILE_FORMAT=(...)")
       ```
 
       ✅ **GOOD:**
       ```python
+      # Identifiers via IDENTIFIER(?)
       cursor.execute(
           "ALTER TABLE IDENTIFIER(?) RENAME TO IDENTIFIER(?)",
           params=(target_location, original),
@@ -533,6 +546,28 @@ rules:
           "TRUNCATE TABLE IF EXISTS IDENTIFIER(?)",
           params=(target_location,),
           _force_qmark_paramstyle=True,
+      )
+
+      # Option value via bare ?
+      cursor.execute(
+          "COPY INTO IDENTIFIER(?) (...) PURGE=TRUE ON_ERROR=?",
+          params=(target_location, cfg.on_error),
+          _force_qmark_paramstyle=True,
+      )
+
+      # Auto-generated name still bound
+      cursor.execute(
+          "CREATE TEMPORARY STAGE IDENTIFIER(?) FILE_FORMAT=(...)",
+          params=(stage_name,),
+          _force_qmark_paramstyle=True,
+      )
+
+      # Binding not supported by syntax — comment required
+      cursor.execute(
+          f"PUT 'file://{uri}' @{stage_location} PARALLEL={self._cfg.parallel} ..."
+          # PUT does not support IDENTIFIER(?) or ? bindings for stage paths.
+          # stage_location is a connector-internal name generated by secrets.token_hex;
+          # uri is produced by escape_path_for_sql() which escapes backslashes and quotes.
       )
       ```
 
