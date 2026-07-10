@@ -301,6 +301,17 @@ impl Binding {
 
         if self.target_value_ptr.is_null() || self.buffer_length <= 0 {
             let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
+            if remaining.is_empty() {
+                // Whole value already returned; mark the column complete.
+                *get_data_offset = None;
+                return vec![];
+            }
+            // Length-only probe (zero-size buffer): report the length but keep the
+            // read cursor where it is. Leaving it as None would make the statement
+            // layer (data.rs) treat the column as Completed and return SQL_NO_DATA
+            // on the next SQLGetData, dropping the value. This is the invariant the
+            // sibling write_*_from_fn / write_wchar_string probe paths also uphold.
+            *get_data_offset = Some(offset);
             return vec![Warning::StringDataTruncated];
         }
 
@@ -393,6 +404,7 @@ impl Binding {
                 let _ = self.write_length_or_null(LengthOrNull::Length(0));
                 return vec![];
             }
+            *get_data_offset = Some(offset);
             let _ = self.write_length_or_null(LengthOrNull::Length(remaining));
             return vec![Warning::StringDataTruncated];
         }
@@ -443,6 +455,7 @@ impl Binding {
                 let _ = self.write_length_or_null(LengthOrNull::Length(0));
                 return vec![];
             }
+            *get_data_offset = Some(offset);
             let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
             return vec![Warning::StringDataTruncated];
         }
@@ -497,8 +510,16 @@ impl Binding {
         let unit_size = wchar_byte_size() as sql::Len;
         let total_units = wide_unit_len(src);
         if self.target_value_ptr.is_null() || self.buffer_length < unit_size {
-            let total_bytes = (total_units as sql::Len) * unit_size;
-            let _ = self.write_length_or_null(LengthOrNull::Length(total_bytes));
+            let offset = get_data_offset.unwrap_or(0);
+            let remaining_units = total_units.saturating_sub(offset);
+            let remaining_bytes = (remaining_units as sql::Len) * unit_size;
+            let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
+            if remaining_units == 0 {
+                // Whole value already returned; mark the column complete.
+                *get_data_offset = None;
+                return vec![];
+            }
+            *get_data_offset = Some(offset);
             return vec![Warning::StringDataTruncated];
         }
 
