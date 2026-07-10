@@ -212,7 +212,11 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
     let cancel_token_for_task = cancel_token.clone();
     state.registry().insert(async_handle, cancel_token);
 
+    // Tokio worker threads do not inherit the caller's tracing dispatch (see the sync path's set_default above).
+    // Without this, async RPC tracing events skip file/OTLP/telemetry/CallbackLayer.
+    let dispatch = state.dispatch.clone();
     state.runtime.spawn(async move {
+        let _guard = tracing::dispatcher::set_default(&dispatch);
         let result: Option<(usize, Vec<u8>)> = tokio::select! {
             biased;
             _ = cancel_token_for_task.cancelled() => None,
