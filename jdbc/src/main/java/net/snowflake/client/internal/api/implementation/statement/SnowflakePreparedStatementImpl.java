@@ -56,7 +56,6 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       SFLoggerFactory.getLogger(SnowflakePreparedStatementImpl.class);
 
   private final String sql;
-  private final SqlPlaceholderMetadata placeholderMetadata;
   private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
   private final PreparedBatch batch = new PreparedBatch();
 
@@ -71,7 +70,6 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       InternalSnowflakeConnection connection, String sql, CoreDriverApi coreDriverApi) {
     super(connection, coreDriverApi);
     this.sql = sql;
-    this.placeholderMetadata = SqlPlaceholderMetadata.analyze(sql);
     this.parameterValues = new HashMap<>();
   }
 
@@ -104,7 +102,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
       return executeQueryWithBindings(sql, nativeBindings);
     }
   }
@@ -114,7 +112,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
       return executeUpdateWithBindings(sql, nativeBindings);
     }
   }
@@ -289,8 +287,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void clearParameters() throws SQLException {
     checkClosed();
-    logger.trace(
-        "Clearing prepared parameters: placeholders={}", placeholderMetadata.placeholderCount());
+    logger.trace("Clearing prepared parameters: binds={}", parameterValues.size());
     parameterValues.clear();
   }
 
@@ -431,7 +428,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
       return executeWithBindings(sql, nativeBindings);
     }
   }
@@ -439,7 +436,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void addBatch() throws SQLException {
     checkClosed();
-    batch.addRow(placeholderMetadata, parameterValues);
+    batch.addRow(parameterValues);
   }
 
   @Override
@@ -459,7 +456,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   public int[] executeBatch() throws SQLException {
     checkClosed();
     invalidateConversionContext();
-    long[] expanded = batch.executeAll(this, sql, placeholderMetadata);
+    long[] expanded = batch.executeAll(this, sql);
     int[] result = new int[expanded.length];
     for (int i = 0; i < expanded.length; i++) {
       result[i] = toBatchInt(expanded[i]);
@@ -471,7 +468,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   public long[] executeLargeBatch() throws SQLException {
     checkClosed();
     invalidateConversionContext();
-    return batch.executeAll(this, sql, placeholderMetadata);
+    return batch.executeAll(this, sql);
   }
 
   @Override
@@ -687,22 +684,11 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private void setParameter(int parameterIndex, SnowflakeType bindType, Object value)
       throws SQLException {
     if (parameterIndex < 1) {
-      logger.warn(
-          "Invalid prepared parameter index: index={}, placeholders={}",
-          parameterIndex,
-          placeholderMetadata.placeholderCount());
+      logger.warn("Invalid prepared parameter index: index={}", parameterIndex);
       throw new SQLException("Invalid parameter index: " + parameterIndex);
     }
-    if (placeholderMetadata.hasMixedPlaceholderStyles()) {
-      throw new SQLException("Mixed positional and numeric placeholders are not supported");
-    }
-    if (!placeholderMetadata.referencesParameterIndex(parameterIndex)) {
-      logger.debug(
-          "Ignoring extra prepared parameter to preserve legacy JDBC behavior: index={}, placeholders={}",
-          parameterIndex,
-          placeholderMetadata.placeholderCount());
-      return;
-    }
+    // Every bound value is retained and shipped to the server keyed by index; the server owns
+    // placeholder analysis (count, positional/numeric style, over/under-binding).
     // Boxed primitives passed through setObject must be stringified before they reach the
     // serializer (which rejects non-String values).
     String normalized = Objects.toString(value, null);
@@ -710,11 +696,10 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
         parameterIndex,
         new PreparedStatementBindingSerializer.ParameterValue(bindType, normalized));
     logger.debug(
-        "Prepared parameter set: index={}, bindType={}, isNull={}, placeholders={}",
+        "Prepared parameter set: index={}, bindType={}, isNull={}",
         parameterIndex,
         bindType,
-        value == null,
-        placeholderMetadata.placeholderCount());
+        value == null);
   }
 
   private <T> void setNullableParameter(
@@ -781,7 +766,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     invalidateConversionContext();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
       return executeAsyncQueryWithBindings(sql, nativeBindings.bindings());
     }
   }
