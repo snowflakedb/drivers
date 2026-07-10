@@ -431,6 +431,7 @@ class Connection(ConnectionMixin):
             return True
 
     @property
+    @api_telemetry
     def expired(self) -> bool:
         """
         True if the connection's master token has expired and the session can

@@ -286,6 +286,7 @@ class Connection(ConnectionMixin):
         except Exception:
             return True
 
+    @api_telemetry
     async def is_expired(self) -> bool:
         """
         Return True if the connection's master token has expired.
