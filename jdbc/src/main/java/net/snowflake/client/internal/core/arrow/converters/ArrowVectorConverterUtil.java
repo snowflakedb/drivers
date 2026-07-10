@@ -92,6 +92,10 @@ public final class ArrowVectorConverterUtil {
           // resolved by the converter itself from the concrete vector type.
           return new IntervalYearMonthToPeriodConverter(vector, idx, context);
 
+        case INTERVAL_DAY_TIME:
+          // The interval is a signed total-nanoseconds Int64.
+          return new IntervalDayTimeToDurationConverter(vector, idx, context);
+
         case REAL:
           return new DoubleToRealConverter(vector, idx, context);
 

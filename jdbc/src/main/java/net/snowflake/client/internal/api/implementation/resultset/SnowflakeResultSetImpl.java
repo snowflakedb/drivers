@@ -20,6 +20,7 @@ import java.sql.SQLXML;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Period;
 import java.util.Calendar;
 import java.util.List;
@@ -184,6 +185,12 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   private Period getPeriod(int columnIndex) throws SQLException {
     checkClosed();
     return rowReader.getPeriod(columnIndex);
+  }
+
+  /** Backs {@code getObject(col, Duration.class)} for INTERVAL DAY TO SECOND columns. */
+  private Duration getDuration(int columnIndex) throws SQLException {
+    checkClosed();
+    return rowReader.getDuration(columnIndex);
   }
 
   @Override
@@ -1111,6 +1118,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
       return type.cast(getTimestamp(columnIndex));
     } else if (type == Period.class) {
       return type.cast(getPeriod(columnIndex));
+    } else if (type == Duration.class) {
+      return type.cast(getDuration(columnIndex));
     }
     throw new SQLFeatureNotSupportedException("Type not supported: " + type.getName());
   }
