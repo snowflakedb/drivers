@@ -26,7 +26,7 @@ SQLRETURN driver_connect(ConnectionHandleWrapper& dbc, const std::string& conn_s
 }  // namespace
 
 // Scenario: should negotiate TLS when the server offers a version inside the window
-TEST_CASE("should negotiate TLS when the server offers a version inside the window", "[tls][flaky]") {
+TEST_CASE("should negotiate TLS when the server offers a version inside the window", "[tls]") {
   SKIP_OLD_DRIVER("", "New driver only. Old driver does not support MIN_TLS_VERSION and MAX_TLS_VERSION");
   // Given a TLS server that offers only TLS 1.3
   WiremockClient wm(WiremockClient::Mode::Server, WiremockClient::TlsVersion::Tls13);
@@ -42,7 +42,7 @@ TEST_CASE("should negotiate TLS when the server offers a version inside the wind
 }
 
 // Scenario: should fail the handshake when the server only offers a version below the minimum
-TEST_CASE("should fail the handshake when the server only offers a version below the minimum", "[tls][flaky]") {
+TEST_CASE("should fail the handshake when the server only offers a version below the minimum", "[tls]") {
   SKIP_OLD_DRIVER("", "New driver only. Old driver does not support MIN_TLS_VERSION and MAX_TLS_VERSION");
   // Given a TLS server that offers only TLS 1.2
   WiremockClient wm(WiremockClient::Mode::Server, WiremockClient::TlsVersion::Tls12);
