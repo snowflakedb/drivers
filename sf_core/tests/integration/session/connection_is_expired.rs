@@ -1,3 +1,4 @@
+use scopeguard::defer;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClientBlockingExt, database_driver_client,
 };
@@ -31,6 +32,14 @@ fn setup() -> (
 #[test]
 fn test_connection_is_expired_initially_false() {
     let (client, db_handle, conn_handle) = setup();
+    defer! {
+        let _ = client.connection_release_blocking(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        });
+        let _ = client.database_release_blocking(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        });
+    }
 
     let is_expired = client
         .connection_is_expired_blocking(ConnectionIsExpiredRequest {
@@ -39,18 +48,6 @@ fn test_connection_is_expired_initially_false() {
         .unwrap()
         .is_expired;
     assert!(!is_expired, "New connection should not be expired");
-
-    // Cleanup
-    client
-        .connection_release_blocking(ConnectionReleaseRequest {
-            conn_handle: Some(conn_handle),
-        })
-        .unwrap();
-    client
-        .database_release_blocking(DatabaseReleaseRequest {
-            db_handle: Some(db_handle),
-        })
-        .unwrap();
 }
 
 /// Closing a connection must NOT set the expired flag — expired and closed
@@ -58,6 +55,14 @@ fn test_connection_is_expired_initially_false() {
 #[test]
 fn test_connection_is_expired_not_set_by_close() {
     let (client, db_handle, conn_handle) = setup();
+    defer! {
+        let _ = client.connection_release_blocking(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        });
+        let _ = client.database_release_blocking(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        });
+    }
 
     client
         .connection_close_blocking(ConnectionCloseRequest {
@@ -75,18 +80,6 @@ fn test_connection_is_expired_not_set_by_close() {
         !is_expired,
         "Closing a connection must not set the expired flag"
     );
-
-    // Cleanup
-    client
-        .connection_release_blocking(ConnectionReleaseRequest {
-            conn_handle: Some(conn_handle),
-        })
-        .unwrap();
-    client
-        .database_release_blocking(DatabaseReleaseRequest {
-            db_handle: Some(db_handle),
-        })
-        .unwrap();
 }
 
 /// Querying expired state for an invalid handle must return an error.
