@@ -1,4 +1,4 @@
-@odbc @python @core_not_needed
+@odbc @python @jdbc @core_not_needed
 Feature: INTERVAL datatype handling
   # Snowflake INTERVAL types: INTERVAL YEAR, INTERVAL MONTH, INTERVAL YEAR TO MONTH,
   # INTERVAL DAY, INTERVAL HOUR, INTERVAL MINUTE, INTERVAL SECOND,
@@ -43,7 +43,7 @@ Feature: INTERVAL datatype handling
   # TYPE CASTING
   # ============================================================================
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should cast INTERVAL values to appropriate type for YEAR TO MONTH and DAY TO SECOND
     # Python: YEAR TO MONTH as canonical string, DAY TO SECOND as timedelta
     # JDBC: YEAR TO MONTH as java.time.Period, DAY TO SECOND as java.time.Duration
@@ -56,7 +56,7 @@ Feature: INTERVAL datatype handling
   # SELECT LITERALS
   # ============================================================================
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL YEAR TO MONTH literals
     # Happy path + corner cases for YEAR TO MONTH:
     #   - 0-0
@@ -66,7 +66,7 @@ Feature: INTERVAL datatype handling
     When Query selecting INTERVAL YEAR TO MONTH literals is executed
     Then the result should contain expected INTERVAL YEAR TO MONTH literal values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO SECOND literals
     # Happy path + corner cases for DAY TO SECOND:
     #   - Zero:          '0 0:0:0.0'
@@ -123,14 +123,14 @@ Feature: INTERVAL datatype handling
     When Query "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR, '-1 2'::INTERVAL DAY TO HOUR" is executed
     Then the result should contain expected INTERVAL DAY TO HOUR literal values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO HOUR max literal
     # Snowflake spec max for DAY TO HOUR: '999999999 23'.
     Given Snowflake client is logged in
     When Query "SELECT '999999999 23'::INTERVAL DAY TO HOUR" is executed
     Then the result should contain expected INTERVAL DAY TO HOUR max value
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO HOUR min literal
     # Snowflake spec min for DAY TO HOUR: '-999999999 23'.
     # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
@@ -145,14 +145,14 @@ Feature: INTERVAL datatype handling
     When Query "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE, '-1 2:30'::INTERVAL DAY TO MINUTE" is executed
     Then the result should contain expected INTERVAL DAY TO MINUTE literal values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO MINUTE max literal
     # Snowflake spec max for DAY TO MINUTE: '999999999 23:59'.
     Given Snowflake client is logged in
     When Query "SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
     Then the result should contain expected INTERVAL DAY TO MINUTE max value
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO MINUTE min literal
     # Snowflake spec min for DAY TO MINUTE: '-999999999 23:59'.
     # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
@@ -179,7 +179,7 @@ Feature: INTERVAL datatype handling
     When Query "SELECT '0:0.0'::INTERVAL MINUTE TO SECOND, '30:45.123'::INTERVAL MINUTE TO SECOND, '-30:45.123'::INTERVAL MINUTE TO SECOND, '999999999:59.999999'::INTERVAL MINUTE TO SECOND, '-999999999:59.999999'::INTERVAL MINUTE TO SECOND" is executed
     Then the result should contain expected INTERVAL MINUTE TO SECOND literal values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select NULL INTERVAL literals
     Given Snowflake client is logged in
     When Query "SELECT NULL::INTERVAL YEAR TO MONTH, NULL::INTERVAL DAY TO SECOND, NULL::INTERVAL YEAR, NULL::INTERVAL SECOND" is executed
@@ -203,7 +203,7 @@ Feature: INTERVAL datatype handling
   # widths: SB8 (BigIntVector) for YEAR TO MONTH, SB16 (Decimal128) for DAY TO
   # SECOND. The precision-variant scenarios test smaller Arrow vector types.
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL YEAR TO MONTH values from table
     Given Snowflake client is logged in
     And A temporary table with INTERVAL YEAR TO MONTH column is created
@@ -218,7 +218,7 @@ Feature: INTERVAL datatype handling
     When Query "SELECT * FROM {table} ORDER BY C1 NULLS LAST" is executed
     Then the result should contain the inserted INTERVAL YEAR TO MONTH values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO SECOND values from table
     Given Snowflake client is logged in
     And A temporary table with INTERVAL DAY TO SECOND column is created
@@ -233,7 +233,7 @@ Feature: INTERVAL datatype handling
     When Query "SELECT * FROM {table} ORDER BY C1 NULLS LAST" is executed
     Then the result should contain the inserted INTERVAL DAY TO SECOND values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL YEAR(2) TO MONTH values from table
     # Arrow precision variant: SmallIntVector (SB2, 16-bit)
     Given Snowflake client is logged in
@@ -242,7 +242,7 @@ Feature: INTERVAL datatype handling
     When Query "SELECT * FROM {table} ORDER BY C1 NULLS LAST" is executed
     Then the result should contain the inserted INTERVAL YEAR(2) TO MONTH values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL YEAR(7) TO MONTH values from table
     # Arrow precision variant: IntVector (SB4, 32-bit)
     Given Snowflake client is logged in
@@ -251,7 +251,7 @@ Feature: INTERVAL datatype handling
     When Query "SELECT * FROM {table} ORDER BY C1 NULLS LAST" is executed
     Then the result should contain the inserted INTERVAL YEAR(7) TO MONTH values in order
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY(3) TO SECOND values from table
     # Arrow precision variant: BigIntVector (SB8, 64-bit nanoseconds)
     Given Snowflake client is logged in
@@ -264,7 +264,7 @@ Feature: INTERVAL datatype handling
   # BINDING
   # ============================================================================
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should insert and select back INTERVAL YEAR TO MONTH values using parameter binding
     Given Snowflake client is logged in
     And A temporary table with INTERVAL YEAR TO MONTH column is created
@@ -272,7 +272,7 @@ Feature: INTERVAL datatype handling
     And Query "SELECT * FROM {table} ORDER BY C1 NULLS LAST" is executed
     Then the result should contain the bound INTERVAL YEAR TO MONTH values ['-999999999-11', '-1-3', '0-0', '1-2', '999999999-11', NULL]
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should insert and select back INTERVAL DAY TO SECOND values using parameter binding
     Given Snowflake client is logged in
     And A temporary table with INTERVAL DAY TO SECOND column is created
@@ -280,7 +280,7 @@ Feature: INTERVAL datatype handling
     And Query "SELECT * FROM {table} ORDER BY C1 NULLS LAST" is executed
     Then the result should contain the bound INTERVAL DAY TO SECOND values ['-99999 23:59:59.999999', '-1 2:3:4.567', '0 0:0:0.0', '12 3:4:5.678', '99999 23:59:59.999999', NULL]
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL YEAR TO MONTH values using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL YEAR TO MONTH, ?::INTERVAL YEAR TO MONTH, ?::INTERVAL YEAR TO MONTH" is executed with bound string values ['0-0', '1-2', '999999999-11']
@@ -288,7 +288,7 @@ Feature: INTERVAL datatype handling
       | col1 | col2 | col3         |
       | 0-0  | 1-2  | 999999999-11 |
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO SECOND values using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL DAY TO SECOND, ?::INTERVAL DAY TO SECOND, ?::INTERVAL DAY TO SECOND" is executed with bound string values ['0 0:0:0.0', '12 3:4:5.678', '99999 23:59:59.999999']
@@ -296,7 +296,7 @@ Feature: INTERVAL datatype handling
       | col1      | col2         | col3                  |
       | 0 0:0:0.0 | 12 3:4:5.678 | 99999 23:59:59.999999 |
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select NULL INTERVAL values using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL YEAR TO MONTH, ?::INTERVAL DAY TO SECOND" is executed with bound NULL values
@@ -346,14 +346,14 @@ Feature: INTERVAL datatype handling
     When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '1 2'
     Then the result should contain expected INTERVAL DAY TO HOUR bound value
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO HOUR max value using parameter binding
     # Snowflake spec max for DAY TO HOUR: '999999999 23'.
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '999999999 23'
     Then the result should contain expected INTERVAL DAY TO HOUR max bound value
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO HOUR min value using parameter binding
     # Snowflake spec min for DAY TO HOUR: '-999999999 23'.
     # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
@@ -368,14 +368,14 @@ Feature: INTERVAL datatype handling
     When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '1 2:30'
     Then the result should contain expected INTERVAL DAY TO MINUTE bound value
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO MINUTE max value using parameter binding
     # Snowflake spec max for DAY TO MINUTE: '999999999 23:59'.
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '999999999 23:59'
     Then the result should contain expected INTERVAL DAY TO MINUTE max bound value
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select INTERVAL DAY TO MINUTE min value using parameter binding
     # Snowflake spec min for DAY TO MINUTE: '-999999999 23:59'.
     # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
@@ -406,7 +406,7 @@ Feature: INTERVAL datatype handling
   # MULTIPLE CHUNKS DOWNLOADING
   # ============================================================================
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should download INTERVAL YEAR TO MONTH data in multiple chunks
     # ~50000 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
@@ -414,7 +414,7 @@ Feature: INTERVAL datatype handling
     Then there are 50000 rows returned
     And all returned INTERVAL YEAR TO MONTH values should form a sequential series of months starting at 0
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should download INTERVAL DAY TO SECOND data in multiple chunks
     # ~50000 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
