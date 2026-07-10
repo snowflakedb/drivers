@@ -25,6 +25,9 @@ inline constexpr auto READONLY_SCHEMA_NAME = "CATALOGTESTS";
 // Second schema in the same database, used to verify that NULL-schema metadata
 // queries span all schemas in the connected database (not just the current one).
 inline constexpr auto READONLY_SECOND_SCHEMA_NAME = "DATATYPETESTS";
+// Schema holding the cross-schema FK child (XSCHILD references
+// CATALOGTESTS.XSPARENT); used by SQLForeignKeys cross-schema tests.
+inline constexpr auto READONLY_FK_REMOTE_SCHEMA_NAME = "FKREMOTESCHEMA";
 
 // =============================================================================
 // Object name constants
@@ -51,6 +54,14 @@ inline constexpr auto FK_CHILD = "FKCHILD";
 inline constexpr auto FK_MULTI_PARENT = "FKMULTIPARENT";
 inline constexpr auto FK_MULTI_CHILD_A = "FKMULTICHILDA";
 inline constexpr auto FK_MULTI_CHILD_B = "FKMULTICHILDB";
+
+// Cross-schema FK: XS_PARENT in CATALOGTESTS, XS_CHILD in FKREMOTESCHEMA.
+inline constexpr auto XS_PARENT = "XSPARENT";
+inline constexpr auto XS_CHILD = "XSCHILD";
+
+// Composite (multi-column) FK for KEY_SEQ ordering tests.
+inline constexpr auto COMPOSITE_FK_PARENT = "CFKPARENT";
+inline constexpr auto COMPOSITE_FK_CHILD = "CFKCHILD";
 
 // Views
 inline constexpr auto BASIC_VIEW = "BASICVIEW";

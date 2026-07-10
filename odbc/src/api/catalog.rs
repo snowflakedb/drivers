@@ -374,6 +374,17 @@ fn catalog_key_seq_field(name: &str) -> Field {
     Field::new(name, DataType::Int16, false).with_metadata(metadata)
 }
 
+fn catalog_nullable_smallint_field(name: &str) -> Field {
+    let metadata: HashMap<String, String> = [
+        ("logicalType".to_string(), "FIXED".to_string()),
+        ("scale".to_string(), "0".to_string()),
+        ("precision".to_string(), "5".to_string()),
+        ("conciseSqlType".to_string(), "5".to_string()),
+    ]
+    .into();
+    Field::new(name, DataType::Int16, true).with_metadata(metadata)
+}
+
 fn escape_snowflake_identifier(ident: &str) -> String {
     ident.replace('"', "\"\"")
 }
@@ -588,13 +599,19 @@ impl ShowKeyScopeFilter<'_> {
         row_schema: Option<&str>,
         row_table: Option<&str>,
     ) -> bool {
-        let field_matches = |want: Option<&str>, got: Option<&str>| match want {
-            Some(want) => got == Some(want),
-            None => true,
-        };
         field_matches(self.catalog, row_catalog)
             && field_matches(self.schema, row_schema)
             && field_matches(self.table, row_table)
+    }
+}
+
+/// Client-side filter comparison for a single catalog identifier. `None` or an
+/// empty string means "no filter" — mirroring `build_show_in_scope`, which also
+/// treats an empty identifier as absent — so the scope and the re-filter agree.
+fn field_matches(want: Option<&str>, got: Option<&str>) -> bool {
+    match want {
+        Some(want) if !want.is_empty() => got == Some(want),
+        _ => true,
     }
 }
 
@@ -766,6 +783,498 @@ pub fn primary_keys<E: OdbcEncoding>(
         table: table_raw.as_deref(),
     };
     let flat_batch = map_show_primary_keys_to_odbc(show_batch, &filter)?;
+    let schema = flat_batch.schema();
+    let reader = reader_from_record_batch(flat_batch, schema)?;
+    set_state_for_catalog(
+        &mut inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
+}
+
+// ============================================================================
+// SQLForeignKeys — SHOW IMPORTED / EXPORTED KEYS
+// ============================================================================
+
+// ODBC referential rule / deferrability constants (sqlext.h).
+const SQL_CASCADE: i16 = 0;
+const SQL_RESTRICT: i16 = 1;
+const SQL_SET_NULL: i16 = 2;
+const SQL_NO_ACTION: i16 = 3;
+const SQL_SET_DEFAULT: i16 = 4;
+const SQL_INITIALLY_DEFERRED: i16 = 5;
+const SQL_INITIALLY_IMMEDIATE: i16 = 6;
+const SQL_NOT_DEFERRABLE: i16 = 7;
+
+fn foreign_keys_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("PKTABLE_CAT", 255),
+        catalog_text_field("PKTABLE_SCHEM", 255),
+        catalog_text_field("PKTABLE_NAME", 255),
+        catalog_text_field("PKCOLUMN_NAME", 255),
+        catalog_text_field("FKTABLE_CAT", 255),
+        catalog_text_field("FKTABLE_SCHEM", 255),
+        catalog_text_field("FKTABLE_NAME", 255),
+        catalog_text_field("FKCOLUMN_NAME", 255),
+        catalog_key_seq_field("KEY_SEQ"),
+        catalog_nullable_smallint_field("UPDATE_RULE"),
+        catalog_nullable_smallint_field("DELETE_RULE"),
+        catalog_text_field("FK_NAME", 255),
+        catalog_text_field("PK_NAME", 255),
+        catalog_nullable_smallint_field("DEFERRABILITY"),
+    ]))
+}
+
+/// Which `SHOW ... KEYS` direction to run, and hence which side scopes the query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShowKeySide {
+    /// `SHOW EXPORTED KEYS` — scoped to the primary-key (referenced) side.
+    Exported,
+    /// `SHOW IMPORTED KEYS` — scoped to the foreign-key (referencing) side.
+    Imported,
+}
+
+fn build_show_foreign_keys_command(
+    pk_catalog: Option<&str>,
+    pk_schema: Option<&str>,
+    pk_table: Option<&str>,
+    fk_catalog: Option<&str>,
+    fk_schema: Option<&str>,
+    fk_table: Option<&str>,
+) -> String {
+    let pk_has_table = pk_table.is_some_and(|s| !s.is_empty());
+    let fk_has_table = fk_table.is_some_and(|s| !s.is_empty());
+    // Side selection by which side carries a table name. The `SQLForeignKeys`
+    // entry point already fails both-tables-NULL with HY009, so at least one is
+    // present here.
+    //
+    // This is equivalent to the reference driver's bitmask rule
+    // (`SFForeignKeysMetadataSource`: granularity table|schema|catalog = 1|2|4,
+    // `SHOW EXPORTED` when `primary >= foreign`). After `resolve_show_identifiers`
+    // a table-bearing side is always granularity 7 and any non-table side is at
+    // most 6, so `primary >= foreign` picks exactly the side that has a table —
+    // and the both-tables tie resolves to EXPORTED/PK, same as this match.
+    debug_assert!(
+        pk_has_table || fk_has_table,
+        "SQLForeignKeys entry rejects both-tables-NULL with HY009"
+    );
+    let side = match (pk_has_table, fk_has_table) {
+        (true, _) => ShowKeySide::Exported,
+        (false, true) => ShowKeySide::Imported,
+        // Unreachable in practice (see debug_assert); fall back to an
+        // account-scoped EXPORTED scan rather than panicking on malformed input.
+        (false, false) => ShowKeySide::Exported,
+    };
+
+    let (kind, catalog, schema, table) = match side {
+        ShowKeySide::Exported => ("EXPORTED", pk_catalog, pk_schema, pk_table),
+        ShowKeySide::Imported => ("IMPORTED", fk_catalog, fk_schema, fk_table),
+    };
+    // A `None`/unresolved catalog on the selected side widens the scope to
+    // `account` inside `build_show_in_scope`; the client-side re-filter then
+    // narrows the result back to the requested identifiers.
+    format!(
+        "SHOW {kind} KEYS IN {}",
+        build_show_in_scope(catalog, schema, table)
+    )
+}
+
+fn map_fk_update_delete_rule(rule: Option<&str>) -> Option<i16> {
+    // Snowflake returns these keywords uppercase, but match case-insensitively so
+    // a casing change in the server response can't silently drop the mapping.
+    match rule?.to_ascii_uppercase().as_str() {
+        "CASCADE" => Some(SQL_CASCADE),
+        "NO ACTION" => Some(SQL_NO_ACTION),
+        "SET NULL" => Some(SQL_SET_NULL),
+        "SET DEFAULT" => Some(SQL_SET_DEFAULT),
+        "RESTRICT" => Some(SQL_RESTRICT),
+        _ => None,
+    }
+}
+
+fn map_fk_deferrability(value: Option<&str>) -> Option<i16> {
+    match value?.to_ascii_uppercase().as_str() {
+        "INITIALLY DEFERRED" => Some(SQL_INITIALLY_DEFERRED),
+        "INITIALLY IMMEDIATE" => Some(SQL_INITIALLY_IMMEDIATE),
+        "NOT DEFERRABLE" => Some(SQL_NOT_DEFERRABLE),
+        _ => None,
+    }
+}
+
+/// One flat `SQLForeignKeys` result row, in ODBC column order.
+struct ForeignKeyRow {
+    pk_table_cat: Option<String>,
+    pk_table_schem: Option<String>,
+    pk_table_name: Option<String>,
+    pk_column_name: Option<String>,
+    fk_table_cat: Option<String>,
+    fk_table_schem: Option<String>,
+    fk_table_name: Option<String>,
+    fk_column_name: Option<String>,
+    key_seq: i16,
+    update_rule: Option<i16>,
+    delete_rule: Option<i16>,
+    fk_name: Option<String>,
+    pk_name: Option<String>,
+    deferrability: Option<i16>,
+}
+
+/// Re-applies requested PK/FK identifiers as filters when the `SHOW` scope was widened.
+struct ShowForeignKeyFilter<'a> {
+    pk_catalog: Option<&'a str>,
+    pk_schema: Option<&'a str>,
+    pk_table: Option<&'a str>,
+    fk_catalog: Option<&'a str>,
+    fk_schema: Option<&'a str>,
+    fk_table: Option<&'a str>,
+}
+
+impl ShowForeignKeyFilter<'_> {
+    fn matches(
+        &self,
+        pk_catalog: Option<&str>,
+        pk_schema: Option<&str>,
+        pk_table: Option<&str>,
+        fk_catalog: Option<&str>,
+        fk_schema: Option<&str>,
+        fk_table: Option<&str>,
+    ) -> bool {
+        field_matches(self.pk_catalog, pk_catalog)
+            && field_matches(self.pk_schema, pk_schema)
+            && field_matches(self.pk_table, pk_table)
+            && field_matches(self.fk_catalog, fk_catalog)
+            && field_matches(self.fk_schema, fk_schema)
+            && field_matches(self.fk_table, fk_table)
+    }
+}
+
+fn map_show_foreign_keys_to_odbc(
+    batch: RecordBatch,
+    filter: &ShowForeignKeyFilter<'_>,
+) -> OdbcResult<RecordBatch> {
+    let schema = foreign_keys_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(schema));
+    }
+
+    let input = batch.schema();
+    let idx_pk_db = column_index_by_name(&input, "pk_database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_database_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_schema = column_index_by_name(&input, "pk_schema_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_schema_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_table = column_index_by_name(&input, "pk_table_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_table_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_column = column_index_by_name(&input, "pk_column_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_column_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_db = column_index_by_name(&input, "fk_database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_database_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_schema = column_index_by_name(&input, "fk_schema_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_schema_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_table = column_index_by_name(&input, "fk_table_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_table_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_column = column_index_by_name(&input, "fk_column_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_column_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_key_seq = column_index_by_name(&input, "key_sequence").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing key_sequence column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_update_rule = column_index_by_name(&input, "update_rule").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing update_rule column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_delete_rule = column_index_by_name(&input, "delete_rule").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing delete_rule column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_name = column_index_by_name(&input, "fk_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_name = column_index_by_name(&input, "pk_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_deferrability = column_index_by_name(&input, "deferrability").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing deferrability column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+
+    let mut rows: Vec<ForeignKeyRow> = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        let pk_table_cat = utf8_value_at(&batch, idx_pk_db, row);
+        let pk_table_schem = utf8_value_at(&batch, idx_pk_schema, row);
+        let pk_table_name = utf8_value_at(&batch, idx_pk_table, row);
+        let fk_table_cat = utf8_value_at(&batch, idx_fk_db, row);
+        let fk_table_schem = utf8_value_at(&batch, idx_fk_schema, row);
+        let fk_table_name = utf8_value_at(&batch, idx_fk_table, row);
+        if !filter.matches(
+            pk_table_cat.as_deref(),
+            pk_table_schem.as_deref(),
+            pk_table_name.as_deref(),
+            fk_table_cat.as_deref(),
+            fk_table_schem.as_deref(),
+            fk_table_name.as_deref(),
+        ) {
+            continue;
+        }
+
+        let pk_column_name = utf8_value_at(&batch, idx_pk_column, row);
+        let fk_column_name = utf8_value_at(&batch, idx_fk_column, row);
+        let key_seq = key_seq_value_at(&batch, idx_key_seq, row)?;
+        let update_rule =
+            map_fk_update_delete_rule(utf8_value_at(&batch, idx_update_rule, row).as_deref());
+        let delete_rule =
+            map_fk_update_delete_rule(utf8_value_at(&batch, idx_delete_rule, row).as_deref());
+        let fk_name = utf8_value_at(&batch, idx_fk_name, row);
+        let pk_name = utf8_value_at(&batch, idx_pk_name, row);
+        let deferrability =
+            map_fk_deferrability(utf8_value_at(&batch, idx_deferrability, row).as_deref());
+        rows.push(ForeignKeyRow {
+            pk_table_cat,
+            pk_table_schem,
+            pk_table_name,
+            pk_column_name,
+            fk_table_cat,
+            fk_table_schem,
+            fk_table_name,
+            fk_column_name,
+            key_seq,
+            update_rule,
+            delete_rule,
+            fk_name,
+            pk_name,
+            deferrability,
+        });
+    }
+
+    // Preserve server SHOW order; the reference driver does not sort client-side.
+    let pk_table_cats: Vec<Option<&str>> = rows.iter().map(|r| r.pk_table_cat.as_deref()).collect();
+    let pk_table_schems: Vec<Option<&str>> =
+        rows.iter().map(|r| r.pk_table_schem.as_deref()).collect();
+    let pk_table_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.pk_table_name.as_deref()).collect();
+    let pk_column_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.pk_column_name.as_deref()).collect();
+    let fk_table_cats: Vec<Option<&str>> = rows.iter().map(|r| r.fk_table_cat.as_deref()).collect();
+    let fk_table_schems: Vec<Option<&str>> =
+        rows.iter().map(|r| r.fk_table_schem.as_deref()).collect();
+    let fk_table_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.fk_table_name.as_deref()).collect();
+    let fk_column_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.fk_column_name.as_deref()).collect();
+    let key_seqs: Vec<Option<i16>> = rows.iter().map(|r| Some(r.key_seq)).collect();
+    let update_rules: Vec<Option<i16>> = rows.iter().map(|r| r.update_rule).collect();
+    let delete_rules: Vec<Option<i16>> = rows.iter().map(|r| r.delete_rule).collect();
+    let fk_names: Vec<Option<&str>> = rows.iter().map(|r| r.fk_name.as_deref()).collect();
+    let pk_names: Vec<Option<&str>> = rows.iter().map(|r| r.pk_name.as_deref()).collect();
+    let deferrabilities: Vec<Option<i16>> = rows.iter().map(|r| r.deferrability).collect();
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(pk_table_cats)) as ArrayRef,
+            Arc::new(StringArray::from(pk_table_schems)) as ArrayRef,
+            Arc::new(StringArray::from(pk_table_names)) as ArrayRef,
+            Arc::new(StringArray::from(pk_column_names)) as ArrayRef,
+            Arc::new(StringArray::from(fk_table_cats)) as ArrayRef,
+            Arc::new(StringArray::from(fk_table_schems)) as ArrayRef,
+            Arc::new(StringArray::from(fk_table_names)) as ArrayRef,
+            Arc::new(StringArray::from(fk_column_names)) as ArrayRef,
+            Arc::new(Int16Array::from(key_seqs)) as ArrayRef,
+            Arc::new(Int16Array::from(update_rules)) as ArrayRef,
+            Arc::new(Int16Array::from(delete_rules)) as ArrayRef,
+            Arc::new(StringArray::from(fk_names)) as ArrayRef,
+            Arc::new(StringArray::from(pk_names)) as ArrayRef,
+            Arc::new(Int16Array::from(deferrabilities)) as ArrayRef,
+        ],
+    )
+    .context(crate::api::error::RecordBatchBuildSnafu)
+}
+
+/// Implements `SQLForeignKeys`: returns foreign-key metadata for PK/FK tables.
+#[allow(clippy::too_many_arguments)]
+pub fn foreign_keys<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    pk_catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    pk_schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    pk_table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+    fk_catalog_name: *const E::Char,
+    name_length4: sql::SmallInt,
+    fk_schema_name: *const E::Char,
+    name_length5: sql::SmallInt,
+    fk_table_name: *const E::Char,
+    name_length6: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::info!("SQLForeignKeys: entry");
+    let _exit = ApiExitLog("SQLForeignKeys");
+
+    let pk_catalog_raw = read_opt_str::<E>(pk_catalog_name, name_length1)?;
+    let pk_schema_raw = read_opt_str::<E>(pk_schema_name, name_length2)?;
+    let pk_table_raw = read_opt_str::<E>(pk_table_name, name_length3)?;
+    let fk_catalog_raw = read_opt_str::<E>(fk_catalog_name, name_length4)?;
+    let fk_schema_raw = read_opt_str::<E>(fk_schema_name, name_length5)?;
+    let fk_table_raw = read_opt_str::<E>(fk_table_name, name_length6)?;
+    if pk_table_raw.is_none() && fk_table_raw.is_none() {
+        return NullPointerSnafu.fail();
+    }
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    let metadata_id = inner.metadata_id;
+    let stmt_handle = guard.stmt_handle;
+    drop(conn);
+
+    if metadata_id {
+        // Only the side whose table was supplied carries required identifier
+        // args; a single-sided query intentionally leaves the other side NULL.
+        // A zero-length catalog/schema is treated as *absent* (not HY090),
+        // matching the legacy driver and SQLPrimaryKeys: `build_show_in_scope`
+        // filters empty strings out, so an empty identifier widens the SHOW
+        // scope. NULL still returns HY009.
+        if pk_table_raw.is_some() {
+            if pk_catalog_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+            if pk_schema_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+        }
+        if fk_table_raw.is_some() {
+            if fk_catalog_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+            if fk_schema_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+        }
+    }
+
+    // In identifier mode, fold each argument to its canonical Snowflake form so
+    // both the SHOW scope and the client-side re-filter are case-correct.
+    let (pk_catalog_raw, pk_schema_raw, pk_table_raw, fk_catalog_raw, fk_schema_raw, fk_table_raw) =
+        if metadata_id {
+            (
+                pk_catalog_raw.map(|s| fold_identifier(&s)),
+                pk_schema_raw.map(|s| fold_identifier(&s)),
+                pk_table_raw.map(|s| fold_identifier(&s)),
+                fk_catalog_raw.map(|s| fold_identifier(&s)),
+                fk_schema_raw.map(|s| fold_identifier(&s)),
+                fk_table_raw.map(|s| fold_identifier(&s)),
+            )
+        } else {
+            (
+                pk_catalog_raw,
+                pk_schema_raw,
+                pk_table_raw,
+                fk_catalog_raw,
+                fk_schema_raw,
+                fk_table_raw,
+            )
+        };
+
+    let (pk_catalog_raw, pk_schema_raw) = resolve_show_identifiers(
+        pk_catalog_raw,
+        pk_schema_raw,
+        pk_table_raw.as_deref(),
+        conn_handle,
+    )?;
+    let (fk_catalog_raw, fk_schema_raw) = resolve_show_identifiers(
+        fk_catalog_raw,
+        fk_schema_raw,
+        fk_table_raw.as_deref(),
+        conn_handle,
+    )?;
+
+    let sql = build_show_foreign_keys_command(
+        pk_catalog_raw.as_deref(),
+        pk_schema_raw.as_deref(),
+        pk_table_raw.as_deref(),
+        fk_catalog_raw.as_deref(),
+        fk_schema_raw.as_deref(),
+        fk_table_raw.as_deref(),
+    );
+
+    let show_batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_object_not_found_sql_state)
+            {
+                return set_static_empty_catalog_result(&mut inner, foreign_keys_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let filter = ShowForeignKeyFilter {
+        pk_catalog: pk_catalog_raw.as_deref(),
+        pk_schema: pk_schema_raw.as_deref(),
+        pk_table: pk_table_raw.as_deref(),
+        fk_catalog: fk_catalog_raw.as_deref(),
+        fk_schema: fk_schema_raw.as_deref(),
+        fk_table: fk_table_raw.as_deref(),
+    };
+    let flat_batch = map_show_foreign_keys_to_odbc(show_batch, &filter)?;
     let schema = flat_batch.schema();
     let reader = reader_from_record_batch(flat_batch, schema)?;
     set_state_for_catalog(
@@ -2706,5 +3215,45 @@ mod type_info_tests {
         ];
         let actual: Vec<i16> = ALL_SF_TYPE_INFO.iter().map(|r| r.data_type).collect();
         assert_eq!(actual, expected);
+    }
+}
+
+#[cfg(test)]
+mod fk_command_tests {
+    use super::*;
+
+    #[test]
+    fn pk_table_only_uses_exported_scoped_to_pk() {
+        let sql =
+            build_show_foreign_keys_command(Some("DB"), Some("SCH"), Some("PKT"), None, None, None);
+        assert_eq!(sql, "SHOW EXPORTED KEYS IN table \"DB\".\"SCH\".\"PKT\"");
+    }
+
+    #[test]
+    fn fk_table_only_uses_imported_scoped_to_fk() {
+        let sql =
+            build_show_foreign_keys_command(None, None, None, Some("DB"), Some("SCH"), Some("FKT"));
+        assert_eq!(sql, "SHOW IMPORTED KEYS IN table \"DB\".\"SCH\".\"FKT\"");
+    }
+
+    #[test]
+    fn both_tables_tie_breaks_to_exported_pk_side() {
+        let sql = build_show_foreign_keys_command(
+            Some("DB"),
+            Some("SCH"),
+            Some("PKT"),
+            Some("DB"),
+            Some("SCH"),
+            Some("FKT"),
+        );
+        assert_eq!(sql, "SHOW EXPORTED KEYS IN table \"DB\".\"SCH\".\"PKT\"");
+    }
+
+    #[test]
+    fn unresolved_catalog_widens_to_account() {
+        // PK table present but catalog unresolved (no current database): the
+        // scope widens to account and the client-side filter narrows it back.
+        let sql = build_show_foreign_keys_command(None, None, Some("PKT"), None, None, None);
+        assert_eq!(sql, "SHOW EXPORTED KEYS IN account");
     }
 }

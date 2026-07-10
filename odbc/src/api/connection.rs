@@ -1946,7 +1946,6 @@ impl OdbcFunction {
                 | Self::BulkOperations
                 | Self::DataSources
                 | Self::Drivers
-                | Self::ForeignKeys
                 | Self::GetCursorName
                 | Self::ParamOptions
                 | Self::ProcedureColumns
@@ -2865,6 +2864,20 @@ mod tests {
         assert!(
             OdbcFunction::EndTran.is_supported(),
             "SQLEndTran is exported in c_api.rs; SQLGetFunctions must report it supported"
+        );
+    }
+
+    /// `SQLForeignKeys` is implemented and exported in `c_api.rs`, so
+    /// `SQLGetFunctions` must report it as supported. If it is left in the
+    /// `is_supported` exclusion list, strict driver managers (unixODBC) consult
+    /// the bitmap and refuse to dispatch `SQLForeignKeys`, returning `SQL_ERROR`
+    /// before the driver's entry point ever runs (iODBC / Windows dispatch
+    /// regardless, which is why the regression only showed up under unixODBC).
+    #[test]
+    fn foreign_keys_is_reported_supported() {
+        assert!(
+            OdbcFunction::ForeignKeys.is_supported(),
+            "SQLForeignKeys is exported in c_api.rs; SQLGetFunctions must report it supported"
         );
     }
 

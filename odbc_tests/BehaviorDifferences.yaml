@@ -1472,3 +1472,69 @@ behavior_differences:
       identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
       split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
       legacy empty result set).
+  88:
+    name: "SQLForeignKeys resolves NULL FK catalog and schema from connection context"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When only FKTableName is supplied with NULL FKCatalogName and NULL FKSchemaName, the reference
+      driver's result depends on the account's CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX session
+      parameter. With it disabled the driver returns an empty result set because it does not resolve
+      the FK-side identifiers from the connection context; with it enabled the FK_CHILD row is
+      returned.
+    new_driver_behavior: |
+      NULL FK catalog and schema are always resolved from the connection context (the catalog from the
+      current database, and the schema because a table name was supplied), and client-side filtering
+      scopes the result to the requested FK table, so the FK_CHILD row is returned regardless of the
+      session parameter.
+    description: |
+      Aligns FK-side identifier resolution with SQLPrimaryKeys and the ODBC catalog-function contract
+      for ordinary (non-pattern) arguments.
+  89:
+    name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided PK-table query that leaves the entire FK
+      side NULL returns HY009 even though FKTableName was not supplied.
+    new_driver_behavior: |
+      Catalog/schema null-pointer validation applies only to the side whose table name was supplied,
+      so a PK-only query with metadata_id=TRUE succeeds when PK catalog and schema are provided. This
+      applies under unixODBC and iODBC; the Windows Driver Manager performs its own identifier
+      null-pointer check and returns HY009 for the NULL FK-side arguments before the driver is
+      invoked, so the query still fails with HY009 on Windows regardless of the driver.
+    description: |
+      Per ODBC HY009 diagnostics, identifier-mode null checks apply to supplied table sides only.
+      The reference driver over-validates the unspecified FK side. On Windows the Driver Manager
+      enforces the identifier null check itself (documented as a "(DM)" diagnostic in the MS ODBC
+      reference), so the improvement is observable only on unixODBC/iODBC.
+  90:
+    name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      SQLForeignKeys chooses SHOW EXPORTED vs SHOW IMPORTED KEYS based on which side supplies a table
+      name. The universal driver treats an empty-string table name the same as an absent (NULL) one,
+      so an empty PKTableName with a populated FKTableName resolves to the FK side (SHOW IMPORTED KEYS
+      scoped to the FK table), consistent with how build_show_in_scope treats empty identifiers as "no
+      filter". Tracked under SNOW-3234773.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With an empty-string PKTableName and a populated FKTableName, the legacy driver does not resolve
+      the query to the FK side and returns an empty result set.
+    new_driver_behavior: |
+      An empty-string table name is treated as absent for side selection, so the query resolves to the
+      side whose table name is populated (here the FK side) and returns the relationship row.
+    description: |
+      Callers that passed an empty PKTableName alongside a real FKTableName and relied on the legacy
+      empty result set will now receive the FK relationship. The odbc-api test splits the assertion
+      (NEW_DRIVER_ONLY expects the row, OLD_DRIVER_ONLY expects the legacy empty result set).
+

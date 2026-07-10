@@ -271,6 +271,92 @@ pub unsafe extern "system" fn SQLPrimaryKeysW(
     result.to_sql_code()
 }
 
+/// ODBC catalog function: return foreign-key metadata for PK/FK tables.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLForeignKeys(
+    statement_handle: sql::Handle,
+    pk_catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    pk_schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    pk_table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    fk_catalog_name: *const sql::Char,
+    name_length4: sql::SmallInt,
+    fk_schema_name: *const sql::Char,
+    name_length5: sql::SmallInt,
+    fk_table_name: *const sql::Char,
+    name_length6: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLForeignKeys");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::foreign_keys::<Narrow>(
+        statement_handle,
+        pk_catalog_name,
+        name_length1,
+        pk_schema_name,
+        name_length2,
+        pk_table_name,
+        name_length3,
+        fk_catalog_name,
+        name_length4,
+        fk_schema_name,
+        name_length5,
+        fk_table_name,
+        name_length6,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// ODBC catalog function: return foreign-key metadata for PK/FK tables.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLForeignKeysW(
+    statement_handle: sql::Handle,
+    pk_catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    pk_schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    pk_table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    fk_catalog_name: *const WideChar,
+    name_length4: sql::SmallInt,
+    fk_schema_name: *const WideChar,
+    name_length5: sql::SmallInt,
+    fk_table_name: *const WideChar,
+    name_length6: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLForeignKeys");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::foreign_keys::<Wide>(
+        statement_handle,
+        pk_catalog_name,
+        name_length1,
+        pk_schema_name,
+        name_length2,
+        pk_table_name,
+        name_length3,
+        fk_catalog_name,
+        name_length4,
+        fk_schema_name,
+        name_length5,
+        fk_table_name,
+        name_length6,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
 /// ODBC catalog function: list columns matching pattern arguments.
 ///
 /// # Safety
