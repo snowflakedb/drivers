@@ -263,3 +263,89 @@ fn should_fail_when_login_request_is_rejected_after_browser_callback() {
         "login failure after browser callback",
     );
 }
+
+// =============================================================================
+// Security — SNOW-3649282: WSL command injection via malicious ssoUrl
+// =============================================================================
+
+/// End-to-end check that an `ssoUrl` carrying an unsafe character is
+/// rejected *before* the driver hands it to the system browser, delivered
+/// through the real `connect()` path. See SNOW-3649282.
+///
+/// The generous timeout with no simulated callback discriminates the fix
+/// from a regression: a correct fix fails instantly at validation, whereas
+/// a regression that skipped validation would open the browser and block
+/// until the timeout — surfacing a *timeout* error, not the validation
+/// error asserted below. The assertion targets "refusing to open browser",
+/// which `validate_browser_url` emits and a timeout/HTTP error does not.
+#[test]
+fn should_reject_malicious_sso_url_before_opening_browser() {
+    // Given Wiremock returns an ssoUrl containing a shell metacharacter
+    let fixture = ExternalBrowserTestFixture::new();
+    fixture.mock.mount(external_browser::authenticator_request(
+        "https://evil-idp.example.com/sso?state=poc|calc",
+        "proof_key",
+    ));
+    // A generous timeout so a regression that skipped validation fails with a
+    // *timeout*, not the validation error asserted below.
+    fixture
+        .client
+        .set_connection_option("authentication_timeout", "30");
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Connection fails before the browser is opened
+    ExternalBrowserTestFixture::assert_error(
+        result,
+        &["refusing to open browser"],
+        "malicious ssoUrl to be rejected before browser launch",
+    );
+}
+
+/// Regression guard for the calibrated validation blocklist: a genuine
+/// SAML `ssoUrl` carries `&`-separated query parameters and percent-
+/// encoding. These are legitimate and MUST NOT be rejected — the
+/// transport-layer bypass, not validation, is what makes them safe on
+/// WSL. This is the exact scenario a naive "reject the whole ticket set"
+/// fix would break.
+#[test]
+fn should_login_when_sso_url_has_multi_param_query_string() {
+    // Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
+    let fixture = ExternalBrowserTestFixture::new();
+    let proof_key = "test_proof_key_multi";
+    // A realistic multi-parameter ssoUrl: ampersand + percent-encoding.
+    fixture.mock.mount(external_browser::authenticator_request(
+        "https://idp.example.com/app/sso/saml?SAMLRequest=aB%2Bc&RelayState=xyz",
+        proof_key,
+    ));
+    // And Login endpoint returns success
+    fixture.mock.mount(external_browser::login_success());
+
+    // When Trying to Connect with simulated browser callback delivering a token
+    let mock_ref = &fixture.mock;
+    let result = std::thread::scope(|s| {
+        s.spawn(|| {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let requests = mock_ref.received_requests();
+                if requests
+                    .iter()
+                    .any(|r| r.url.path().contains("authenticator-request"))
+                {
+                    simulate_browser_callback(mock_ref, "multi_param_token");
+                    return;
+                }
+            }
+            panic!("Timed out waiting for authenticator-request");
+        });
+
+        fixture.connect()
+    });
+
+    // Then Login is successful
+    ExternalBrowserTestFixture::assert_success(
+        result,
+        "external browser login with multi-param ssoUrl to succeed",
+    );
+}
