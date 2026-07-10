@@ -16,7 +16,8 @@ class TestExpiredAfterGS390114:
 
         connection = int_test_connection_factory(server_url=wiremock.http_url())
         try:
-            connection.cursor().execute("SELECT 1")
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
         except Exception:
             pass  # 401 → refresh → 390114 path always raises; we care about the flag
 
@@ -40,7 +41,8 @@ class TestIsExpiredNotSet:
 
         connection = int_test_connection_factory(server_url=wiremock.http_url())
         try:
-            connection.cursor().execute("SELECT 1")
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
         except Exception:
             pass  # 500 always raises; we care about the flag
 
@@ -55,7 +57,8 @@ class TestIsExpiredNotSet:
 
         connection = int_test_connection_factory(server_url=wiremock.http_url())
         try:
-            connection.cursor().execute("SELECT 1")
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
         except Exception:
             pass  # 401 → refresh → 390111 path always raises; we care about the flag
 
