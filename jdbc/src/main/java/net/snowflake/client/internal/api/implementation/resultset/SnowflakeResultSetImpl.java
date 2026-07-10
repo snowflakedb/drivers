@@ -20,6 +20,7 @@ import java.sql.SQLXML;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.Period;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
@@ -179,6 +180,12 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
     return rowReader.getTimestamp(columnIndex);
   }
 
+  /** Backs {@code getObject(col, Period.class)} for INTERVAL YEAR TO MONTH columns. */
+  private Period getPeriod(int columnIndex) throws SQLException {
+    checkClosed();
+    return rowReader.getPeriod(columnIndex);
+  }
+
   @Override
   public InputStream getAsciiStream(int columnIndex) throws SQLException {
     throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
@@ -310,7 +317,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public int findColumn(String columnLabel) throws SQLException {
-    // TODO(SNOW-3740748): in SnowflakeResultSetMetaDataImpl::getColumnIndex session parameter
+    // TODO(SNOW-3695645): in SnowflakeResultSetMetaDataImpl::getColumnIndex session parameter
     //  "isResultColumnCaseInsensitive" is respect during the search, should we respect it here?
 
     checkClosed();
@@ -1102,6 +1109,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
       return type.cast(getTime(columnIndex));
     } else if (type == Timestamp.class) {
       return type.cast(getTimestamp(columnIndex));
+    } else if (type == Period.class) {
+      return type.cast(getPeriod(columnIndex));
     }
     throw new SQLFeatureNotSupportedException("Type not supported: " + type.getName());
   }
