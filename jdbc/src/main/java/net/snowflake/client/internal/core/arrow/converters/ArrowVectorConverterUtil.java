@@ -87,6 +87,11 @@ public final class ArrowVectorConverterUtil {
         case DECFLOAT:
           return new DecfloatToDecimalConverter(vector, idx, context);
 
+        case INTERVAL_YEAR_MONTH:
+          // The interval is a signed total-months integer; the physical width (SB2/SB4/SB8) is
+          // resolved by the converter itself from the concrete vector type.
+          return new IntervalYearMonthToPeriodConverter(vector, idx, context);
+
         case REAL:
           return new DoubleToRealConverter(vector, idx, context);
 
