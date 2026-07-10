@@ -105,18 +105,9 @@ impl BindingStrides {
     /// error is still preferable to a panic across the FFI boundary.
     #[inline]
     pub fn for_row(self, base: &Binding, row_idx: usize) -> Result<Binding, ConversionError> {
-        let value_stride = if self.bind_type == 0 {
-            base.target_type
-                .fixed_size()
-                .unwrap_or(base.buffer_length as usize)
-        } else {
-            self.bind_type
-        };
-        let indicator_stride = if self.bind_type == 0 {
-            size_of::<sql::Len>()
-        } else {
-            self.bind_type
-        };
+        // Single source of truth for the stride formula — the incremental
+        // fast path in `convert_arrow_range` reuses the same `row_step`.
+        let (value_stride, indicator_stride) = self.row_step(base.target_type, base.buffer_length);
         let overflow_err = || {
             BindingStrideOverflowSnafu {
                 row_idx,
@@ -158,6 +149,23 @@ impl BindingStrides {
             datetime_interval_precision: base.datetime_interval_precision,
             length: base.length,
         })
+    }
+
+    /// The constant per-row `(value_stride, indicator_stride)` in bytes — the
+    /// same values [`for_row`](Self::for_row) derives, exposed so a hot loop
+    /// can advance the row pointers incrementally (via [`Binding::stepped`])
+    /// instead of recomputing `row_idx * stride` with overflow checks on every
+    /// cell. `target_type`/`buffer_length` come from the base binding.
+    #[inline]
+    pub fn row_step(self, target_type: CDataType, buffer_length: sql::Len) -> (usize, usize) {
+        if self.bind_type == 0 {
+            (
+                target_type.fixed_size().unwrap_or(buffer_length as usize),
+                size_of::<sql::Len>(),
+            )
+        } else {
+            (self.bind_type, self.bind_type)
+        }
     }
 }
 
@@ -208,6 +216,31 @@ pub struct Binding {
 }
 
 impl Binding {
+    /// Advance the value/octet/indicator pointers by one row's stride,
+    /// preserving null pointers, and return the new binding. Used by the
+    /// incremental fast path in `ColumnConverter::convert_arrow_range`: paired
+    /// with [`BindingStrides::row_step`] it reproduces [`BindingStrides::for_row`]
+    /// without the per-cell `row_idx * stride` overflow-checked multiply. The
+    /// arithmetic is `wrapping` (no deref here), matching the in-bounds
+    /// guarantee the application makes via `SQLBindCol` — the same contract
+    /// `advance_ptr` documents.
+    #[inline]
+    pub fn stepped(mut self, value_stride: usize, indicator_stride: usize) -> Self {
+        if !self.target_value_ptr.is_null() {
+            self.target_value_ptr =
+                (self.target_value_ptr as *mut u8).wrapping_add(value_stride) as sql::Pointer;
+        }
+        if !self.octet_length_ptr.is_null() {
+            self.octet_length_ptr =
+                (self.octet_length_ptr as *mut u8).wrapping_add(indicator_stride) as *mut sql::Len;
+        }
+        if !self.indicator_ptr.is_null() {
+            self.indicator_ptr =
+                (self.indicator_ptr as *mut u8).wrapping_add(indicator_stride) as *mut sql::Len;
+        }
+        self
+    }
+
     pub fn write_length_or_null(&self, length_or_null: LengthOrNull) -> Result<(), WriteOdbcError> {
         match length_or_null {
             LengthOrNull::Null => {
@@ -811,5 +844,73 @@ mod binding_strides_tests {
         assert_eq!(row4.datetime_interval_precision, Some(6));
         assert_eq!(row4.target_type, CDataType::Numeric);
         assert_eq!(row4.buffer_length, base.buffer_length);
+    }
+
+    /// The incremental fast path in `convert_arrow_range` is correct only if
+    /// chaining `Binding::stepped` from `for_row(base, 0)` reproduces
+    /// `for_row(base, i)` for every row. Enforce that directly so a future
+    /// change to `for_row`/`advance_ptr`/`row_step` cannot silently desync the
+    /// fast path from the reference path.
+    #[test]
+    fn stepped_chain_matches_for_row_across_configs() {
+        // (target_type, buffer_length, bind_type, bind_offset)
+        let configs: [(CDataType, sql::Len, usize, isize); 4] = [
+            (CDataType::Char, 64, 0, 0),      // column-wise, variable width
+            (CDataType::SBigInt, 0, 0, 32),   // column-wise, fixed width, +offset
+            (CDataType::Char, 64, 128, 0),    // row-wise
+            (CDataType::SBigInt, 0, 96, -16), // row-wise, -offset
+        ];
+        for (ty, buflen, bind_type, bind_offset) in configs {
+            let mut fx = Fixture::new();
+            let base = fx.binding(ty, buflen);
+            let strides = BindingStrides {
+                bind_type,
+                bind_offset,
+            };
+            let (vs, is) = strides.row_step(base.target_type, base.buffer_length);
+            let mut cur = strides.for_row(&base, 0).expect("row 0 must not overflow");
+            for i in 0..6usize {
+                let expected = strides
+                    .for_row(&base, i)
+                    .expect("for_row must not overflow");
+                assert_eq!(
+                    cur.target_value_ptr, expected.target_value_ptr,
+                    "value ptr at row {i} (bind_type={bind_type}, offset={bind_offset})"
+                );
+                assert_eq!(
+                    cur.octet_length_ptr, expected.octet_length_ptr,
+                    "octet ptr at row {i} (bind_type={bind_type}, offset={bind_offset})"
+                );
+                assert_eq!(
+                    cur.indicator_ptr, expected.indicator_ptr,
+                    "indicator ptr at row {i} (bind_type={bind_type}, offset={bind_offset})"
+                );
+                cur = cur.stepped(vs, is);
+            }
+        }
+    }
+
+    #[test]
+    fn stepped_preserves_null_indicator_pointers() {
+        let mut fx = Fixture::new();
+        let mut base = fx.binding(CDataType::SBigInt, 0);
+        base.octet_length_ptr = std::ptr::null_mut();
+        base.indicator_ptr = std::ptr::null_mut();
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let (vs, is) = strides.row_step(base.target_type, base.buffer_length);
+        let mut cur = strides.for_row(&base, 0).expect("row 0");
+        for i in 0..4usize {
+            let expected = strides.for_row(&base, i).expect("for_row");
+            assert_eq!(
+                cur.target_value_ptr, expected.target_value_ptr,
+                "value ptr row {i}"
+            );
+            assert!(cur.octet_length_ptr.is_null(), "octet stays null row {i}");
+            assert!(cur.indicator_ptr.is_null(), "indicator stays null row {i}");
+            cur = cur.stepped(vs, is);
+        }
     }
 }
