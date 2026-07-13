@@ -874,6 +874,24 @@ message TelemetrySendWrapperErrorRequest {
 message TelemetrySendResponse {
 }
 
+// Adds one arbitrary in-band telemetry entry to the connection's per-session
+// batch. Used by wrappers to forward telemetry a caller produced (e.g. Snowpark),
+// whose payload shape core does not own.
+message TelemetryAddLogToBatchRequest {
+  ConnectionHandle conn_handle = 1;
+  // The entry's `message`, already JSON-encoded by the wrapper. Preserved
+  // byte-for-byte and embedded as a nested object in the `/telemetry/send` body.
+  string message_json = 2;
+  // Event time in epoch milliseconds. Serialized to a JSON *string* on the wire,
+  // matching the legacy drivers' `TelemetryData` format.
+  int64 timestamp_ms = 3;
+}
+
+// Flushes the connection's buffered log-telemetry batch to `/telemetry/send`.
+message TelemetrySendLogBatchRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
@@ -953,4 +971,7 @@ service DatabaseDriver {
   // Telemetry operations
   rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
   rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendResponse);
+  // Buffer one caller-produced telemetry entry; flush the buffered batch.
+  rpc TelemetryAddLogToBatch(TelemetryAddLogToBatchRequest) returns (TelemetrySendResponse);
+  rpc TelemetrySendLogBatch(TelemetrySendLogBatchRequest) returns (TelemetrySendResponse);
 }

@@ -1055,6 +1055,30 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         Ok(TelemetrySendResponse {})
     }
+
+    // Buffer one caller-produced telemetry entry. Real batching + `/telemetry/send`
+    // egress is wired in SNOW-3774686 -core; this stub keeps the stack green.
+    #[instrument(
+        name = "DatabaseDriverV1::telemetry_add_log_to_batch",
+        skip(self, input)
+    )]
+    async fn telemetry_add_log_to_batch(
+        &self,
+        input: TelemetryAddLogToBatchRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        required(input.conn_handle, "Connection handle is required")?;
+        Ok(TelemetrySendResponse {})
+    }
+
+    // Flush the connection's buffered log-telemetry batch. Wired in SNOW-3774686 -core.
+    #[instrument(name = "DatabaseDriverV1::telemetry_send_log_batch", skip(self, input))]
+    async fn telemetry_send_log_batch(
+        &self,
+        input: TelemetrySendLogBatchRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        required(input.conn_handle, "Connection handle is required")?;
+        Ok(TelemetrySendResponse {})
+    }
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}
@@ -1208,6 +1232,14 @@ pub trait DatabaseDriverClientBlockingExt {
     fn telemetry_send_wrapper_error_blocking(
         &self,
         input: TelemetrySendWrapperErrorRequest,
+    ) -> BlockingProtoResult<TelemetrySendResponse>;
+    fn telemetry_add_log_to_batch_blocking(
+        &self,
+        input: TelemetryAddLogToBatchRequest,
+    ) -> BlockingProtoResult<TelemetrySendResponse>;
+    fn telemetry_send_log_batch_blocking(
+        &self,
+        input: TelemetrySendLogBatchRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse>;
     fn connection_get_query_result_blocking(
         &self,
@@ -1383,6 +1415,20 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: TelemetrySendWrapperErrorRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse> {
         block_on_client_call(self.telemetry_send_wrapper_error(input))
+    }
+
+    fn telemetry_add_log_to_batch_blocking(
+        &self,
+        input: TelemetryAddLogToBatchRequest,
+    ) -> BlockingProtoResult<TelemetrySendResponse> {
+        block_on_client_call(self.telemetry_add_log_to_batch(input))
+    }
+
+    fn telemetry_send_log_batch_blocking(
+        &self,
+        input: TelemetrySendLogBatchRequest,
+    ) -> BlockingProtoResult<TelemetrySendResponse> {
+        block_on_client_call(self.telemetry_send_log_batch(input))
     }
 
     fn connection_get_query_result_blocking(
