@@ -2,6 +2,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.sql.Time;
 import java.util.TimeZone;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 
 public interface DataConversionContext {
@@ -19,7 +20,7 @@ public interface DataConversionContext {
    * snowflake-jdbc's {@code "America/Los_Angeles"}.
    */
   default TimeZone getSessionTimeZone() {
-    return TimeZone.getTimeZone("America/Los_Angeles");
+    return TimeZone.getTimeZone(Parameter.TIMEZONE.getDefaultVal());
   }
 
   /**

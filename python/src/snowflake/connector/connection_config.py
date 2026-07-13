@@ -240,6 +240,26 @@ class ConnectionConfig(ConnectionConfigMixin):
     put_get_max_attempts: int | None = 6
     """Maximum total attempts for a single PUT/GET file transfer (1 = no retry). Default: 6"""
 
+    retry_backoff_base_ms: int | None = 250
+    """Initial exponential-backoff delay in milliseconds between retry attempts. Default: 250"""
+
+    retry_backoff_cap_ms: int | None = 16000
+    """Maximum exponential-backoff delay in milliseconds between retry attempts. Default: 16000"""
+
+    retry_backoff_factor: float | None = 2
+    """Multiplier applied to the backoff delay after each retry attempt. Default: 2"""
+
+    retry_backoff_jitter: str | None = "decorrelated"
+    """Backoff jitter strategy: 'none', 'full', or 'decorrelated'. Default: 'decorrelated'"""
+
+    retry_extra_status_codes: str | None = None
+    """Additional HTTP status codes (comma-separated) to retry on general HTTP and PUT/GET calls, beyond the built-in
+    408/429/307/308/5xx set
+    """
+
+    retry_max_attempts: int | None = 6
+    """Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry. Default: 6"""
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 
@@ -261,6 +281,13 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+
+    unsafe_skip_config_file_permissions_check: bool | None = False
+    """When true, skip file permission checks on config.toml and connections.toml during connection setup. Use in
+    environments where permissions cannot be controlled (CI runners, containers). Unix-only; ignored on Windows.
+
+    Default: False
+    """
 
     use_proxy_env: bool | None = False
     """Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set. Default: False"""

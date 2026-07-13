@@ -5,14 +5,13 @@ import static java.sql.DatabaseMetaData.sqlStateSQL;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import lombok.RequiredArgsConstructor;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 
+@RequiredArgsConstructor
 public final class MetaDataCapabilities {
-  private final SnowflakeConnectionImpl connection;
 
-  public MetaDataCapabilities(SnowflakeConnectionImpl connection) {
-    this.connection = connection;
-  }
+  private final InternalSnowflakeConnection connection;
 
   public boolean allProceduresAreCallable() throws SQLException {
     connection.checkClosed();

@@ -213,6 +213,208 @@ pub unsafe extern "system" fn SQLGetTypeInfo(
     result.to_sql_code()
 }
 
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLPrimaryKeys(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLPrimaryKeys");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::primary_keys::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLPrimaryKeysW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLPrimaryKeys");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::primary_keys::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        table_name,
+        name_length3,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// ODBC catalog function: return foreign-key metadata for PK/FK tables.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLForeignKeys(
+    statement_handle: sql::Handle,
+    pk_catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    pk_schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    pk_table_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    fk_catalog_name: *const sql::Char,
+    name_length4: sql::SmallInt,
+    fk_schema_name: *const sql::Char,
+    name_length5: sql::SmallInt,
+    fk_table_name: *const sql::Char,
+    name_length6: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLForeignKeys");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::foreign_keys::<Narrow>(
+        statement_handle,
+        pk_catalog_name,
+        name_length1,
+        pk_schema_name,
+        name_length2,
+        pk_table_name,
+        name_length3,
+        fk_catalog_name,
+        name_length4,
+        fk_schema_name,
+        name_length5,
+        fk_table_name,
+        name_length6,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLProcedures(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    proc_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLProcedures");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::procedures::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        proc_name,
+        name_length3,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// ODBC catalog function: return foreign-key metadata for PK/FK tables.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLForeignKeysW(
+    statement_handle: sql::Handle,
+    pk_catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    pk_schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    pk_table_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    fk_catalog_name: *const WideChar,
+    name_length4: sql::SmallInt,
+    fk_schema_name: *const WideChar,
+    name_length5: sql::SmallInt,
+    fk_table_name: *const WideChar,
+    name_length6: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLForeignKeys");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::foreign_keys::<Wide>(
+        statement_handle,
+        pk_catalog_name,
+        name_length1,
+        pk_schema_name,
+        name_length2,
+        pk_table_name,
+        name_length3,
+        fk_catalog_name,
+        name_length4,
+        fk_schema_name,
+        name_length5,
+        fk_table_name,
+        name_length6,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLProceduresW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    proc_name: *const WideChar,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLProcedures");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::procedures::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        proc_name,
+        name_length3,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
 /// ODBC catalog function: list columns matching pattern arguments.
 ///
 /// # Safety
@@ -661,10 +863,10 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
 /// after a successful `SQLCancel`. We accept this because we currently
 /// cannot distinguish same-thread vs cross-thread callers.
 ///
-/// TODO(SNOW-3258918, SNOW-3258919): When async or DAE cancel is
-/// implemented, add thread-ID tracking to distinguish same-thread vs
-/// cross-thread. Same-thread cancel must clear_diag_info and post its own
-/// diagnostic records per spec. Only cross-thread cancel skips diagnostics.
+/// TODO(SNOW-3258918): When async cancel is implemented, add thread-ID
+/// tracking to distinguish same-thread vs cross-thread. Same-thread cancel
+/// must clear_diag_info and post its own diagnostic records per spec. Only
+/// cross-thread cancel skips diagnostics.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
     set_dispatch!();
@@ -2309,6 +2511,57 @@ pub unsafe extern "system" fn SQLGetDescRecW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetDescRec(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    type_: sql::SmallInt,
+    sub_type: sql::SmallInt,
+    length: sql::Len,
+    precision: sql::SmallInt,
+    scale: sql::SmallInt,
+    data_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::Len,
+    indicator_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescRec");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
+    let result = api::descriptor::set_desc_rec(
+        descriptor_handle,
+        rec_number,
+        type_,
+        sub_type,
+        length,
+        precision,
+        scale,
+        data_ptr,
+        string_length_ptr,
+        indicator_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
+    record_err!(sql::HandleType::Desc, descriptor_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLCopyDesc(
+    source_desc_handle: sql::Handle,
+    target_desc_handle: sql::Handle,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Desc, source_desc_handle, "SQLCopyDesc");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, target_desc_handle);
+    let result = api::descriptor::copy_desc(source_desc_handle, target_desc_handle);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, target_desc_handle, &result);
+    record_err!(sql::HandleType::Desc, target_desc_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLSetDescField(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -2319,7 +2572,7 @@ pub unsafe extern "system" fn SQLSetDescField(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescField");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
-    let result = api::descriptor::set_desc_field(
+    let result = api::descriptor::set_desc_field::<Narrow>(
         descriptor_handle,
         rec_number,
         field_identifier,
@@ -2344,7 +2597,7 @@ pub unsafe extern "system" fn SQLSetDescFieldW(
     set_dispatch!();
     record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescFieldW");
     api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
-    let result = api::descriptor::set_desc_field(
+    let result = api::descriptor::set_desc_field::<Wide>(
         descriptor_handle,
         rec_number,
         field_identifier,

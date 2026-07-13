@@ -813,6 +813,7 @@ message StatementSetOptionsResponse {
 message ConfigLoadAllSectionsRequest {
   optional string config_file = 1;
   optional string connections_file = 2;
+  bool skip_permissions = 3;
 }
 
 message ConfigLoadAllSectionsResponse {

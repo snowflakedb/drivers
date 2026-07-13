@@ -207,6 +207,25 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Cannot modify an implementation row descriptor"))]
+    CannotModifyIrd {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Inconsistent descriptor information: {reason}"))]
+    InconsistentDescriptorInfo {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("SQL_DESC_UNNAMED may only be set to SQL_UNNAMED, not SQL_NAMED"))]
+    CannotSetUnnamedToNamed {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Unsupported attribute: {attribute}"))]
     UnsupportedAttribute {
         attribute: i32,
@@ -322,6 +341,27 @@ pub enum OdbcError {
     #[snafu(display("Internal driver error: {message}"))]
     InternalError {
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("{command}: result set is missing the '{column}' column"))]
+    ShowKeysColumnMissing {
+        command: &'static str,
+        column: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("SHOW KEYS result: KEY_SEQ is missing, null, or not a valid SMALLINT"))]
+    ShowKeysInvalidKeySeq {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("procedure metadata parse error: {detail}"))]
+    ProcedureMetadataParse {
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -677,6 +717,9 @@ impl OdbcError {
             OdbcError::UnknownAttribute { .. } => ErrorSource::ApiMisuse,
             OdbcError::ReadOnlyAttribute { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDescriptorFieldId { .. } => ErrorSource::ApiMisuse,
+            OdbcError::CannotModifyIrd { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InconsistentDescriptorInfo { .. } => ErrorSource::ApiMisuse,
+            OdbcError::CannotSetUnnamedToNamed { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnsupportedAttribute { .. } => ErrorSource::Unsupported,
             OdbcError::InvalidAttributeValue { .. } => ErrorSource::ApiMisuse,
             OdbcError::UnsupportedInfoType { .. } => ErrorSource::Unsupported,
@@ -695,6 +738,9 @@ impl OdbcError {
             OdbcError::InvalidCursorPosition { .. } => ErrorSource::CursorState,
             OdbcError::MixedCursorFunctions { .. } => ErrorSource::CursorState,
             OdbcError::InternalError { .. } => ErrorSource::InternalError,
+            OdbcError::ShowKeysColumnMissing { .. } => ErrorSource::InternalError,
+            OdbcError::ShowKeysInvalidKeySeq { .. } => ErrorSource::InternalError,
+            OdbcError::ProcedureMetadataParse { .. } => ErrorSource::InternalError,
             OdbcError::UnsupportedFeature { .. } => ErrorSource::Unsupported,
             OdbcError::FetchTypeOutOfRange { .. } => ErrorSource::CursorState,
             OdbcError::ExtendedFetchUsed { .. } => ErrorSource::CursorState,
@@ -839,6 +885,11 @@ impl OdbcError {
             OdbcError::InvalidDescriptorFieldId { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
             }
+            OdbcError::CannotModifyIrd { .. } => SqlState::CannotModifyImplementationRowDescriptor,
+            OdbcError::InconsistentDescriptorInfo { .. } => {
+                SqlState::InconsistentDescriptorInformation
+            }
+            OdbcError::CannotSetUnnamedToNamed { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
@@ -858,6 +909,9 @@ impl OdbcError {
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::InternalError { .. } => SqlState::GeneralError,
+            OdbcError::ShowKeysColumnMissing { .. } => SqlState::GeneralError,
+            OdbcError::ShowKeysInvalidKeySeq { .. } => SqlState::GeneralError,
+            OdbcError::ProcedureMetadataParse { .. } => SqlState::GeneralError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
@@ -1022,6 +1076,17 @@ impl OdbcError {
         match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Application { query_id, .. } => query_id.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Server-provided SQLSTATE from a core application error, when present.
+    pub fn server_sql_state(&self) -> Option<&str> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { sql_state, .. } => sql_state.as_deref(),
                 _ => None,
             },
             _ => None,

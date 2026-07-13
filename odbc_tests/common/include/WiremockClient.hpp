@@ -177,12 +177,28 @@ class WiremockClient {
   std::unique_ptr<Subprocess> process_;
 
   void init() {
-    port_ = platform::find_free_port();
-    if (tls_version_) {
-      https_port_ = platform::find_free_port();
+    // WireMock binds its port in a separate process, but find_free_port() must
+    // close its probe socket before that happens — so under parallel test
+    // execution (ctest -j) another process can steal the port between the two.
+    // The socket can't be held open across the hand-off, so make bring-up
+    // self-healing: on a failed start, tear down and retry with a fresh port.
+    constexpr int kMaxAttempts = 5;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+      port_ = platform::find_free_port();
+      if (tls_version_) {
+        https_port_ = platform::find_free_port();
+      }
+      start_process();
+      if (wait_for_health() && (!tls_version_ || wait_for_https_ready())) {
+        return;
+      }
+      // Lost the port race, WireMock failed to bind, or it died before becoming
+      // ready. Discard this attempt and retry with a freshly allocated port.
+      process_.reset();
+      std::error_code ec;
+      std::filesystem::remove_all(root_dir_, ec);
     }
-    start_process();
-    wait_for_health();
+    throw std::runtime_error("WireMock did not become healthy after " + std::to_string(kMaxAttempts) + " attempts");
   }
 
   std::string admin_url(const std::string& path) const { return "http://localhost:" + std::to_string(port_) + path; }
@@ -283,15 +299,37 @@ class WiremockClient {
     return path.string();
   }
 
-  void wait_for_health(int timeout_secs = 15) const {
+  /// Polls the plain-HTTP admin health endpoint. Returns true once WireMock is
+  /// healthy, false if it does not become healthy within the timeout or the
+  /// process exits first (a failed port bind). Never throws — `init()` decides
+  /// whether to retry.
+  bool wait_for_health(int timeout_secs = 15) const {
     for (int i = 0; i < timeout_secs * 5; ++i) {
+      if (!process_->running()) return false;  // bind failed / crashed — don't burn the full timeout
       std::string cmd =
           "curl -s -o " + platform::null_device() + " -w \"%{http_code}\" " + admin_url("/__admin/health");
       std::string code = platform::exec_command(cmd);
-      if (code == "200") return;
+      if (code == "200") return true;
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
-    throw std::runtime_error("WireMock did not become healthy within " + std::to_string(timeout_secs) + "s");
+    return false;
+  }
+
+  /// Waits until the HTTPS connector accepts a TLS connection. `wait_for_health`
+  /// only proves the plain-HTTP admin port is up; without this a test could
+  /// connect to `https_port_` before Jetty finishes binding it. Any HTTP
+  /// response (even non-200) means the listener is bound; curl code "000" means
+  /// the connection was refused. `-k`: the listener uses a self-signed test cert.
+  bool wait_for_https_ready(int timeout_secs = 15) const {
+    const std::string url = "https://localhost:" + std::to_string(https_port_) + "/__admin/health";
+    for (int i = 0; i < timeout_secs * 5; ++i) {
+      if (!process_->running()) return false;
+      std::string cmd = "curl -sk -o " + platform::null_device() + " -w \"%{http_code}\" " + url;
+      std::string code = platform::exec_command(cmd);
+      if (code != "000") return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    return false;
   }
 };
 

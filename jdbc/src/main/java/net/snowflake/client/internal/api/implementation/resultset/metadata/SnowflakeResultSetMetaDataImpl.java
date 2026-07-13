@@ -40,7 +40,7 @@ public class SnowflakeResultSetMetaDataImpl
   public static SnowflakeResultSetMetaDataImpl from(
       String queryId, List<ColumnMetadata> columns, DataConversionContext conversionContext)
       throws SnowflakeSQLException {
-    // TODO(SNOW-3695645): source jdbcTreatDecimalAsInt, isResultColumnCaseInsensitive,
+    // TODO(SNOW-3740746): source jdbcTreatDecimalAsInt, isResultColumnCaseInsensitive,
     //  and enableReturnTimestampWithTimeZone from connection parameters
     boolean jdbcTreatDecimalAsInt = false;
     List<SnowflakeColumnMetadata> columnMetadata = new ArrayList<>(columns.size());
@@ -61,7 +61,7 @@ public class SnowflakeResultSetMetaDataImpl
     return new SnowflakeResultSetMetaDataImpl(sfResultSetMetaData, queryId, QueryType.SYNC);
   }
 
-  // TODO(SNOW-3695645): the minimal SFResultSetMetaData constructor leaves precisions, scales,
+  // TODO(SNOW-3740746): the minimal SFResultSetMetaData constructor leaves precisions, scales,
   //  displaySizes, and source table/schema/catalog null, so accessors fall back to defaults
   //  (precision 9, scale 9, displaySize 25, tableName "T", etc.). These match the old driver's
   //  behavior for fabricated metadata result sets but should be revisited.

@@ -18,7 +18,7 @@ from ..binding_converters import (
     parse_stage_binding_threshold,
 )
 from ..config_utils import create_config_setting
-from ..decorators import pep249
+from ..decorators import api_telemetry, pep249
 from ..errorcode import ER_INVALID_VALUE
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency, pandas, pyarrow
@@ -76,6 +76,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
     @property
     @pep249
+    @api_telemetry
     def description(self) -> list[ResultMetadata] | None:
         """
         Read-only attribute describing the result columns of a query.
@@ -95,6 +96,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
     @property
     @pep249
+    @api_telemetry
     def rowcount(self) -> int | None:
         """
         Read-only attribute specifying the number of rows that the last
@@ -107,21 +109,25 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
     @property
     @pep249
+    @api_telemetry
     def arraysize(self) -> int:
         """Number of rows to fetch at a time with .fetchmany(). Defaults to 1."""
         return self._arraysize
 
     @arraysize.setter
+    @api_telemetry
     def arraysize(self, value: int) -> None:
         self._arraysize = int(value)
 
     @property
     @pep249
+    @api_telemetry
     def messages(self) -> list[tuple[type[Exception], ErrorValue]]:
         """List of (exception class, exception value) tuples received from the database."""
         return self._messages
 
     @messages.setter
+    @api_telemetry
     def messages(self, value: list[tuple[type[Exception], ErrorValue]]) -> None:
         self._messages = value
 
@@ -130,6 +136,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
     # ------------------------------------------------------------------
 
     @property
+    @api_telemetry
     def query(self) -> str | None:
         """
         Read-only attribute containing the SQL text of the last executed or described query.
@@ -140,6 +147,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._query_result.query
 
     @property
+    @api_telemetry
     def sfqid(self) -> str | None:
         """
         Read-only attribute containing the Snowflake Query ID for the last executed or described query.
@@ -150,22 +158,26 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._query_result.sfqid
 
     @property
+    @api_telemetry
     def stats(self) -> QueryResultStats:
         """Returns detailed row-level statistics for DML operations."""
         return self._query_result.stats
 
     @property
     @pep249
+    @api_telemetry
     def rownumber(self) -> int | None:
         """The current 0-based index of the cursor in the result set, or ``None`` if indeterminate."""
         return self._rownumber if self._rownumber >= 0 else None
 
     @property
+    @api_telemetry
     def sqlstate(self) -> str | None:
         """The SQLSTATE code of the last executed operation."""
         return self._query_result.sqlstate
 
     @property
+    @api_telemetry
     def multi_statement_parent_sfqid(self) -> str | None:
         """
         Read-only attribute containing the parent Snowflake Query ID for multi-statement queries.
@@ -176,6 +188,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._multi_statement.parent_qid if self._multi_statement else None
 
     @property
+    @api_telemetry
     def multi_statement_savedIds(self) -> list[str]:
         """
         Read-only attribute containing child query IDs for multi-statement queries.
@@ -186,6 +199,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._multi_statement.child_query_ids if self._multi_statement else []
 
     @property
+    @api_telemetry
     def is_file_transfer(self) -> bool:
         """Whether the last executed command was a PUT or GET file transfer."""
         return self._query_result.is_file_transfer
@@ -386,17 +400,20 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return options
 
     @pep249
+    @api_telemetry
     def setinputsizes(self, sizes: Sequence[Any]) -> None:
         """Not supported."""
         return None
 
     @pep249
+    @api_telemetry
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Not supported."""
         return None
 
     @property
     @pep249
+    @api_telemetry
     def lastrowid(self) -> None:
         """Snowflake does not support lastrowid; returns None per PEP 249."""
         return None
@@ -406,11 +423,13 @@ class CursorBaseMixin(ErrorHandlerMixin):
     # ------------------------------------------------------------------
 
     @property
+    @api_telemetry
     def timestamp_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_OUTPUT_FORMAT`` parameter value."""
         return self._connection._session_parameters["TIMESTAMP_OUTPUT_FORMAT"]
 
     @property
+    @api_telemetry
     def timestamp_ltz_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_LTZ_OUTPUT_FORMAT`` parameter value.
 
@@ -419,6 +438,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._connection._session_parameters["TIMESTAMP_LTZ_OUTPUT_FORMAT"] or self.timestamp_output_format
 
     @property
+    @api_telemetry
     def timestamp_tz_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_TZ_OUTPUT_FORMAT`` parameter value.
 
@@ -427,6 +447,7 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._connection._session_parameters["TIMESTAMP_TZ_OUTPUT_FORMAT"] or self.timestamp_output_format
 
     @property
+    @api_telemetry
     def timestamp_ntz_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_NTZ_OUTPUT_FORMAT`` parameter value.
 
@@ -435,21 +456,25 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._connection._session_parameters["TIMESTAMP_NTZ_OUTPUT_FORMAT"] or self.timestamp_output_format
 
     @property
+    @api_telemetry
     def date_output_format(self) -> str | None:
         """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
         return self._connection._session_parameters["DATE_OUTPUT_FORMAT"]
 
     @property
+    @api_telemetry
     def time_output_format(self) -> str | None:
         """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
         return self._connection._session_parameters["TIME_OUTPUT_FORMAT"]
 
     @property
+    @api_telemetry
     def timezone(self) -> str | None:
         """The session's ``TIMEZONE`` parameter value."""
         return self._connection._session_parameters["TIMEZONE"]
 
     @property
+    @api_telemetry
     def binary_output_format(self) -> str | None:
         """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
         return self._connection._session_parameters["BINARY_OUTPUT_FORMAT"]
@@ -460,11 +485,13 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
     @property
     @pep249
+    @api_telemetry
     def errorhandler(self) -> Callable:
         """PEP 249 error handler for this cursor."""
         return self._errorhandler
 
     @errorhandler.setter
+    @api_telemetry
     def errorhandler(self, value: Callable | None) -> None:
         if value is None:
             raise ProgrammingError("Invalid errorhandler is specified")
@@ -474,8 +501,10 @@ class CursorBaseMixin(ErrorHandlerMixin):
     # Optional dependency checks
     # ------------------------------------------------------------------
 
+    @api_telemetry
     def check_can_use_arrow_resultset(self) -> None:
         check_dependency(pyarrow)
 
+    @api_telemetry
     def check_can_use_pandas(self) -> None:
         check_dependency(pandas)

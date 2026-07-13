@@ -800,6 +800,7 @@ pub fn get_data(
                 scale: ard_binding.and_then(|b| b.scale),
                 datetime_interval_precision: ard_binding
                     .and_then(|b| b.datetime_interval_precision),
+                length: 0,
             };
             let settings = guard.conn()?.connection.lock().numeric_settings;
             let conversion_warnings = read_arrow_value(

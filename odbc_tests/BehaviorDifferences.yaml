@@ -370,7 +370,7 @@ behavior_differences:
     is_breaking_change: false
     impact: medium
     old_driver_behavior: |
-      The truncation indicator returned by the old driver is inconsistent across target C types and platforms: - SQL_C_BINARY truncation: always returns actual byte length. - SQL_C_CHAR truncation via SQLGetData: returns actual length on x86_64 Linux but SQL_NO_TOTAL (-4) on arm64. - SQL_C_CHAR truncation via SQLBindCol: always returns actual length. - SQL_C_WCHAR truncation (string source): returns SQL_NO_TOTAL. - SQL_C_WCHAR truncation (binary source): returns actual byte length.
+      The truncation indicator returned by the old driver is inconsistent across target C types and platforms: - SQL_C_BINARY truncation: always returns actual byte length. - SQL_C_CHAR truncation via SQLGetData: returns SQL_NO_TOTAL (-4) on Windows and Linux/aarch64, but the actual byte length on Linux/x86_64 and macOS (i.e. the divergence tracks the platform + CPU architecture, not architecture alone). - SQL_C_CHAR truncation via SQLBindCol: always returns actual length. - SQL_C_WCHAR truncation (string source): returns SQL_NO_TOTAL. - SQL_C_WCHAR truncation (binary source): returns actual byte length.
     new_driver_behavior: |
       Always sets the indicator to the actual total byte length of the remaining data, regardless of platform, source type, or target C type. This makes indicator behavior deterministic and portable. Rationale: The ODBC specification states that when data is truncated, "SQLGetData returns the length of the data available to return" and that SQL_NO_TOTAL should only be used when the driver "cannot determine the length of the long data." Since the driver always knows the data length, returning it is more correct and more useful. This lets applications pre-allocate appropriately-sized buffers on subsequent calls instead of guessing.
     description: |
@@ -1431,3 +1431,141 @@ behavior_differences:
       on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
       on the legacy driver so a token cached by the preceding happy-path test cannot mask the
       expected token-exchange failure.
+  86:
+    name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
+    status: allowed
+    type: bug
+    reviewed: false
+    impact: high
+    is_breaking_change: true
+    old_driver_behavior: |
+      When SQLCancel is called from S10 (PutDataCalled) during a data-at-execution sequence, the old driver retains accumulated SQLPutData data. If the application re-enters DAE and provides new data, the final parameter value is the concatenation of the old and new chunks.
+    new_driver_behavior: |
+      SQLCancel from any DAE state (S8/S9/S10) fully resets the pending operation, discarding all accumulated SQLPutData. On re-entry the parameter starts fresh, matching the ODBC 3.5 spec requirement that cancel aborts the pending operation.
+    description: |
+      Applications that cancel mid-DAE and retry will get clean parameter values instead of stale concatenated data.
+  87:
+    name: "SQLPrimaryKeys/SQLForeignKeys case-fold unquoted identifiers in identifier mode"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
+      ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
+      preserves case). The universal driver folds unquoted catalog/schema/table identifiers to
+      uppercase before building the SHOW scope and re-filtering, matching how Snowflake stores
+      unquoted names. The legacy driver re-filters the SHOW result case-sensitively against the
+      caller's raw (lowercase) argument, so a lowercase identifier matches nothing. Tracked under
+      SNOW-3234772 (SQLPrimaryKeys) and SNOW-3234773 (SQLForeignKeys).
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE and a lowercase (unquoted) catalog/schema/table identifier,
+      the legacy driver compares the identifier case-sensitively against the uppercase names returned
+      by SHOW and drops every row, yielding an empty result set.
+    new_driver_behavior: |
+      Unquoted identifiers are folded to uppercase before the SHOW scope is built and before the
+      client-side re-filter, so a lowercase identifier matches the uppercase stored name and the
+      expected row(s) are returned. Double-quoted identifiers remain case-sensitive.
+    description: |
+      Applications that relied on the legacy case-sensitive behavior of unquoted identifiers under
+      identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
+      split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
+      legacy empty result set).
+  88:
+    name: "SQLForeignKeys resolves NULL FK catalog and schema from connection context"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When only FKTableName is supplied with NULL FKCatalogName and NULL FKSchemaName, the reference
+      driver's result depends on the account's CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX session
+      parameter. With it disabled the driver returns an empty result set because it does not resolve
+      the FK-side identifiers from the connection context; with it enabled the FK_CHILD row is
+      returned.
+    new_driver_behavior: |
+      NULL FK catalog and schema are always resolved from the connection context (the catalog from the
+      current database, and the schema because a table name was supplied), and client-side filtering
+      scopes the result to the requested FK table, so the FK_CHILD row is returned regardless of the
+      session parameter.
+    description: |
+      Aligns FK-side identifier resolution with SQLPrimaryKeys and the ODBC catalog-function contract
+      for ordinary (non-pattern) arguments.
+  89:
+    name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided PK-table query that leaves the entire FK
+      side NULL returns HY009 even though FKTableName was not supplied.
+    new_driver_behavior: |
+      Catalog/schema null-pointer validation applies only to the side whose table name was supplied,
+      so a PK-only query with metadata_id=TRUE succeeds when PK catalog and schema are provided. This
+      applies under unixODBC and iODBC; the Windows Driver Manager performs its own identifier
+      null-pointer check and returns HY009 for the NULL FK-side arguments before the driver is
+      invoked, so the query still fails with HY009 on Windows regardless of the driver.
+    description: |
+      Per ODBC HY009 diagnostics, identifier-mode null checks apply to supplied table sides only.
+      The reference driver over-validates the unspecified FK side. On Windows the Driver Manager
+      enforces the identifier null check itself (documented as a "(DM)" diagnostic in the MS ODBC
+      reference), so the improvement is observable only on unixODBC/iODBC.
+  90:
+    name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      SQLForeignKeys chooses SHOW EXPORTED vs SHOW IMPORTED KEYS based on which side supplies a table
+      name. The universal driver treats an empty-string table name the same as an absent (NULL) one,
+      so an empty PKTableName with a populated FKTableName resolves to the FK side (SHOW IMPORTED KEYS
+      scoped to the FK table), consistent with how build_show_in_scope treats empty identifiers as "no
+      filter". Tracked under SNOW-3234773.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With an empty-string PKTableName and a populated FKTableName, the legacy driver does not resolve
+      the query to the FK side and returns an empty result set.
+    new_driver_behavior: |
+      An empty-string table name is treated as absent for side selection, so the query resolves to the
+      side whose table name is populated (here the FK side) and returns the relationship row.
+    description: |
+      Callers that passed an empty PKTableName alongside a real FKTableName and relied on the legacy
+      empty result set will now receive the FK relationship. The odbc-api test splits the assertion
+      (NEW_DRIVER_ONLY expects the row, OLD_DRIVER_ONLY expects the legacy empty result set).
+  91:
+    name: "SQLProcedures/SQLProcedureColumns case-fold unquoted identifiers in identifier mode"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
+      ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
+      preserves case). SQLProcedures and SQLProcedureColumns fold the unquoted
+      catalog/schema/procedure identifiers (and, for SQLProcedureColumns, the column name) to
+      uppercase (via catalog_arg_to_pattern) before filtering: the catalog/schema/procedure names
+      feed the case-sensitive information_schema.procedures LIKE filter, and the SQLProcedureColumns
+      column name feeds the case-sensitive client-side like_match against the (upper-folded) parsed
+      column names. The legacy driver compares the caller's raw (lowercase) arguments
+      case-sensitively, so a lowercase identifier matches nothing. Tracked under SNOW-3234774.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE and a lowercase (unquoted) catalog/schema/procedure/column
+      identifier, the legacy driver matches case-sensitively against the uppercase stored names and
+      drops every row, yielding an empty result set.
+    new_driver_behavior: |
+      Unquoted identifiers are folded to uppercase before the information_schema.procedures LIKE
+      filter and (for SQLProcedureColumns) the client-side column-name match, so a lowercase
+      identifier matches the uppercase stored name and the expected row(s) are returned. Double-quoted
+      identifiers remain case-sensitive. In pattern mode (SQL_ATTR_METADATA_ID=SQL_FALSE, the default)
+      names stay case-sensitive, matching the reference driver.
+    description: |
+      Applications that relied on the legacy case-sensitive behavior of unquoted identifiers under
+      identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
+      split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
+      legacy empty result set).
