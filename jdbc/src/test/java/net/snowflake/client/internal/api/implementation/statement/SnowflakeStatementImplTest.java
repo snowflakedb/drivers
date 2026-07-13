@@ -3,6 +3,7 @@ package net.snowflake.client.internal.api.implementation.statement;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -103,6 +104,21 @@ public class SnowflakeStatementImplTest {
 
     assertThrows(SQLException.class, () -> stmt.execute("SELECT 1"));
     assertThrows(SQLException.class, () -> stmt.executeQuery("SELECT 1"));
+  }
+
+  @Test
+  void shouldExposeConnectionWithoutClosedCheckForResultSetConstruction() throws Exception {
+    SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi);
+    stmt.close();
+
+    // ResultSetFactory.buildConversionContext relies on getConnectionInternal() to build the
+    // conversion context during ResultSet construction; it must not enforce checkClosed(), so a
+    // statement concurrently closed after execute() still yields a ResultSet (legacy parity).
+    assertSame(mockConnection, stmt.getConnectionInternal());
+
+    // The public JDBC getConnection() still enforces the closed check.
+    SQLException ex = assertThrows(SQLException.class, stmt::getConnection);
+    assertEquals("Statement is closed", ex.getMessage());
   }
 
   @Test
