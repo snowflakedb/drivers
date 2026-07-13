@@ -15,6 +15,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
     ConnectionIsClosedResponse,
+    ConnectionIsExpiredResponse,
     ConnectionSetOptionsResponse,
     StatementHandle,
     ValidationIssue,
@@ -1165,3 +1166,45 @@ class TestIsValid:
     def test_returns_false_on_exception(self, connection, mock_db_api):
         mock_db_api.connection_heartbeat.side_effect = RuntimeError("transport error")
         assert connection.is_valid() is False
+
+
+class TestExpired:
+    """Unit tests for the ``Connection.expired`` property.
+
+    The property mirrors ``SnowflakeConnection.expired`` in the legacy
+    Python connector — it is ``False`` for a fresh connection and ``True``
+    once the driver has detected master-token expiry (GS code 390114 or
+    time-based expiry check during a refresh attempt).
+    """
+
+    def test_returns_false_for_fresh_connection(self, connection, mock_db_api):
+        """A brand-new connection must report expired=False."""
+        mock_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
+        assert connection.expired is False
+        mock_db_api.connection_is_expired.assert_called_once()
+
+    def test_returns_true_when_core_reports_expired(self, connection, mock_db_api):
+        """expired=True is forwarded from sf_core."""
+        mock_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
+        assert connection.expired is True
+
+    def test_returns_true_on_exception(self, connection, mock_db_api):
+        """If the RPC throws (e.g. handle already released) expired fails closed
+        and returns True rather than propagating — the connection may be unusable,
+        so pools evict it (matches the async is_expired() coroutine)."""
+        mock_db_api.connection_is_expired.side_effect = RuntimeError("handle gone")
+        assert connection.expired is True
+
+    def test_closing_does_not_set_expired(self, connection, mock_db_api):
+        """Closing a connection must not affect the expired flag — they are
+        orthogonal states."""
+        mock_db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=False)
+        mock_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
+        connection.close()
+        assert connection.expired is False
+
+    def test_expired_returns_bool(self, connection, mock_db_api):
+        """The property must return a plain Python bool, not a protobuf bool."""
+        mock_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
+        result = connection.expired
+        assert type(result) is bool
