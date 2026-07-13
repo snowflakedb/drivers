@@ -102,6 +102,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     @property
     @pep249
+    @api_telemetry
     def connection(self) -> Connection:
         """The :class:`Connection` object that created this cursor."""
         return self._connection
@@ -140,6 +141,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         await self.execute(command, args)
         return args
 
+    @api_telemetry
     @requires_open
     async def set_statement_parameter(self, key: str, value: Any) -> None:
         """Set a statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
@@ -607,6 +609,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """Exit the runtime context for the cursor."""
         await self.close()
 
+    @api_telemetry
     async def is_closed(self) -> bool:
         """
         Check if the cursor is closed.
@@ -616,6 +619,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         """
         return self._closed or await self._connection.is_closed()
 
+    @api_telemetry
     @requires_open_cursor_not_connection
     async def reset(self, closing: bool = False) -> None:
         """Reset the result set.
