@@ -55,6 +55,7 @@ EXPORTS
     SQLPrimaryKeysW
     SQLForeignKeysW
     SQLProceduresW
+    SQLProcedureColumnsW
     SQLSpecialColumnsW
     SQLColumnPrivilegesW
     SQLTablePrivilegesW
