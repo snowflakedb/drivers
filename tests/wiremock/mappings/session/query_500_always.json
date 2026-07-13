@@ -1,0 +1,11 @@
+{
+  "name": "Query always returns 500 (server error, no session-token refresh triggered)",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 500,
+    "body": "Internal server error"
+  }
+}

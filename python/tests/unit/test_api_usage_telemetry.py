@@ -12,6 +12,7 @@ from snowflake.connector._internal.decorators import _TRACKING
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     ConnectionIsClosedResponse,
+    ConnectionIsExpiredResponse,
     DatabaseHandle,
     ExecuteQueryResponse,
     ResultSetDescriptor,
@@ -126,6 +127,7 @@ def mock_async_db_api():
         return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
 
     db_api.connection_is_closed = AsyncMock(side_effect=_connection_is_closed)
+    db_api.connection_is_expired = AsyncMock(return_value=ConnectionIsExpiredResponse(is_expired=False))
     db_api.connection_close = AsyncMock()
     db_api.connection_release = AsyncMock()
     db_api.database_release = AsyncMock()
@@ -531,3 +533,41 @@ class TestPassedArgumentsThroughStack:
         mock_db_api.telemetry_send_api_usage.reset_mock()
         connection.cursor()
         assert _passed_arguments_for(mock_db_api, "Connection.cursor") == []
+
+
+class TestAsyncExpired:
+    """Unit tests for ``aio.Connection.is_expired()`` coroutine.
+
+    Mirrors the sync ``TestExpired`` in test_connection.py. Injection point is
+    ``mock_async_db_api.connection_is_expired`` — the same RPC-layer mock used
+    by all other async connection tests.
+    """
+
+    def test_returns_false_for_fresh_connection(self, async_connection, mock_async_db_api):
+        """A fresh async connection must report is_expired() == False."""
+        mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=False)
+        assert _run_async(async_connection.is_expired()) is False
+        mock_async_db_api.connection_is_expired.assert_called_once()
+
+    def test_returns_true_when_core_reports_expired(self, async_connection, mock_async_db_api):
+        """is_expired() == True is forwarded from sf_core."""
+        mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
+        assert _run_async(async_connection.is_expired()) is True
+
+    def test_returns_true_on_exception(self, async_connection, mock_async_db_api):
+        """If the RPC raises, is_expired() fails closed and returns True rather than
+        propagating — the connection may be unusable, so callers treat it as expired."""
+        mock_async_db_api.connection_is_expired.side_effect = RuntimeError("handle gone")
+        assert _run_async(async_connection.is_expired()) is True
+
+    def test_conn_handle_none_returns_false(self, async_connection, mock_async_db_api):
+        """conn_handle=None (pre-connect or post-release) must return False immediately."""
+        async_connection.conn_handle = None
+        assert _run_async(async_connection.is_expired()) is False
+        mock_async_db_api.connection_is_expired.assert_not_called()
+
+    def test_returns_bool(self, async_connection, mock_async_db_api):
+        """is_expired() must return a plain Python bool, not a protobuf bool."""
+        mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
+        result = _run_async(async_connection.is_expired())
+        assert type(result) is bool
