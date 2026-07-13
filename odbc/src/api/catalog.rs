@@ -45,7 +45,7 @@ use sf_core::apis::database_driver_v1::{
 };
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionGetInfoRequest, ConnectionGetObjectsRequest, ConnectionGetParameterRequest,
-    ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest,
+    ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, StatementHandle,
 };
 use snafu::{OptionExt, ResultExt};
 use std::collections::HashMap;
@@ -1275,6 +1275,340 @@ pub fn foreign_keys<E: OdbcEncoding>(
         fk_table: fk_table_raw.as_deref(),
     };
     let flat_batch = map_show_foreign_keys_to_odbc(show_batch, &filter)?;
+    let schema = flat_batch.schema();
+    let reader = reader_from_record_batch(flat_batch, schema)?;
+    set_state_for_catalog(
+        &mut inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
+}
+
+// ============================================================================
+// SQLProcedures — information_schema.procedures
+// ============================================================================
+
+/// ODBC 3.x `PROCEDURE_TYPE` value: the object has a return value (Snowflake
+/// procedures always declare `RETURNS`, so this is always `SQL_PT_FUNCTION`).
+const SQL_PT_FUNCTION: i16 = 2;
+
+fn procedures_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("PROCEDURE_CAT", 255),   // 1
+        catalog_text_field("PROCEDURE_SCHEM", 255), // 2
+        catalog_text_field("PROCEDURE_NAME", 255),  // 3
+        catalog_int_field("NUM_INPUT_PARAMS"),      // 4 (reference: INTEGER, arg count)
+        catalog_int_field("NUM_OUTPUT_PARAMS"),     // 5 (reserved; always NULL)
+        catalog_int_field("NUM_RESULT_SETS"),       // 6 (0/1, 1 iff table-valued)
+        catalog_text_field("REMARKS", 65535),       // 7
+        catalog_smallint_field("PROCEDURE_TYPE"),   // 8 (reference: SMALLINT)
+    ]))
+}
+
+/// Escapes a value for embedding in a Snowflake single-quoted string literal.
+///
+/// Snowflake processes backslash escape sequences inside `'...'` literals, so
+/// the backslash must be doubled *before* the single quote is doubled. Escaping
+/// only `'` would (a) allow injection via a `\'` payload in pattern mode, where
+/// `catalog_arg_to_pattern` passes the argument through verbatim, and (b) break
+/// exact-match in identifier mode, where `escape_like_wildcards` has already
+/// backslash-escaped `_`/`%`: the string layer would strip that backslash and
+/// re-expose the wildcard to `LIKE`. Doubling the backslash preserves it through
+/// the string layer so `LIKE` (default escape `\`) treats `\_`/`\%` as literals.
+fn escape_sql_string_literal(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "''")
+}
+
+/// Splits a comma-separated list on top-level commas only, so commas nested
+/// inside parentheses (e.g. `NUMBER(10,2)`) do not split a token. Shared by
+/// `argument_signature` and `TABLE(...)` return-type parsing.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let last = s[start..].trim();
+    if !out.is_empty() || !last.is_empty() {
+        out.push(last);
+    }
+    out
+}
+
+/// Extracts the text between the outermost parentheses of a signature such as
+/// `(P1 VARCHAR, PAGE FLOAT)` → `P1 VARCHAR, PAGE FLOAT`. Returns `""` when the
+/// parentheses are absent or empty (a zero-argument procedure yields `()`).
+fn parenthesized_inner(sig: &str) -> &str {
+    let sig = sig.trim();
+    match (sig.find('('), sig.rfind(')')) {
+        (Some(open), Some(close)) if open < close => sig[open + 1..close].trim(),
+        _ => "",
+    }
+}
+
+/// Counts the input parameters in an `argument_signature`. Argument types are
+/// bare (no precision/scale), so the depth-aware split is defensive rather than
+/// strictly required, but it keeps counting robust and matches PR2's tokenizer.
+fn count_input_params(argument_signature: &str) -> i32 {
+    let inner = parenthesized_inner(argument_signature);
+    if inner.is_empty() {
+        return 0;
+    }
+    split_top_level_commas(inner).len() as i32
+}
+
+/// SQLSTATEs that `SQLProcedures` maps to an empty result set instead of an
+/// error, matching the reference `fetchProceduresFromBackend` catch: `02000`
+/// (no data) plus `42000`/`42S02` (a filter matching no procedure, a
+/// non-existent database, or an invalid identifier character). Kept separate
+/// from [`is_object_not_found_sql_state`] so widening it does not change
+/// `SQLPrimaryKeys`/`SQLForeignKeys` behavior.
+fn is_procedures_empty_result_sql_state(state: &str) -> bool {
+    state == "02000" || is_object_not_found_sql_state(state)
+}
+
+/// A procedure is table-valued (`NUM_RESULT_SETS = 1`) iff its return `data_type`
+/// begins with `TABLE` (case-insensitive), e.g. `TABLE (ID NUMBER, NAME VARCHAR)`.
+fn returns_table(data_type: &str) -> bool {
+    let t = data_type.trim_start();
+    t.len() >= 5 && t.as_bytes()[..5].eq_ignore_ascii_case(b"table")
+}
+
+/// Runs `SELECT database_name FROM information_schema.databases` to enumerate the
+/// databases to union over when the caller passes a NULL catalog without
+/// connection-context resolution (mirrors the reference `QueryDatabases`).
+fn enumerate_databases(stmt_handle: StatementHandle) -> OdbcResult<Vec<String>> {
+    let batch = execute_show_query_collect_batch(
+        stmt_handle,
+        "select database_name from information_schema.databases",
+    )?;
+    let mut dbs = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        if let Some(name) = utf8_value_at(&batch, 0, row) {
+            dbs.push(name);
+        }
+    }
+    Ok(dbs)
+}
+
+/// Builds the `information_schema.procedures` query, unioning one subquery per
+/// database. Matches the reference driver: `procedure_name`/`procedure_schema`
+/// LIKE filters are only appended when meaningful (`proc != "%"`, non-empty).
+fn build_procedures_query(
+    db_names: &[String],
+    schema_pattern: Option<&str>,
+    proc_pattern: Option<&str>,
+) -> String {
+    let mut where_clauses: Vec<String> = Vec::new();
+    if let Some(p) = proc_pattern
+        && p != "%"
+        && !p.is_empty()
+    {
+        where_clauses.push(format!(
+            "procedure_name like '{}'",
+            escape_sql_string_literal(p)
+        ));
+    }
+    if let Some(s) = schema_pattern
+        && !s.is_empty()
+    {
+        where_clauses.push(format!(
+            "procedure_schema like '{}'",
+            escape_sql_string_literal(s)
+        ));
+    }
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" where {}", where_clauses.join(" AND "))
+    };
+
+    db_names
+        .iter()
+        .map(|db| {
+            format!(
+                "(select procedure_catalog, procedure_schema, procedure_name, \
+                 argument_signature, data_type, comment from \"{}\".information_schema.procedures{})",
+                escape_snowflake_identifier(db),
+                where_sql
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n union all \n")
+}
+
+fn procedures_column_index(schema: &Schema, column: &'static str) -> OdbcResult<usize> {
+    column_index_by_name(schema, column).with_context(|| {
+        crate::api::error::ProcedureMetadataParseSnafu {
+            detail: format!("information_schema.procedures result is missing '{column}'"),
+        }
+    })
+}
+
+/// Maps the `information_schema.procedures` result to the 8-column ODBC
+/// `SQLProcedures` result set. Preserves server/union order (no client sort),
+/// matching the reference driver.
+fn map_procedures_to_odbc(batch: RecordBatch) -> OdbcResult<RecordBatch> {
+    let schema = procedures_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(schema));
+    }
+
+    let input = batch.schema();
+    let idx_cat = procedures_column_index(&input, "procedure_catalog")?;
+    let idx_schema = procedures_column_index(&input, "procedure_schema")?;
+    let idx_name = procedures_column_index(&input, "procedure_name")?;
+    let idx_args = procedures_column_index(&input, "argument_signature")?;
+    let idx_data_type = procedures_column_index(&input, "data_type")?;
+    let idx_comment = procedures_column_index(&input, "comment")?;
+
+    let n = batch.num_rows();
+    let mut cats: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut schems: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut names: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut num_inputs: Vec<Option<i32>> = Vec::with_capacity(n);
+    let mut num_result_sets: Vec<Option<i32>> = Vec::with_capacity(n);
+    let mut remarks: Vec<Option<String>> = Vec::with_capacity(n);
+
+    for row in 0..n {
+        cats.push(utf8_value_at(&batch, idx_cat, row));
+        schems.push(utf8_value_at(&batch, idx_schema, row));
+        names.push(utf8_value_at(&batch, idx_name, row));
+        let arg_sig = utf8_value_at(&batch, idx_args, row).unwrap_or_default();
+        num_inputs.push(Some(count_input_params(&arg_sig)));
+        let data_type = utf8_value_at(&batch, idx_data_type, row).unwrap_or_default();
+        num_result_sets.push(Some(if returns_table(&data_type) { 1 } else { 0 }));
+        remarks.push(utf8_value_at(&batch, idx_comment, row));
+    }
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(cats)) as ArrayRef,
+            Arc::new(StringArray::from(schems)) as ArrayRef,
+            Arc::new(StringArray::from(names)) as ArrayRef,
+            Arc::new(Int32Array::from(num_inputs)) as ArrayRef,
+            // NUM_OUTPUT_PARAMS: reserved, always NULL.
+            Arc::new(Int32Array::from(vec![None; n])) as ArrayRef,
+            Arc::new(Int32Array::from(num_result_sets)) as ArrayRef,
+            Arc::new(StringArray::from(remarks)) as ArrayRef,
+            // PROCEDURE_TYPE: SQL_PT_FUNCTION for every Snowflake procedure.
+            Arc::new(Int16Array::from(vec![Some(SQL_PT_FUNCTION); n])) as ArrayRef,
+        ],
+    )
+    .context(crate::api::error::RecordBatchBuildSnafu)
+}
+
+/// Implements `SQLProcedures`: lists stored procedures from
+/// `information_schema.procedures`.
+pub fn procedures<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    proc_name: *const E::Char,
+    name_length3: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::info!("SQLProcedures: entry");
+    let _exit = ApiExitLog("SQLProcedures");
+
+    let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
+    let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
+    let proc_raw = read_opt_str::<E>(proc_name, name_length3)?;
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    let metadata_id = inner.metadata_id;
+    let stmt_handle = guard.stmt_handle;
+    drop(conn);
+
+    // In identifier mode (SQL_ATTR_METADATA_ID = TRUE) every argument is a
+    // required identifier: a NULL pointer is HY009.
+    if metadata_id && (catalog_raw.is_none() || schema_raw.is_none() || proc_raw.is_none()) {
+        return NullPointerSnafu.fail();
+    }
+
+    // Catalog is an exact database identifier (ODBC forbids a search pattern);
+    // schema and proc name are LIKE patterns. Fold the catalog identifier in
+    // identifier mode so the quoted `"db"` scope is case-correct.
+    let mut db_name: Option<String> = if metadata_id {
+        catalog_raw.as_deref().map(fold_identifier)
+    } else {
+        catalog_raw.clone()
+    };
+    let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
+    let proc_pattern = catalog_arg_to_pattern(proc_raw.as_deref(), metadata_id)?;
+
+    // NULL catalog under CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX resolves to
+    // the connection's current database (and schema, if schema is also NULL);
+    // otherwise a NULL catalog enumerates every database (union all).
+    if catalog_raw.is_none() && metadata_request_use_connection_ctx(conn_handle)? {
+        let rt = global().context(OdbcRuntimeSnafu)?;
+        let info = rt.block_on(async |c| {
+            c.connection_get_info(ConnectionGetInfoRequest {
+                conn_handle: Some(conn_handle),
+                info_codes: vec![],
+                include_master_token: false,
+            })
+            .await
+        })?;
+        db_name = info.database;
+        if schema_raw.is_none() {
+            schema_pattern = info.schema;
+        }
+    }
+
+    let db_names = match db_name {
+        Some(db) => vec![db],
+        None => enumerate_databases(stmt_handle)?,
+    };
+
+    if db_names.is_empty() {
+        return set_static_empty_catalog_result(&mut inner, procedures_schema());
+    }
+
+    let sql = build_procedures_query(
+        &db_names,
+        schema_pattern.as_deref(),
+        proc_pattern.as_deref(),
+    );
+
+    let batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_procedures_empty_result_sql_state)
+            {
+                return set_static_empty_catalog_result(&mut inner, procedures_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let flat_batch = map_procedures_to_odbc(batch)?;
     let schema = flat_batch.schema();
     let reader = reader_from_record_batch(flat_batch, schema)?;
     set_state_for_catalog(
@@ -3255,5 +3589,165 @@ mod fk_command_tests {
         // scope widens to account and the client-side filter narrows it back.
         let sql = build_show_foreign_keys_command(None, None, Some("PKT"), None, None, None);
         assert_eq!(sql, "SHOW EXPORTED KEYS IN account");
+    }
+}
+#[cfg(test)]
+mod procedures_tests {
+    use super::*;
+
+    #[test]
+    fn split_top_level_commas_ignores_nested_parens() {
+        // Live-pinned: table return columns use bare types, but a scalar
+        // NUMBER(p,s) must never be split on its inner comma.
+        assert_eq!(
+            split_top_level_commas("ID NUMBER(38,0), NAME VARCHAR"),
+            vec!["ID NUMBER(38,0)", "NAME VARCHAR"]
+        );
+        assert_eq!(split_top_level_commas("NUMBER(10,2)"), vec!["NUMBER(10,2)"]);
+        assert!(split_top_level_commas("").is_empty());
+        assert_eq!(split_top_level_commas("A"), vec!["A"]);
+    }
+
+    #[test]
+    fn parenthesized_inner_extracts_argument_list() {
+        assert_eq!(
+            parenthesized_inner("(PNAME VARCHAR, PAGE FLOAT)"),
+            "PNAME VARCHAR, PAGE FLOAT"
+        );
+        assert_eq!(parenthesized_inner("()"), "");
+        assert_eq!(parenthesized_inner("no parens"), "");
+    }
+
+    #[test]
+    fn count_input_params_matches_live_signatures() {
+        // Live-pinned argument_signature strings from information_schema.
+        assert_eq!(count_input_params("(P1 VARCHAR)"), 1);
+        assert_eq!(count_input_params("(PNAME VARCHAR, PAGE FLOAT)"), 2);
+        assert_eq!(count_input_params("(PID NUMBER, PNAME VARCHAR)"), 2);
+        assert_eq!(count_input_params("()"), 0);
+    }
+
+    #[test]
+    fn returns_table_detects_table_valued_return() {
+        // Live-pinned: table returns render as "TABLE (…)" with a space.
+        assert!(returns_table("TABLE (ID NUMBER, NAME VARCHAR)"));
+        assert!(returns_table("table(x int)"));
+        assert!(!returns_table("VARCHAR(134217728)"));
+        assert!(!returns_table("NUMBER(38,0)"));
+    }
+
+    #[test]
+    fn escape_sql_string_literal_doubles_single_quotes() {
+        assert_eq!(escape_sql_string_literal("O'Brien%"), "O''Brien%");
+        assert_eq!(escape_sql_string_literal("PROC%"), "PROC%");
+    }
+
+    #[test]
+    fn escape_sql_string_literal_escapes_backslash_before_quote() {
+        // Injection payload: the escaped quote must not close the literal.
+        assert_eq!(
+            escape_sql_string_literal("a\\' union all"),
+            "a\\\\'' union all"
+        );
+        // Identifier mode: escape_like_wildcards produces MY\_PROC; the backslash
+        // must survive the Snowflake string layer so LIKE sees an escaped '_'.
+        assert_eq!(escape_sql_string_literal("MY\\_PROC"), "MY\\\\_PROC");
+    }
+
+    #[test]
+    fn build_procedures_query_escapes_injection_payload() {
+        let sql =
+            build_procedures_query(&["DB".to_string()], None, Some("a\\' union all select 1--"));
+        // The lone escaped quote is neutralized (backslash doubled, quote doubled),
+        // so no bare quote can terminate the literal early.
+        assert!(sql.contains("procedure_name like 'a\\\\'' union all select 1--'"));
+    }
+
+    #[test]
+    fn build_procedures_query_single_db_with_filters() {
+        let sql = build_procedures_query(
+            &["ODBCMETADATATESTDB".to_string()],
+            Some("CATALOGTESTS"),
+            Some("BASICPROC"),
+        );
+        assert!(sql.contains("\"ODBCMETADATATESTDB\".information_schema.procedures"));
+        assert!(sql.contains("procedure_name like 'BASICPROC'"));
+        assert!(sql.contains("procedure_schema like 'CATALOGTESTS'"));
+        assert!(!sql.contains("union all"));
+    }
+
+    #[test]
+    fn build_procedures_query_percent_proc_pattern_is_not_filtered() {
+        // A "%" procedure pattern matches everything, so no WHERE is emitted for it.
+        let sql = build_procedures_query(&["DB".to_string()], None, Some("%"));
+        assert!(!sql.contains("procedure_name like"));
+        assert!(!sql.contains("where"));
+    }
+
+    #[test]
+    fn build_procedures_query_unions_multiple_dbs() {
+        let sql = build_procedures_query(&["A".to_string(), "B".to_string()], None, None);
+        assert!(sql.contains("\"A\".information_schema.procedures"));
+        assert!(sql.contains("\"B\".information_schema.procedures"));
+        assert!(sql.contains("union all"));
+    }
+
+    #[test]
+    fn procedures_empty_result_sql_states_include_no_data() {
+        assert!(is_procedures_empty_result_sql_state("02000"));
+        assert!(is_procedures_empty_result_sql_state("42000"));
+        assert!(is_procedures_empty_result_sql_state("42S02"));
+        assert!(!is_procedures_empty_result_sql_state("22007"));
+        // The shared keys matcher must NOT swallow 02000 (scope isolation).
+        assert!(!is_object_not_found_sql_state("02000"));
+    }
+
+    #[test]
+    fn map_procedures_to_odbc_emits_eight_columns() {
+        use arrow::array::StringArray;
+        let input_schema = Arc::new(Schema::new(vec![
+            Field::new("procedure_catalog", DataType::Utf8, true),
+            Field::new("procedure_schema", DataType::Utf8, true),
+            Field::new("procedure_name", DataType::Utf8, true),
+            Field::new("argument_signature", DataType::Utf8, true),
+            Field::new("data_type", DataType::Utf8, true),
+            Field::new("comment", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            input_schema,
+            vec![
+                Arc::new(StringArray::from(vec![Some("DB"), Some("DB")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("S"), Some("S")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("SCALARP"), Some("TABLEP")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("(P1 VARCHAR, P2 NUMBER)"),
+                    Some("()"),
+                ])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("NUMBER(38,0)"),
+                    Some("TABLE (ID NUMBER, NAME VARCHAR)"),
+                ])) as ArrayRef,
+                Arc::new(StringArray::from(vec![None::<&str>, None::<&str>])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        let out = map_procedures_to_odbc(batch).expect("map failed");
+        assert_eq!(out.num_columns(), 8);
+        assert_eq!(out.num_rows(), 2);
+
+        let num_inputs = out.column(3).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(num_inputs.value(0), 2); // scalar proc: 2 params
+        assert_eq!(num_inputs.value(1), 0); // table proc: 0 params
+
+        // NUM_OUTPUT_PARAMS (col 5) is always NULL.
+        assert!(out.column(4).is_null(0));
+
+        let num_result_sets = out.column(5).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(num_result_sets.value(0), 0); // scalar return
+        assert_eq!(num_result_sets.value(1), 1); // table-valued return
+
+        let proc_type = out.column(7).as_any().downcast_ref::<Int16Array>().unwrap();
+        assert_eq!(proc_type.value(0), SQL_PT_FUNCTION);
     }
 }

@@ -1537,4 +1537,35 @@ behavior_differences:
       Callers that passed an empty PKTableName alongside a real FKTableName and relied on the legacy
       empty result set will now receive the FK relationship. The odbc-api test splits the assertion
       (NEW_DRIVER_ONLY expects the row, OLD_DRIVER_ONLY expects the legacy empty result set).
-
+  91:
+    name: "SQLProcedures/SQLProcedureColumns case-fold unquoted identifiers in identifier mode"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under SQL_ATTR_METADATA_ID=SQL_TRUE the catalog function arguments are identifiers, and per the
+      ODBC specification an unquoted identifier is case-insensitive (only a double-quoted identifier
+      preserves case). SQLProcedures and SQLProcedureColumns fold the unquoted
+      catalog/schema/procedure identifiers (and, for SQLProcedureColumns, the column name) to
+      uppercase (via catalog_arg_to_pattern) before filtering: the catalog/schema/procedure names
+      feed the case-sensitive information_schema.procedures LIKE filter, and the SQLProcedureColumns
+      column name feeds the case-sensitive client-side like_match against the (upper-folded) parsed
+      column names. The legacy driver compares the caller's raw (lowercase) arguments
+      case-sensitively, so a lowercase identifier matches nothing. Tracked under SNOW-3234774.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      With SQL_ATTR_METADATA_ID=SQL_TRUE and a lowercase (unquoted) catalog/schema/procedure/column
+      identifier, the legacy driver matches case-sensitively against the uppercase stored names and
+      drops every row, yielding an empty result set.
+    new_driver_behavior: |
+      Unquoted identifiers are folded to uppercase before the information_schema.procedures LIKE
+      filter and (for SQLProcedureColumns) the client-side column-name match, so a lowercase
+      identifier matches the uppercase stored name and the expected row(s) are returned. Double-quoted
+      identifiers remain case-sensitive. In pattern mode (SQL_ATTR_METADATA_ID=SQL_FALSE, the default)
+      names stay case-sensitive, matching the reference driver.
+    description: |
+      Applications that relied on the legacy case-sensitive behavior of unquoted identifiers under
+      identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
+      split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
+      legacy empty result set).

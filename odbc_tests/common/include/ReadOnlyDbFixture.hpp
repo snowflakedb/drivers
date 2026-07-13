@@ -86,6 +86,9 @@ inline constexpr auto PROC_DTYPE_A = "PROCDTYPEA";
 inline constexpr auto PROC_DTYPE_B = "PROCDTYPEB";
 inline constexpr auto PROC_NUM_A = "PROCNUMA";
 inline constexpr auto PROC_NUM_B = "PROCNUMB";
+// Table-valued procedure (RETURNS TABLE(id, name)): NUM_RESULT_SETS=1 and
+// SQL_RESULT_COL rows.
+inline constexpr auto TABLE_PROC = "TABLEPROC";
 
 // Describe-col tables
 inline constexpr auto DESC_VARCHAR_TABLE = "DESCVARCHARTABLE";

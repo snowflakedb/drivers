@@ -359,6 +359,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("procedure metadata parse error: {detail}"))]
+    ProcedureMetadataParse {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
         #[snafu(implicit)]
@@ -733,6 +740,7 @@ impl OdbcError {
             OdbcError::InternalError { .. } => ErrorSource::InternalError,
             OdbcError::ShowKeysColumnMissing { .. } => ErrorSource::InternalError,
             OdbcError::ShowKeysInvalidKeySeq { .. } => ErrorSource::InternalError,
+            OdbcError::ProcedureMetadataParse { .. } => ErrorSource::InternalError,
             OdbcError::UnsupportedFeature { .. } => ErrorSource::Unsupported,
             OdbcError::FetchTypeOutOfRange { .. } => ErrorSource::CursorState,
             OdbcError::ExtendedFetchUsed { .. } => ErrorSource::CursorState,
@@ -903,6 +911,7 @@ impl OdbcError {
             OdbcError::InternalError { .. } => SqlState::GeneralError,
             OdbcError::ShowKeysColumnMissing { .. } => SqlState::GeneralError,
             OdbcError::ShowKeysInvalidKeySeq { .. } => SqlState::GeneralError,
+            OdbcError::ProcedureMetadataParse { .. } => SqlState::GeneralError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
