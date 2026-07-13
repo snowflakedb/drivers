@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use tokio::sync::RwLock as AsyncRwLock;
@@ -86,6 +87,7 @@ pub fn spawn_heartbeat_task(
     server_url: String,
     client_info: ClientInfo,
     heartbeat_interval: Duration,
+    is_master_token_expired: Arc<AtomicBool>,
 ) -> HeartbeatHandle {
     let cancel_token = CancellationToken::new();
     let task_token = cancel_token.clone();
@@ -98,6 +100,7 @@ pub fn spawn_heartbeat_task(
             client_info,
             heartbeat_interval,
             task_token,
+            is_master_token_expired,
         )
         .with_current_subscriber(),
     );
@@ -115,6 +118,7 @@ async fn heartbeat_loop(
     client_info: ClientInfo,
     interval: Duration,
     cancel_token: CancellationToken,
+    is_master_token_expired: Arc<AtomicBool>,
 ) {
     tracing::info!(interval_secs = interval.as_secs(), "Heartbeat task started");
 
@@ -140,6 +144,7 @@ async fn heartbeat_loop(
             http_client.clone(),
             server_url.to_string(),
             client_info.clone(),
+            is_master_token_expired.clone(),
         );
         let mut last_error: Option<RestError> = None;
         loop {
@@ -266,6 +271,7 @@ mod tests {
             server.uri(),
             test_client_info(),
             Duration::from_secs(3600),
+            Arc::new(AtomicBool::new(false)),
         );
 
         handle.cancel_and_wait().await;
@@ -285,6 +291,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(10),
             task_token,
+            Arc::new(AtomicBool::new(false)),
         ));
 
         tokio::time::timeout(Duration::from_secs(2), task)
@@ -313,6 +320,7 @@ mod tests {
             server.uri(),
             test_client_info(),
             Duration::from_millis(50),
+            Arc::new(AtomicBool::new(false)),
         );
 
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -344,6 +352,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(50),
             task_token,
+            Arc::new(AtomicBool::new(false)),
         ));
 
         // Wait for at least one heartbeat, then clear tokens.
@@ -354,5 +363,58 @@ mod tests {
             .await
             .expect("task did not exit within timeout")
             .expect("task panicked");
+    }
+
+    /// A 390114 (master token expired) returned while the heartbeat task refreshes
+    /// must set the shared `is_master_token_expired` flag, so the owning connection
+    /// reports `is_expired == true` even though the expiry was detected on the
+    /// background heartbeat path rather than a foreground query.
+    #[tokio::test]
+    async fn heartbeat_390114_sets_shared_expired_flag() {
+        let server = MockServer::start().await;
+
+        // Heartbeat gets 401 → triggers a session-token refresh.
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        // The refresh endpoint reports the master token has expired (390114).
+        Mock::given(method("POST"))
+            .and(path("/session/token-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "code": "390114",
+                "message": "Master token has expired. The session is no longer active."
+            })))
+            .mount(&server)
+            .await;
+
+        let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok"))));
+        let is_master_token_expired = Arc::new(AtomicBool::new(false));
+        let mut handle = spawn_heartbeat_task(
+            tokens,
+            reqwest::Client::new(),
+            server.uri(),
+            test_client_info(),
+            Duration::from_millis(20),
+            is_master_token_expired.clone(),
+        );
+
+        // Poll for the flag rather than sleeping a fixed duration.
+        let flagged = tokio::time::timeout(Duration::from_secs(2), async {
+            while !is_master_token_expired.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        handle.cancel_and_wait().await;
+
+        assert!(
+            flagged,
+            "heartbeat-path 390114 must set the shared is_master_token_expired flag"
+        );
     }
 }
