@@ -7,6 +7,15 @@ FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake
 
 RUN cargo install cargo-chef --version 0.1.77 --locked
 
+# Make cargo's resolver MSRV-aware. `cargo chef cook` re-resolves dependencies
+# from the manifests (it does not honor the committed Cargo.lock), so without
+# this it pulls the newest release of a transitive crate even when that release
+# raises its rust-version above the toolchain pinned in rust-toolchain.toml
+# (e.g. aws-smithy-async 1.3.0 requires rustc 1.94.1 > our 1.91.1). "fallback"
+# makes cargo pick the newest version compatible with the workspace's declared
+# rust-version instead.
+ENV CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
+
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang

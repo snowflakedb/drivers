@@ -2,6 +2,7 @@
 name = "odbc"
 version = "4.0.0"
 edition = "2024"
+rust-version = "1.94"
 
 [package.metadata.odbc]
 # ODBC API conformance level reported by SQLGetInfo(SQL_DRIVER_ODBC_VER) and
