@@ -642,8 +642,8 @@ behavior_differences:
       tracking and diagnostics.
     new_driver_behavior: |
       The Universal Driver does not implement OOB telemetry. `TelemetryService`
-      is a no-op stub. All calls are silently dropped. `get_instance()` emits a
-      `DeprecationWarning` to surface the gap.
+      is a no-op stub. Operation methods raise `NotSupportedError` (Snowpark
+      swallows these silently). get_instance/enable/disable/close are no-ops.
     description: |
       TODO: implement OOB telemetry in the Universal Driver and wire up
       `TelemetryService` to the real implementation.
