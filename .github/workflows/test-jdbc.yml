@@ -268,15 +268,14 @@ jobs:
   jdbc_parity_tests:
     needs: detect-changes
     if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
-    name: JDBC Date,Time,Timestamp Parity Tests (informational, non-blocking)
-    # Informational job: runs DateTimeParityTest, the single-JVM oracle that diffs
-    # universal-driver against snowflake-jdbc 4.0.1. New parity gaps are expected while the
-    # driver is still being built out, so failures here must NOT block PRs. Kept out of
-    # jdbc-status's `needs` and continue-on-error: true so the workflow stays green even
-    # when this job fails. Promote to required once the matrix is consistently clean.
+    name: JDBC Date,Time,Timestamp Parity Tests
+    # Blocking job: runs DateTimeParityTest, the single-JVM oracle that diffs
+    # universal-driver against snowflake-jdbc 4.0.1. The matrix is now consistently
+    # clean, so parity regressions must block PRs — this job is wired into
+    # jdbc-status's `needs` and carries no continue-on-error, so a new parity gap
+    # fails the job, fails jdbc-status, and blocks the merge.
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -324,12 +323,6 @@ jobs:
         run: chmod +x jdbc/gradlew
 
       - name: Run JDBC parity tests
-        # Step-level continue-on-error so the check reports success regardless
-        # of test outcome — failures stay visible in the step log and the
-        # uploaded artifacts. Job-level continue-on-error alone keeps the
-        # workflow green but the check still renders red, which prompts
-        # reviewers to ask whether the job is flaky.
-        continue-on-error: true
         run: |
           cd jdbc
           ./gradlew parityTest
@@ -356,34 +349,37 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   jdbc-status:
-    needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference]
+    needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference, jdbc_parity_tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check status
         run: |
           echo "=== JDBC CI Status ==="
-          
+
           NEW_RESULT="${{ needs.jdbc_tests.result }}"
           REFERENCE_RESULT="${{ needs.jdbc_tests_reference.result }}"
+          PARITY_RESULT="${{ needs.jdbc_parity_tests.result }}"
 
           # Check if tests were skipped
-          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
+          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" && "$PARITY_RESULT" == "skipped" ]]; then
             echo "✓ JDBC jobs were SKIPPED (no relevant changes detected)"
             echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
             exit 0
           fi
-          
+
           # Check if any job failed or was cancelled
-          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
+          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ || "$PARITY_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ JDBC CI FAILED or CANCELLED"
             echo "  - JDBC Tests (new): $NEW_RESULT"
             echo "  - JDBC Reference (old): $REFERENCE_RESULT"
+            echo "  - JDBC Parity: $PARITY_RESULT"
             exit 1
           fi
-          
+
           # Tests ran and passed
           echo "✓ JDBC jobs were RUN and PASSED"
           echo "  - JDBC Tests (new): $NEW_RESULT"
           echo "  - JDBC Reference (old): $REFERENCE_RESULT"
+          echo "  - JDBC Parity: $PARITY_RESULT"
           exit 0

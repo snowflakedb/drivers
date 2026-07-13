@@ -309,3 +309,36 @@ rules:
       #include <sql.h>
       #include <string>
       ```
+
+  - id: prefer-driver-only-guards-over-skip-old-driver
+    rule: |
+      **OBJECTIVE**: Keep old-driver behavior tested and documented. `SKIP_OLD_DRIVER` drops the old driver from the test entirely, so a known behavioral difference goes unasserted — the test records *that* the drivers differ but not *how*. Prefer the positive `OLD_DRIVER_ONLY(bd) { ... }` / `NEW_DRIVER_ONLY(bd) { ... }` guards, which run on both drivers and assert each one's expected result.
+
+      **REQUIREMENT**: When a test would otherwise run on both drivers and only the *expected value / error code / format diverges*, assert both sides with `OLD_DRIVER_ONLY` / `NEW_DRIVER_ONLY` guards instead of skipping the old driver with `SKIP_OLD_DRIVER(bd, message)`. A `SKIP_OLD_DRIVER` whose message describes a concrete, observable difference ("old driver returns X", "old driver uses > instead of >=") is the tell-tale sign the difference should have been asserted, not skipped.
+
+      `SKIP_OLD_DRIVER` remains appropriate ONLY when the test genuinely cannot execute on the old driver — it exercises a new-driver-only feature, connection parameter, or API the old driver lacks, or the old driver hangs/crashes on the input. In that case the message must explain *why the old driver can't run the test*, not merely how its output differs. (Note: `NEW_DRIVER_ONLY` / `OLD_DRIVER_ONLY` are guard `if`s around a block, not whole-test skips — a whole test that only makes sense on the new driver still uses `SKIP_OLD_DRIVER`, just with a why-it-can't-run message.)
+
+      Every `SKIP_OLD_DRIVER` / `OLD_DRIVER_ONLY` / `NEW_DRIVER_ONLY` must reference a `BD#` id backed by an entry in `odbc_tests/BehaviorDifferences.yaml` (see the `universal-driver-behavior-differences` ruleset).
+
+      ❌ **BAD** — a known value difference dodged by skipping the old driver, so old-driver behavior is silently untested:
+      ```cpp
+      // Old driver compares with `>` instead of `>=`, but we never assert what it
+      // actually returns — coverage lost on the old driver.
+      SKIP_OLD_DRIVER("BD#78", "Old driver does the comparison with > instead of >=");
+      SQLRETURN ret = run_boundary_query(stmt, MAX_BINDINGS);
+      CHECK(ret == SQL_SUCCESS);
+      ```
+
+      ✅ **GOOD** — both drivers run; each side's expected result is asserted and documented:
+      ```cpp
+      SQLRETURN ret = run_boundary_query(stmt, MAX_BINDINGS);
+      NEW_DRIVER_ONLY("BD#78") { CHECK(ret == SQL_SUCCESS); }
+      OLD_DRIVER_ONLY("BD#78") { CHECK(ret == SQL_ERROR); }
+      ```
+
+      ✅ **GOOD** — `SKIP_OLD_DRIVER` kept because the old driver truly cannot run the test (new-only feature), with a why-it-can't-run message:
+      ```cpp
+      // Programmatic access tokens are new-driver-only; the old driver has no code path for them.
+      SKIP_OLD_DRIVER("BD#7", "PAT authentication is not supported by the old driver");
+      connect_with_pat(dbc, token);
+      ```
