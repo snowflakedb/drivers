@@ -1281,6 +1281,13 @@ pub async fn refresh_session(
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
         tracing::error!(code, message = %message, "Session refresh failed");
+        // GS 390114 on the refresh endpoint means the master token itself has
+        // expired: the session can never be renewed. Surface the discriminable
+        // MasterTokenExpired variant so callers can mark the connection expired,
+        // mirroring the query-response path in read_response_json.
+        if code == MASTER_TOKEN_EXPIRED {
+            return Err(MasterTokenExpiredSnafu.build()).context(InvalidSnowflakeResponseSnafu);
+        }
         return SessionRefreshFailedSnafu { message, code }.fail();
     }
 
@@ -2093,7 +2100,7 @@ where
 
     // 2xx with `success:false, code:"390114"` means the master token has expired.
     // The session can never be renewed; surface it so RefreshContext can set
-    // `is_expired = true` and propagate `MasterTokenExpired` to the caller.
+    // `is_master_token_expired = true` and propagate `MasterTokenExpired` to the caller.
     if !parsed.success
         && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(MASTER_TOKEN_EXPIRED)
     {
