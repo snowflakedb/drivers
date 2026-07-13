@@ -560,6 +560,34 @@ behavior_differences:
       a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
       to `https://`.
 
+  39:
+    name: "ResultMetadataV2 lacks vector_dimension and fields attributes"
+    status: todo
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: medium
+    old_driver_behavior: |
+      `cursor._describe_internal()` returns `list[ResultMetadataV2]` where
+      `ResultMetadataV2` is a distinct class from `ResultMetadata` and carries two
+      additional attributes: `vector_dimension: int | None` (for VECTOR column types)
+      and `fields: list[ResultMetadataV2] | None` (for structured/object column types).
+      Snowpark and other callers read these attributes to handle VECTOR and structured
+      columns correctly.
+    new_driver_behavior: |
+      The Universal Driver aliases `ResultMetadataV2 = ResultMetadata` (a NamedTuple).
+      The alias lacks `vector_dimension` and `fields`; accessing either attribute on a
+      result from `cursor._describe_internal()` raises `AttributeError`. As a result,
+      `cursor._describe_internal()` currently raises `NotImplementedError` to prevent
+      silent data loss for callers that read these fields.
+      Snowpark falls back to `cursor.description` (V1 path) for schema inference.
+    description: |
+      Tracked as part of SNOW-2912540 Snowpark compatibility work. Proper fix requires
+      implementing a distinct `ResultMetadataV2` class in the UD with `vector_dimension`
+      and `fields` populated from the protobuf column descriptor, then wiring
+      `_describe_internal` to use it. Until then, VECTOR column schema inference and
+      structured-type introspection via `_describe_internal` are unsupported.
+
   40:
     name: "write_pandas create_temp_table emits DeprecationWarning"
     status: allowed
@@ -614,8 +642,8 @@ behavior_differences:
       tracking and diagnostics.
     new_driver_behavior: |
       The Universal Driver does not implement OOB telemetry. `TelemetryService`
-      is a no-op stub. All calls are silently dropped. `get_instance()` emits a
-      `DeprecationWarning` to surface the gap.
+      is a no-op stub. Operation methods raise `NotSupportedError` (Snowpark
+      swallows these silently). get_instance/enable/disable/close are no-ops.
     description: |
       TODO: implement OOB telemetry in the Universal Driver and wire up
       `TelemetryService` to the real implementation.
