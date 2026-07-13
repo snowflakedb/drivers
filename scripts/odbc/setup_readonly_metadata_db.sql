@@ -110,6 +110,11 @@ CREATE PROCEDURE PROCDTYPEA(p1 VARCHAR) RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN R
 CREATE PROCEDURE PROCDTYPEB(p1 INT) RETURNS INT LANGUAGE SQL AS 'BEGIN RETURN p1; END';
 CREATE PROCEDURE PROCNUMA(p1 INT) RETURNS INT LANGUAGE SQL AS 'BEGIN RETURN p1; END';
 CREATE PROCEDURE PROCNUMB(p1 INT) RETURNS INT LANGUAGE SQL AS 'BEGIN RETURN p1; END';
+-- Table-valued procedure (RETURNS TABLE): drives NUM_RESULT_SETS=1 in
+-- SQLProcedures and SQL_RESULT_COL rows in SQLProcedureColumns. The body must
+-- stay single-quoted (the setup runner splits on ';' but preserves quoted
+-- semicolons; it does not understand $$ dollar-quoting).
+CREATE PROCEDURE TABLEPROC(pid INTEGER) RETURNS TABLE(id INTEGER, name VARCHAR(100)) LANGUAGE SQL AS 'DECLARE res RESULTSET DEFAULT (SELECT id, name FROM BASICTABLE); BEGIN RETURN TABLE(res); END';
 
 -- =============================================================================
 -- SQLDescribeCol tables (used by e2e/query/sql_describe_col.cpp)
