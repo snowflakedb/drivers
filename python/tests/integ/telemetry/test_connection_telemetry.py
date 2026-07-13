@@ -80,8 +80,6 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     ``/telemetry/send`` with ``message.type == 'api_call'`` and
     ``message.api_method == 'Connection.cursor'``.
     """
-    from snowflake.connector.version import __version__
-
     wiremock.add_mapping("auth/login_success_jwt.json")
     wiremock.add_mapping("telemetry/telemetry_send_success.json")
 
@@ -127,6 +125,8 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     # entry-point where the per-call wrapper_api_usage span is opened.
     # The `service.*` / `process.runtime.*` attributes come from the wrapper
     # identity stamped on the span by `record_wrapper_identity_on_span`.
+    from snowflake.connector.version import __version__ as CONNECTOR_VERSION
+
     expected_exact = {
         "type": "api_call",
         "api_method": "Connection.cursor",
@@ -134,7 +134,7 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
         "db.system": "snowflake",
         "event_kind": "event",
         "service.name": "PythonConnector",
-        "service.version": __version__,
+        "service.version": CONNECTOR_VERSION,
     }
     for key, expected in expected_exact.items():
         assert message.get(key) == expected, (
@@ -187,6 +187,62 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
         )
         expected_keys.add("process.runtime.compiler")
     assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
+
+
+@pytest.mark.skip_reference(reason="api_usage telemetry is universal-driver only")
+def test_api_usage_telemetry_records_constructor_arguments(int_test_connection_factory, wiremock):
+    """Verify that the names of arguments passed to Connection.__init__ appear in api_call telemetry.
+
+    ``Connection.__init__`` is decorated with ``@api_telemetry``, which fires
+    post-call (after __init__ returns) so that _telemetry_client is initialized
+    before the telemetry is sent.  The recorded ``api_arguments`` attribute must
+    contain the names of every keyword argument the caller explicitly supplied —
+    names only, never values.
+    """
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+
+    # The factory passes a fixed set of kwargs to Connection.__init__ via
+    # connector.connect(**params). All of them land in **kwargs on __init__,
+    # so _passed_argument_names expands them to their individual key names.
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after connection open"
+
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    init_entries = [
+        entry
+        for entry in log_entries
+        if entry["message"].get("type") == "api_call" and entry["message"].get("api_method") == "Connection.__init__"
+    ]
+    assert len(init_entries) >= 1, (
+        "Expected at least one api_call telemetry log entry with "
+        f"api_method='Connection.__init__'. Got entries: {log_entries}"
+    )
+
+    message = init_entries[0]["message"]
+
+    # api_arguments is a comma-joined string of argument names; split to check membership.
+    raw_args = message.get("api_arguments", "")
+    assert raw_args, (
+        f"api_call message['api_arguments'] must not be empty for Connection.__init__. Full message: {message}"
+    )
+    recorded_args = set(raw_args.split(","))
+
+    # These kwargs are always supplied by int_test_connection_factory.
+    expected_args = {"account", "user", "database", "schema", "warehouse", "role", "authenticator", "private_key_file"}
+    missing = expected_args - recorded_args
+    assert not missing, (
+        f"Expected constructor argument names {missing!r} to be present in api_arguments "
+        f"{raw_args!r}. Full message: {message}"
+    )
+
+    # Argument values must never appear in telemetry.
+    assert "test_account" not in json.dumps(message), f"argument value leaked into telemetry payload: {message}"
+    assert "test_user" not in json.dumps(message), f"argument value leaked into telemetry payload: {message}"
 
 
 @pytest.mark.skip_reference(reason="api_usage telemetry is universal-driver only")
