@@ -11,6 +11,7 @@ import java.util.Properties;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 import net.snowflake.client.api.datasource.SnowflakeDataSource;
+import net.snowflake.client.internal.api.implementation.parameters.SessionProperty;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.DelegatingWrapper;
@@ -69,10 +70,10 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
     try {
       Properties properties = getProperties();
       if (username != null) {
-        properties.setProperty(SnowflakeSessionProperty.USER.getPropertyKey(), username);
+        properties.setProperty(SessionProperty.USER.getKey(), username);
       }
       if (password != null) {
-        properties.setProperty(SnowflakeSessionProperty.PASSWORD.getPropertyKey(), password);
+        properties.setProperty(SessionProperty.PASSWORD.getKey(), password);
       }
 
       Connection con = openConnection(getUrl(), properties);
@@ -104,20 +105,18 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
   @Override
   public int getLoginTimeout() {
     try {
-      return Integer.parseInt(
-          properties.getProperty(SnowflakeSessionProperty.LOGIN_TIMEOUT.getPropertyKey()));
+      return Integer.parseInt(properties.getProperty(SessionProperty.LOGIN_TIMEOUT.getKey()));
     } catch (NumberFormatException e) {
       logger.warn(
           "Could not parse loginTimeout property value '{}', returning default of 0",
-          properties.getProperty(SnowflakeSessionProperty.LOGIN_TIMEOUT.getPropertyKey()));
+          properties.getProperty(SessionProperty.LOGIN_TIMEOUT.getKey()));
       return 0;
     }
   }
 
   @Override
   public void setLoginTimeout(int seconds) {
-    properties.put(
-        SnowflakeSessionProperty.LOGIN_TIMEOUT.getPropertyKey(), Integer.toString(seconds));
+    properties.put(SessionProperty.LOGIN_TIMEOUT.getKey(), Integer.toString(seconds));
   }
 
   @Override
@@ -144,137 +143,126 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
 
   @Override
   public void setAccount(String account) {
-    this.properties.setProperty(SnowflakeSessionProperty.ACCOUNT.getPropertyKey(), account);
+    this.properties.setProperty(SessionProperty.ACCOUNT.getKey(), account);
   }
 
   @Override
   public void setDatabase(String database) {
-    this.properties.setProperty(SnowflakeSessionProperty.DATABASE.getPropertyKey(), database);
+    this.properties.setProperty(SessionProperty.DATABASE.getKey(), database);
   }
 
   @Override
   public void setSchema(String schema) {
-    this.properties.setProperty(SnowflakeSessionProperty.SCHEMA.getPropertyKey(), schema);
+    this.properties.setProperty(SessionProperty.SCHEMA.getKey(), schema);
   }
 
   @Override
   public void setRole(String role) {
-    this.properties.setProperty(SnowflakeSessionProperty.ROLE.getPropertyKey(), role);
+    this.properties.setProperty(SessionProperty.ROLE.getKey(), role);
   }
 
   @Override
   public void setWarehouse(String warehouse) {
-    this.properties.setProperty(SnowflakeSessionProperty.WAREHOUSE.getPropertyKey(), warehouse);
+    this.properties.setProperty(SessionProperty.WAREHOUSE.getKey(), warehouse);
   }
 
   @Override
   public void setAuthenticator(String authenticator) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.AUTHENTICATOR.getPropertyKey(), authenticator);
+    this.properties.setProperty(SessionProperty.AUTHENTICATOR.getKey(), authenticator);
   }
 
   @Override
   public void setToken(String token) {
-    this.properties.setProperty(SnowflakeSessionProperty.TOKEN.getPropertyKey(), token);
+    this.properties.setProperty(SessionProperty.TOKEN.getKey(), token);
   }
 
   @Override
   public void setPrivateKey(PrivateKey privateKey) {
     String base64 = Base64.getEncoder().encodeToString(privateKey.getEncoded());
-    this.properties.setProperty(SnowflakeSessionProperty.PRIVATE_KEY.getPropertyKey(), base64);
+    this.properties.setProperty(SessionProperty.PRIVATE_KEY.getKey(), base64);
   }
 
   @Override
   public void setPrivateKeyFile(String location, String password) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.PRIVATE_KEY_FILE.getPropertyKey(), location);
+    this.properties.setProperty(SessionProperty.PRIVATE_KEY_FILE.getKey(), location);
     if (password != null) {
-      this.properties.setProperty(
-          SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
+      this.properties.setProperty(SessionProperty.PRIVATE_KEY_PASSWORD.getKey(), password);
     }
   }
 
   @Override
   public void setPrivateKeyBase64(String privateKeyBase64, String password) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.PRIVATE_KEY.getPropertyKey(), privateKeyBase64);
+    this.properties.setProperty(SessionProperty.PRIVATE_KEY.getKey(), privateKeyBase64);
     if (password != null) {
-      this.properties.setProperty(
-          SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
+      this.properties.setProperty(SessionProperty.PRIVATE_KEY_PASSWORD.getKey(), password);
     }
   }
 
   @Override
   public void setPasscode(String passcode) {
-    this.properties.setProperty(SnowflakeSessionProperty.PASSCODE.getPropertyKey(), passcode);
+    this.properties.setProperty(SessionProperty.PASSCODE.getKey(), passcode);
   }
 
   @Override
   public void setPasscodeInPassword(boolean isPasscodeInPassword) {
     this.properties.setProperty(
-        SnowflakeSessionProperty.PASSCODE_IN_PASSWORD.getPropertyKey(),
-        Boolean.toString(isPasscodeInPassword));
+        SessionProperty.PASSCODE_IN_PASSWORD.getKey(), Boolean.toString(isPasscodeInPassword));
   }
 
   @Override
   public void setOktaUsername(String oktaUsername) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.OKTA_USERNAME.getPropertyKey(), oktaUsername);
+    this.properties.setProperty(SessionProperty.OKTA_USERNAME.getKey(), oktaUsername);
   }
 
   @Override
   public void setDisableSamlURLCheck(boolean disableSamlURLCheck) {
     this.properties.setProperty(
-        SnowflakeSessionProperty.DISABLE_SAML_URL_CHECK.getPropertyKey(),
-        Boolean.toString(disableSamlURLCheck));
+        SessionProperty.DISABLE_SAML_URL_CHECK.getKey(), Boolean.toString(disableSamlURLCheck));
   }
 
   @Override
   public void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential) {
     this.properties.setProperty(
-        SnowflakeSessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL.getPropertyKey(),
+        SessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL.getKey(),
         Boolean.toString(clientStoreTemporaryCredential));
   }
 
   @Override
   public void setOauthClientId(String oauthClientId) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.OAUTH_CLIENT_ID.getPropertyKey(), oauthClientId);
+    this.properties.setProperty(SessionProperty.OAUTH_CLIENT_ID.getKey(), oauthClientId);
   }
 
   @Override
   public void setOauthClientSecret(String oauthClientSecret) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.OAUTH_CLIENT_SECRET.getPropertyKey(), oauthClientSecret);
+    this.properties.setProperty(SessionProperty.OAUTH_CLIENT_SECRET.getKey(), oauthClientSecret);
   }
 
   @Override
   public void setOauthAuthorizationUrl(String oauthAuthorizationUrl) {
     this.properties.setProperty(
-        SnowflakeSessionProperty.OAUTH_AUTHORIZATION_URL.getPropertyKey(), oauthAuthorizationUrl);
+        SessionProperty.OAUTH_AUTHORIZATION_URL.getKey(), oauthAuthorizationUrl);
   }
 
   @Override
   public void setOauthTokenRequestUrl(String oauthTokenRequestUrl) {
     this.properties.setProperty(
-        SnowflakeSessionProperty.OAUTH_TOKEN_REQUEST_URL.getPropertyKey(), oauthTokenRequestUrl);
+        SessionProperty.OAUTH_TOKEN_REQUEST_URL.getKey(), oauthTokenRequestUrl);
   }
 
   @Override
   public void setOauthRedirectUri(String oauthRedirectUri) {
-    this.properties.setProperty(
-        SnowflakeSessionProperty.OAUTH_REDIRECT_URI.getPropertyKey(), oauthRedirectUri);
+    this.properties.setProperty(SessionProperty.OAUTH_REDIRECT_URI.getKey(), oauthRedirectUri);
   }
 
   @Override
   public void setOauthScope(String oauthScope) {
-    this.properties.setProperty(SnowflakeSessionProperty.OAUTH_SCOPE.getPropertyKey(), oauthScope);
+    this.properties.setProperty(SessionProperty.OAUTH_SCOPE.getKey(), oauthScope);
   }
 
   @Override
   public void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens) {
     this.properties.setProperty(
-        SnowflakeSessionProperty.OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.getPropertyKey(),
+        SessionProperty.OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.getKey(),
         Boolean.toString(oauthEnableSingleUseRefreshTokens));
   }
 

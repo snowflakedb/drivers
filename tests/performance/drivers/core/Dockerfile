@@ -7,6 +7,15 @@ FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake
 
 RUN cargo install cargo-chef --version 0.1.77 --locked
 
+# Make cargo's resolver MSRV-aware. `cargo chef cook` re-resolves dependencies
+# from the manifests (it does not honor the committed Cargo.lock), so without
+# this it pulls the newest release of a transitive crate even when that release
+# raises its rust-version above the toolchain pinned in rust-toolchain.toml
+# (e.g. aws-smithy-async 1.3.0 requires rustc 1.94.1 > our 1.91.1). "fallback"
+# makes cargo pick the newest version compatible with the workspace's declared
+# rust-version instead.
+ENV CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
+
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang
@@ -23,6 +32,7 @@ COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
+COPY tests/performance/drivers/core/app/Cargo.lock ./tests/performance/drivers/core/app/Cargo.lock
 COPY tests/performance/drivers/core/app/ ./tests/performance/drivers/core/app/
 
 # Modify sf_core/Cargo.toml to only build rlib (not dylib) to avoid linker issues
@@ -75,12 +85,12 @@ COPY --from=planner /workdir/tests/performance/drivers/core/app/recipe.json reci
 # Copy Cargo.lock to ensure cargo-chef uses pinned dependency versions
 # (without this, cargo resolves the latest versions which may require a newer rustc)
 COPY tests/performance/drivers/core/app/Cargo.lock Cargo.lock
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json --locked
 
 # Copy application source and build only the app (sf_core already compiled)
 COPY tests/performance/drivers/core/app/ ./
 
-RUN cargo build --release --bin core-perf-driver
+RUN cargo build --release --bin core-perf-driver --locked
 
 # Stage 4: Runtime - use minimal base image with newer GLIBC
 ARG BUILDPLATFORM=linux/amd64

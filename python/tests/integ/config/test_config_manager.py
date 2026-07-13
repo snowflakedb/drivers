@@ -12,6 +12,7 @@ from snowflake.connector.config_manager import (
     ConfigSlice,
     ConfigSliceOptions,
 )
+from snowflake.connector.errors import ConfigManagerError, ConfigSourceError
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
@@ -1009,3 +1010,47 @@ account = "test"
 
         # Then exactly the enabled plugins are discovered
         assert enabled == ["alpha", "gamma"]
+
+
+@pytest.mark.skip_reference(reason="Permission checks are enforced in sf_core (UD-only path)")
+class TestSkipFilePermissionsCheck:
+    """Tests for skip_file_permissions_check in ConfigManager.read_config."""
+
+    @pytest.mark.skipif(os.name == "nt", reason="Permission checks are Unix-only")
+    def test_world_writable_config_file_raises_without_skip(self, tmp_path):
+        """World-writable config.toml causes read_config to raise without the skip flag."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[connections.test]\naccount = "myaccount"\n')
+        config_file.chmod(0o666)  # world-writable
+
+        manager = _make_manager(config_file)
+        with pytest.raises((ConfigManagerError, ConfigSourceError)):
+            manager.read_config(skip_file_permissions_check=False)
+
+    @pytest.mark.skipif(os.name == "nt", reason="Permission checks are Unix-only")
+    def test_world_writable_config_file_succeeds_with_skip(self, tmp_path):
+        """World-writable config.toml loads successfully when skip_file_permissions_check=True."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[connections.test]\naccount = "myaccount"\n')
+        config_file.chmod(0o666)  # world-writable
+
+        manager = _make_manager(config_file)
+        manager.read_config(skip_file_permissions_check=True)
+        connections = manager["connections"]
+        assert "test" in connections
+
+    @pytest.mark.skipif(os.name == "nt", reason="Permission checks are Unix-only")
+    def test_world_writable_connections_toml_succeeds_with_skip(self, tmp_path):
+        """World-writable connections.toml loads successfully when skip_file_permissions_check=True."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("")
+        config_file.chmod(0o600)
+
+        connections_file = tmp_path / "connections.toml"
+        connections_file.write_text('[myconn]\naccount = "acc"\nuser = "usr"\n')
+        connections_file.chmod(0o666)  # world-writable
+
+        manager = _make_manager(config_file, connections_file)
+        manager.read_config(skip_file_permissions_check=True)
+        connections = manager["connections"]
+        assert "myconn" in connections

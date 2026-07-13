@@ -6,33 +6,30 @@ import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.util.Properties;
 import net.snowflake.client.api.connection.SnowflakeDatabaseMetaData;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataCapabilities;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataIdentity;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
 import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects;
 import net.snowflake.client.internal.api.implementation.metadata.objects.MetaDataObjects.ForeignKeyKind;
-import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 
 public class SnowflakeDatabaseMetaDataImpl
     implements DatabaseMetaData, SnowflakeDatabaseMetaData, DelegatingWrapper {
 
-  private final SnowflakeConnectionImpl connection;
+  private final InternalSnowflakeConnection connection;
   private final MetaDataIdentity identity;
   private final MetaDataCapabilities capabilities;
   private final MetaDataLimits limits;
   private final MetaDataObjects objects;
 
-  public SnowflakeDatabaseMetaDataImpl(
-      SnowflakeConnectionImpl connection, Properties properties, CoreDriverApi coreDriverApi) {
+  public SnowflakeDatabaseMetaDataImpl(InternalSnowflakeConnection connection) {
     this.connection = connection;
-    this.identity = new MetaDataIdentity(connection, properties);
+    this.identity = new MetaDataIdentity(connection);
     this.capabilities = new MetaDataCapabilities(connection);
-    this.limits = new MetaDataLimits(connection, coreDriverApi);
-    this.objects = new MetaDataObjects(connection, coreDriverApi);
+    this.limits = new MetaDataLimits(connection);
+    this.objects = new MetaDataObjects(connection);
   }
 
   @Override

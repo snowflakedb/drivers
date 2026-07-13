@@ -58,6 +58,11 @@ struct Subprocess::Impl {
       job_handle = INVALID_HANDLE_VALUE;
     }
   }
+
+  bool running() const {
+    if (process_handle == INVALID_HANDLE_VALUE) return false;
+    return WaitForSingleObject(process_handle, 0) == WAIT_TIMEOUT;  // still running
+  }
 };
 
 Subprocess::Subprocess(const std::string& program, const std::vector<std::string>& args)
@@ -68,6 +73,8 @@ Subprocess::Subprocess(const std::string& program, const std::vector<std::string
 Subprocess::~Subprocess() {
   if (impl_) impl_->stop();
 }
+
+bool Subprocess::running() const { return impl_ && impl_->running(); }
 
 Subprocess::Subprocess(Subprocess&&) noexcept = default;
 Subprocess& Subprocess::operator=(Subprocess&&) noexcept = default;

@@ -5,6 +5,7 @@ use crate::config::param_names;
 use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
+use crate::config::toml_loader::FilePermissionCheck;
 
 /// If `account` is not explicitly set but `host` is available,
 /// derive the account identifier from the hostname — matching the legacy
@@ -135,19 +136,30 @@ pub fn resolve_with_paths(
     // client_app_id, …) even on a bare call — so the merged `explicit` store
     // can never look "empty" here, and a locator heuristic would diverge from
     // the legacy `is_kwargs_empty` contract (e.g. `connect(user="alice")`).
+    let permission_check = if matches!(
+        explicit.get(param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK),
+        Some(Setting::Bool(true))
+    ) {
+        FilePermissionCheck::UnsafeDisabled
+    } else {
+        FilePermissionCheck::Enabled
+    };
+
     let connection_name: Option<String> =
         if let Some(Setting::String(name)) = explicit.get(param_names::CONNECTION_NAME) {
             Some(name.clone())
         } else if no_connection_details {
             Some(config_manager::get_default_connection_name_with_paths(
                 paths,
+                permission_check,
             )?)
         } else {
             None
         };
 
     if let Some(ref name) = connection_name {
-        let file_settings = config_manager::load_connection_config_with_paths(name, paths)?;
+        let file_settings =
+            config_manager::load_connection_config_with_paths(name, paths, permission_check)?;
         for (k, v) in file_settings {
             merged.insert(k, v);
         }
@@ -707,6 +719,49 @@ account = "other_acct"
         assert!(
             matches!(&err, ConfigError::ConnectionNotFound { name, .. } if name == "default"),
             "Expected ConnectionNotFound for 'default', got: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skip_flag_allows_loading_connection_from_world_writable_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+
+        let connections_path = temp_dir.path().join("connections.toml");
+        fs::write(
+            &connections_path,
+            "[myconn]\naccount = \"myaccount\"\nuser = \"myuser\"\n",
+        )
+        .unwrap();
+        // World-writable: normally rejected by check_file_permissions
+        fs::set_permissions(&connections_path, fs::Permissions::from_mode(0o666)).unwrap();
+
+        // Without the flag: should fail with InsecurePermissions
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            param_names::CONNECTION_NAME.into(),
+            Setting::String("myconn".to_owned()),
+        );
+        assert!(
+            matches!(
+                resolve_with_paths(&explicit, &paths, false),
+                Err(crate::config::ConfigError::InsecurePermissions { .. })
+            ),
+            "expected InsecurePermissions without skip flag"
+        );
+
+        // With the flag: should succeed
+        explicit.insert(
+            param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.into(),
+            Setting::Bool(true),
+        );
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("myaccount".to_owned())
         );
     }
 }

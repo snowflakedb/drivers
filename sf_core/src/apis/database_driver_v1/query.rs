@@ -7,6 +7,7 @@ use crate::chunks::{
     ChunkError, PrefetchConfig, arrow_prefetch_reader, empty_reader, json_prefetch_reader,
     schema_only_reader, single_chunk_reader,
 };
+use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::{
     DownloadResult, StageInfoCache, StageInfoRefreshError, StageInfoSnapshot, UploadResult,
@@ -56,7 +57,8 @@ pub struct StageInfoRefreshContext {
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
 ///
-/// `put_get_max_attempts` bounds the per-file HTTP/transport retry loop.
+/// `retry_policy` is the base put/get retry policy (built from connection
+/// params at the dispatch site); cloud-specific code clones and tweaks it.
 ///
 /// When `stage_info_refresh_context` is `Some`, recoverable stage-info-expiry
 /// errors during a file transfer trigger a re-issue of the original PUT/GET
@@ -78,7 +80,7 @@ pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
-    put_get_max_attempts: u32,
+    retry_policy: &RetryPolicy,
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
@@ -106,10 +108,9 @@ pub(super) async fn perform_put_get_transfer(
                 )
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
-            let upload_results =
-                upload_files(&file_upload_data, put_get_max_attempts, refresher_handle)
-                    .await
-                    .context(FileUploadSnafu)?;
+            let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
+                .await
+                .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
@@ -127,7 +128,7 @@ pub(super) async fn perform_put_get_transfer(
                 })?;
             file_download_data.stage_info.tls_config = tls_config;
             let download_results =
-                download_files(file_download_data, put_get_max_attempts, refresher_handle)
+                download_files(file_download_data, retry_policy, refresher_handle)
                     .await
                     .context(FileDownloadSnafu)?;
             Ok(RowsetData::Download(download_results))

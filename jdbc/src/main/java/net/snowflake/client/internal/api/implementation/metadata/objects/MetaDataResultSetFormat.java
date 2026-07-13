@@ -305,7 +305,7 @@ enum MetaDataResultSetFormat {
 
   GET_PRIMARY_KEYS(
       Arrays.asList("TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "KEY_SEQ", "PK_NAME"),
-      // TODO(SNOW-3695645): KEY_SEQ type name is "INTEGER" here but "SHORT" in GET_FOREIGN_KEYS,
+      // TODO(SNOW-3740744): KEY_SEQ type name is "INTEGER" here but "SHORT" in GET_FOREIGN_KEYS,
       //  even though both map to Types.SMALLINT
       Arrays.asList("TEXT", "TEXT", "TEXT", "TEXT", "INTEGER", "TEXT"),
       Arrays.asList(

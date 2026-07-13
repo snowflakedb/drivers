@@ -6,10 +6,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.Properties;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
-import net.snowflake.client.internal.unicore.CoreDriverApi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -19,10 +17,9 @@ class SnowflakeDatabaseMetaDataImplTest {
   private SnowflakeDatabaseMetaDataImpl metadata;
 
   @BeforeEach
-  void setUp() throws Exception {
+  void setUp() {
     connection = mock(SnowflakeConnectionImpl.class);
-    metadata =
-        new SnowflakeDatabaseMetaDataImpl(connection, new Properties(), mock(CoreDriverApi.class));
+    metadata = new SnowflakeDatabaseMetaDataImpl(connection);
   }
 
   @Test

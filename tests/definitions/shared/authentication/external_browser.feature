@@ -52,3 +52,20 @@ Feature: External Browser Authentication
     And Login endpoint returns failure
     When Trying to Connect with simulated browser callback delivering a token
     Then Connection fails with login error
+
+  # =============================================================================
+  # Integration Tests - SSO URL validation (SNOW-3649282)
+  # =============================================================================
+
+  @core_int
+  Scenario: should reject malicious sso url before opening browser
+    Given Wiremock returns an ssoUrl containing a shell metacharacter
+    When Trying to Connect
+    Then Connection fails before the browser is opened
+
+  @core_int
+  Scenario: should login when sso url has multi param query string
+    Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
+    And Login endpoint returns success
+    When Trying to Connect with simulated browser callback delivering a token
+    Then Login is successful

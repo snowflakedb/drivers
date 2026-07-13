@@ -33,6 +33,7 @@ fn make_binding(target: CDataType, buf: &mut sql::IntervalStruct) -> Binding {
         precision: None,
         scale: None,
         datetime_interval_precision: None,
+        length: 0,
     }
 }
 

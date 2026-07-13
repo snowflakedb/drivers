@@ -587,3 +587,23 @@ behavior_differences:
       and `fields` populated from the protobuf column descriptor, then wiring
       `_describe_internal` to use it. Until then, VECTOR column schema inference and
       structured-type introspection via `_describe_internal` are unsupported.
+
+  40:
+    name: "write_pandas create_temp_table emits DeprecationWarning"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Passing `create_temp_table=True` to `write_pandas` silently translates to
+      `table_type="temp"` with no warning emitted to the caller.
+    new_driver_behavior: |
+      The universal driver emits a `DeprecationWarning` directing callers to use
+      `table_type="temp"` instead of `create_temp_table=True`. The translation still
+      occurs so runtime behaviour is otherwise unchanged. Code using
+      `warnings.filterwarnings("error")` will see the warning raised as an exception.
+    description: |
+      `create_temp_table` is the legacy boolean spelling accepted for Snowpark
+      backward-compatibility. The warning nudges callers toward the canonical
+      `table_type` parameter without breaking existing usage.

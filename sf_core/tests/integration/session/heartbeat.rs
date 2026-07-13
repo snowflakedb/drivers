@@ -1,7 +1,7 @@
 //! Integration tests for the per-connection heartbeat background task.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
@@ -36,6 +36,7 @@ async fn heartbeat_sends_periodic_requests() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
+        Arc::new(AtomicBool::new(false)),
     );
 
     // When enough time passes for multiple heartbeat intervals
@@ -91,6 +92,7 @@ async fn heartbeat_refreshes_on_401_then_retries() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
+        Arc::new(AtomicBool::new(false)),
     );
 
     // When the heartbeat task runs and encounters the 401
@@ -143,6 +145,7 @@ async fn heartbeat_stops_on_cancellation() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
+        Arc::new(AtomicBool::new(false)),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
     let count_before_cancel = heartbeat_count.load(Ordering::SeqCst);
@@ -188,6 +191,7 @@ async fn heartbeat_exits_when_tokens_cleared() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
+        Arc::new(AtomicBool::new(false)),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -260,6 +264,7 @@ async fn heartbeat_fires_repeatedly_at_configured_interval() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(100),
+        Arc::new(AtomicBool::new(false)),
     );
 
     // When 550ms elapse (enough for ~4-5 heartbeats at 100ms)
@@ -300,6 +305,7 @@ async fn heartbeat_drop_cancels_task() {
             server.uri(),
             test_client_info(),
             Duration::from_millis(50),
+            Arc::new(AtomicBool::new(false)),
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
 

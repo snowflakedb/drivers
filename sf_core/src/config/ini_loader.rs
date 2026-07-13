@@ -89,7 +89,10 @@ fn read_first_existing(paths: &[PathBuf]) -> Result<IniConfig, ConfigError> {
         if !path.exists() {
             continue;
         }
-        super::toml_loader::check_file_permissions(path)?;
+        super::toml_loader::check_file_permissions(
+            path,
+            super::toml_loader::FilePermissionCheck::Enabled,
+        )?;
         let ini = ini::Ini::load_from_file_noescape(path).map_err(|e| match e {
             ini::Error::Io(io) => ConfigError::ConfigFileRead {
                 path: path.display().to_string(),
