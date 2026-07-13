@@ -19,48 +19,44 @@ pub mod internal {
     pub use super::gcs_transfer::download_from_gcs_streaming;
     pub use crate::compression::compress_to_tempfile;
 
-    /// Zero-backoff variant of the production Azure retry policy, for tests.
-    /// Derives from `azure_retry_policy` (keeping the real `max_attempts` /
-    /// `max_elapsed` / retryable set) and only zeroes the backoff, so
-    /// retry-exhaustion tests run instantly without sleeping. Single source of
-    /// truth shared by the in-crate unit tests and the external integration
-    /// tests, so the test policy can't drift from the production shape.
-    pub fn azure_test_retry_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
-        use crate::config::retry::{BackoffConfig, Jitter};
+    /// Builds a base put/get retry policy with the given `max_attempts`
+    /// (zero backoff for instant test runs).
+    fn base_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
+        use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
         use std::time::Duration;
-        crate::config::retry::RetryPolicy {
-            backoff: BackoffConfig {
-                base: Duration::ZERO,
-                factor: 1.0,
-                cap: Duration::ZERO,
-                jitter: Jitter::None,
-            },
-            ..super::azure_transfer::azure_retry_policy(max_attempts)
-        }
+        let mut p = RetryPolicy::put_get(&test_params(max_attempts));
+        p.backoff = BackoffConfig {
+            base: Duration::ZERO,
+            factor: 1.0,
+            cap: Duration::ZERO,
+            jitter: Jitter::None,
+        };
+        p
+    }
+
+    /// Zero-backoff variant of the production Azure retry policy, for tests.
+    pub fn azure_test_retry_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
+        super::azure_transfer::azure_retry_policy(&base_policy(max_attempts))
     }
 
     /// Zero-backoff variant of the production GCS retry policy, for tests.
-    /// Derives from `gcs_retry_policy` (keeping the real `max_attempts` /
-    /// `max_elapsed` / retryable set, including the presigned-only 400) and
-    /// only zeroes the backoff, so retry tests run instantly without sleeping.
-    /// Single source of truth shared by the in-crate unit tests and the
-    /// external integration tests, so the test policy can't drift from the
-    /// production shape.
     pub fn gcs_test_retry_policy(
         using_presigned_url: bool,
         max_attempts: u32,
     ) -> crate::config::retry::RetryPolicy {
-        use crate::config::retry::{BackoffConfig, Jitter};
-        use std::time::Duration;
-        crate::config::retry::RetryPolicy {
-            backoff: BackoffConfig {
-                base: Duration::ZERO,
-                factor: 1.0,
-                cap: Duration::ZERO,
-                jitter: Jitter::None,
-            },
-            ..super::gcs_transfer::gcs_retry_policy(using_presigned_url, max_attempts)
-        }
+        super::gcs_transfer::gcs_retry_policy(using_presigned_url, &base_policy(max_attempts))
+    }
+
+    /// Builds a [`ParamStore`] with only `put_get_max_attempts` set.
+    pub fn test_params(max_attempts: u32) -> crate::config::param_store::ParamStore {
+        use crate::config::param_registry::param_names;
+        use crate::config::settings::Setting;
+        let mut params = crate::config::param_store::ParamStore::new();
+        params.insert(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+            Setting::Int(max_attempts as i64),
+        );
+        params
     }
 }
 
@@ -74,7 +70,7 @@ pub use multipart::{MultipartParams, MultipartThreshold};
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+use crate::config::retry::RetryPolicy;
 use azure_transfer::{
     AzureDownloadError, AzureUploadError, azure_retry_policy, download_from_azure_streaming,
     upload_to_azure_or_skip,
@@ -110,7 +106,7 @@ const COMPRESSION_DETECT_PREFIX_LEN: usize = 512;
 
 pub async fn upload_files(
     data: &UploadData,
-    put_get_max_attempts: u32,
+    policy: &RetryPolicy,
     mut refresher: Option<&mut dyn StageInfoRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
@@ -149,8 +145,7 @@ pub async fn upload_files(
             multipart: data.multipart,
         };
 
-        let result =
-            upload_single_file(single_upload_data, put_get_max_attempts, &mut refresher).await?;
+        let result = upload_single_file(single_upload_data, policy, &mut refresher).await?;
         results.push(result);
     }
 
@@ -183,12 +178,12 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
 /// than returned here.
 pub async fn upload_single_file(
     data: SingleUploadData,
-    put_get_max_attempts: u32,
+    policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads a `ByteSource::Path` itself
     // (streaming), so `upload_single_file` no longer pre-reads the file.
-    upload_prepared_source(data.source.clone(), data, put_get_max_attempts, refresher).await
+    upload_prepared_source(data.source.clone(), data, policy, refresher).await
 }
 
 /// Uploads an in-memory byte buffer to the stage location described by
@@ -204,18 +199,10 @@ pub async fn upload_single_file(
 pub async fn upload_in_memory_file(
     buffer: Vec<u8>,
     data: SingleUploadData,
+    policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
-    // The in-memory path serves the bind-stage uploader, which is not driven
-    // by the session-level `put_get_max_attempts` knob; it keeps the default
-    // attempt count (its payloads are small and fast — see `upload_blob`).
-    upload_prepared_source(
-        ByteSource::Bytes(buffer.into()),
-        data,
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
-        refresher,
-    )
-    .await
+    upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, refresher).await
 }
 
 /// Shared core of the upload path used by both `upload_single_file` (file
@@ -225,7 +212,7 @@ pub async fn upload_in_memory_file(
 async fn upload_prepared_source(
     source: ByteSource,
     data: SingleUploadData,
-    put_get_max_attempts: u32,
+    policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads the source file from disk and
@@ -246,7 +233,7 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
-            put_get_max_attempts,
+            policy,
             refresher,
         )
         .await
@@ -256,12 +243,7 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
-            // Build the policy here, where `using_presigned_url` is known, and
-            // pass it by reference so the test seam can inject zero backoff.
-            &gcs_retry_policy(
-                data.stage_info.presigned_url.is_some(),
-                put_get_max_attempts,
-            ),
+            &gcs_retry_policy(data.stage_info.presigned_url.is_some(), policy),
             refresher,
         )
         .await
@@ -272,7 +254,7 @@ async fn upload_prepared_source(
             file_metadata.target.as_str(),
             data.overwrite,
             data.skip_upload_on_content_match,
-            &azure_retry_policy(put_get_max_attempts),
+            &azure_retry_policy(policy),
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -530,7 +512,7 @@ fn auto_detect_source_compression(
 
 pub async fn download_files(
     mut data: DownloadData,
-    put_get_max_attempts: u32,
+    policy: &RetryPolicy,
     mut refresher: Option<&mut dyn StageInfoRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
@@ -562,13 +544,8 @@ pub async fn download_files(
             multipart: data.multipart,
         };
 
-        let result = download_single_file(
-            single_download_data,
-            put_get_max_attempts,
-            index,
-            &mut refresher,
-        )
-        .await?;
+        let result =
+            download_single_file(single_download_data, policy, index, &mut refresher).await?;
         results.push(result);
     }
 
@@ -643,7 +620,7 @@ fn resolve_validated_output_path(
 /// (S3 streaming is a follow-up optimization).
 pub async fn download_single_file(
     mut data: SingleDownloadData,
-    put_get_max_attempts: u32,
+    policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
@@ -696,7 +673,7 @@ pub async fn download_single_file(
             } = download_from_s3(
                 &data.stage_info,
                 data.src_location.as_str(),
-                put_get_max_attempts,
+                policy,
                 refresher,
             )
             .await
@@ -786,7 +763,7 @@ pub async fn download_single_file(
                 // test seam can inject zero backoff.
                 &gcs_retry_policy(
                     data.presigned_url.is_some() || data.stage_info.presigned_url.is_some(),
-                    put_get_max_attempts,
+                    policy,
                 ),
                 per_file_index,
                 refresher,
@@ -875,7 +852,7 @@ pub async fn download_single_file(
             let dl = download_from_azure_streaming(
                 &data.stage_info,
                 data.src_location.as_str(),
-                &azure_retry_policy(put_get_max_attempts),
+                &azure_retry_policy(policy),
             )
             .await
             .context(AzureDownloadSnafu)?;
@@ -2076,7 +2053,10 @@ mod tests {
         };
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
-        upload_single_file(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, &mut refresher)
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        upload_single_file(data, &policy, &mut refresher)
             .await
             .expect("upload_single_file should succeed against the mock")
     }
@@ -2197,7 +2177,10 @@ mod tests {
             single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
-        let result = upload_single_file(data, DEFAULT_PUT_GET_MAX_ATTEMPTS, &mut refresher)
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let result = upload_single_file(data, &policy, &mut refresher)
             .await
             .expect("S3 upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");

@@ -294,6 +294,25 @@ behavior_differences:
       TRANSACTION_READ_COMMITTED, and setTransactionIsolation is a validating no-op that accepts
       NONE and READ_COMMITTED (per supportsTransactionIsolationLevel) and rejects other levels with
       SQLFeatureNotSupportedException.
-
-
-
+  19:
+    name: "DatabaseMetaData: getFunctionColumns used raw (pre-session-resolved) catalog/schema in result rows"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Result rows used the original null catalog/schema params instead of session-resolved values;
+      null catalog yielded null FUNCTION_CAT even when session context had a real database.
+  20:
+    name: "getFunctionColumns FUNCTION_SCHEM uses actual SHOW-row schema; legacy echoes the input schema pattern"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Legacy snowflake-jdbc populates the FUNCTION_SCHEM column of getFunctionColumns from the input
+      schemaPattern argument (a pre-existing bug), so a wildcard/pattern leaks into the result instead
+      of the function's real schema. The universal driver uses schema_name from the SHOW FUNCTIONS
+      result row, so FUNCTION_SCHEM reflects each function's actual schema.

@@ -4,6 +4,7 @@ use std::time::Duration;
 use sf_core::config::config_manager::load_config_section_with_paths;
 use sf_core::config::logging_config_from_toml_section;
 use sf_core::config::path_resolver::ConfigPaths;
+use sf_core::config::toml_loader::FilePermissionCheck;
 use sf_core::logging::LogManager;
 
 /// Load a `[log]` section from a TOML file, init `LogManager` at DEBUG level,
@@ -33,7 +34,7 @@ fn toml_log_section_with_level_filtering() {
         config_file: Some(config_path),
         connections_file: None,
     };
-    let section = load_config_section_with_paths("log", &paths)
+    let section = load_config_section_with_paths("log", &paths, FilePermissionCheck::Enabled)
         .expect("load_config_section_with_paths failed")
         .expect("[log] section should exist");
 

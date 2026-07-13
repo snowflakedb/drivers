@@ -1,6 +1,7 @@
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager::SourceCompressionParam;
+use crate::sensitive::SensitiveString;
 use crate::{file_manager, query_types};
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu};
@@ -334,7 +335,7 @@ pub struct Credentials {
 #[derive(Debug, Deserialize)]
 pub struct EncryptionMaterial {
     #[serde(rename = "queryStageMasterKey")]
-    query_stage_master_key: String,
+    query_stage_master_key: SensitiveString,
     #[serde(rename = "queryId")]
     query_id: String,
     #[serde(rename = "smkId")]
@@ -1268,7 +1269,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
 impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
     fn from(value: &EncryptionMaterial) -> Self {
         Self {
-            query_stage_master_key: value.query_stage_master_key.clone().into(),
+            query_stage_master_key: value.query_stage_master_key.clone(),
             query_id: value.query_id.clone(),
             smk_id: value.smk_id.clone(),
         }

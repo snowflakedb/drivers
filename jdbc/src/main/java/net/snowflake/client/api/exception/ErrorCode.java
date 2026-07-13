@@ -10,6 +10,11 @@ public enum ErrorCode {
   INVALID_VALUE_CONVERT(
       200038, null, "Cannot convert value in the driver from type:{0} to type:{1}, value={2}."),
   COLUMN_DOES_NOT_EXIST(200032, "22000", null),
+  CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP(
+      200041,
+      "01000",
+      "Connection property value {0} is invalid. Value specified by user: {1}, returned by server:"
+          + " {2}."),
   RESULTSET_ALREADY_CLOSED(200037, "0A000", null),
   ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED(200023, "0A000", null),
   FEATURE_UNSUPPORTED(200035, "0A000", null);

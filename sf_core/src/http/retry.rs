@@ -2,6 +2,7 @@ use crate::config::retry::{BackoffConfig, HttpPolicy, Jitter, RetryPolicy};
 use rand::{Rng, rng};
 use reqwest::{Method, Response, StatusCode};
 use snafu::{IntoError, Location, ResultExt, Snafu};
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -191,7 +192,7 @@ where
     }
 }
 
-fn should_retry_status(status: StatusCode, extra: &[u16]) -> bool {
+fn should_retry_status(status: StatusCode, extra: &BTreeSet<u16>) -> bool {
     extra.contains(&status.as_u16())
         || status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS

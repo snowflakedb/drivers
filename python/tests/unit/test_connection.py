@@ -1188,11 +1188,12 @@ class TestExpired:
         mock_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
         assert connection.expired is True
 
-    def test_returns_false_on_exception(self, connection, mock_db_api):
-        """If the RPC throws (e.g. handle already released) return False rather
-        than propagating, matching the legacy connector's safe-default pattern."""
+    def test_returns_true_on_exception(self, connection, mock_db_api):
+        """If the RPC throws (e.g. handle already released) expired fails closed
+        and returns True rather than propagating — the connection may be unusable,
+        so pools evict it (matches the async is_expired() coroutine)."""
         mock_db_api.connection_is_expired.side_effect = RuntimeError("handle gone")
-        assert connection.expired is False
+        assert connection.expired is True
 
     def test_closing_does_not_set_expired(self, connection, mock_db_api):
         """Closing a connection must not affect the expired flag — they are

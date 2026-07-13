@@ -26,10 +26,12 @@ const UPLOAD_CHUNK_SIZE_BYTES: usize = 64 * 1024;
 /// least one full attempt can complete.
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
+use std::collections::BTreeSet;
+
 /// Returns true when the HTTP status code should trigger a retry. Mirrors
 /// `http::retry::should_retry_status` — kept inline so the cloud transfer
 /// modules don't take an indirect dep just for the constant set.
-pub(super) fn is_retryable_status(status: u16, extra: &[u16]) -> bool {
+pub(super) fn is_retryable_status(status: u16, extra: &BTreeSet<u16>) -> bool {
     matches!(status, 408 | 429 | 500 | 502 | 503 | 504) || extra.contains(&status)
 }
 

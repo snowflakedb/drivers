@@ -109,8 +109,9 @@ fn should_refresh_session_proactively() {
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
+        let policy = sf_core::config::retry::RetryPolicy::default();
         let login_result =
-            snowflake_login_with_client(&http_client, &login_parameters, None, None, None)
+            snowflake_login_with_client(&http_client, &login_parameters, None, None, None, &policy)
                 .await
                 .expect("Login should succeed");
 

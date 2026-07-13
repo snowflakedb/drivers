@@ -8,7 +8,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import net.snowflake.client.api.exception.SnowflakeSQLException;
+import java.util.Set;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 import net.snowflake.client.internal.log.SFLogger;
@@ -27,21 +27,19 @@ final class PreparedBatch {
   private int rowCount = 0;
 
   /**
-   * Append a row built from the per-row {@code currentValues} map. Two-pass: every column is
-   * validated before any is mutated so a type-mismatch on a later column doesn't leave earlier
-   * columns at a different length.
+   * Append a row built from the per-row {@code currentValues} map. The first row establishes the
+   * batch's column set (the indexes the caller bound); every subsequent row must supply the same
+   * indexes, so a row that omits one trips {@link BatchColumnValidator}'s missing-value check.
+   * Two-pass: every column is validated before any is mutated so a type-mismatch on a later column
+   * doesn't leave earlier columns at a different length.
    */
-  void addRow(SqlPlaceholderMetadata meta, Map<Integer, ParameterValue> currentValues)
-      throws SQLException {
-    if (meta.hasMixedPlaceholderStyles()) {
-      throw new SnowflakeSQLException(
-          "Mixed positional and numeric placeholders are not supported");
-    }
-    for (int parameterIndex : meta.referencedParameterIndexes()) {
+  void addRow(Map<Integer, ParameterValue> currentValues) throws SQLException {
+    Set<Integer> columnIndexes = rowCount == 0 ? currentValues.keySet() : columns.keySet();
+    for (int parameterIndex : columnIndexes) {
       BatchColumnValidator.validate(
           parameterIndex, columns.get(parameterIndex), currentValues.get(parameterIndex));
     }
-    for (int parameterIndex : meta.referencedParameterIndexes()) {
+    for (int parameterIndex : columnIndexes) {
       commit(parameterIndex, currentValues);
     }
     rowCount++;
@@ -70,8 +68,7 @@ final class PreparedBatch {
    * Statement#SUCCESS_NO_INFO}. On failure throws {@link BatchUpdateException} with all entries set
    * to {@link Statement#EXECUTE_FAILED}.
    */
-  long[] executeAll(SnowflakePreparedStatementImpl stmt, String sql, SqlPlaceholderMetadata meta)
-      throws SQLException {
+  long[] executeAll(SnowflakePreparedStatementImpl stmt, String sql) throws SQLException {
     final int batchSize = size();
     stmt.clearBatchQueryIds();
     if (batchSize == 0) {
@@ -81,7 +78,7 @@ final class PreparedBatch {
     long[] result = new long[0];
     BatchUpdateException pending = null;
     try {
-      long updateCount = runOnce(stmt, sql, meta);
+      long updateCount = serializeAndExecute(stmt, sql);
       result = expandUpdateCounts(updateCount, batchSize);
       stmt.recordBatchQueryId();
     } catch (SQLException e) {
@@ -100,10 +97,10 @@ final class PreparedBatch {
    * Manual try/finally rather than try-with-resources: a close-throws-after-RPC-success would
    * otherwise be caught by the outer catch(SQLException) and falsely mark the batch as failed.
    */
-  private long runOnce(SnowflakePreparedStatementImpl stmt, String sql, SqlPlaceholderMetadata meta)
+  private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql)
       throws SQLException {
     PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(meta, snapshot());
+        PreparedStatementBindingSerializer.serialize(snapshot());
     try {
       return stmt.executeLargeUpdateWithBindings(sql, nativeBindings);
     } finally {

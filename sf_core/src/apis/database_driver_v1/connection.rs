@@ -25,9 +25,7 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
 use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{
-    DEFAULT_PUT_GET_MAX_ATTEMPTS, ParamKey, ParamScope, param_names,
-};
+use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
@@ -423,12 +421,18 @@ impl DatabaseDriverV1 {
                     None
                 };
 
+                let retry_policy = {
+                    let conn = conn_ptr.lock().await;
+                    RetryPolicy::http(&conn.connection_seed)
+                };
+
                 let login_result = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
                     token_cache.map(|c| c as &dyn TokenCache),
                     Some(&self.prompt_locks),
+                    &retry_policy,
                 )
                 .await;
 
@@ -579,6 +583,7 @@ impl DatabaseDriverV1 {
                                 .clone()
                                 .context(ConnectionNotInitializedSnafu)?,
                             interval,
+                            conn.is_master_token_expired.clone(),
                         );
                         conn.heartbeat_handle = Some(handle);
                     }
@@ -1037,16 +1042,6 @@ impl Connection {
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
     }
 
-    /// Reads `put_get_max_attempts` from the connection seed; falls back to
-    /// `DEFAULT_PUT_GET_MAX_ATTEMPTS` for unset or out-of-range values.
-    pub(crate) fn put_get_max_attempts(&self) -> u32 {
-        self.connection_seed
-            .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
-            .filter(|v| *v > 0 && *v <= u32::MAX as i64)
-            .map(|v| v as u32)
-            .unwrap_or(DEFAULT_PUT_GET_MAX_ATTEMPTS)
-    }
-
     /// The resolved TLS config for this connection, read from the established
     /// [`ClientInfo`]. Falls back to the default `TlsConfig` before login
     /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP
@@ -1105,6 +1100,7 @@ impl Connection {
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
+        self.retry_policy = RetryPolicy::http(&self.connection_seed);
         self.host = host;
         self.port = port;
         self.server_url = Some(server_url);
@@ -1282,14 +1278,15 @@ impl RefreshContext {
 
     /// Create a `RefreshContext` from individual components (no `Connection` needed).
     ///
-    /// Callers that do not have an `Arc<AtomicBool>` to share can pass
-    /// `Arc::new(AtomicBool::new(false))` as a throw-away sentinel; the expired
-    /// flag simply won't be observable from a `Connection` in that case.
+    /// `is_master_token_expired` should be the owning connection's shared flag so
+    /// that a master-token expiry detected here (e.g. on the background heartbeat
+    /// path) is observable via `Connection::is_expired`.
     pub fn from_parts(
         tokens_lock: Arc<AsyncRwLock<Option<SessionTokens>>>,
         http_client: reqwest::Client,
         server_url: String,
         client_info: ClientInfo,
+        is_master_token_expired: Arc<AtomicBool>,
     ) -> Self {
         Self {
             tokens_lock,
@@ -1297,7 +1294,7 @@ impl RefreshContext {
             server_url,
             client_info,
             state: RefreshState::Initial,
-            is_master_token_expired: Arc::new(AtomicBool::new(false)),
+            is_master_token_expired,
         }
     }
 
@@ -1395,14 +1392,34 @@ impl RefreshContext {
                     }
 
                     // Refresh session (still holding write lock to prevent concurrent refreshes)
-                    let new_tokens = snowflake::refresh_session(
+                    let new_tokens = match snowflake::refresh_session(
                         &self.http_client,
                         &self.server_url,
                         &self.client_info,
                         &tokens,
                     )
                     .await
-                    .context(SessionRefreshSnafu)?;
+                    {
+                        Ok(new_tokens) => new_tokens,
+                        Err(refresh_err) => {
+                            // GS 390114 from the refresh endpoint means the master
+                            // token has expired: mark the connection expired before
+                            // propagating, mirroring the query-response path.
+                            if matches!(
+                                &refresh_err,
+                                RestError::InvalidSnowflakeResponse {
+                                    source: SnowflakeResponseError::MasterTokenExpired { .. },
+                                    ..
+                                },
+                            ) {
+                                tracing::error!(
+                                    "Server reported master token expired (390114) during refresh, full re-authentication required"
+                                );
+                                self.is_master_token_expired.store(true, Ordering::SeqCst);
+                            }
+                            return Err(refresh_err).context(SessionRefreshSnafu);
+                        }
+                    };
 
                     let new_session_token = new_tokens.session_token.clone();
 
@@ -1472,6 +1489,10 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
         })
     }
 
+    /// Whether `err` warrants a session refresh. Note the deliberate
+    /// side-effect: for a non-renewable master-token-expiry (GS 390114) this
+    /// sets `is_master_token_expired` here (before declining to refresh),
+    /// because `refresh()` is never reached for that error.
     fn should_refresh(&self, err: &ApiError) -> bool {
         let ApiError::Query { source, .. } = err else {
             return false;
@@ -1546,14 +1567,36 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             }
 
             tracing::info!("Session expired, attempting refresh");
-            let new_tokens = snowflake::refresh_session(
+            let new_tokens = match snowflake::refresh_session(
                 &self.http_client,
                 &self.server_url,
                 &self.client_info,
                 &tokens,
             )
             .await
-            .context(SessionRefreshSnafu)?;
+            {
+                Ok(new_tokens) => new_tokens,
+                Err(refresh_err) => {
+                    // The refresh endpoint can itself return GS 390114 (master
+                    // token expired). refresh_session surfaces that as
+                    // InvalidSnowflakeResponse { MasterTokenExpired }; mark the
+                    // connection expired before propagating, mirroring
+                    // should_refresh() on the query path.
+                    if matches!(
+                        &refresh_err,
+                        RestError::InvalidSnowflakeResponse {
+                            source: SnowflakeResponseError::MasterTokenExpired { .. },
+                            ..
+                        },
+                    ) {
+                        tracing::error!(
+                            "Server reported master token expired (390114) during refresh, full re-authentication required"
+                        );
+                        self.is_master_token_expired.store(true, Ordering::SeqCst);
+                    }
+                    return Err(refresh_err).context(SessionRefreshSnafu);
+                }
+            };
 
             *tokens_guard = Some(new_tokens);
             drop(tokens_guard);
@@ -2700,44 +2743,6 @@ mod tests {
         );
         drop(conn);
         ds.connection_release(handle).unwrap();
-    }
-
-    #[test]
-    fn put_get_max_attempts_unset_yields_default() {
-        let conn = Connection::new();
-        assert_eq!(conn.put_get_max_attempts(), DEFAULT_PUT_GET_MAX_ATTEMPTS);
-    }
-
-    #[test]
-    fn put_get_max_attempts_returns_user_value() {
-        let mut conn = Connection::new();
-        conn.set_option(
-            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
-            Setting::Int(25),
-        );
-        assert_eq!(conn.put_get_max_attempts(), 25);
-
-        conn.set_option(
-            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
-            Setting::Int(1),
-        );
-        assert_eq!(conn.put_get_max_attempts(), 1);
-    }
-
-    #[test]
-    fn put_get_max_attempts_out_of_range_falls_back_to_default() {
-        let mut conn = Connection::new();
-        for bad in [0i64, -1, (u32::MAX as i64) + 1] {
-            conn.set_option(
-                param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
-                Setting::Int(bad),
-            );
-            assert_eq!(
-                conn.put_get_max_attempts(),
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-                "bad value: {bad}"
-            );
-        }
     }
 
     #[tokio::test]

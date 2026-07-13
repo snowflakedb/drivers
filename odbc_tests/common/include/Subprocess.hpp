@@ -19,6 +19,11 @@ class Subprocess {
   Subprocess(Subprocess&&) noexcept;
   Subprocess& operator=(Subprocess&&) noexcept;
 
+  /// Returns true while the child is still running. If the child has exited it
+  /// is reaped here so the destructor does not block; subsequent calls return
+  /// false. Used to fail fast when a launched process dies during startup.
+  bool running() const;
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

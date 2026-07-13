@@ -32,7 +32,15 @@ enum class PLATFORM {
   PLATFORM_UNKNOWN = 3,
 };
 
+enum class ARCH {
+  ARCH_X86_64 = 0,
+  ARCH_AARCH64 = 1,
+  ARCH_UNKNOWN = 2,
+};
+
 extern PLATFORM get_platform();
+
+extern ARCH get_arch();
 
 extern DRIVER_TYPE get_driver_type();
 
