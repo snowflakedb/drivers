@@ -559,3 +559,23 @@ behavior_differences:
       BD#10 in jdbc/ and BD#81 in odbc_tests/ BehaviorDifferences.yaml. Callers that configured
       a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
       to `https://`.
+
+  40:
+    name: "write_pandas create_temp_table emits DeprecationWarning"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Passing `create_temp_table=True` to `write_pandas` silently translates to
+      `table_type="temp"` with no warning emitted to the caller.
+    new_driver_behavior: |
+      The universal driver emits a `DeprecationWarning` directing callers to use
+      `table_type="temp"` instead of `create_temp_table=True`. The translation still
+      occurs so runtime behaviour is otherwise unchanged. Code using
+      `warnings.filterwarnings("error")` will see the warning raised as an exception.
+    description: |
+      `create_temp_table` is the legacy boolean spelling accepted for Snowpark
+      backward-compatibility. The warning nudges callers toward the canonical
+      `table_type` parameter without breaking existing usage.
