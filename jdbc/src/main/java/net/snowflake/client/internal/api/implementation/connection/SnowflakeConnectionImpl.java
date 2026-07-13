@@ -564,7 +564,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void abort(Executor executor) throws SQLException {
-    throw new NotImplementedException();
+    close();
   }
 
   @Override
