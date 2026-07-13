@@ -213,6 +213,19 @@ class SnowflakeConnectionImplTest {
     }
 
     @Test
+    void shouldCloseConnectionWhenAborted() throws Exception {
+      Connection conn = createConnection();
+      assertFalse(conn.isClosed());
+
+      conn.abort(null);
+
+      assertTrue(conn.isClosed());
+      verify(mockCoreApi).connectionClose(any());
+      verify(mockCoreApi).connectionRelease(any());
+      verify(mockCoreApi).databaseRelease(any());
+    }
+
+    @Test
     void manuallyClosedStatementIsNotDoubleClosedOnConnectionClose() throws Exception {
       StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
       when(mockCoreApi.statementNew(any()))
