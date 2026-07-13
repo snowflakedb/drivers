@@ -702,6 +702,18 @@ impl SnowflakeTestClient {
             .map(|r| r.is_closed)
     }
 
+    /// Read the connection's expired flag. Uses this client's own driver
+    /// instance (handle registries are per-instance, not global), so the
+    /// connection must be owned by `self`.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_is_expired_blocking(&self) -> Result<bool, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_is_expired_blocking(ConnectionIsExpiredRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .map(|r| r.is_expired)
+    }
+
     /// Get connection info (tokens, host, etc.) for inspection.
     #[allow(clippy::result_large_err)]
     pub fn connection_get_info_blocking(
