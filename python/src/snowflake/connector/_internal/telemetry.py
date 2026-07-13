@@ -132,6 +132,8 @@ class AsyncTelemetryClient:
 
     def __init__(self, conn_handle: ConnectionHandle) -> None:
         self._conn_handle = conn_handle
+        self._enabled = True
+        self._closed = False
 
     async def send_api_usage(self, api_method: str, passed_arguments: list[str] | None = None) -> None:
         """Record an API method call for telemetry.
@@ -158,3 +160,51 @@ class AsyncTelemetryClient:
             )
         except Exception:
             logger.debug("Failed to send wrapper_error telemetry", exc_info=True)
+
+    async def add_log_to_batch(self, telemetry_data: TelemetryData) -> None:
+        """Buffer one caller-produced telemetry entry, forwarding it to sf_core.
+
+        Async counterpart of :meth:`TelemetryClient.add_log_to_batch`: raises when
+        closed, silent no-op when disabled, otherwise forwards one entry (strict on
+        purpose — the try_ variant owns error swallowing).
+        """
+        if self._closed:
+            raise InterfaceError("Attempted to add log when TelemetryClient is closed")
+        if not self._enabled:
+            return
+        await async_core_driver.telemetry_add_log_to_batch(
+            conn_handle=self._conn_handle,
+            message_json=json.dumps(telemetry_data.message),
+            timestamp_ms=int(telemetry_data.timestamp),
+        )
+
+    async def try_add_log_to_batch(self, telemetry_data: TelemetryData) -> None:
+        """Exception-swallowing wrapper over :meth:`add_log_to_batch` (the hot path)."""
+        try:
+            await self.add_log_to_batch(telemetry_data)
+        except Exception:
+            logger.debug("Failed to add log to telemetry", exc_info=True)
+
+    async def send_log_batch(self) -> None:
+        """Flush the connection's buffered log-telemetry batch to Snowflake.
+
+        A no-op when telemetry is disabled. A send failure quiesces telemetry for
+        this client (best-effort: telemetry must never break the caller).
+        """
+        if not self._enabled:
+            return
+        try:
+            await async_core_driver.telemetry_send_log_batch(conn_handle=self._conn_handle)
+        except Exception:
+            logger.debug("Failed to send telemetry log batch", exc_info=True)
+            self._enabled = False
+
+    # Backward-compatibility alias: snowflake-connector-python named this _log_batch.
+    _log_batch = send_log_batch
+
+    async def close(self) -> None:
+        """Flush any buffered entries, then reject further use. Idempotent."""
+        if self._closed:
+            return
+        await self.send_log_batch()
+        self._closed = True

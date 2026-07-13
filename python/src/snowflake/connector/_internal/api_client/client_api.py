@@ -733,6 +733,16 @@ class AsyncCoreDriver:
             )
         )
 
+    async def telemetry_add_log_to_batch(
+        self, conn_handle: ConnectionHandle, message_json: str, timestamp_ms: int
+    ) -> TelemetrySendResponse:
+        return await self.client.telemetry_add_log_to_batch(
+            TelemetryAddLogToBatchRequest(conn_handle=conn_handle, message_json=message_json, timestamp_ms=timestamp_ms)
+        )
+
+    async def telemetry_send_log_batch(self, conn_handle: ConnectionHandle) -> TelemetrySendResponse:
+        return await self.client.telemetry_send_log_batch(TelemetrySendLogBatchRequest(conn_handle=conn_handle))
+
     # =====================================================================
     # Statement lifecycle (cursor execute path)
     # =====================================================================
