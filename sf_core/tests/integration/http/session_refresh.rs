@@ -1,7 +1,7 @@
 //! Integration tests for session token refresh functionality.
 
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
-use sf_core::rest::snowflake::{SessionTokens, refresh_session};
+use sf_core::rest::snowflake::{RestError, SessionTokens, SnowflakeResponseError, refresh_session};
 use sf_core::sensitive::SensitiveString;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -71,9 +71,10 @@ async fn should_fail_when_master_token_expired() {
 
 #[tokio::test]
 async fn should_fail_when_refresh_returns_error() {
-    // Given a server that returns a Snowflake error response
+    // Given a server that returns a generic Snowflake refresh error (not a
+    // token-lifecycle code, which has dedicated handling)
     let (addr, attempts, server) = spawn_refresh_server(|_| async move {
-        let body = r#"{"success":false,"code":"390114","message":"Session token has expired"}"#;
+        let body = r#"{"success":false,"code":"390195","message":"Session refresh was rejected"}"#;
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
@@ -87,15 +88,48 @@ async fn should_fail_when_refresh_returns_error() {
     // When we try to refresh the session
     let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
 
-    // Then it should fail with the Snowflake error
+    // Then it should fail with the generic session-refresh error
     assert!(result.is_err());
     let err = result.unwrap_err();
-    // The error message includes both the wrapper and the inner message
     let err_str = err.to_string();
     assert!(
-        err_str.contains("Session refresh failed") || err_str.contains("390114"),
+        err_str.contains("Session refresh failed"),
         "Unexpected error message: {}",
         err_str
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    server.await.unwrap();
+}
+
+/// GS 390114 on the refresh endpoint must surface the discriminable
+/// MasterTokenExpired variant (not the generic SessionRefreshFailed), so callers
+/// can mark the connection expired. Unit-level proof of the refresh_session mapping.
+#[tokio::test]
+async fn should_map_390114_to_master_token_expired() {
+    let (addr, attempts, server) = spawn_refresh_server(|_| async move {
+        let body = r#"{"success":false,"code":"390114","message":"Master token has expired"}"#;
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ).into_bytes()
+    }).await;
+
+    let client = reqwest::Client::new();
+    let server_url = format!("http://{}", addr);
+
+    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+    let err = result.expect_err("390114 refresh must fail");
+    assert!(
+        matches!(
+            err,
+            RestError::InvalidSnowflakeResponse {
+                source: SnowflakeResponseError::MasterTokenExpired { .. },
+                ..
+            }
+        ),
+        "expected InvalidSnowflakeResponse{{MasterTokenExpired}}, got {err:?}"
     );
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     server.await.unwrap();
