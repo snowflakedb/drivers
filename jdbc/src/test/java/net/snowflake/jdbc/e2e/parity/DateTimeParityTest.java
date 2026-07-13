@@ -667,7 +667,17 @@ public class DateTimeParityTest {
             // day before the epoch -- negative epoch-ms with sub-second nanos.
             "1969-12-31 23:59:59.999999999",
             // lower boundary of the supported range.
-            "0001-01-01 00:00:00"));
+            "0001-01-01 00:00:00",
+            // DST spring-forward gap (02:30 does not exist) and fall-back overlap (01:30 twice):
+            // NTZ is the type whose honor-client-TZ re-anchoring routes through
+            // ArrowResultUtil.moveToTimeZone, so these exercise the offset math at a transition
+            // under a DST-observing session zone (P5 DST-correction decision).
+            "2024-03-10 02:30:00",
+            "2024-11-03 01:30:00",
+            // far-future (>2500): confirms tz-offset resolution without the legacy 400-year-cycle
+            // remap (P5 far-future decision).
+            "2600-01-01 12:00:00",
+            "3000-06-15 08:30:00.123456789"));
 
     // ---- TIMESTAMP_LTZ ----
     TIMEZONES.put(SfType.TIMESTAMP_LTZ, TZ_FULL);
@@ -695,7 +705,11 @@ public class DateTimeParityTest {
             "1969-12-31 23:59:59.999999999",
             // supported-range boundaries.
             "0001-01-01 00:00:00",
-            "9999-12-31 23:59:59"));
+            "9999-12-31 23:59:59",
+            // far-future (>2500) under a DST-observing session zone: confirms LTZ rendering in the
+            // session zone without the legacy 400-year-cycle tz remap (P5 far-future decision).
+            "2600-06-15 12:00:00",
+            "2999-01-01 00:00:00"));
 
     // ---- TIMESTAMP_TZ ----
     TIMEZONES.put(SfType.TIMESTAMP_TZ, TZ_FULL);
@@ -725,7 +739,11 @@ public class DateTimeParityTest {
             // day before the epoch with negative-zero offset.
             "1969-12-31 23:59:59.999999999 -00:00",
             // extreme negative offset (min supported is -12:00).
-            "2024-01-15 12:34:56.789 -12:00"));
+            "2024-01-15 12:34:56.789 -12:00",
+            // far-future (>2500) with explicit offsets: confirms the stored-offset render path
+            // without the legacy 400-year-cycle tz remap (P5 far-future decision).
+            "2600-01-01 12:00:00 +05:30",
+            "3000-06-15 08:30:00.123456789 -08:00"));
   }
 
   // ---- Profiles ----

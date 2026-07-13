@@ -554,10 +554,11 @@ class TestAsyncExpired:
         mock_async_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
         assert _run_async(async_connection.is_expired()) is True
 
-    def test_returns_false_on_exception(self, async_connection, mock_async_db_api):
-        """If the RPC raises, is_expired() returns False rather than propagating."""
+    def test_returns_true_on_exception(self, async_connection, mock_async_db_api):
+        """If the RPC raises, is_expired() fails closed and returns True rather than
+        propagating — the connection may be unusable, so callers treat it as expired."""
         mock_async_db_api.connection_is_expired.side_effect = RuntimeError("handle gone")
-        assert _run_async(async_connection.is_expired()) is False
+        assert _run_async(async_connection.is_expired()) is True
 
     def test_conn_handle_none_returns_false(self, async_connection, mock_async_db_api):
         """conn_handle=None (pre-connect or post-release) must return False immediately."""

@@ -1,24 +1,14 @@
 package net.snowflake.client.internal.api.implementation.metadata.capabilities;
 
 import java.sql.SQLException;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
-import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
+import lombok.RequiredArgsConstructor;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 
+@RequiredArgsConstructor
 public final class MetaDataLimits {
-  private static final String MAX_VARCHAR_BINARY_SIZE_PARAM_NAME =
-      "VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT";
 
-  // Defaults to 16MB
-  private static final int DEFAULT_MAX_LOB_SIZE = 16_777_216;
-
-  private final SnowflakeConnectionImpl connection;
-  private final CoreDriverApi coreDriverApi;
-
-  public MetaDataLimits(SnowflakeConnectionImpl connection, CoreDriverApi coreDriverApi) {
-    this.connection = connection;
-    this.coreDriverApi = coreDriverApi;
-  }
+  private final InternalSnowflakeConnection connection;
 
   public int getMaxBinaryLiteralLength() throws SQLException {
     connection.checkClosed();
@@ -28,13 +18,7 @@ public final class MetaDataLimits {
 
   public int getMaxCharLiteralLength() throws SQLException {
     connection.checkClosed();
-    ConnectionGetParameterResponse response =
-        coreDriverApi.connectionGetParameter(
-            connection.getHandle(), MAX_VARCHAR_BINARY_SIZE_PARAM_NAME);
-    if (response.hasValue()) {
-      return Integer.parseInt(response.getValue());
-    }
-    return DEFAULT_MAX_LOB_SIZE;
+    return connection.getParameters().getInt(Parameter.VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT);
   }
 
   public int getMaxColumnNameLength() throws SQLException {

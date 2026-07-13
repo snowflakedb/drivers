@@ -10,19 +10,25 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flaky]") {
-  // Blocked on the new driver. Required to unblock:
-  //   - SQLGetInfo info types (S1C00 - unknown): SQL_ACTIVE_STATEMENTS,
-  //     SQL_DATABASE_NAME, SQL_DEFAULT_TXN_ISOLATION, SQL_TXN_CAPABLE,
-  //     SQL_TXN_ISOLATION_OPTION, SQL_SCROLL_OPTIONS, SQL_SCROLL_CONCURRENCY,
-  //     SQL_POS_OPERATIONS, SQL_LOCK_TYPES, SQL_STATIC_SENSITIVITY,
-  //     SQL_BOOKMARK_PERSISTENCE, SQL_MULT_RESULT_SETS, SQL_NEED_LONG_DATA_LEN,
-  //     SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1, SQL_STATIC_CURSOR_ATTRIBUTES1,
-  //     SQL_STATIC_CURSOR_ATTRIBUTES2, SQL_KEYSET_CURSOR_ATTRIBUTES1,
-  //     SQL_KEYSET_CURSOR_ATTRIBUTES2.
-  //   - SQLColAttribute fields (S1092 - unknown): SQL_DESC_LABEL, SQL_DESC_UPDATABLE.
-  // Re-run replay_excel against the new driver and remove this skip once implemented.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
+  // TODO(SNOW-3758323): the new driver's zero-length SQLGetData probe writes the
+  // truncation indicator but leaves get_data_offset unadvanced
+  // (odbc/src/conversion/traits.rs:269 write_char_bytes), so the statement layer
+  // treats the column as finished and the next read on the same column returns
+  // SQL_NO_DATA, losing the value. This replay issues zero-length probes before
+  // every SQL_C_CHAR read, so the new driver cannot retrieve those columns.
+  // Skip until the driver bug is fixed, then remove this and assert the
+  // (correct) new-driver behavior.
+  SKIP_NEW_DRIVER("SNOW-3758323", "zero-length SQLGetData probe consumes the column value");
+
+  // BehaviorDifferences.yaml #23: the reference (old) driver's narrow
+  // (SQL_C_CHAR) SQLGetData path diverges by platform + CPU arch. On Windows and
+  // Linux/aarch64 it substitutes non-ASCII bytes with 0x1A (ASCII SUB) and
+  // reports the truncation indicator as SQL_NO_TOTAL; on Linux/x86_64 and macOS
+  // it returns the real UTF-8 bytes and the actual remaining byte length.
+  const bool ascii_getdata_indicator = get_platform() == PLATFORM::PLATFORM_WINDOWS ||
+                                       (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_AARCH64);
+
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
@@ -316,7 +322,13 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_MAX_ROWS, nullptr, -6);
     WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
     UNIX_ONLY {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
+      // iODBC's DM accepts these ODBC 2.x attributes on the connection handle;
+      // unixODBC forwards them and the old driver rejects them with S1092.
+      IODBC_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      NON_IODBC {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
+      }
     }
   }
 
@@ -327,7 +339,13 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_QUERY_TIMEOUT, nullptr, -6);
     WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
     UNIX_ONLY {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
+      // iODBC's DM accepts these ODBC 2.x attributes on the connection handle;
+      // unixODBC forwards them and the old driver rejects them with S1092.
+      IODBC_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      NON_IODBC {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
+      }
     }
   }
 
@@ -394,15 +412,21 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
   }
 
   // SQLSetStmtAttr - SQL_ATTR_PARAM_BIND_TYPE
-  // Class A divergence: SQL_DESC_BIND_TYPE = 10 is accepted by the Windows DM but
-  // rejected by the SimbaEngine SDK descriptor validator under 64-bit unixODBC
+  // SQL_DESC_BIND_TYPE = 10 is accepted by the Windows DM but
+  // rejected by the reference driver under 64-bit unixODBC
   // (value must be 0 or divisible by alignof(SQLLEN) = 8), surfaced as 11700.
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_PARAM_BIND_TYPE, (SQLPOINTER)10, 0);
     WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
     UNIX_ONLY {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
-                 OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
+      // The old driver accepts the misaligned bind type on Linux/x86_64 but the
+      // reference driver rejects it (S1000) on Linux/aarch64 and macOS.
+      if (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64) {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
+      } else {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
+      }
     }
   }
 
@@ -1474,7 +1498,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 6, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 38);
+    }
   }
 
   // SQLGetData col 6
@@ -1494,7 +1522,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 12, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 21);
+    }
   }
 
   // SQLGetData col 12
@@ -1532,7 +1564,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 22, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 4);
+    }
   }
 
   // SQLGetData col 22
@@ -1552,7 +1588,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 23, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 2);
+    }
   }
 
   // SQLGetData col 23
@@ -1572,7 +1612,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 24, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 2);
+    }
   }
 
   // SQLGetData col 24
@@ -1592,7 +1636,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 25, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 61);
+    }
   }
 
   // SQLGetData col 25
@@ -1601,7 +1649,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 25, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 61);
+    }
   }
 
   // SQLGetData col 25
@@ -1621,11 +1673,10 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
   // success; the driver under unixODBC returns a warning (01000 / native 40460).
   {
     SQLRETURN ret = SQLFetch(stmt0);
-    WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
-    UNIX_ONLY {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
-                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01000"));
-    }
+    // The old driver surfaces a fractional-truncation warning (01000 / native
+    // 40460) on all platforms when converting this high-scale numeric column.
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
+               OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01000"));
   }
 
   // SQLGetData col 6
@@ -1634,7 +1685,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 6, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 30);
+    }
   }
 
   // SQLGetData col 6
@@ -1654,7 +1709,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 12, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 27);
+    }
   }
 
   // SQLGetData col 12
@@ -1692,7 +1751,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 22, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 12);
+    }
   }
 
   // SQLGetData col 22
@@ -1712,7 +1775,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 23, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 14);
+    }
   }
 
   // SQLGetData col 23
@@ -1732,7 +1799,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 24, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 17);
+    }
   }
 
   // SQLGetData col 24
@@ -1752,7 +1823,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 25, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 62);
+    }
   }
 
   // SQLGetData col 25
@@ -1761,7 +1836,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 25, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 62);
+    }
   }
 
   // SQLGetData col 25
@@ -1850,11 +1929,10 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
   // driver's warning (01000 / native 40460).
   {
     SQLRETURN ret = SQLFetch(stmt0);
-    WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
-    UNIX_ONLY {
-      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
-                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01000"));
-    }
+    // The old driver surfaces a fractional-truncation warning (01000 / native
+    // 40460) on all platforms when converting this high-scale numeric column.
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
+               OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01000"));
   }
 
   // SQLGetData col 6
@@ -1863,7 +1941,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 6, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 2);
+    }
   }
 
   // SQLGetData col 6
@@ -1883,7 +1965,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 12, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 50);
+    }
   }
 
   // SQLGetData col 12
@@ -1896,8 +1982,13 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLRETURN ret = SQLGetData(stmt0, 12, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());
-    CHECK(std::string(buf.data(), n) == "\x1a\x1a \x1a\x1a\x1a\x1a\x1a\x1a\x1a \x1a\x1a\x1a \x1a mixed scripts");
-    CHECK(ind == 30);
+    if (ascii_getdata_indicator) {
+      CHECK(std::string(buf.data(), n) == "\x1a\x1a \x1a\x1a\x1a\x1a\x1a\x1a\x1a \x1a\x1a\x1a \x1a mixed scripts");
+      CHECK(ind == 30);
+    } else {
+      CHECK(std::string(buf.data(), n) == "中文 العربية 한국어 🚀 mixed scripts");
+      CHECK(ind == 50);
+    }
   }
 
   // SQLGetData col 15
@@ -1924,7 +2015,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 22, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 40);
+    }
   }
 
   // SQLGetData col 22
@@ -1934,8 +2029,13 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLRETURN ret = SQLGetData(stmt0, 22, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());
-    CHECK(std::string(buf.data(), n) == "{\n  \"cjk\": \"\x1a\x1a\",\n  \"emoji\": \"\x1a\"\n}");
-    CHECK(ind == 33);
+    if (ascii_getdata_indicator) {
+      CHECK(std::string(buf.data(), n) == "{\n  \"cjk\": \"\x1a\x1a\",\n  \"emoji\": \"\x1a\"\n}");
+      CHECK(ind == 33);
+    } else {
+      CHECK(std::string(buf.data(), n) == "{\n  \"cjk\": \"日本\",\n  \"emoji\": \"😀\"\n}");
+      CHECK(ind == 40);
+    }
   }
 
   // SQLGetData col 23
@@ -1944,7 +2044,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 23, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 22);
+    }
   }
 
   // SQLGetData col 23
@@ -1954,8 +2058,13 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLRETURN ret = SQLGetData(stmt0, 23, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());
-    CHECK(std::string(buf.data(), n) == "{\n  \"lang\": \"\x1a\x1a\"\n}");
-    CHECK(ind == 18);
+    if (ascii_getdata_indicator) {
+      CHECK(std::string(buf.data(), n) == "{\n  \"lang\": \"\x1a\x1a\"\n}");
+      CHECK(ind == 18);
+    } else {
+      CHECK(std::string(buf.data(), n) == "{\n  \"lang\": \"中文\"\n}");
+      CHECK(ind == 22);
+    }
   }
 
   // SQLGetData col 24
@@ -1964,7 +2073,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 24, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 29);
+    }
   }
 
   // SQLGetData col 24
@@ -1974,8 +2087,13 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLRETURN ret = SQLGetData(stmt0, 24, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
     const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());
-    CHECK(std::string(buf.data(), n) == "[\n  \"\x1a\",\n  \"\x1a\",\n  \"\x1a\"\n]");
-    CHECK(ind == 23);
+    if (ascii_getdata_indicator) {
+      CHECK(std::string(buf.data(), n) == "[\n  \"\x1a\",\n  \"\x1a\",\n  \"\x1a\"\n]");
+      CHECK(ind == 23);
+    } else {
+      CHECK(std::string(buf.data(), n) == "[\n  \"日\",\n  \"本\",\n  \"語\"\n]");
+      CHECK(ind == 29);
+    }
   }
 
   // SQLGetData col 25
@@ -1984,7 +2102,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 25, SQL_C_CHAR, buf.data(), 0, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 71);
+    }
   }
 
   // SQLGetData col 25
@@ -1993,7 +2115,11 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol][flak
     SQLLEN ind = 0;
     SQLRETURN ret = SQLGetData(stmt0, 25, SQL_C_CHAR, buf.data(), 51, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccessWithInfo());
-    CHECK(ind == SQL_NO_TOTAL);
+    if (ascii_getdata_indicator) {
+      CHECK(ind == SQL_NO_TOTAL);
+    } else {
+      CHECK(ind == 71);
+    }
   }
 
   // SQLGetData col 25

@@ -392,23 +392,58 @@ rules:
     rule: |
       **OBJECTIVE**: Use expressive JUnit assertions that produce actionable failure messages.
 
-      **REQUIREMENT**: Prefer typed JUnit 5 assertions over generic boolean checks:
-      - `assertNotNull(x)` not `assertTrue(x != null)`
-      - `assertEquals(expected, actual)` not `assertTrue(actual.equals(expected))`
-      - `assertThrows` with typed exception capture for error paths
+      **SCOPE**: This rule covers ONLY assertion-style anti-patterns — the way a condition is asserted, not what it asserts about. Flag exactly these transformations:
+      - `assertTrue(x != null)` / `assertTrue(null != x)` → `assertNotNull(x)`
+      - `assertTrue(x == null)` / `assertTrue(null == x)` → `assertNull(x)`
+      - `assertTrue(!condition)` → `assertFalse(condition)` (and `assertFalse(!condition)` → `assertTrue(condition)`)
+      - `assertTrue(a.equals(b))` → `assertEquals(b, a)`
+      - `assertEquals(true, x)` / `assertEquals(false, x)` → `assertTrue(x)` / `assertFalse(x)`
+      - Compound conditions buried in a single `assertTrue`/`assertFalse` (e.g. `assertTrue(msg != null && !msg.isEmpty())`) → split into separate typed assertions so a failure identifies which condition failed.
 
-      Magic numeric or string literals in assertions SHOULD use named constants or inline comments explaining domain meaning.
+      **OUT OF SCOPE** — do NOT raise these under this rule:
+      - Magic numeric/string literals or constant duplication in assertions. This is a distinct concern (named-constant hygiene); if a dedicated rule for it exists, defer to that rule, otherwise stay silent here. Replacing `200041` with `ErrorCode.X.getMessageCode()` is NOT a weak-assertion finding.
+      - Redundant or vacuous assertions (e.g. `assertNotNull` on a value that cannot be null). See `ud-java-no-redundant-assertions`.
+
+      **SEVERITY NOTE**: `assertTrue(x != null)`, `assertTrue(!cond)`, `assertTrue(a.equals(b))`, and compound-condition assertions are Medium — they materially degrade CI failure messages. `assertEquals(true/false, x)` is a Low-priority style suggestion: prefix the comment with "Style suggestion:" and never raise it above Low.
 
       ❌ **BAD:**
       ```java
       assertTrue(rs.getString(1) != null);
-      assertTrue(result == 42);
+      assertTrue(!rs.next());
+      assertTrue(msg != null && !msg.isEmpty());
+      assertEquals(true, conn.isValid(0));
       ```
 
       ✅ **GOOD:**
       ```java
       assertNotNull(rs.getString(1));
-      assertEquals(EXPECTED_ROW_COUNT, result);
+      assertFalse(rs.next());
+      assertNotNull(msg);
+      assertFalse(msg.isEmpty());
+      assertTrue(conn.isValid(0));
+      ```
+
+  - id: ud-java-no-redundant-assertions
+    rule: |
+      **OBJECTIVE**: Remove assertions that can never fail so tests express real invariants, not noise.
+
+      **REQUIREMENT**: Flag assertions that are vacuous given the surrounding control flow. This is a scope split from `ud-java-no-weak-null-assertions`: those checks are not "weak" phrasings of a real condition — they are unnecessary. Common cases:
+      - `assertNotNull(e)` on the value returned by `assertThrows(...)`. JUnit 5's `assertThrows` never returns null, so the check adds nothing — assert a meaningful property of the exception instead (`getSQLState()`, `getErrorCode()`, message content).
+      - `assertNotNull(x)` immediately after `x` was created with `new` or returned by an API contractually guaranteed non-null.
+      - Duplicate assertions on the same expression with no intervening state change.
+
+      **SEVERITY NOTE**: Medium — vacuous assertions mislead readers about coverage but never cause an incorrect pass. Always suggest the meaningful assertion that should replace the vacuous one.
+
+      ❌ **BAD:**
+      ```java
+      SQLException e = assertThrows(SQLException.class, () -> stmt.execute("SELECT * FROM missing"));
+      assertNotNull(e);  // assertThrows already guarantees a non-null return
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      SQLException e = assertThrows(SQLException.class, () -> stmt.execute("SELECT * FROM missing"));
+      assertEquals("42S02", e.getSQLState());
       ```
 
   - id: ud-java-no-bare-system-out-println

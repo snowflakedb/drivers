@@ -13,16 +13,19 @@ use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, AsyncInProgressSnafu, CursorAlreadyOpenSnafu,
     DisconnectedSnafu, InvalidDuringDaeSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    ShowKeysColumnMissingSnafu, ShowKeysInvalidKeySeqSnafu,
 };
 use crate::api::runtime::global;
-use crate::api::statement::set_state_for_catalog;
+use crate::api::statement::{
+    collect_nested_batch, execute_show_query_collect_batch, set_state_for_catalog,
+};
 use crate::api::utils::{catalog_arg_to_pattern, escape_like_wildcards};
 use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
 use crate::conversion::{
-    NumericSettings, column_size_from_field, decimal_digits_from_field, num_prec_radix_from_field,
-    octet_length_from_field, sql_type_from_field, type_name_from_field,
+    NumericSettings, SMALLINT_CONCISE_SQL_TYPE, column_size_from_field, decimal_digits_from_field,
+    num_prec_radix_from_field, octet_length_from_field, sql_type_from_field, type_name_from_field,
     verbose_sql_type_from_field,
 };
 use arrow::array::{
@@ -41,10 +44,10 @@ use sf_core::apis::database_driver_v1::{
     FIELD_TABLE_NAME, FIELD_TABLE_TYPE,
 };
 use sf_core::protobuf::generated::database_driver_v1::{
-    ConnectionGetInfoRequest, ConnectionGetObjectsRequest, ResultSetGetStreamRequest,
-    ResultSetHandle, ResultSetReleaseRequest,
+    ConnectionGetInfoRequest, ConnectionGetObjectsRequest, ConnectionGetParameterRequest,
+    ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, StatementHandle,
 };
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -338,6 +341,1285 @@ pub fn columns<E: OdbcEncoding>(
         table_pattern,
         column_pattern,
     )
+}
+
+// ============================================================================
+// SQLPrimaryKeys — SHOW PRIMARY KEYS
+// ============================================================================
+
+fn primary_keys_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("TABLE_CAT", 255),
+        catalog_text_field("TABLE_SCHEM", 255),
+        catalog_text_field("TABLE_NAME", 255),
+        catalog_text_field("COLUMN_NAME", 255),
+        catalog_key_seq_field("KEY_SEQ"),
+        catalog_text_field("PK_NAME", 255),
+    ]))
+}
+
+fn catalog_key_seq_field(name: &str) -> Field {
+    let metadata: HashMap<String, String> = [
+        ("logicalType".to_string(), "FIXED".to_string()),
+        ("scale".to_string(), "0".to_string()),
+        // precision = 5 decimal digits (the width of a SMALLINT), unrelated to
+        // the SQL type code below.
+        ("precision".to_string(), "5".to_string()),
+        (
+            "conciseSqlType".to_string(),
+            SMALLINT_CONCISE_SQL_TYPE.to_string(),
+        ),
+    ]
+    .into();
+    Field::new(name, DataType::Int16, false).with_metadata(metadata)
+}
+
+fn catalog_nullable_smallint_field(name: &str) -> Field {
+    let metadata: HashMap<String, String> = [
+        ("logicalType".to_string(), "FIXED".to_string()),
+        ("scale".to_string(), "0".to_string()),
+        ("precision".to_string(), "5".to_string()),
+        ("conciseSqlType".to_string(), "5".to_string()),
+    ]
+    .into();
+    Field::new(name, DataType::Int16, true).with_metadata(metadata)
+}
+
+fn escape_snowflake_identifier(ident: &str) -> String {
+    ident.replace('"', "\"\"")
+}
+
+/// Builds the `IN <scope>` clause for a `SHOW ... KEYS` query, picking the
+/// narrowest object the caller resolved to.
+///
+/// `resolve_show_identifiers` runs first and fills a missing catalog/schema from
+/// the connection context, so a `None` catalog here means the identifier is
+/// *genuinely unresolved* (e.g. the connection has no current database). In that
+/// case we deliberately widen to `account` scope and rely on the client-side
+/// re-filter ([`ShowKeyScopeFilter`] / `ShowForeignKeyFilter`) to narrow the
+/// result set — Snowflake `SHOW ... KEYS` supports only a single `IN` object and
+/// has no `LIKE`, so there is no narrower server-side option.
+fn build_show_in_scope(catalog: Option<&str>, schema: Option<&str>, table: Option<&str>) -> String {
+    let catalog = catalog.filter(|s| !s.is_empty());
+    let schema = schema.filter(|s| !s.is_empty());
+    let table = table.filter(|s| !s.is_empty());
+
+    match (catalog, schema, table) {
+        (None, _, _) => "account".to_string(),
+        (Some(db), None, _) => {
+            format!("database \"{}\"", escape_snowflake_identifier(db))
+        }
+        (Some(db), Some(sch), None) => {
+            format!(
+                "schema \"{}\".\"{}\"",
+                escape_snowflake_identifier(db),
+                escape_snowflake_identifier(sch),
+            )
+        }
+        (Some(db), Some(sch), Some(tbl)) => {
+            format!(
+                "table \"{}\".\"{}\".\"{}\"",
+                escape_snowflake_identifier(db),
+                escape_snowflake_identifier(sch),
+                escape_snowflake_identifier(tbl),
+            )
+        }
+    }
+}
+
+fn metadata_request_use_connection_ctx(
+    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+) -> OdbcResult<bool> {
+    let rt = global().context(OdbcRuntimeSnafu)?;
+    let resp = rt.block_on(async |c| {
+        c.connection_get_parameter(ConnectionGetParameterRequest {
+            conn_handle: Some(conn_handle),
+            key: "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX".to_string(),
+        })
+        .await
+    });
+    Ok(resp
+        .ok()
+        .and_then(|r| r.value)
+        .is_some_and(|v| v.eq_ignore_ascii_case("true")))
+}
+
+fn resolve_show_identifiers(
+    catalog: Option<String>,
+    schema: Option<String>,
+    table: Option<&str>,
+    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+) -> OdbcResult<(Option<String>, Option<String>)> {
+    if catalog.is_some() && schema.is_some() {
+        return Ok((catalog, schema));
+    }
+
+    let table_specified = table.is_some_and(|t| !t.is_empty());
+    let use_ctx = metadata_request_use_connection_ctx(conn_handle)?;
+    let needs_info = catalog.is_none() || (schema.is_none() && (use_ctx || table_specified));
+    if !needs_info {
+        return Ok((catalog, schema));
+    }
+
+    let rt = global().context(OdbcRuntimeSnafu)?;
+    let info = rt.block_on(async |c| {
+        c.connection_get_info(ConnectionGetInfoRequest {
+            conn_handle: Some(conn_handle),
+            info_codes: vec![],
+            include_master_token: false,
+        })
+        .await
+    })?;
+
+    let catalog = catalog.or(info.database);
+    let schema = if use_ctx || table_specified {
+        schema.or(info.schema)
+    } else {
+        schema
+    };
+    Ok((catalog, schema))
+}
+
+fn is_object_not_found_sql_state(state: &str) -> bool {
+    matches!(state, "42000" | "42S02")
+}
+
+fn column_index_by_name(schema: &Schema, name: &str) -> Option<usize> {
+    schema
+        .fields()
+        .iter()
+        .position(|f| f.name().eq_ignore_ascii_case(name))
+}
+
+/// Resolves a required column in a `SHOW ... KEYS` result, failing with a typed
+/// error that names both the command and the absent column when the server
+/// response does not carry the layout the catalog mapping expects.
+fn show_keys_column_index(
+    schema: &Schema,
+    command: &'static str,
+    column: &'static str,
+) -> OdbcResult<usize> {
+    column_index_by_name(schema, column).context(ShowKeysColumnMissingSnafu { command, column })
+}
+
+fn utf8_value_at(batch: &RecordBatch, col: usize, row: usize) -> Option<String> {
+    let array = batch.column(col);
+    if array.is_null(row) {
+        return None;
+    }
+    match array.data_type() {
+        DataType::Utf8 => {
+            let arr = array.as_any().downcast_ref::<StringArray>()?;
+            Some(arr.value(row).to_string())
+        }
+        DataType::LargeUtf8 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<arrow::array::LargeStringArray>()?;
+            Some(arr.value(row).to_string())
+        }
+        _ => None,
+    }
+}
+
+fn key_seq_value_at(batch: &RecordBatch, col: usize, row: usize) -> OdbcResult<i16> {
+    let array = batch.column(col);
+    if array.is_null(row) {
+        return ShowKeysInvalidKeySeqSnafu.fail();
+    }
+    let value = match array.data_type() {
+        DataType::Utf8 | DataType::LargeUtf8 => {
+            utf8_value_at(batch, col, row).and_then(|s| s.parse::<i16>().ok())
+        }
+        DataType::Int16 => array
+            .as_any()
+            .downcast_ref::<Int16Array>()
+            .map(|a| a.value(row)),
+        DataType::Int32 => array
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .and_then(|a| i16::try_from(a.value(row)).ok()),
+        DataType::Int64 => array
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .and_then(|a| i16::try_from(a.value(row)).ok()),
+        _ => None,
+    };
+    value.context(ShowKeysInvalidKeySeqSnafu)
+}
+
+/// One flat `SQLPrimaryKeys` result row, in ODBC column order.
+type PrimaryKeyRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i16,
+    Option<String>,
+);
+
+/// Folds a catalog identifier argument to its canonical Snowflake form for
+/// `SQL_ATTR_METADATA_ID = TRUE` (identifier) mode, mirroring
+/// [`catalog_arg_to_pattern`](crate::api::utils::catalog_arg_to_pattern):
+///
+/// - A quoted `"..."` identifier is case-sensitive: strip the surrounding
+///   quotes and collapse `""` → `"`.
+/// - An unquoted identifier is folded with `to_uppercase()` (Snowflake stores
+///   unquoted identifiers uppercase). `to_uppercase()` — not
+///   `to_ascii_uppercase()` — matches the rest of the driver; this is correct
+///   for Snowflake because unquoted identifiers are ASCII-only.
+///
+/// Folding upfront (before `build_show_in_scope` and the client-side re-filter)
+/// makes both the `SHOW ... IN <scope>` query and the row filter case-correct:
+/// the scope object name and the compared identifiers all use the canonical
+/// form the server echoes.
+fn fold_identifier(s: &str) -> String {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        s[1..s.len() - 1].replace("\"\"", "\"")
+    } else {
+        s.trim_end().to_uppercase()
+    }
+}
+
+/// Re-applies requested identifiers as filters, since `build_show_in_scope` widens the `SHOW` scope when a catalog/schema can't be resolved.
+///
+/// Comparison is exact: in identifier mode the caller folds the requested
+/// identifiers with [`fold_identifier`] before constructing this filter, and in
+/// pattern mode ordinary arguments are case-sensitive per the ODBC spec.
+struct ShowKeyScopeFilter<'a> {
+    catalog: Option<&'a str>,
+    schema: Option<&'a str>,
+    table: Option<&'a str>,
+}
+
+impl ShowKeyScopeFilter<'_> {
+    fn matches(
+        &self,
+        row_catalog: Option<&str>,
+        row_schema: Option<&str>,
+        row_table: Option<&str>,
+    ) -> bool {
+        field_matches(self.catalog, row_catalog)
+            && field_matches(self.schema, row_schema)
+            && field_matches(self.table, row_table)
+    }
+}
+
+/// Client-side filter comparison for a single catalog identifier. `None` or an
+/// empty string means "no filter" — mirroring `build_show_in_scope`, which also
+/// treats an empty identifier as absent — so the scope and the re-filter agree.
+fn field_matches(want: Option<&str>, got: Option<&str>) -> bool {
+    match want {
+        Some(want) if !want.is_empty() => got == Some(want),
+        _ => true,
+    }
+}
+
+fn map_show_primary_keys_to_odbc(
+    batch: RecordBatch,
+    filter: &ShowKeyScopeFilter<'_>,
+) -> OdbcResult<RecordBatch> {
+    let schema = primary_keys_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(schema));
+    }
+
+    let input = batch.schema();
+    const SHOW_PRIMARY_KEYS: &str = "SHOW PRIMARY KEYS";
+    let idx_db = show_keys_column_index(&input, SHOW_PRIMARY_KEYS, "database_name")?;
+    let idx_schema = show_keys_column_index(&input, SHOW_PRIMARY_KEYS, "schema_name")?;
+    let idx_table = show_keys_column_index(&input, SHOW_PRIMARY_KEYS, "table_name")?;
+    let idx_column = show_keys_column_index(&input, SHOW_PRIMARY_KEYS, "column_name")?;
+    let idx_key_seq = show_keys_column_index(&input, SHOW_PRIMARY_KEYS, "key_sequence")?;
+    let idx_pk_name = show_keys_column_index(&input, SHOW_PRIMARY_KEYS, "constraint_name")?;
+
+    let mut rows: Vec<PrimaryKeyRow> = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        let table_cat = utf8_value_at(&batch, idx_db, row);
+        let table_schem = utf8_value_at(&batch, idx_schema, row);
+        let table_name = utf8_value_at(&batch, idx_table, row);
+        if !filter.matches(
+            table_cat.as_deref(),
+            table_schem.as_deref(),
+            table_name.as_deref(),
+        ) {
+            continue;
+        }
+        let column_name = utf8_value_at(&batch, idx_column, row);
+        let key_seq = key_seq_value_at(&batch, idx_key_seq, row)?;
+        let pk_name = utf8_value_at(&batch, idx_pk_name, row);
+        rows.push((
+            table_cat,
+            table_schem,
+            table_name,
+            column_name,
+            key_seq,
+            pk_name,
+        ));
+    }
+
+    // Preserve server SHOW order; the reference driver does not sort client-side.
+    let table_cats: Vec<Option<&str>> = rows.iter().map(|r| r.0.as_deref()).collect();
+    let table_schems: Vec<Option<&str>> = rows.iter().map(|r| r.1.as_deref()).collect();
+    let table_names: Vec<Option<&str>> = rows.iter().map(|r| r.2.as_deref()).collect();
+    let column_names: Vec<Option<&str>> = rows.iter().map(|r| r.3.as_deref()).collect();
+    let key_seqs: Vec<Option<i16>> = rows.iter().map(|r| Some(r.4)).collect();
+    let pk_names: Vec<Option<&str>> = rows.iter().map(|r| r.5.as_deref()).collect();
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(table_cats)) as ArrayRef,
+            Arc::new(StringArray::from(table_schems)) as ArrayRef,
+            Arc::new(StringArray::from(table_names)) as ArrayRef,
+            Arc::new(StringArray::from(column_names)) as ArrayRef,
+            Arc::new(Int16Array::from(key_seqs)) as ArrayRef,
+            Arc::new(StringArray::from(pk_names)) as ArrayRef,
+        ],
+    )
+    .context(crate::api::error::RecordBatchBuildSnafu)
+}
+
+/// Logs `"{name}: exit"` at INFO when dropped — pair with an entry log at the top
+/// of a public wrapper API function per the logging guidelines.
+struct ApiExitLog(&'static str);
+
+impl Drop for ApiExitLog {
+    fn drop(&mut self) {
+        tracing::info!("{}: exit", self.0);
+    }
+}
+
+/// Implements `SQLPrimaryKeys`: returns primary-key column metadata for a table.
+#[allow(clippy::too_many_arguments)]
+pub fn primary_keys<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::info!("SQLPrimaryKeys: entry");
+    let _exit = ApiExitLog("SQLPrimaryKeys");
+
+    let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
+    let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
+    let table_raw = read_opt_str::<E>(table_name, name_length3)?;
+    if table_raw.is_none() {
+        return NullPointerSnafu.fail();
+    }
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    let metadata_id = inner.metadata_id;
+    let stmt_handle = guard.stmt_handle;
+    drop(conn);
+
+    if metadata_id {
+        if catalog_raw.is_none() {
+            return NullPointerSnafu.fail();
+        }
+        if schema_raw.is_none() {
+            return NullPointerSnafu.fail();
+        }
+        // A zero-length catalog/schema is treated as *absent* for SHOW scope
+        // (`build_show_in_scope` filters empty strings out, widening to `account`
+        // when both are empty — same as the legacy `PrimaryKeysMetadataSource`).
+        // The client-side re-filter still receives `Some("")`, so no row matches
+        // an empty catalog/schema name and the caller gets an empty result set
+        // (SQL_SUCCESS, no rows) — the ODBC "tables without a catalog" case,
+        // which does not exist in Snowflake. We do not reject it with HY090;
+        // NULL (HY009) is handled above.
+    }
+
+    // In identifier mode, fold each argument to its canonical Snowflake form so
+    // both the SHOW scope and the client-side re-filter are case-correct.
+    let (catalog_raw, schema_raw, table_raw) = if metadata_id {
+        (
+            catalog_raw.map(|s| fold_identifier(&s)),
+            schema_raw.map(|s| fold_identifier(&s)),
+            table_raw.map(|s| fold_identifier(&s)),
+        )
+    } else {
+        (catalog_raw, schema_raw, table_raw)
+    };
+
+    let (catalog_raw, schema_raw) =
+        resolve_show_identifiers(catalog_raw, schema_raw, table_raw.as_deref(), conn_handle)?;
+
+    let scope = build_show_in_scope(
+        catalog_raw.as_deref(),
+        schema_raw.as_deref(),
+        table_raw.as_deref(),
+    );
+    let sql = format!("SHOW PRIMARY KEYS IN {scope}");
+
+    let show_batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_object_not_found_sql_state)
+            {
+                return set_static_empty_catalog_result(&mut inner, primary_keys_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let filter = ShowKeyScopeFilter {
+        catalog: catalog_raw.as_deref(),
+        schema: schema_raw.as_deref(),
+        table: table_raw.as_deref(),
+    };
+    let flat_batch = map_show_primary_keys_to_odbc(show_batch, &filter)?;
+    let schema = flat_batch.schema();
+    let reader = reader_from_record_batch(flat_batch, schema)?;
+    set_state_for_catalog(
+        &mut inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
+}
+
+// ============================================================================
+// SQLForeignKeys — SHOW IMPORTED / EXPORTED KEYS
+// ============================================================================
+
+// ODBC referential rule / deferrability constants (sqlext.h).
+const SQL_CASCADE: i16 = 0;
+const SQL_RESTRICT: i16 = 1;
+const SQL_SET_NULL: i16 = 2;
+const SQL_NO_ACTION: i16 = 3;
+const SQL_SET_DEFAULT: i16 = 4;
+const SQL_INITIALLY_DEFERRED: i16 = 5;
+const SQL_INITIALLY_IMMEDIATE: i16 = 6;
+const SQL_NOT_DEFERRABLE: i16 = 7;
+
+fn foreign_keys_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("PKTABLE_CAT", 255),
+        catalog_text_field("PKTABLE_SCHEM", 255),
+        catalog_text_field("PKTABLE_NAME", 255),
+        catalog_text_field("PKCOLUMN_NAME", 255),
+        catalog_text_field("FKTABLE_CAT", 255),
+        catalog_text_field("FKTABLE_SCHEM", 255),
+        catalog_text_field("FKTABLE_NAME", 255),
+        catalog_text_field("FKCOLUMN_NAME", 255),
+        catalog_key_seq_field("KEY_SEQ"),
+        catalog_nullable_smallint_field("UPDATE_RULE"),
+        catalog_nullable_smallint_field("DELETE_RULE"),
+        catalog_text_field("FK_NAME", 255),
+        catalog_text_field("PK_NAME", 255),
+        catalog_nullable_smallint_field("DEFERRABILITY"),
+    ]))
+}
+
+/// Which `SHOW ... KEYS` direction to run, and hence which side scopes the query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShowKeySide {
+    /// `SHOW EXPORTED KEYS` — scoped to the primary-key (referenced) side.
+    Exported,
+    /// `SHOW IMPORTED KEYS` — scoped to the foreign-key (referencing) side.
+    Imported,
+}
+
+fn build_show_foreign_keys_command(
+    pk_catalog: Option<&str>,
+    pk_schema: Option<&str>,
+    pk_table: Option<&str>,
+    fk_catalog: Option<&str>,
+    fk_schema: Option<&str>,
+    fk_table: Option<&str>,
+) -> String {
+    let pk_has_table = pk_table.is_some_and(|s| !s.is_empty());
+    let fk_has_table = fk_table.is_some_and(|s| !s.is_empty());
+    // Side selection by which side carries a table name. The `SQLForeignKeys`
+    // entry point already fails both-tables-NULL with HY009, so at least one is
+    // present here.
+    //
+    // This is equivalent to the reference driver's bitmask rule
+    // (`SFForeignKeysMetadataSource`: granularity table|schema|catalog = 1|2|4,
+    // `SHOW EXPORTED` when `primary >= foreign`). After `resolve_show_identifiers`
+    // a table-bearing side is always granularity 7 and any non-table side is at
+    // most 6, so `primary >= foreign` picks exactly the side that has a table —
+    // and the both-tables tie resolves to EXPORTED/PK, same as this match.
+    debug_assert!(
+        pk_has_table || fk_has_table,
+        "SQLForeignKeys entry rejects both-tables-NULL with HY009"
+    );
+    let side = match (pk_has_table, fk_has_table) {
+        (true, _) => ShowKeySide::Exported,
+        (false, true) => ShowKeySide::Imported,
+        // Unreachable in practice (see debug_assert); fall back to an
+        // account-scoped EXPORTED scan rather than panicking on malformed input.
+        (false, false) => ShowKeySide::Exported,
+    };
+
+    let (kind, catalog, schema, table) = match side {
+        ShowKeySide::Exported => ("EXPORTED", pk_catalog, pk_schema, pk_table),
+        ShowKeySide::Imported => ("IMPORTED", fk_catalog, fk_schema, fk_table),
+    };
+    // A `None`/unresolved catalog on the selected side widens the scope to
+    // `account` inside `build_show_in_scope`; the client-side re-filter then
+    // narrows the result back to the requested identifiers.
+    format!(
+        "SHOW {kind} KEYS IN {}",
+        build_show_in_scope(catalog, schema, table)
+    )
+}
+
+fn map_fk_update_delete_rule(rule: Option<&str>) -> Option<i16> {
+    // Snowflake returns these keywords uppercase, but match case-insensitively so
+    // a casing change in the server response can't silently drop the mapping.
+    match rule?.to_ascii_uppercase().as_str() {
+        "CASCADE" => Some(SQL_CASCADE),
+        "NO ACTION" => Some(SQL_NO_ACTION),
+        "SET NULL" => Some(SQL_SET_NULL),
+        "SET DEFAULT" => Some(SQL_SET_DEFAULT),
+        "RESTRICT" => Some(SQL_RESTRICT),
+        _ => None,
+    }
+}
+
+fn map_fk_deferrability(value: Option<&str>) -> Option<i16> {
+    match value?.to_ascii_uppercase().as_str() {
+        "INITIALLY DEFERRED" => Some(SQL_INITIALLY_DEFERRED),
+        "INITIALLY IMMEDIATE" => Some(SQL_INITIALLY_IMMEDIATE),
+        "NOT DEFERRABLE" => Some(SQL_NOT_DEFERRABLE),
+        _ => None,
+    }
+}
+
+/// One flat `SQLForeignKeys` result row, in ODBC column order.
+struct ForeignKeyRow {
+    pk_table_cat: Option<String>,
+    pk_table_schem: Option<String>,
+    pk_table_name: Option<String>,
+    pk_column_name: Option<String>,
+    fk_table_cat: Option<String>,
+    fk_table_schem: Option<String>,
+    fk_table_name: Option<String>,
+    fk_column_name: Option<String>,
+    key_seq: i16,
+    update_rule: Option<i16>,
+    delete_rule: Option<i16>,
+    fk_name: Option<String>,
+    pk_name: Option<String>,
+    deferrability: Option<i16>,
+}
+
+/// Re-applies requested PK/FK identifiers as filters when the `SHOW` scope was widened.
+struct ShowForeignKeyFilter<'a> {
+    pk_catalog: Option<&'a str>,
+    pk_schema: Option<&'a str>,
+    pk_table: Option<&'a str>,
+    fk_catalog: Option<&'a str>,
+    fk_schema: Option<&'a str>,
+    fk_table: Option<&'a str>,
+}
+
+impl ShowForeignKeyFilter<'_> {
+    fn matches(
+        &self,
+        pk_catalog: Option<&str>,
+        pk_schema: Option<&str>,
+        pk_table: Option<&str>,
+        fk_catalog: Option<&str>,
+        fk_schema: Option<&str>,
+        fk_table: Option<&str>,
+    ) -> bool {
+        field_matches(self.pk_catalog, pk_catalog)
+            && field_matches(self.pk_schema, pk_schema)
+            && field_matches(self.pk_table, pk_table)
+            && field_matches(self.fk_catalog, fk_catalog)
+            && field_matches(self.fk_schema, fk_schema)
+            && field_matches(self.fk_table, fk_table)
+    }
+}
+
+fn map_show_foreign_keys_to_odbc(
+    batch: RecordBatch,
+    filter: &ShowForeignKeyFilter<'_>,
+) -> OdbcResult<RecordBatch> {
+    let schema = foreign_keys_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(schema));
+    }
+
+    let input = batch.schema();
+    let idx_pk_db = column_index_by_name(&input, "pk_database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_database_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_schema = column_index_by_name(&input, "pk_schema_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_schema_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_table = column_index_by_name(&input, "pk_table_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_table_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_column = column_index_by_name(&input, "pk_column_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_column_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_db = column_index_by_name(&input, "fk_database_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_database_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_schema = column_index_by_name(&input, "fk_schema_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_schema_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_table = column_index_by_name(&input, "fk_table_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_table_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_column = column_index_by_name(&input, "fk_column_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_column_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_key_seq = column_index_by_name(&input, "key_sequence").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing key_sequence column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_update_rule = column_index_by_name(&input, "update_rule").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing update_rule column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_delete_rule = column_index_by_name(&input, "delete_rule").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing delete_rule column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_fk_name = column_index_by_name(&input, "fk_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing fk_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_pk_name = column_index_by_name(&input, "pk_name").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing pk_name column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+    let idx_deferrability = column_index_by_name(&input, "deferrability").ok_or_else(|| {
+        crate::api::error::OdbcError::InternalError {
+            message: "SHOW KEYS: missing deferrability column".to_string(),
+            location: snafu::location!(),
+        }
+    })?;
+
+    let mut rows: Vec<ForeignKeyRow> = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        let pk_table_cat = utf8_value_at(&batch, idx_pk_db, row);
+        let pk_table_schem = utf8_value_at(&batch, idx_pk_schema, row);
+        let pk_table_name = utf8_value_at(&batch, idx_pk_table, row);
+        let fk_table_cat = utf8_value_at(&batch, idx_fk_db, row);
+        let fk_table_schem = utf8_value_at(&batch, idx_fk_schema, row);
+        let fk_table_name = utf8_value_at(&batch, idx_fk_table, row);
+        if !filter.matches(
+            pk_table_cat.as_deref(),
+            pk_table_schem.as_deref(),
+            pk_table_name.as_deref(),
+            fk_table_cat.as_deref(),
+            fk_table_schem.as_deref(),
+            fk_table_name.as_deref(),
+        ) {
+            continue;
+        }
+
+        let pk_column_name = utf8_value_at(&batch, idx_pk_column, row);
+        let fk_column_name = utf8_value_at(&batch, idx_fk_column, row);
+        let key_seq = key_seq_value_at(&batch, idx_key_seq, row)?;
+        let update_rule =
+            map_fk_update_delete_rule(utf8_value_at(&batch, idx_update_rule, row).as_deref());
+        let delete_rule =
+            map_fk_update_delete_rule(utf8_value_at(&batch, idx_delete_rule, row).as_deref());
+        let fk_name = utf8_value_at(&batch, idx_fk_name, row);
+        let pk_name = utf8_value_at(&batch, idx_pk_name, row);
+        let deferrability =
+            map_fk_deferrability(utf8_value_at(&batch, idx_deferrability, row).as_deref());
+        rows.push(ForeignKeyRow {
+            pk_table_cat,
+            pk_table_schem,
+            pk_table_name,
+            pk_column_name,
+            fk_table_cat,
+            fk_table_schem,
+            fk_table_name,
+            fk_column_name,
+            key_seq,
+            update_rule,
+            delete_rule,
+            fk_name,
+            pk_name,
+            deferrability,
+        });
+    }
+
+    // Preserve server SHOW order; the reference driver does not sort client-side.
+    let pk_table_cats: Vec<Option<&str>> = rows.iter().map(|r| r.pk_table_cat.as_deref()).collect();
+    let pk_table_schems: Vec<Option<&str>> =
+        rows.iter().map(|r| r.pk_table_schem.as_deref()).collect();
+    let pk_table_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.pk_table_name.as_deref()).collect();
+    let pk_column_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.pk_column_name.as_deref()).collect();
+    let fk_table_cats: Vec<Option<&str>> = rows.iter().map(|r| r.fk_table_cat.as_deref()).collect();
+    let fk_table_schems: Vec<Option<&str>> =
+        rows.iter().map(|r| r.fk_table_schem.as_deref()).collect();
+    let fk_table_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.fk_table_name.as_deref()).collect();
+    let fk_column_names: Vec<Option<&str>> =
+        rows.iter().map(|r| r.fk_column_name.as_deref()).collect();
+    let key_seqs: Vec<Option<i16>> = rows.iter().map(|r| Some(r.key_seq)).collect();
+    let update_rules: Vec<Option<i16>> = rows.iter().map(|r| r.update_rule).collect();
+    let delete_rules: Vec<Option<i16>> = rows.iter().map(|r| r.delete_rule).collect();
+    let fk_names: Vec<Option<&str>> = rows.iter().map(|r| r.fk_name.as_deref()).collect();
+    let pk_names: Vec<Option<&str>> = rows.iter().map(|r| r.pk_name.as_deref()).collect();
+    let deferrabilities: Vec<Option<i16>> = rows.iter().map(|r| r.deferrability).collect();
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(pk_table_cats)) as ArrayRef,
+            Arc::new(StringArray::from(pk_table_schems)) as ArrayRef,
+            Arc::new(StringArray::from(pk_table_names)) as ArrayRef,
+            Arc::new(StringArray::from(pk_column_names)) as ArrayRef,
+            Arc::new(StringArray::from(fk_table_cats)) as ArrayRef,
+            Arc::new(StringArray::from(fk_table_schems)) as ArrayRef,
+            Arc::new(StringArray::from(fk_table_names)) as ArrayRef,
+            Arc::new(StringArray::from(fk_column_names)) as ArrayRef,
+            Arc::new(Int16Array::from(key_seqs)) as ArrayRef,
+            Arc::new(Int16Array::from(update_rules)) as ArrayRef,
+            Arc::new(Int16Array::from(delete_rules)) as ArrayRef,
+            Arc::new(StringArray::from(fk_names)) as ArrayRef,
+            Arc::new(StringArray::from(pk_names)) as ArrayRef,
+            Arc::new(Int16Array::from(deferrabilities)) as ArrayRef,
+        ],
+    )
+    .context(crate::api::error::RecordBatchBuildSnafu)
+}
+
+/// Implements `SQLForeignKeys`: returns foreign-key metadata for PK/FK tables.
+#[allow(clippy::too_many_arguments)]
+pub fn foreign_keys<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    pk_catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    pk_schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    pk_table_name: *const E::Char,
+    name_length3: sql::SmallInt,
+    fk_catalog_name: *const E::Char,
+    name_length4: sql::SmallInt,
+    fk_schema_name: *const E::Char,
+    name_length5: sql::SmallInt,
+    fk_table_name: *const E::Char,
+    name_length6: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::info!("SQLForeignKeys: entry");
+    let _exit = ApiExitLog("SQLForeignKeys");
+
+    let pk_catalog_raw = read_opt_str::<E>(pk_catalog_name, name_length1)?;
+    let pk_schema_raw = read_opt_str::<E>(pk_schema_name, name_length2)?;
+    let pk_table_raw = read_opt_str::<E>(pk_table_name, name_length3)?;
+    let fk_catalog_raw = read_opt_str::<E>(fk_catalog_name, name_length4)?;
+    let fk_schema_raw = read_opt_str::<E>(fk_schema_name, name_length5)?;
+    let fk_table_raw = read_opt_str::<E>(fk_table_name, name_length6)?;
+    if pk_table_raw.is_none() && fk_table_raw.is_none() {
+        return NullPointerSnafu.fail();
+    }
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    let metadata_id = inner.metadata_id;
+    let stmt_handle = guard.stmt_handle;
+    drop(conn);
+
+    if metadata_id {
+        // Only the side whose table was supplied carries required identifier
+        // args; a single-sided query intentionally leaves the other side NULL.
+        // A zero-length catalog/schema is treated as *absent* (not HY090),
+        // matching the legacy driver and SQLPrimaryKeys: `build_show_in_scope`
+        // filters empty strings out, so an empty identifier widens the SHOW
+        // scope. NULL still returns HY009.
+        if pk_table_raw.is_some() {
+            if pk_catalog_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+            if pk_schema_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+        }
+        if fk_table_raw.is_some() {
+            if fk_catalog_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+            if fk_schema_raw.is_none() {
+                return NullPointerSnafu.fail();
+            }
+        }
+    }
+
+    // In identifier mode, fold each argument to its canonical Snowflake form so
+    // both the SHOW scope and the client-side re-filter are case-correct.
+    let (pk_catalog_raw, pk_schema_raw, pk_table_raw, fk_catalog_raw, fk_schema_raw, fk_table_raw) =
+        if metadata_id {
+            (
+                pk_catalog_raw.map(|s| fold_identifier(&s)),
+                pk_schema_raw.map(|s| fold_identifier(&s)),
+                pk_table_raw.map(|s| fold_identifier(&s)),
+                fk_catalog_raw.map(|s| fold_identifier(&s)),
+                fk_schema_raw.map(|s| fold_identifier(&s)),
+                fk_table_raw.map(|s| fold_identifier(&s)),
+            )
+        } else {
+            (
+                pk_catalog_raw,
+                pk_schema_raw,
+                pk_table_raw,
+                fk_catalog_raw,
+                fk_schema_raw,
+                fk_table_raw,
+            )
+        };
+
+    let (pk_catalog_raw, pk_schema_raw) = resolve_show_identifiers(
+        pk_catalog_raw,
+        pk_schema_raw,
+        pk_table_raw.as_deref(),
+        conn_handle,
+    )?;
+    let (fk_catalog_raw, fk_schema_raw) = resolve_show_identifiers(
+        fk_catalog_raw,
+        fk_schema_raw,
+        fk_table_raw.as_deref(),
+        conn_handle,
+    )?;
+
+    let sql = build_show_foreign_keys_command(
+        pk_catalog_raw.as_deref(),
+        pk_schema_raw.as_deref(),
+        pk_table_raw.as_deref(),
+        fk_catalog_raw.as_deref(),
+        fk_schema_raw.as_deref(),
+        fk_table_raw.as_deref(),
+    );
+
+    let show_batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_object_not_found_sql_state)
+            {
+                return set_static_empty_catalog_result(&mut inner, foreign_keys_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let filter = ShowForeignKeyFilter {
+        pk_catalog: pk_catalog_raw.as_deref(),
+        pk_schema: pk_schema_raw.as_deref(),
+        pk_table: pk_table_raw.as_deref(),
+        fk_catalog: fk_catalog_raw.as_deref(),
+        fk_schema: fk_schema_raw.as_deref(),
+        fk_table: fk_table_raw.as_deref(),
+    };
+    let flat_batch = map_show_foreign_keys_to_odbc(show_batch, &filter)?;
+    let schema = flat_batch.schema();
+    let reader = reader_from_record_batch(flat_batch, schema)?;
+    set_state_for_catalog(
+        &mut inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
+}
+
+// ============================================================================
+// SQLProcedures — information_schema.procedures
+// ============================================================================
+
+/// ODBC 3.x `PROCEDURE_TYPE` value: the object has a return value (Snowflake
+/// procedures always declare `RETURNS`, so this is always `SQL_PT_FUNCTION`).
+const SQL_PT_FUNCTION: i16 = 2;
+
+fn procedures_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("PROCEDURE_CAT", 255),   // 1
+        catalog_text_field("PROCEDURE_SCHEM", 255), // 2
+        catalog_text_field("PROCEDURE_NAME", 255),  // 3
+        catalog_int_field("NUM_INPUT_PARAMS"),      // 4 (reference: INTEGER, arg count)
+        catalog_int_field("NUM_OUTPUT_PARAMS"),     // 5 (reserved; always NULL)
+        catalog_int_field("NUM_RESULT_SETS"),       // 6 (0/1, 1 iff table-valued)
+        catalog_text_field("REMARKS", 65535),       // 7
+        catalog_smallint_field("PROCEDURE_TYPE"),   // 8 (reference: SMALLINT)
+    ]))
+}
+
+/// Escapes a value for embedding in a Snowflake single-quoted string literal.
+///
+/// Snowflake processes backslash escape sequences inside `'...'` literals, so
+/// the backslash must be doubled *before* the single quote is doubled. Escaping
+/// only `'` would (a) allow injection via a `\'` payload in pattern mode, where
+/// `catalog_arg_to_pattern` passes the argument through verbatim, and (b) break
+/// exact-match in identifier mode, where `escape_like_wildcards` has already
+/// backslash-escaped `_`/`%`: the string layer would strip that backslash and
+/// re-expose the wildcard to `LIKE`. Doubling the backslash preserves it through
+/// the string layer so `LIKE` (default escape `\`) treats `\_`/`\%` as literals.
+fn escape_sql_string_literal(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "''")
+}
+
+/// Splits a comma-separated list on top-level commas only, so commas nested
+/// inside parentheses (e.g. `NUMBER(10,2)`) do not split a token. Shared by
+/// `argument_signature` and `TABLE(...)` return-type parsing.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let last = s[start..].trim();
+    if !out.is_empty() || !last.is_empty() {
+        out.push(last);
+    }
+    out
+}
+
+/// Extracts the text between the outermost parentheses of a signature such as
+/// `(P1 VARCHAR, PAGE FLOAT)` → `P1 VARCHAR, PAGE FLOAT`. Returns `""` when the
+/// parentheses are absent or empty (a zero-argument procedure yields `()`).
+fn parenthesized_inner(sig: &str) -> &str {
+    let sig = sig.trim();
+    match (sig.find('('), sig.rfind(')')) {
+        (Some(open), Some(close)) if open < close => sig[open + 1..close].trim(),
+        _ => "",
+    }
+}
+
+/// Counts the input parameters in an `argument_signature`. Argument types are
+/// bare (no precision/scale), so the depth-aware split is defensive rather than
+/// strictly required, but it keeps counting robust and matches PR2's tokenizer.
+fn count_input_params(argument_signature: &str) -> i32 {
+    let inner = parenthesized_inner(argument_signature);
+    if inner.is_empty() {
+        return 0;
+    }
+    split_top_level_commas(inner).len() as i32
+}
+
+/// SQLSTATEs that `SQLProcedures` maps to an empty result set instead of an
+/// error, matching the reference `fetchProceduresFromBackend` catch: `02000`
+/// (no data) plus `42000`/`42S02` (a filter matching no procedure, a
+/// non-existent database, or an invalid identifier character). Kept separate
+/// from [`is_object_not_found_sql_state`] so widening it does not change
+/// `SQLPrimaryKeys`/`SQLForeignKeys` behavior.
+fn is_procedures_empty_result_sql_state(state: &str) -> bool {
+    state == "02000" || is_object_not_found_sql_state(state)
+}
+
+/// A procedure is table-valued (`NUM_RESULT_SETS = 1`) iff its return `data_type`
+/// begins with `TABLE` (case-insensitive), e.g. `TABLE (ID NUMBER, NAME VARCHAR)`.
+fn returns_table(data_type: &str) -> bool {
+    let t = data_type.trim_start();
+    t.len() >= 5 && t.as_bytes()[..5].eq_ignore_ascii_case(b"table")
+}
+
+/// Runs `SELECT database_name FROM information_schema.databases` to enumerate the
+/// databases to union over when the caller passes a NULL catalog without
+/// connection-context resolution (mirrors the reference `QueryDatabases`).
+fn enumerate_databases(stmt_handle: StatementHandle) -> OdbcResult<Vec<String>> {
+    let batch = execute_show_query_collect_batch(
+        stmt_handle,
+        "select database_name from information_schema.databases",
+    )?;
+    let mut dbs = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        if let Some(name) = utf8_value_at(&batch, 0, row) {
+            dbs.push(name);
+        }
+    }
+    Ok(dbs)
+}
+
+/// Builds the `information_schema.procedures` query, unioning one subquery per
+/// database. Matches the reference driver: `procedure_name`/`procedure_schema`
+/// LIKE filters are only appended when meaningful (`proc != "%"`, non-empty).
+fn build_procedures_query(
+    db_names: &[String],
+    schema_pattern: Option<&str>,
+    proc_pattern: Option<&str>,
+) -> String {
+    let mut where_clauses: Vec<String> = Vec::new();
+    if let Some(p) = proc_pattern
+        && p != "%"
+        && !p.is_empty()
+    {
+        where_clauses.push(format!(
+            "procedure_name like '{}'",
+            escape_sql_string_literal(p)
+        ));
+    }
+    if let Some(s) = schema_pattern
+        && !s.is_empty()
+    {
+        where_clauses.push(format!(
+            "procedure_schema like '{}'",
+            escape_sql_string_literal(s)
+        ));
+    }
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" where {}", where_clauses.join(" AND "))
+    };
+
+    db_names
+        .iter()
+        .map(|db| {
+            format!(
+                "(select procedure_catalog, procedure_schema, procedure_name, \
+                 argument_signature, data_type, comment from \"{}\".information_schema.procedures{})",
+                escape_snowflake_identifier(db),
+                where_sql
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n union all \n")
+}
+
+fn procedures_column_index(schema: &Schema, column: &'static str) -> OdbcResult<usize> {
+    column_index_by_name(schema, column).with_context(|| {
+        crate::api::error::ProcedureMetadataParseSnafu {
+            detail: format!("information_schema.procedures result is missing '{column}'"),
+        }
+    })
+}
+
+/// Maps the `information_schema.procedures` result to the 8-column ODBC
+/// `SQLProcedures` result set. Preserves server/union order (no client sort),
+/// matching the reference driver.
+fn map_procedures_to_odbc(batch: RecordBatch) -> OdbcResult<RecordBatch> {
+    let schema = procedures_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(schema));
+    }
+
+    let input = batch.schema();
+    let idx_cat = procedures_column_index(&input, "procedure_catalog")?;
+    let idx_schema = procedures_column_index(&input, "procedure_schema")?;
+    let idx_name = procedures_column_index(&input, "procedure_name")?;
+    let idx_args = procedures_column_index(&input, "argument_signature")?;
+    let idx_data_type = procedures_column_index(&input, "data_type")?;
+    let idx_comment = procedures_column_index(&input, "comment")?;
+
+    let n = batch.num_rows();
+    let mut cats: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut schems: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut names: Vec<Option<String>> = Vec::with_capacity(n);
+    let mut num_inputs: Vec<Option<i32>> = Vec::with_capacity(n);
+    let mut num_result_sets: Vec<Option<i32>> = Vec::with_capacity(n);
+    let mut remarks: Vec<Option<String>> = Vec::with_capacity(n);
+
+    for row in 0..n {
+        cats.push(utf8_value_at(&batch, idx_cat, row));
+        schems.push(utf8_value_at(&batch, idx_schema, row));
+        names.push(utf8_value_at(&batch, idx_name, row));
+        let arg_sig = utf8_value_at(&batch, idx_args, row).unwrap_or_default();
+        num_inputs.push(Some(count_input_params(&arg_sig)));
+        let data_type = utf8_value_at(&batch, idx_data_type, row).unwrap_or_default();
+        num_result_sets.push(Some(if returns_table(&data_type) { 1 } else { 0 }));
+        remarks.push(utf8_value_at(&batch, idx_comment, row));
+    }
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(cats)) as ArrayRef,
+            Arc::new(StringArray::from(schems)) as ArrayRef,
+            Arc::new(StringArray::from(names)) as ArrayRef,
+            Arc::new(Int32Array::from(num_inputs)) as ArrayRef,
+            // NUM_OUTPUT_PARAMS: reserved, always NULL.
+            Arc::new(Int32Array::from(vec![None; n])) as ArrayRef,
+            Arc::new(Int32Array::from(num_result_sets)) as ArrayRef,
+            Arc::new(StringArray::from(remarks)) as ArrayRef,
+            // PROCEDURE_TYPE: SQL_PT_FUNCTION for every Snowflake procedure.
+            Arc::new(Int16Array::from(vec![Some(SQL_PT_FUNCTION); n])) as ArrayRef,
+        ],
+    )
+    .context(crate::api::error::RecordBatchBuildSnafu)
+}
+
+/// Implements `SQLProcedures`: lists stored procedures from
+/// `information_schema.procedures`.
+pub fn procedures<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    proc_name: *const E::Char,
+    name_length3: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::info!("SQLProcedures: entry");
+    let _exit = ApiExitLog("SQLProcedures");
+
+    let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
+    let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
+    let proc_raw = read_opt_str::<E>(proc_name, name_length3)?;
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    let metadata_id = inner.metadata_id;
+    let stmt_handle = guard.stmt_handle;
+    drop(conn);
+
+    // In identifier mode (SQL_ATTR_METADATA_ID = TRUE) every argument is a
+    // required identifier: a NULL pointer is HY009.
+    if metadata_id && (catalog_raw.is_none() || schema_raw.is_none() || proc_raw.is_none()) {
+        return NullPointerSnafu.fail();
+    }
+
+    // Catalog is an exact database identifier (ODBC forbids a search pattern);
+    // schema and proc name are LIKE patterns. Fold the catalog identifier in
+    // identifier mode so the quoted `"db"` scope is case-correct.
+    let mut db_name: Option<String> = if metadata_id {
+        catalog_raw.as_deref().map(fold_identifier)
+    } else {
+        catalog_raw.clone()
+    };
+    let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
+    let proc_pattern = catalog_arg_to_pattern(proc_raw.as_deref(), metadata_id)?;
+
+    // NULL catalog under CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX resolves to
+    // the connection's current database (and schema, if schema is also NULL);
+    // otherwise a NULL catalog enumerates every database (union all).
+    if catalog_raw.is_none() && metadata_request_use_connection_ctx(conn_handle)? {
+        let rt = global().context(OdbcRuntimeSnafu)?;
+        let info = rt.block_on(async |c| {
+            c.connection_get_info(ConnectionGetInfoRequest {
+                conn_handle: Some(conn_handle),
+                info_codes: vec![],
+                include_master_token: false,
+            })
+            .await
+        })?;
+        db_name = info.database;
+        if schema_raw.is_none() {
+            schema_pattern = info.schema;
+        }
+    }
+
+    let db_names = match db_name {
+        Some(db) => vec![db],
+        None => enumerate_databases(stmt_handle)?,
+    };
+
+    if db_names.is_empty() {
+        return set_static_empty_catalog_result(&mut inner, procedures_schema());
+    }
+
+    let sql = build_procedures_query(
+        &db_names,
+        schema_pattern.as_deref(),
+        proc_pattern.as_deref(),
+    );
+
+    let batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_procedures_empty_result_sql_state)
+            {
+                return set_static_empty_catalog_result(&mut inner, procedures_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let flat_batch = map_procedures_to_odbc(batch)?;
+    let schema = flat_batch.schema();
+    let reader = reader_from_record_batch(flat_batch, schema)?;
+    set_state_for_catalog(
+        &mut inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
 }
 
 // ============================================================================
@@ -949,25 +2231,6 @@ fn build_flat_columns_batch(
         ],
     )
     .context(crate::api::error::RecordBatchBuildSnafu)
-}
-
-fn collect_nested_batch(
-    mut reader: Box<dyn arrow::array::RecordBatchReader + Send>,
-) -> OdbcResult<RecordBatch> {
-    let schema = reader.schema();
-    let mut batches = vec![];
-    for b in &mut *reader {
-        let batch = b.context(crate::api::error::ArrowBatchReadSnafu)?;
-        batches.push(batch);
-    }
-    if batches.is_empty() {
-        Ok(RecordBatch::new_empty(schema))
-    } else if batches.len() == 1 {
-        Ok(batches.remove(0))
-    } else {
-        use arrow::compute::concat_batches;
-        concat_batches(&schema, &batches).context(crate::api::error::ArrowBatchConcatSnafu)
-    }
 }
 
 /// Wrap a RecordBatch in an ArrowArrayStreamReader.
@@ -2286,5 +3549,205 @@ mod type_info_tests {
         ];
         let actual: Vec<i16> = ALL_SF_TYPE_INFO.iter().map(|r| r.data_type).collect();
         assert_eq!(actual, expected);
+    }
+}
+
+#[cfg(test)]
+mod fk_command_tests {
+    use super::*;
+
+    #[test]
+    fn pk_table_only_uses_exported_scoped_to_pk() {
+        let sql =
+            build_show_foreign_keys_command(Some("DB"), Some("SCH"), Some("PKT"), None, None, None);
+        assert_eq!(sql, "SHOW EXPORTED KEYS IN table \"DB\".\"SCH\".\"PKT\"");
+    }
+
+    #[test]
+    fn fk_table_only_uses_imported_scoped_to_fk() {
+        let sql =
+            build_show_foreign_keys_command(None, None, None, Some("DB"), Some("SCH"), Some("FKT"));
+        assert_eq!(sql, "SHOW IMPORTED KEYS IN table \"DB\".\"SCH\".\"FKT\"");
+    }
+
+    #[test]
+    fn both_tables_tie_breaks_to_exported_pk_side() {
+        let sql = build_show_foreign_keys_command(
+            Some("DB"),
+            Some("SCH"),
+            Some("PKT"),
+            Some("DB"),
+            Some("SCH"),
+            Some("FKT"),
+        );
+        assert_eq!(sql, "SHOW EXPORTED KEYS IN table \"DB\".\"SCH\".\"PKT\"");
+    }
+
+    #[test]
+    fn unresolved_catalog_widens_to_account() {
+        // PK table present but catalog unresolved (no current database): the
+        // scope widens to account and the client-side filter narrows it back.
+        let sql = build_show_foreign_keys_command(None, None, Some("PKT"), None, None, None);
+        assert_eq!(sql, "SHOW EXPORTED KEYS IN account");
+    }
+}
+#[cfg(test)]
+mod procedures_tests {
+    use super::*;
+
+    #[test]
+    fn split_top_level_commas_ignores_nested_parens() {
+        // Live-pinned: table return columns use bare types, but a scalar
+        // NUMBER(p,s) must never be split on its inner comma.
+        assert_eq!(
+            split_top_level_commas("ID NUMBER(38,0), NAME VARCHAR"),
+            vec!["ID NUMBER(38,0)", "NAME VARCHAR"]
+        );
+        assert_eq!(split_top_level_commas("NUMBER(10,2)"), vec!["NUMBER(10,2)"]);
+        assert!(split_top_level_commas("").is_empty());
+        assert_eq!(split_top_level_commas("A"), vec!["A"]);
+    }
+
+    #[test]
+    fn parenthesized_inner_extracts_argument_list() {
+        assert_eq!(
+            parenthesized_inner("(PNAME VARCHAR, PAGE FLOAT)"),
+            "PNAME VARCHAR, PAGE FLOAT"
+        );
+        assert_eq!(parenthesized_inner("()"), "");
+        assert_eq!(parenthesized_inner("no parens"), "");
+    }
+
+    #[test]
+    fn count_input_params_matches_live_signatures() {
+        // Live-pinned argument_signature strings from information_schema.
+        assert_eq!(count_input_params("(P1 VARCHAR)"), 1);
+        assert_eq!(count_input_params("(PNAME VARCHAR, PAGE FLOAT)"), 2);
+        assert_eq!(count_input_params("(PID NUMBER, PNAME VARCHAR)"), 2);
+        assert_eq!(count_input_params("()"), 0);
+    }
+
+    #[test]
+    fn returns_table_detects_table_valued_return() {
+        // Live-pinned: table returns render as "TABLE (…)" with a space.
+        assert!(returns_table("TABLE (ID NUMBER, NAME VARCHAR)"));
+        assert!(returns_table("table(x int)"));
+        assert!(!returns_table("VARCHAR(134217728)"));
+        assert!(!returns_table("NUMBER(38,0)"));
+    }
+
+    #[test]
+    fn escape_sql_string_literal_doubles_single_quotes() {
+        assert_eq!(escape_sql_string_literal("O'Brien%"), "O''Brien%");
+        assert_eq!(escape_sql_string_literal("PROC%"), "PROC%");
+    }
+
+    #[test]
+    fn escape_sql_string_literal_escapes_backslash_before_quote() {
+        // Injection payload: the escaped quote must not close the literal.
+        assert_eq!(
+            escape_sql_string_literal("a\\' union all"),
+            "a\\\\'' union all"
+        );
+        // Identifier mode: escape_like_wildcards produces MY\_PROC; the backslash
+        // must survive the Snowflake string layer so LIKE sees an escaped '_'.
+        assert_eq!(escape_sql_string_literal("MY\\_PROC"), "MY\\\\_PROC");
+    }
+
+    #[test]
+    fn build_procedures_query_escapes_injection_payload() {
+        let sql =
+            build_procedures_query(&["DB".to_string()], None, Some("a\\' union all select 1--"));
+        // The lone escaped quote is neutralized (backslash doubled, quote doubled),
+        // so no bare quote can terminate the literal early.
+        assert!(sql.contains("procedure_name like 'a\\\\'' union all select 1--'"));
+    }
+
+    #[test]
+    fn build_procedures_query_single_db_with_filters() {
+        let sql = build_procedures_query(
+            &["ODBCMETADATATESTDB".to_string()],
+            Some("CATALOGTESTS"),
+            Some("BASICPROC"),
+        );
+        assert!(sql.contains("\"ODBCMETADATATESTDB\".information_schema.procedures"));
+        assert!(sql.contains("procedure_name like 'BASICPROC'"));
+        assert!(sql.contains("procedure_schema like 'CATALOGTESTS'"));
+        assert!(!sql.contains("union all"));
+    }
+
+    #[test]
+    fn build_procedures_query_percent_proc_pattern_is_not_filtered() {
+        // A "%" procedure pattern matches everything, so no WHERE is emitted for it.
+        let sql = build_procedures_query(&["DB".to_string()], None, Some("%"));
+        assert!(!sql.contains("procedure_name like"));
+        assert!(!sql.contains("where"));
+    }
+
+    #[test]
+    fn build_procedures_query_unions_multiple_dbs() {
+        let sql = build_procedures_query(&["A".to_string(), "B".to_string()], None, None);
+        assert!(sql.contains("\"A\".information_schema.procedures"));
+        assert!(sql.contains("\"B\".information_schema.procedures"));
+        assert!(sql.contains("union all"));
+    }
+
+    #[test]
+    fn procedures_empty_result_sql_states_include_no_data() {
+        assert!(is_procedures_empty_result_sql_state("02000"));
+        assert!(is_procedures_empty_result_sql_state("42000"));
+        assert!(is_procedures_empty_result_sql_state("42S02"));
+        assert!(!is_procedures_empty_result_sql_state("22007"));
+        // The shared keys matcher must NOT swallow 02000 (scope isolation).
+        assert!(!is_object_not_found_sql_state("02000"));
+    }
+
+    #[test]
+    fn map_procedures_to_odbc_emits_eight_columns() {
+        use arrow::array::StringArray;
+        let input_schema = Arc::new(Schema::new(vec![
+            Field::new("procedure_catalog", DataType::Utf8, true),
+            Field::new("procedure_schema", DataType::Utf8, true),
+            Field::new("procedure_name", DataType::Utf8, true),
+            Field::new("argument_signature", DataType::Utf8, true),
+            Field::new("data_type", DataType::Utf8, true),
+            Field::new("comment", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            input_schema,
+            vec![
+                Arc::new(StringArray::from(vec![Some("DB"), Some("DB")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("S"), Some("S")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("SCALARP"), Some("TABLEP")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("(P1 VARCHAR, P2 NUMBER)"),
+                    Some("()"),
+                ])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("NUMBER(38,0)"),
+                    Some("TABLE (ID NUMBER, NAME VARCHAR)"),
+                ])) as ArrayRef,
+                Arc::new(StringArray::from(vec![None::<&str>, None::<&str>])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        let out = map_procedures_to_odbc(batch).expect("map failed");
+        assert_eq!(out.num_columns(), 8);
+        assert_eq!(out.num_rows(), 2);
+
+        let num_inputs = out.column(3).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(num_inputs.value(0), 2); // scalar proc: 2 params
+        assert_eq!(num_inputs.value(1), 0); // table proc: 0 params
+
+        // NUM_OUTPUT_PARAMS (col 5) is always NULL.
+        assert!(out.column(4).is_null(0));
+
+        let num_result_sets = out.column(5).as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(num_result_sets.value(0), 0); // scalar return
+        assert_eq!(num_result_sets.value(1), 1); // table-valued return
+
+        let proc_type = out.column(7).as_any().downcast_ref::<Int16Array>().unwrap();
+        assert_eq!(proc_type.value(0), SQL_PT_FUNCTION);
     }
 }

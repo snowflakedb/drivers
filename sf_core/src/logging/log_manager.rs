@@ -304,7 +304,10 @@ impl LogManager {
     /// Factory: load `[log]` section from `config.toml`, falling back to
     /// defaults.
     pub fn for_toml() -> Option<Self> {
-        let config = match crate::config::config_manager::load_config_section("log") {
+        let config = match crate::config::config_manager::load_config_section(
+            "log",
+            crate::config::toml_loader::FilePermissionCheck::Enabled,
+        ) {
             Ok(Some(section)) => crate::config::logging_config_from_toml_section(&section),
             _ => LoggingConfig::default(),
         };

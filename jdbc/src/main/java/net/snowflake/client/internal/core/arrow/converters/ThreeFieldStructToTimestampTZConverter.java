@@ -128,6 +128,15 @@ public class ThreeFieldStructToTimestampTZConverter extends AbstractArrowVectorC
         ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BOOLEAN_STR, val);
   }
 
+  @Override
+  public byte[] toBytes(int index) throws SFException {
+    if (isNull(index)) {
+      return null;
+    }
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "byteArray", toString(index));
+  }
+
   static Timestamp getTimestamp(
       long epoch, int fraction, int timeZoneIndex, boolean useSessionTimezone, boolean fromToString)
       throws SFException {

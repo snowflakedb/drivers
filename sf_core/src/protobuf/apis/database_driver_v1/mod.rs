@@ -6,6 +6,7 @@ use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::config::config_manager;
 use crate::config::path_resolver;
+use crate::config::toml_loader::FilePermissionCheck;
 use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
@@ -953,17 +954,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
         &self,
         input: ConfigLoadAllSectionsRequest,
     ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
-        let merged_toml = if input.config_file.is_some() || input.connections_file.is_some() {
-            let paths = path_resolver::ConfigPaths {
+        let paths = if input.config_file.is_some() || input.connections_file.is_some() {
+            path_resolver::ConfigPaths {
                 config_file: input.config_file.map(std::path::PathBuf::from),
                 connections_file: input.connections_file.map(std::path::PathBuf::from),
-            };
-            config_manager::load_all_config_merged_toml_with_paths(&paths)
+            }
         } else {
-            config_manager::load_all_config_merged_toml()
-        }
-        .context(ConfigurationSnafu)
-        .to_protobuf()?;
+            path_resolver::get_config_paths()
+                .context(ConfigurationSnafu)
+                .to_protobuf()?
+        };
+        let permission_check = if input.skip_permissions {
+            FilePermissionCheck::UnsafeDisabled
+        } else {
+            FilePermissionCheck::Enabled
+        };
+        let merged_toml =
+            config_manager::load_all_config_merged_toml_with_paths(&paths, permission_check)
+                .context(ConfigurationSnafu)
+                .to_protobuf()?;
 
         let nested_json = toml_value_to_json(&merged_toml);
         let config_json = serde_json::to_string(&nested_json).map_err(|e| DriverException {
@@ -1012,9 +1021,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        let session_id = self.driver.session_id_for_conn(handle).await;
+        let (session_id, wrapper_identity) =
+            self.driver.session_id_and_identity_for_conn(handle).await;
         let span = crate::snowflake_op_span!("wrapper_api_usage", session_id);
         let _guard = span.enter();
+        if let Some(ref identity) = wrapper_identity {
+            crate::telemetry::record_wrapper_identity_on_span(identity);
+        }
         crate::telemetry::record_api_call(&input.api_method, &input.passed_arguments);
 
         Ok(TelemetrySendResponse {})
@@ -1031,9 +1044,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        let session_id = self.driver.session_id_for_conn(handle).await;
+        let (session_id, wrapper_identity) =
+            self.driver.session_id_and_identity_for_conn(handle).await;
         let span = crate::snowflake_op_span!("wrapper_error", session_id);
         let _guard = span.enter();
+        if let Some(ref identity) = wrapper_identity {
+            crate::telemetry::record_wrapper_identity_on_span(identity);
+        }
         crate::telemetry::record_exception(&input.exception_type, &input.error_source);
 
         Ok(TelemetrySendResponse {})

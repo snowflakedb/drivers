@@ -59,6 +59,7 @@ class Connection(ConnectionMixin):
     # Initialization
     # ------------------------------------------------------------------
 
+    @api_telemetry
     def __init__(
         self,
         *,
@@ -94,6 +95,7 @@ class Connection(ConnectionMixin):
     # Connection setup
     # ------------------------------------------------------------------
 
+    @api_telemetry
     async def connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
         if self.conn_handle is not None:
@@ -270,6 +272,7 @@ class Connection(ConnectionMixin):
         return await self._autocommit_enabled()
 
     @pep249
+    @api_telemetry
     async def autocommit(self, value: bool) -> None:
         await self.set_autocommit(value)
 
@@ -277,6 +280,7 @@ class Connection(ConnectionMixin):
     # Connection state
     # ------------------------------------------------------------------
 
+    @api_telemetry
     async def is_closed(self) -> bool:
         if self.conn_handle is None:
             return self._ever_opened
@@ -286,6 +290,7 @@ class Connection(ConnectionMixin):
         except Exception:
             return True
 
+    @api_telemetry
     async def is_expired(self) -> bool:
         """
         Return True if the connection's master token has expired.
@@ -375,6 +380,7 @@ class Connection(ConnectionMixin):
     # Session info
     # ------------------------------------------------------------------
 
+    @api_telemetry
     def fetch_info(self, field: str) -> Any:
         """Fetch a single connection-info field by name."""
         return self._connection_info[field]
@@ -387,6 +393,7 @@ class Connection(ConnectionMixin):
     # Server metadata
     # ------------------------------------------------------------------
 
+    @api_telemetry
     async def snowflake_version(self) -> str:
         cur = await self.cursor(DictCursor)
         async with cur:

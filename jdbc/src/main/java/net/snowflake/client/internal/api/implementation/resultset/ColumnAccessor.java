@@ -3,8 +3,11 @@ package net.snowflake.client.internal.api.implementation.resultset;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Period;
 import java.util.TimeZone;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 
@@ -52,6 +55,24 @@ public interface ColumnAccessor {
   Timestamp getTimestamp(int columnIndex, TimeZone tz) throws SQLException;
 
   Object getObject(int columnIndex) throws SQLException;
+
+  /**
+   * Materializes an {@code INTERVAL YEAR TO MONTH} column as a {@link Period}. Backs {@code
+   * ResultSet.getObject(col, Period.class)}. Readers that cannot produce intervals inherit the
+   * default, which reports the operation as unsupported.
+   */
+  default Period getPeriod(int columnIndex) throws SQLException {
+    throw new SQLFeatureNotSupportedException("getPeriod is not supported for this result set");
+  }
+
+  /**
+   * Materializes an {@code INTERVAL DAY TO SECOND} column as a {@link Duration}. Backs {@code
+   * ResultSet.getObject(col, Duration.class)} and, unlike plain {@code getObject}, yields a {@code
+   * Duration} for the SB16 (Decimal128) physical layout as well.
+   */
+  default Duration getDuration(int columnIndex) throws SQLException {
+    throw new SQLFeatureNotSupportedException("getDuration is not supported for this result set");
+  }
 
   int getColumnCount() throws SQLException;
 
