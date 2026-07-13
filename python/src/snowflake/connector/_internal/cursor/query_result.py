@@ -65,7 +65,16 @@ class MultiStatementQueryResultState:
 class QueryResult:
     """Pure metadata about a query execution result."""
 
-    __slots__ = ("description", "sqlstate", "sfqid", "query", "stats", "rowcount", "is_file_transfer")
+    __slots__ = (
+        "description",
+        "sqlstate",
+        "sfqid",
+        "request_id",
+        "query",
+        "stats",
+        "rowcount",
+        "is_file_transfer",
+    )
 
     def __init__(
         self,
@@ -73,6 +82,7 @@ class QueryResult:
         description: list[ResultMetadata] | None = None,
         sqlstate: str | None = None,
         sfqid: str | None = None,
+        request_id: str | None = None,
         query: str | None = None,
         stats: QueryResultStats | None = None,
         rowcount: int | None = None,
@@ -81,6 +91,7 @@ class QueryResult:
         self.description = description
         self.sqlstate = sqlstate
         self.sfqid = sfqid
+        self.request_id = request_id
         self.query = query
         self.stats = stats if stats is not None else QueryResultStats()
         self.rowcount = rowcount

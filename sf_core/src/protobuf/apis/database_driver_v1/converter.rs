@@ -1,6 +1,7 @@
 use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
+use crate::apis::database_driver_v1::ExecuteQueryOutcome as NativeExecuteQueryOutcome;
 use crate::apis::database_driver_v1::ExecuteQueryResult as NativeExecuteQueryResult;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
@@ -342,9 +343,21 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
 
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
-        match result {
+        NativeExecuteQueryOutcome {
+            result,
+            request_id: None,
+        }
+        .into()
+    }
+}
+
+impl From<NativeExecuteQueryOutcome> for ExecuteQueryResponse {
+    fn from(outcome: NativeExecuteQueryOutcome) -> Self {
+        let request_id = outcome.request_id.map(|id: uuid::Uuid| id.to_string());
+        match outcome.result {
             NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
                 result: Some(execute_query_response::Result::Single(info.into())),
+                request_id,
             },
             NativeExecuteQueryResult::Multi {
                 parent,
@@ -358,6 +371,7 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
                         statement_type_ids,
                     },
                 )),
+                request_id,
             },
         }
     }

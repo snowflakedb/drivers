@@ -2674,3 +2674,44 @@ class TestParamsAliasAndForceQmark:
         assert request.bindings is not None  # flag survived to inner execute()
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated
+
+
+class TestRequestId:
+    """Unit tests for Cursor._request_id property."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture
+    def async_cursor(self, mock_connection):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    def test_request_id_is_none_before_execute(self, cursor):
+        assert cursor._request_id is None
+
+    def test_request_id_delegates_to_query_result(self, cursor):
+        cursor._query_result.request_id = "550e8400-e29b-41d4-a716-446655440000"
+        assert cursor._request_id == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_request_id_distinct_from_sfqid(self, cursor):
+        cursor._query_result.request_id = "aaaaaaaa-0000-4000-8000-000000000001"
+        cursor._query_result.sfqid = "bbbbbbbb-0000-4000-8000-000000000002"
+        assert cursor._request_id != cursor.sfqid
+        assert cursor._request_id == "aaaaaaaa-0000-4000-8000-000000000001"
+        assert cursor.sfqid == "bbbbbbbb-0000-4000-8000-000000000002"
+
+    def test_request_id_cleared_to_none_when_query_result_reset(self, cursor):
+        cursor._query_result.request_id = "some-uuid"
+        cursor._query_result = QueryResult()
+        assert cursor._request_id is None
+
+    def test_async_cursor_request_id_delegates_to_query_result(self, async_cursor):
+        async_cursor._query_result.request_id = "550e8400-e29b-41d4-a716-446655440000"
+        assert async_cursor._request_id == "550e8400-e29b-41d4-a716-446655440000"

@@ -1492,14 +1492,15 @@ pub async fn snowflake_query_with_client<'a>(
     }
 
     // Sync mode (default): use requestId-based retry for connection failures
-    execute_sync_with_retry(
+    let (response, _request_id) = execute_sync_with_retry(
         client,
         &query_parameters,
         session_token,
         &query_input,
         retry_policy,
     )
-    .await
+    .await?;
+    Ok(response)
 }
 
 /// Execute query in async mode with fallback to sync for error 612.
@@ -1557,7 +1558,7 @@ async fn execute_async_with_fallback<'a>(
     }
 
     // Fallback to sync after 612
-    let response = execute_sync_with_retry(
+    let (response, _request_id) = execute_sync_with_retry(
         client,
         query_parameters,
         session_token,
@@ -1603,15 +1604,36 @@ async fn execute_sync_with_retry<'a>(
     session_token: &str,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
-) -> Result<query_response::Response, RestError> {
+) -> Result<(query_response::Response, uuid::Uuid), RestError> {
     let request_id = uuid::Uuid::new_v4();
 
-    execute_sync_query(
+    let response = execute_sync_query(
         client,
         query_parameters,
         session_token,
         query_input,
         request_id,
+        retry_policy,
+    )
+    .await?;
+
+    Ok((response, request_id))
+}
+
+/// Like [`execute_sync_with_retry`] but surfaces the client-generated request
+/// UUID so callers can store it alongside the result (e.g. for Snowpark logging).
+pub(crate) async fn execute_sync_with_request_id<'a>(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_input: &QueryInput<'a>,
+    retry_policy: &RetryPolicy,
+) -> Result<(query_response::Response, uuid::Uuid), RestError> {
+    execute_sync_with_retry(
+        client,
+        query_parameters,
+        session_token,
+        query_input,
         retry_policy,
     )
     .await
