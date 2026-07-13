@@ -206,26 +206,36 @@ def _schedule_async_telemetry(coro: Any) -> None:
 
 def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Send the ``{ClassName}.{method_name}`` API-usage telemetry for *self*."""
-    from snowflake.connector._internal.telemetry import AsyncTelemetryClient
+    try:
+        from snowflake.connector._internal.telemetry import AsyncTelemetryClient
 
-    api_name = f"{type(self).__name__}.{func.__name__}"
-    client = _telemetry_client_for(self)
-    if isinstance(client, AsyncTelemetryClient):
-        _schedule_async_telemetry(client.send_api_usage(api_name, passed_arguments))
-    else:
-        client.send_api_usage(api_name, passed_arguments)
+        api_name = f"{type(self).__name__}.{func.__name__}"
+        client = _telemetry_client_for(self)
+        if client is None:
+            return
+        if isinstance(client, AsyncTelemetryClient):
+            _schedule_async_telemetry(client.send_api_usage(api_name, passed_arguments))
+        else:
+            client.send_api_usage(api_name, passed_arguments)
+    except Exception:
+        logger.debug("Failed to send api_usage telemetry", exc_info=True)
 
 
 async def _send_api_usage_async(self: Any, func: Callable[..., Any], passed_arguments: list[str]) -> None:
     """Async counterpart of :func:`_send_api_usage`."""
-    from snowflake.connector._internal.telemetry import AsyncTelemetryClient
+    try:
+        from snowflake.connector._internal.telemetry import AsyncTelemetryClient
 
-    api_name = f"{type(self).__name__}.{func.__name__}"
-    client = _telemetry_client_for(self)
-    if isinstance(client, AsyncTelemetryClient):
-        await client.send_api_usage(api_name, passed_arguments)
-    else:
-        client.send_api_usage(api_name, passed_arguments)
+        api_name = f"{type(self).__name__}.{func.__name__}"
+        client = _telemetry_client_for(self)
+        if client is None:
+            return
+        if isinstance(client, AsyncTelemetryClient):
+            await client.send_api_usage(api_name, passed_arguments)
+        else:
+            client.send_api_usage(api_name, passed_arguments)
+    except Exception:
+        logger.debug("Failed to send api_usage telemetry", exc_info=True)
 
 
 def api_telemetry(func: F) -> F:
@@ -279,6 +289,18 @@ def api_telemetry(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _TRACKING.get():
+            if func.__name__ == "__init__":
+                # Compute argument names before calling (kwargs are not consumed by
+                # the call), but send telemetry post-call so _telemetry_client is ready.
+                passed_args = _passed_argument_names(sig, self, args, kwargs)
+                _TRACKING.set(False)
+                try:
+                    result = func(self, *args, **kwargs)
+                finally:
+                    _TRACKING.set(True)
+                _send_api_usage(self, func, passed_args)
+                return result
+
             _send_api_usage(self, func, _passed_argument_names(sig, self, args, kwargs))
 
             _TRACKING.set(False)

@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -76,32 +77,27 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
-  static NativeBindings serialize(
-      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
+  static NativeBindings serialize(Map<Integer, ParameterValue> parameterValues)
       throws SQLException {
-    if (!placeholderMetadata.hasBindings()) {
-      logger.debug("No parameter placeholders found, skipping bindings serialization.");
+    if (parameterValues.isEmpty()) {
+      logger.debug("No parameter values bound, skipping bindings serialization.");
       return new NativeBindings(null, null);
     }
-    logger.debug(
-        "Serializing prepared bindings: placeholders={}", placeholderMetadata.placeholderCount());
+    logger.debug("Serializing prepared bindings: binds={}", parameterValues.size());
 
-    byte[] jsonBytes = buildBindingsJson(placeholderMetadata, parameterValues);
+    byte[] jsonBytes = buildBindingsJson(parameterValues);
     return allocateNativeBindings(jsonBytes);
   }
 
-  private static byte[] buildBindingsJson(
-      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
+  private static byte[] buildBindingsJson(Map<Integer, ParameterValue> parameterValues)
       throws SQLException {
     JSONStringer jsonStringer = new JSONStringer();
     jsonStringer.object();
-    for (int parameterIndex : placeholderMetadata.referencedParameterIndexes()) {
-      ParameterValue parameterValue = parameterValues.get(parameterIndex);
-      if (parameterValue == null) {
-        logger.warn(
-            "Bindings serialization failed: missing parameter value for index {}", parameterIndex);
-        throw new SQLException("Missing value for parameter index: " + parameterIndex);
-      }
+    // Emit every bound value, keyed by parameter index and ordered for a deterministic payload.
+    // The server validates placeholder count/style/types — the driver never inspects the SQL.
+    for (Map.Entry<Integer, ParameterValue> entry : new TreeMap<>(parameterValues).entrySet()) {
+      int parameterIndex = entry.getKey();
+      ParameterValue parameterValue = entry.getValue();
       jsonStringer.key(String.valueOf(parameterIndex)).object();
       jsonStringer.key("type").value(parameterValue.bindType().name());
       jsonStringer.key("value");

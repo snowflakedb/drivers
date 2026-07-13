@@ -299,6 +299,10 @@ pub fn driver_connect<E: OdbcEncoding>(
     // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
     let driver_section = params.get("DRIVER").cloned();
     let dsn_name = params.get("DSN").cloned();
+    // Expand any DSN-stored attributes (account, host, user, credentials)
+    // underneath the caller-supplied connection-string params so that a bare
+    // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
+    let params = merge_dsn_config(params, dsn_name.as_deref())?;
     connect_with_params(connection_handle, params, driver_section, dsn_name)
 }
 
@@ -538,8 +542,8 @@ async fn apply_pre_connection_runtime_attrs_async(
 /// Connect using DSN (SQLConnect / SQLConnectW).
 ///
 /// Reads DSN configuration from odbc.ini (ODBCINI env var, ~/.odbc.ini, or /etc/odbc.ini),
-/// merges caller-supplied UID/PWD overrides, then delegates to `connect_with_params` to perform
-/// the actual connection.
+/// merges caller-supplied UID/PWD overrides via `merge_dsn_config`, then delegates to
+/// `connect_with_params` to perform the actual connection.
 pub fn connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     server_name: *const E::Char,
@@ -567,25 +571,52 @@ pub fn connect<E: OdbcEncoding>(
 
     tracing::debug!("connect: dsn={:?}", dsn);
 
-    let mut params = read_dsn_config(&dsn)?;
-
-    // Caller-supplied UID/PWD override whatever is in the DSN.
+    // UID/PWD supplied by the caller override whatever the DSN entry holds.
+    let mut explicit = HashMap::new();
     if let Some(uid) = uid {
-        params.insert("UID".to_string(), uid);
+        explicit.insert("UID".to_string(), uid);
     }
     if let Some(pwd) = pwd {
-        params.insert("PWD".to_string(), pwd);
+        explicit.insert("PWD".to_string(), pwd);
     }
-
-    // Drop DSN metadata keys that have no meaning as connection parameters.
-    params
-        .retain(|k, _| !k.eq_ignore_ascii_case("Driver") && !k.eq_ignore_ascii_case("Description"));
+    let params = merge_dsn_config(explicit, Some(&dsn))?;
 
     // The DSN name is what reaches `SQLGetInfo(SQL_DRIVER_NAME)` for
     // resolving the driver's installed file path via `odbc.ini` →
     // `odbcinst.ini`. SQLConnect never carries a `DRIVER=` keyword, so
     // there is no direct driver section to capture here.
     connect_with_params(connection_handle, params, None, Some(dsn))
+}
+
+/// Merge DSN-stored attributes underneath caller-supplied params.
+///
+/// Explicit params (connection string / UID+PWD) win over DSN-stored values.
+/// Strips DSN metadata keys (`Driver`, `Description`, `DSN`) from the result.
+/// No-op when `dsn` is `None`.
+fn merge_dsn_config(
+    explicit: HashMap<String, String>,
+    dsn: Option<&str>,
+) -> OdbcResult<HashMap<String, String>> {
+    merge_dsn_config_impl(explicit, dsn, read_dsn_config)
+}
+
+fn merge_dsn_config_impl(
+    mut explicit: HashMap<String, String>,
+    dsn: Option<&str>,
+    lookup: impl Fn(&str) -> OdbcResult<HashMap<String, String>>,
+) -> OdbcResult<HashMap<String, String>> {
+    if let Some(dsn) = dsn {
+        let stored = lookup(dsn)?;
+        for (k, v) in stored {
+            explicit.entry(k).or_insert(v);
+        }
+    }
+    explicit.retain(|k, _| {
+        !k.eq_ignore_ascii_case("Driver")
+            && !k.eq_ignore_ascii_case("Description")
+            && !k.eq_ignore_ascii_case("DSN")
+    });
+    Ok(explicit)
 }
 
 /// Look up DSN parameters.
@@ -1913,17 +1944,12 @@ impl OdbcFunction {
             self,
             Self::BrowseConnect
                 | Self::BulkOperations
-                | Self::CopyDesc
                 | Self::DataSources
                 | Self::Drivers
-                | Self::ForeignKeys
                 | Self::GetCursorName
                 | Self::ParamOptions
-                | Self::PrimaryKeys
                 | Self::ProcedureColumns
-                | Self::Procedures
                 | Self::SetCursorName
-                | Self::SetDescRec
                 | Self::SetPos
                 | Self::SetScrollOptions
         )
@@ -2840,6 +2866,20 @@ mod tests {
         );
     }
 
+    /// `SQLForeignKeys` is implemented and exported in `c_api.rs`, so
+    /// `SQLGetFunctions` must report it as supported. If it is left in the
+    /// `is_supported` exclusion list, strict driver managers (unixODBC) consult
+    /// the bitmap and refuse to dispatch `SQLForeignKeys`, returning `SQL_ERROR`
+    /// before the driver's entry point ever runs (iODBC / Windows dispatch
+    /// regardless, which is why the regression only showed up under unixODBC).
+    #[test]
+    fn foreign_keys_is_reported_supported() {
+        assert!(
+            OdbcFunction::ForeignKeys.is_supported(),
+            "SQLForeignKeys is exported in c_api.rs; SQLGetFunctions must report it supported"
+        );
+    }
+
     #[test]
     fn odbc3_bitmap_marks_end_tran_supported() {
         let mut bitmap = [0 as sql::USmallInt; SQL_API_ODBC3_ALL_FUNCTIONS_SIZE];
@@ -2859,6 +2899,79 @@ mod tests {
         // unsupported low id like SetPos (68) must be SQL_FALSE.
         assert_eq!(array[OdbcFunction::ExecDirect as usize], SQL_TRUE_U16);
         assert_eq!(array[OdbcFunction::SetPos as usize], SQL_FALSE_U16);
+    }
+
+    mod merge_dsn_config_tests {
+        use super::*;
+
+        fn ok_lookup(
+            map: HashMap<String, String>,
+        ) -> impl Fn(&str) -> OdbcResult<HashMap<String, String>> {
+            move |_dsn| Ok(map.clone())
+        }
+
+        fn err_lookup() -> impl Fn(&str) -> OdbcResult<HashMap<String, String>> {
+            |dsn| {
+                DataSourceNotFoundSnafu {
+                    dsn: dsn.to_string(),
+                }
+                .fail()
+            }
+        }
+
+        #[test]
+        fn should_be_no_op_when_dsn_is_none() {
+            let explicit = HashMap::from([("SERVER".to_owned(), "myhost".to_owned())]);
+            let result = merge_dsn_config_impl(explicit.clone(), None, err_lookup()).unwrap();
+            assert_eq!(result, explicit);
+        }
+
+        #[test]
+        fn should_fill_missing_keys_from_stored_dsn() {
+            let stored = HashMap::from([
+                ("ACCOUNT".to_owned(), "myaccount".to_owned()),
+                ("SERVER".to_owned(), "stored-host".to_owned()),
+            ]);
+            let explicit = HashMap::new();
+            let result =
+                merge_dsn_config_impl(explicit, Some("TestDSN"), ok_lookup(stored)).unwrap();
+            assert_eq!(result.get("ACCOUNT").unwrap(), "myaccount");
+            assert_eq!(result.get("SERVER").unwrap(), "stored-host");
+        }
+
+        #[test]
+        fn should_prefer_explicit_over_stored_dsn_value() {
+            let stored = HashMap::from([("SERVER".to_owned(), "stored-host".to_owned())]);
+            let explicit = HashMap::from([("SERVER".to_owned(), "explicit-host".to_owned())]);
+            let result =
+                merge_dsn_config_impl(explicit, Some("TestDSN"), ok_lookup(stored)).unwrap();
+            assert_eq!(result.get("SERVER").unwrap(), "explicit-host");
+        }
+
+        #[test]
+        fn should_strip_driver_description_dsn_metadata_keys() {
+            let stored = HashMap::from([
+                ("DRIVER".to_owned(), "SnowflakeDSIIDriver".to_owned()),
+                ("Description".to_owned(), "My Snowflake DSN".to_owned()),
+                ("DSN".to_owned(), "TestDSN".to_owned()),
+                ("SERVER".to_owned(), "myhost".to_owned()),
+            ]);
+            let result =
+                merge_dsn_config_impl(HashMap::new(), Some("TestDSN"), ok_lookup(stored)).unwrap();
+            assert!(!result.contains_key("DRIVER"));
+            assert!(!result.contains_key("Description"));
+            assert!(!result.contains_key("DSN"));
+            assert_eq!(result.get("SERVER").unwrap(), "myhost");
+        }
+
+        #[test]
+        fn should_propagate_data_source_not_found_error() {
+            let result = merge_dsn_config_impl(HashMap::new(), Some("Missing"), err_lookup());
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("Missing"), "error should name the DSN: {msg}");
+        }
     }
 
     #[cfg(not(windows))]

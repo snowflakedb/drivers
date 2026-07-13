@@ -79,6 +79,24 @@ pub fn record_session_init(env: &environment::EnvironmentInfo) {
     span.add_event("session_init", attrs);
 }
 
+/// Stamp wrapper identity fields as span attributes on the **current** span.
+///
+/// Called before [`record_api_call`] / [`record_exception`] so that the span
+/// attributes (and therefore all events on that span) carry the identity.
+/// No-ops on a disabled (noop) span, so it is safe to call unconditionally.
+pub fn record_wrapper_identity_on_span(
+    identity: &crate::apis::database_driver_v1::connection::WrapperIdentity,
+) {
+    let span = tracing::Span::current();
+    span.set_attribute("service.name", identity.driver_name.clone());
+    span.set_attribute("service.version", identity.driver_version.clone());
+    span.set_attribute("process.runtime.name", identity.language_runtime.clone());
+    span.set_attribute("process.runtime.version", identity.language_version.clone());
+    if let Some(ref compiler) = identity.language_compiler {
+        span.set_attribute("process.runtime.compiler", compiler.clone());
+    }
+}
+
 /// Record an api_call event on the **current** tracing span.
 ///
 /// `passed_arguments` are the names of the arguments the caller explicitly

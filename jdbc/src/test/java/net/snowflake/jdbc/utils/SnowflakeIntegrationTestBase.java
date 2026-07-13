@@ -46,6 +46,12 @@ public abstract class SnowflakeIntegrationTestBase implements WithQueryUtils {
     return openConnection(null);
   }
 
+  protected Connection openConnection(String propertyKey, String propertyVal) throws SQLException {
+    Properties properties = new Properties();
+    properties.put(propertyKey, propertyVal);
+    return openConnection(properties);
+  }
+
   protected Connection openConnection(Properties overrides) throws SQLException {
     Properties props = withDefaultAuth(loadDefaultConnectionProperties());
 

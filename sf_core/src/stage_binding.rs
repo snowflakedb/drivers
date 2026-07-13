@@ -118,6 +118,7 @@ pub struct StageBindingContext<'a> {
     pub query_parameters: &'a QueryParameters,
     pub session_token: &'a SensitiveString,
     pub retry_policy: &'a RetryPolicy,
+    pub put_get_policy: &'a RetryPolicy,
     pub use_s3_regional_url_session_param: bool,
 }
 
@@ -232,7 +233,7 @@ async fn upload_blob(
     // `perform_put_get_transfer`, so the storage client uses the default TLS
     // version window rather than the connection's narrowed one (see
     // adr/tls_version_enforcement_implementation_notes.md, "Known gaps").
-    upload_in_memory_file(csv_bytes.to_vec(), single, &mut None)
+    upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, &mut None)
         .await
         .context(UploadFailedSnafu)?;
     Ok(())

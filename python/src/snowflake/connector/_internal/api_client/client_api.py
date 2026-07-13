@@ -533,8 +533,13 @@ class CoreDriver:
         self,
         config_file: str,
         connections_file: str | None = None,
+        skip_permissions: bool = False,
     ) -> ConfigLoadAllSectionsResponse:
-        request = ConfigLoadAllSectionsRequest(config_file=config_file, connections_file=connections_file)
+        request = ConfigLoadAllSectionsRequest(
+            config_file=config_file,
+            connections_file=connections_file,
+            skip_permissions=skip_permissions,
+        )
         return self.client.config_load_all_sections(request)
 
     def config_get_paths(self) -> ConfigGetPathsResponse:

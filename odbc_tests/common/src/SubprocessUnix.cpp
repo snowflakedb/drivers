@@ -43,6 +43,17 @@ struct Subprocess::Impl {
       pid = -1;
     }
   }
+
+  bool running() {
+    if (pid <= 0) return false;
+    int status = 0;
+    pid_t r = waitpid(pid, &status, WNOHANG);
+    if (r == 0) return true;  // still alive
+    // Exited (r == pid) or already gone (r == -1): reap and mark so stop()
+    // does not block on an already-collected child.
+    pid = -1;
+    return false;
+  }
 };
 
 Subprocess::Subprocess(const std::string& program, const std::vector<std::string>& args)
@@ -53,6 +64,8 @@ Subprocess::Subprocess(const std::string& program, const std::vector<std::string
 Subprocess::~Subprocess() {
   if (impl_) impl_->stop();
 }
+
+bool Subprocess::running() const { return impl_ && impl_->running(); }
 
 Subprocess::Subprocess(Subprocess&&) noexcept = default;
 Subprocess& Subprocess::operator=(Subprocess&&) noexcept = default;
