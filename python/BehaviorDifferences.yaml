@@ -605,3 +605,43 @@ behavior_differences:
       `create_temp_table` is the legacy boolean spelling accepted for Snowpark
       backward-compatibility. The warning nudges callers toward the canonical
       `table_type` parameter without breaking existing usage.
+
+  41:
+    name: "ReauthenticationRequest is not raised in MasterTokenExpired scenarios"
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      The legacy connector raises `network.ReauthenticationRequest` (carrying the
+      original exception as `.cause`) when the master token expires and a refresh
+      is required. Snowpark catches this exception to trigger session re-establishment.
+    new_driver_behavior: |
+      The universal driver does not raise `ReauthenticationRequest` in the same
+      token-refresh scenarios. The compat stub in `network.py` provides the class so
+      Snowpark can import and subclass it, but the UD has not yet wired it to the
+      equivalent internal refresh paths.
+    description: |
+      TODO: identify the UD token-refresh code paths that correspond to the old
+      driver's MasterTokenExpired handling and raise `ReauthenticationRequest`
+      (or an equivalent signal Snowpark catches) in those cases.
+
+  42:
+    name: "Out-of-band (OOB) telemetry is not implemented"
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `TelemetryService` sends out-of-band telemetry events to Snowflake's
+      telemetry endpoint from a background thread. Snowpark uses this for usage
+      tracking and diagnostics.
+    new_driver_behavior: |
+      The Universal Driver does not implement OOB telemetry. `TelemetryService`
+      is a no-op stub. All calls are silently dropped. `get_instance()` emits a
+      `DeprecationWarning` to surface the gap.
+    description: |
+      TODO: implement OOB telemetry in the Universal Driver and wire up
+      `TelemetryService` to the real implementation.
