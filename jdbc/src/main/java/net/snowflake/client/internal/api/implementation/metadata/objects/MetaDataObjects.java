@@ -20,9 +20,11 @@ import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
+import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.RowConverter;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
@@ -31,7 +33,6 @@ import net.snowflake.client.internal.api.implementation.resultset.metadata.Snowf
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
-import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.common.util.Wildcard;
 
 /**
@@ -41,10 +42,10 @@ import net.snowflake.common.util.Wildcard;
  */
 public class MetaDataObjects {
 
-  // TODO(SNOW-3695645): maybe we should use rpc GetConnectionObjects instead of querying
+  // TODO(SNOW-3740738): maybe we should use rpc GetConnectionObjects instead of querying
   //  Then we can move escaping, etc. to the core and avoid those operations in wrapper.
 
-  // TODO(SNOW-3695645): using column labels is cleaner than positional arguments, consider changing
+  // TODO(SNOW-3740739): using column labels is cleaner than positional arguments, consider changing
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(MetaDataObjects.class);
 
@@ -55,14 +56,12 @@ public class MetaDataObjects {
   private static final List<String> SUPPORTED_TABLE_TYPES =
       Arrays.asList(TABLE_TYPE_TABLE, TABLE_TYPE_VIEW);
 
-  private final SnowflakeConnectionImpl connection;
-  private final MetaDataParams params;
+  private final InternalSnowflakeConnection connection;
   private final MetaDataLimits limits;
 
-  public MetaDataObjects(SnowflakeConnectionImpl connection, CoreDriverApi coreDriverApi) {
+  public MetaDataObjects(InternalSnowflakeConnection connection) {
     this.connection = connection;
-    this.params = new MetaDataParams(connection, coreDriverApi);
-    this.limits = new MetaDataLimits(connection, coreDriverApi);
+    this.limits = new MetaDataLimits(connection);
   }
 
   public ResultSet getCatalogs() throws SQLException {
@@ -74,7 +73,7 @@ public class MetaDataObjects {
   public ResultSet getSchemas(String originalCatalog, String originalSchemaPattern)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -113,7 +112,7 @@ public class MetaDataObjects {
     }
 
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -164,7 +163,7 @@ public class MetaDataObjects {
             comment = row.getString(6);
           }
 
-          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          // TODO(SNOW-3740734): why don't we have exact schema matching case here?
           if (matches(compiledTablePattern, tableName)
               && matches(compiledSchemaPattern, schemaName)) {
             return new Object[] {
@@ -185,7 +184,7 @@ public class MetaDataObjects {
       boolean extendedSet)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -207,9 +206,11 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getColumns: {}", sqlQuery);
 
-    boolean jdbcTreatDecimalAsInt = params.isJdbcTreatDecimalAsInt();
-    boolean enableReturnTimestampWithTimeZone = params.isEnableReturnTimestampWithTimeZone();
-    boolean stringsQuoted = params.isStringsQuoted();
+    ParametersRegistry params = connection.getParameters();
+    boolean jdbcTreatDecimalAsInt = params.getBool(Parameter.JDBC_TREAT_DECIMAL_AS_INT);
+    boolean enableReturnTimestampWithTimeZone =
+        params.getBool(Parameter.ENABLE_RETURN_TIMESTAMP_WITH_TIMEZONE);
+    boolean stringsQuoted = params.getBool(Parameter.STRINGS_QUOTED_FOR_COLUMN_DEF);
 
     Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schemaPattern, true);
     Pattern compiledTablePattern = Wildcard.toRegexPattern(tableNamePattern, true);
@@ -222,6 +223,8 @@ public class MetaDataObjects {
           String columnName = row.getString(3);
           String dataTypeStr = row.getString(4);
           String defaultValue = row.getString(6);
+          // in the legacy driver trim() result was discarded and null default value caused NPE,
+          // anyway - no difference in practice for data returned by backend
           if (defaultValue != null) {
             defaultValue = defaultValue.trim();
           }
@@ -237,7 +240,7 @@ public class MetaDataObjects {
           String catalogName = row.getString(10);
           String autoIncrement = row.getString(11);
 
-          // TODO(SNOW-3695645): why don't we have exact schema matching case here?
+          // TODO(SNOW-3740734): why don't we have exact schema matching case here?
           if (matches(compiledTablePattern, tableName)
               && matches(compiledSchemaPattern, schemaName)
               && matches(compiledColumnPattern, columnName)) {
@@ -326,7 +329,7 @@ public class MetaDataObjects {
       String originalCatalog, String originalSchemaPattern, String procedureNamePattern)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -374,7 +377,7 @@ public class MetaDataObjects {
       String originalCatalog, String originalSchemaPattern, String functionNamePattern)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -404,7 +407,7 @@ public class MetaDataObjects {
               ("Y".equals(row.getString(12))
                   ? DatabaseMetaData.functionReturnsTable
                   : DatabaseMetaData.functionNoTable);
-          // TODO(SNOW-3695645): getProcedures has correct behavior of using getString("arguments")
+          // TODO(SNOW-3740737): getProcedures has correct behavior of using getString("arguments")
           //  for "specificName", consider to fix it here as well
           String specificName = functionName;
           if (matches(compiledFunctionPattern, functionName)
@@ -427,7 +430,7 @@ public class MetaDataObjects {
       String columnNamePattern)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -459,8 +462,10 @@ public class MetaDataObjects {
       String functionNamePattern,
       String columnNamePattern)
       throws SQLException {
+    // BD#19: result rows used raw params instead of session-resolved values.
+    // null catalog produced null FUNCTION_CAT even when session context had a real database
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -489,11 +494,13 @@ public class MetaDataObjects {
   public ResultSet getTablePrivileges(
       String originalCatalog, String originalSchemaPattern, String tableNamePattern)
       throws SQLException {
+    // TODO(SNOW-3740736): only this method null-guards tableNamePattern; others pass null to the
+    //  query builder. Align in one direction or the other.
     if (tableNamePattern == null) {
       return emptyResultSet(MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
     }
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -510,7 +517,8 @@ public class MetaDataObjects {
           String privilege = row.getString("PRIVILEGE_TYPE");
           String is_grantable = row.getString("IS_GRANTABLE");
 
-          // TODO(SNOW-3695645): why do we have custom matching here? different from other methods
+          // TODO(SNOW-3740736): unlike other methods, this post-filters with string equality + "%"
+          //  literal, not Wildcard.toRegexPattern() + matches(). Patterns like "MY_SCHEMA%" fail.
           if ((catalog == null || catalog.trim().equals("%") || catalog.trim().equals(table_cat))
               && (schemaPattern == null
                   || schemaPattern.trim().equals("%")
@@ -530,7 +538,7 @@ public class MetaDataObjects {
   public ResultSet getPrimaryKeys(String originalCatalog, String originalSchema, String table)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchema);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchema);
     String catalog = contextAware.getDatabase();
     String schema = contextAware.getSchema();
 
@@ -543,7 +551,10 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getPrimaryKeys: {}", sqlQuery);
 
-    boolean patternSearch = params.isEnablePatternSearch();
+    // TODO(SNOW-3740735): getPrimaryKeys and getForeignKeys gate pattern matching on
+    //  enablePatternSearch, while all other methods use isExactSchema (via contextAware). These are
+    //  different session parameters and produce different behavior for the same inputs.
+    boolean patternSearch = connection.getParameters().getBool(Parameter.ENABLE_PATTERN_SEARCH);
     // Patterns are only consulted when enablePatternSearch=true; otherwise exact equality is used.
     Pattern compiledSchemaPattern = Wildcard.toRegexPattern(schema, true);
     Pattern compiledTablePattern = Wildcard.toRegexPattern(table, true);
@@ -569,6 +580,7 @@ public class MetaDataObjects {
             tableMatches = table == null || table.equals(tableName);
           }
 
+          // Pattern.equals(String) guards were always false (dead code); removed.
           if (catalogMatches && schemaMatches && tableMatches) {
             return new Object[] {
               tableCat, tableSchem, tableName, columnName, keySeq, pkName,
@@ -603,7 +615,8 @@ public class MetaDataObjects {
       String foreignTable)
       throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalParentCatalog, originalParentSchema);
+        ContextAwareMetadataSearch.fromSession(
+            connection, originalParentCatalog, originalParentSchema);
     String parentCatalog = contextAware.getDatabase();
     String parentSchema = contextAware.getSchema();
 
@@ -619,7 +632,8 @@ public class MetaDataObjects {
 
     logger.debug("SQL query in getForeignKeys: {}", sqlQuery);
 
-    boolean patternSearch = params.isEnablePatternSearch();
+    // TODO(SNOW-3740735): see getPrimaryKeys - same enablePatternSearch vs isExactSchema mismatch.
+    boolean patternSearch = connection.getParameters().getBool(Parameter.ENABLE_PATTERN_SEARCH);
     // Patterns are only consulted when enablePatternSearch=true; otherwise exact equality is used.
     Pattern compiledSchemaPattern = Wildcard.toRegexPattern(parentSchema, true);
     Pattern compiledParentTablePattern = Wildcard.toRegexPattern(parentTable, true);
@@ -742,6 +756,7 @@ public class MetaDataObjects {
     }
   }
 
+  // Pattern.equals(String) guards were always false (dead code) for all three FK kinds; removed.
   private static boolean foreignKeyPatternMatch(
       ForeignKeyKind kind,
       String parentCatalog,
@@ -821,7 +836,7 @@ public class MetaDataObjects {
   public ResultSet getStreams(
       String originalCatalog, String originalSchemaPattern, String streamName) throws SQLException {
     ContextAwareMetadataSearch contextAware =
-        params.applySessionContext(originalCatalog, originalSchemaPattern);
+        ContextAwareMetadataSearch.fromSession(connection, originalCatalog, originalSchemaPattern);
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
@@ -844,6 +859,7 @@ public class MetaDataObjects {
         row -> {
           String name = row.getString("name");
           String schemaName = row.getString("schema_name");
+          // TODO(SNOW-3740734): why don't we have exact schema matching case here?
           if (matches(compiledStreamNamePattern, name)
               && matches(compiledSchemaPattern, schemaName)) {
             return new Object[] {
@@ -916,15 +932,16 @@ public class MetaDataObjects {
     }
   }
 
-  private MetaDataQueryBuilder queryBuilder() throws SQLException {
-    return new MetaDataQueryBuilder(false, false, params.isEnableWildcardsInShowMetadataCommands());
+  private MetaDataQueryBuilder queryBuilder() {
+    return new MetaDataQueryBuilder(
+        false,
+        false,
+        connection.getParameters().getBool(Parameter.ENABLE_WILDCARDS_IN_SHOW_METADATA_COMMANDS));
   }
 
-  private MetaDataQueryBuilder queryBuilder(ContextAwareMetadataSearch ctx) throws SQLException {
+  private MetaDataQueryBuilder queryBuilder(ContextAwareMetadataSearch ctx) {
     return new MetaDataQueryBuilder(
-        ctx.isExactSchema(),
-        ctx.isUseSessionSchema(),
-        params.isEnableWildcardsInShowMetadataCommands());
+        ctx.isExactSchema(), ctx.isUseSessionSchema(), ctx.isEnableWildcards());
   }
 
   private ResultSet createResultSet(

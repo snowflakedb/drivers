@@ -1,5 +1,6 @@
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::MultipartParams;
 use sf_core::file_manager::types::{
@@ -231,7 +232,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
 
     let result = sf_core::file_manager::download_single_file(
         data,
-        DEFAULT_PUT_GET_MAX_ATTEMPTS,
+        &RetryPolicy::put_get(&ParamStore::new()),
         0,
         &mut None,
     )

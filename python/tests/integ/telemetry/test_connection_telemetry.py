@@ -123,12 +123,18 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     # -> sessionId). The `code.*`, `busy_ns`, `idle_ns`, `thread.id`
     # attributes are auto-populated by `tracing::info_span!` at the FFI
     # entry-point where the per-call wrapper_api_usage span is opened.
+    # The `service.*` / `process.runtime.*` attributes come from the wrapper
+    # identity stamped on the span by `record_wrapper_identity_on_span`.
+    from snowflake.connector.version import __version__ as CONNECTOR_VERSION
+
     expected_exact = {
         "type": "api_call",
         "api_method": "Connection.cursor",
         "snowflake.session.id": 12345,
         "db.system": "snowflake",
         "event_kind": "event",
+        "service.name": "PythonConnector",
+        "service.version": CONNECTOR_VERSION,
     }
     for key, expected in expected_exact.items():
         assert message.get(key) == expected, (
@@ -152,16 +158,91 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
             f"api_call message[{key!r}] expected int, got {type(message.get(key)).__name__}: {message.get(key)!r}"
         )
 
+    # Verify wrapper identity fields are present and non-empty strings.
+    # process.runtime.name and process.runtime.version are runtime-dependent
+    # (Python implementation and version) so we type-check rather than pin.
+    identity_string_attrs = {"process.runtime.name", "process.runtime.version"}
+    for key in identity_string_attrs:
+        assert isinstance(message.get(key), str) and message[key], (
+            f"api_call message[{key!r}] expected non-empty string, got: {message.get(key)!r}. Full message: {message}"
+        )
+
     # `thread.name` is present when the span runs on a named thread (e.g. a
     # tokio worker via the async FFI path) but absent when `block_on` runs on
     # the calling Python thread (sync FFI path). Accept both.
-    expected_keys = set(expected_exact.keys()) | numeric_attrs | {"code.filepath", "code.namespace"}
+    # `process.runtime.compiler` is present when platform.python_compiler()
+    # returns a non-empty string (the common case), absent otherwise.
+    expected_keys = (
+        set(expected_exact.keys()) | numeric_attrs | {"code.filepath", "code.namespace", *identity_string_attrs}
+    )
     if "thread.name" in message:
         assert isinstance(message["thread.name"], str) and message["thread.name"], (
             f"thread.name must be a non-empty string when present, got: {message['thread.name']!r}"
         )
         expected_keys.add("thread.name")
+    if "process.runtime.compiler" in message:
+        compiler = message["process.runtime.compiler"]
+        assert isinstance(compiler, str) and compiler, (
+            f"process.runtime.compiler must be a non-empty string when present, got: {compiler!r}"
+        )
+        expected_keys.add("process.runtime.compiler")
     assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
+
+
+@pytest.mark.skip_reference(reason="api_usage telemetry is universal-driver only")
+def test_api_usage_telemetry_records_constructor_arguments(int_test_connection_factory, wiremock):
+    """Verify that the names of arguments passed to Connection.__init__ appear in api_call telemetry.
+
+    ``Connection.__init__`` is decorated with ``@api_telemetry``, which fires
+    post-call (after __init__ returns) so that _telemetry_client is initialized
+    before the telemetry is sent.  The recorded ``api_arguments`` attribute must
+    contain the names of every keyword argument the caller explicitly supplied —
+    names only, never values.
+    """
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+
+    # The factory passes a fixed set of kwargs to Connection.__init__ via
+    # connector.connect(**params). All of them land in **kwargs on __init__,
+    # so _passed_argument_names expands them to their individual key names.
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after connection open"
+
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    init_entries = [
+        entry
+        for entry in log_entries
+        if entry["message"].get("type") == "api_call" and entry["message"].get("api_method") == "Connection.__init__"
+    ]
+    assert len(init_entries) >= 1, (
+        "Expected at least one api_call telemetry log entry with "
+        f"api_method='Connection.__init__'. Got entries: {log_entries}"
+    )
+
+    message = init_entries[0]["message"]
+
+    # api_arguments is a comma-joined string of argument names; split to check membership.
+    raw_args = message.get("api_arguments", "")
+    assert raw_args, (
+        f"api_call message['api_arguments'] must not be empty for Connection.__init__. Full message: {message}"
+    )
+    recorded_args = set(raw_args.split(","))
+
+    # These kwargs are always supplied by int_test_connection_factory.
+    expected_args = {"account", "user", "database", "schema", "warehouse", "role", "authenticator", "private_key_file"}
+    missing = expected_args - recorded_args
+    assert not missing, (
+        f"Expected constructor argument names {missing!r} to be present in api_arguments "
+        f"{raw_args!r}. Full message: {message}"
+    )
+
+    # Argument values must never appear in telemetry.
+    assert "test_account" not in json.dumps(message), f"argument value leaked into telemetry payload: {message}"
+    assert "test_user" not in json.dumps(message), f"argument value leaked into telemetry payload: {message}"
 
 
 @pytest.mark.skip_reference(reason="api_usage telemetry is universal-driver only")

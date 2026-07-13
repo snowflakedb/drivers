@@ -1,5 +1,4 @@
 using System.Data;
-using Microsoft.Testing.Platform.Extensions.Messages;
 using Xunit;
 #pragma warning disable CS0162 // Unreachable code detected
 
@@ -9,19 +8,19 @@ namespace Snowflake.Data.Tests;
 public sealed class ConnectionTests
 {
     [Fact]
-    public async Task ConnectsWithValidCredentials()
+    public void ConnectsWithValidCredentials()
     {
-        await using var connection = TestConnectionFactory.Create();
-        await connection.OpenAsync(CancellationToken.None);
+        using var connection = TestConnectionFactory.Create();
+        connection.Open();
         Assert.Equal(ConnectionState.Open, connection.State);
     }
 
     [Fact]
-    public async Task CloseTransitionsToClosedState()
+    public void CloseTransitionsToClosedState()
     {
-        await using var connection = TestConnectionFactory.Create();
-        await connection.OpenAsync(CancellationToken.None);
-        await connection.CloseAsync();
+        using var connection = TestConnectionFactory.Create();
+        connection.Open();
+        connection.Close();
         Assert.Equal(ConnectionState.Closed, connection.State);
     }
 }
