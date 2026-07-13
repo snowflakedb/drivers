@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
@@ -18,19 +19,16 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_COUNT on explicit descriptor",
                  "[odbc-api][setdescfield][descriptor]") {
-  SQLHDESC explicit_desc = SQL_NULL_HDESC;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
-  REQUIRE(ret == SQL_SUCCESS);
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
 
-  ret = SQLSetDescField(explicit_desc, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(3), 0);
+  SQLRETURN ret = SQLSetDescField(explicit_desc, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(3), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT count = -1;
   ret = SQLGetDescField(explicit_desc, 0, SQL_DESC_COUNT, &count, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(count == 3);
-
-  SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_ARRAY_SIZE on ARD",
@@ -89,11 +87,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DESC_TYPE on ARD r
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set CONCISE_TYPE sets TYPE implicitly",
                  "[odbc-api][setdescfield][descriptor]") {
-  SQLHDESC explicit_desc = SQL_NULL_HDESC;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
-  REQUIRE(ret == SQL_SUCCESS);
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
 
-  ret = SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
+  SQLRETURN ret =
+      SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT concise = -1, dtype = -1;
@@ -104,14 +102,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set CONCISE_TYPE sets 
   ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_TYPE, &dtype, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(dtype == SQL_INTEGER);
-
-  SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DATA_PTR on ARD triggers consistency check",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
@@ -129,8 +123,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set DATA_PTR on ARD tr
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set NAME on IPD for named parameters",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_NAME, sqlchar("PARAM1"), SQL_NTS);
@@ -145,8 +137,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set NAME on IPD for na
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set UNNAMED to SQL_UNNAMED on IPD",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_NAME, sqlchar("P1"), SQL_NTS);
@@ -205,8 +195,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY091 - Invalid field 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot modify IRD header field",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ird, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(1), 0);
@@ -215,8 +203,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot modify 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot modify IRD record field",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ird, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
@@ -225,8 +211,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot modify 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot set NAME on IRD",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1 AS X"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -246,8 +230,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot set NAM
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - RecNumber 0 on IPD for record field",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 0, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
@@ -264,8 +246,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - Negative RecNu
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY092 - Set UNNAMED to SQL_NAMED on IPD",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_UNNAMED, SQL_NAMED, 0);
@@ -351,8 +331,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set INDICATOR_PTR on A
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Setting non-deferred field unbinds record",
                  "[odbc-api][setdescfield][descriptor]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER col_val = 0;
   SQLLEN ind = 0;
   SQLRETURN ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col_val, 0, &ind);
@@ -375,8 +353,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Setting non-deferred f
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - DESC_COUNT set to negative value",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(-1), 0);
@@ -389,44 +365,308 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - DESC_COUNT set
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY090 - Negative BufferLength for string field",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Under iODBC the DriverManager owns BufferLength validation for the string
+  // descriptor fields and reshapes the call before dispatch (BD#62), in a
+  // libiodbc-version-dependent way: it either rejects the negative BufferLength
+  // itself with S1090, or forwards the call with a nulled value pointer (so the
+  // driver sees HY009, not HY090) / silently accepts it. The outcome is DM- and
+  // version-dependent, not driver-controlled, so skip under iODBC for both
+  // drivers; the HY090 contract stays asserted on unixODBC and Windows.
+  SKIP_IODBC("BD#62 - iODBC DM owns SQLSetDescField string BufferLength validation (both drivers)");
 
   SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_NAME, sqlchar("TEST"), -5);
-  // For the old driver under iODBC, BufferLength validation on
-  //   SQLSetDescField is libiodbc-version-dependent (see BD#62 - iODBC's
-  //   per-driver dispatch paths). Both observed outcomes are valid for
-  //   this BD; we assert each one precisely:
-  //
-  //   (a) The libiodbc DM-side length validator rejects the negative
-  //       BufferLength up-front with SQL_ERROR + a single "S1090" record
-  //       on the descriptor handle ([iODBC][Driver Manager]Invalid string
-  //       or buffer length); the call never reaches the driver.
-  //   (b) The libiodbc DM forwards the call to the old driver, which
-  //       silently accepts the negative BufferLength as SQL_NTS-like and
-  //       returns SQL_SUCCESS with no diagnostic records posted.
-  OLD_IODBC_ONLY("BD#62") {
-    REQUIRE((ret == SQL_ERROR || ret == SQL_SUCCESS));
-    auto records = get_diag_rec(SQL_HANDLE_DESC, ipd);
-    if (ret == SQL_ERROR) {
-      REQUIRE(records.size() == 1);
-      REQUIRE(records[0].sqlState == "S1090");
-    } else {
-      REQUIRE(records.empty());
-    }
-  }
-  else {
-    REQUIRE_EXPECTED_ERROR(ret, "HY090", ipd, SQL_HANDLE_DESC);
-  }
+  REQUIRE_EXPECTED_ERROR(ret, "HY090", ipd, SQL_HANDLE_DESC);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY105 - Invalid parameter type value",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
 
   SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_PARAMETER_TYPE, reinterpret_cast<SQLPOINTER>(9999), 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY105", ipd, SQL_HANDLE_DESC);
+}
+
+// ============================================================================
+// SQLSetDescField - Record Beyond Count Auto-Extends
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Setting record beyond count auto-extends DESC_COUNT",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLSMALLINT count = -1;
+  SQLRETURN ret = SQLGetDescField(explicit_desc, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 0);
+
+  ret = SQLSetDescField(explicit_desc, 5, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLGetDescField(explicit_desc, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 5);
+}
+
+// ============================================================================
+// SQLSetDescField - CONCISE_TYPE Datetime/Interval Mapping
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLSetDescField: CONCISE_TYPE SQL_TYPE_TIMESTAMP sets TYPE and DATETIME_INTERVAL_CODE",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLRETURN ret =
+      SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_TYPE_TIMESTAMP), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_TYPE, &type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(type == SQL_DATETIME);
+
+  SQLSMALLINT code = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_DATETIME_INTERVAL_CODE, &code, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(code == SQL_CODE_TIMESTAMP);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLSetDescField: CONCISE_TYPE SQL_TYPE_DATE sets TYPE and DATETIME_INTERVAL_CODE",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLRETURN ret =
+      SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_TYPE_DATE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_TYPE, &type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(type == SQL_DATETIME);
+
+  SQLSMALLINT code = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_DATETIME_INTERVAL_CODE, &code, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(code == SQL_CODE_DATE);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLSetDescField: CONCISE_TYPE SQL_TYPE_TIME sets TYPE and DATETIME_INTERVAL_CODE",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLRETURN ret =
+      SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_TYPE_TIME), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_TYPE, &type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(type == SQL_DATETIME);
+
+  SQLSMALLINT code = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_DATETIME_INTERVAL_CODE, &code, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(code == SQL_CODE_TIME);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Non-datetime CONCISE_TYPE sets DATETIME_INTERVAL_CODE to 0",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLRETURN ret =
+      SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_TYPE_TIMESTAMP), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetDescField(explicit_desc, 1, SQL_DESC_CONCISE_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_TYPE, &type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(type == SQL_INTEGER);
+
+  SQLSMALLINT code = -1;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_DATETIME_INTERVAL_CODE, &code, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(code == 0);
+}
+
+// ============================================================================
+// SQLSetDescField - OCTET_LENGTH and LENGTH Fields
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set OCTET_LENGTH on ARD record",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  SQLRETURN ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_CHAR), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, reinterpret_cast<SQLPOINTER>(256), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN octet_len = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, &octet_len, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(octet_len == 256);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set LENGTH on explicit descriptor",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLRETURN ret = SQLSetDescField(explicit_desc, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_CHAR), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetDescField(explicit_desc, 1, SQL_DESC_LENGTH, reinterpret_cast<SQLPOINTER>(100), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLULEN length = 0;
+  ret = SQLGetDescField(explicit_desc, 1, SQL_DESC_LENGTH, &length, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(length == 100);
+}
+
+// ============================================================================
+// SQLSetDescField - PRECISION and SCALE Fields
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set PRECISION on IPD",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+
+  SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_DECIMAL), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetDescField(ipd, 1, SQL_DESC_PRECISION, reinterpret_cast<SQLPOINTER>(18), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT precision = -1;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_PRECISION, &precision, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(precision == 18);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set SCALE on IPD", "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+
+  SQLRETURN ret = SQLSetDescField(ipd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_DECIMAL), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetDescField(ipd, 1, SQL_DESC_SCALE, reinterpret_cast<SQLPOINTER>(4), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT scale = -1;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_SCALE, &scale, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(scale == 4);
+}
+
+// ============================================================================
+// SQLSetDescField - BIND_OFFSET_PTR Header Field
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set BIND_OFFSET_PTR on ARD",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  SQLULEN offset = 0;
+  SQLRETURN ret = SQLSetDescField(ard, 0, SQL_DESC_BIND_OFFSET_PTR, &offset, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLPOINTER ptr = nullptr;
+  ret = SQLGetDescField(ard, 0, SQL_DESC_BIND_OFFSET_PTR, &ptr, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(ptr == &offset);
+}
+
+// ============================================================================
+// SQLSetDescField - OCTET_LENGTH_PTR on ARD
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set OCTET_LENGTH_PTR on ARD",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  SQLRETURN ret = SQLSetDescField(ard, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_CHAR), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN olen = 0;
+  ret = SQLSetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &olen, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLPOINTER ptr = nullptr;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &ptr, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(ptr == &olen);
+}
+
+// ============================================================================
+// SQLSetDescField - BIND_TYPE Header Field
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set BIND_TYPE on ARD",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  SQLRETURN ret = SQLSetDescField(ard, 0, SQL_DESC_BIND_TYPE, reinterpret_cast<SQLPOINTER>(64), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLULEN bind_type = 0;
+  ret = SQLGetDescField(ard, 0, SQL_DESC_BIND_TYPE, &bind_type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(bind_type == 64);
+}
+
+// ============================================================================
+// SQLSetDescField - DESC_COUNT Increasing Behavior
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Increasing DESC_COUNT allocates new records",
+                 "[odbc-api][setdescfield][descriptor]") {
+  HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);
+  const SQLHDESC explicit_desc = explicit_desc_guard.getHandle();
+
+  SQLRETURN ret = SQLSetDescField(explicit_desc, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(5), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT count = -1;
+  ret = SQLGetDescField(explicit_desc, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 5);
+
+  ret = SQLSetDescField(explicit_desc, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(10), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLGetDescField(explicit_desc, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 10);
+}
+
+// ============================================================================
+// SQLSetDescField - ARRAY_STATUS_PTR on APD
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: ARRAY_STATUS_PTR on APD",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+
+  SQLUSMALLINT status_arr[5] = {};
+  SQLRETURN ret = SQLSetDescField(apd, 0, SQL_DESC_ARRAY_STATUS_PTR, status_arr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLPOINTER ptr = nullptr;
+  ret = SQLGetDescField(apd, 0, SQL_DESC_ARRAY_STATUS_PTR, &ptr, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(ptr == status_arr);
 }

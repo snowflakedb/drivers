@@ -27,7 +27,7 @@ class ObjectsByDescribe {
   private final Statement stmt;
   private final String sqlQuery;
 
-  // TODO(SNOW-3695645): consider replacing that with a streaming approach
+  // TODO(SNOW-3740740): consider replacing that with a streaming approach
   //  getProcedureColumns is intrinsically 1:N: each SHOW PROCEDURES row expands into one output
   //  row per parameter/result column. The streaming RowConverter path is 1:1, so we materialize
   //  eagerly here (like in the snowflake--jdbc).
@@ -42,7 +42,7 @@ class ObjectsByDescribe {
       return new Object[0][];
     }
     while (rs.next()) {
-      // Divergence from snowflake-jdbc: null-guard getString() before .trim() to avoid NPE
+      // null-guard getString() before .trim() to avoid NPE on null arguments/description
       String procedureNameUnparsed = Objects.toString(rs.getString("arguments"), "").trim();
       String procedureNameNoArgs = rs.getString("name");
       String schemaName = rs.getString("schema_name");
@@ -51,7 +51,7 @@ class ObjectsByDescribe {
 
       if (!MatchingUtils.matches(compiledProcedurePattern, procedureNameNoArgs)
           || (!MatchingUtils.matches(compiledSchemaPattern, schemaName)
-              // TODO(SNOW-3695645): why this is the only place where we do this un-escaping
+              // TODO(SNOW-3740742): why this is the only place where we do this un-escaping
               && !(schemaName.startsWith("\"")
                   && schemaName.endsWith("\"")
                   && compiledSchemaPattern
@@ -98,8 +98,8 @@ class ObjectsByDescribe {
           if (type < 10) {
             nextRow[7] = 38;
             nextRow[9] = (short) 0;
-            // Divergence from snowflake-jdbc: handle comma-less types like CHAR(n) that
-            // have precision but no scale, instead of unconditionally splitting on ','
+            // handle comma-less types like CHAR(n) that have precision but no scale,
+            // instead of unconditionally splitting on ','
             if (typeName.contains("(") && typeName.contains(")")) {
               int commaIdx = typeName.indexOf(',');
               if (commaIdx >= 0) {
@@ -167,7 +167,7 @@ class ObjectsByDescribe {
     return rows.toArray(new Object[0][]);
   }
 
-  // TODO(SNOW-3695645): consider replacing that with a streaming approach
+  // TODO(SNOW-3740741): consider replacing that with a streaming approach
   //  getFunctionColumns is intrinsically 1:N: each SHOW FUNCTIONS row expands into one output row
   //  per parameter/result column. The streaming RowConverter path is 1:1, so we materialize
   //  eagerly here (like in the snowflake--jdbc).
@@ -180,14 +180,14 @@ class ObjectsByDescribe {
       return new Object[0][];
     }
     while (rs.next()) {
-      // Divergence from snowflake-jdbc: null-guard getString() before .trim() to avoid NPE
+      // null-guard getString() before .trim() to avoid NPE on null arguments/description
       String functionNameUnparsed = Objects.toString(rs.getString("arguments"), "").trim();
       String functionNameNoArgs = rs.getString("name");
       String schemaName = rs.getString("schema_name");
       String catalogName = rs.getString("catalog_name");
       String remarks = Objects.toString(rs.getString("description"), "").trim();
 
-      // TODO(SNOW-3695645): why don't we filter by functionNamePattern like in getProcedureColumns
+      // TODO(SNOW-3740741): why don't we filter by functionNamePattern like in getProcedureColumns
 
       ParsedParams params =
           describeAndParseParams(catalogName, schemaName, functionNameUnparsed, "function");
@@ -201,8 +201,8 @@ class ObjectsByDescribe {
             || isPatternMatchingAll(columnNamePattern)) {
           Object[] nextRow = new Object[17];
           nextRow[0] = catalog;
-          // Divergence from snowflake-jdbc: legacy used schemaPattern here (pre-existing bug),
-          // we use the actual schema from the SHOW result row
+          // BD#20: legacy used schemaPattern here (pre-existing bug); we use the actual schema
+          // from the SHOW result row
           nextRow[1] = schemaName;
           nextRow[2] = functionNameNoArgs;
           nextRow[3] = params.names[i];
@@ -216,14 +216,14 @@ class ObjectsByDescribe {
           String typeName = params.types[i];
           int type = convertStringToType(typeName);
           nextRow[5] = type;
-          // TODO(SNOW-3695645): why isn't typeName trimmed like for getProcedureColumns?
+          // TODO(SNOW-3740741): why isn't typeName trimmed like for getProcedureColumns?
           nextRow[6] = typeName;
           if (type < 10) {
             nextRow[7] = 38;
             nextRow[9] = (short) 0;
             if (typeName.contains("(") && typeName.contains(")")) {
-              // Divergence from snowflake-jdbc: handle comma-less types like CHAR(n) that
-              // have precision but no scale, instead of unconditionally splitting on ','
+              // handle comma-less types like CHAR(n) that have precision but no scale,
+              // instead of unconditionally splitting on ','
               int commaIdx = typeName.indexOf(',');
               if (commaIdx >= 0) {
                 nextRow[7] =
@@ -236,7 +236,7 @@ class ObjectsByDescribe {
                         typeName.substring(typeName.indexOf('(') + 1, typeName.indexOf(')')));
               }
             } else if (type == Types.FLOAT) {
-              // TODO(SNOW-3695645): this branch is not present in getProcedureColumns
+              // TODO(SNOW-3740741): this branch is not present in getProcedureColumns
               nextRow[7] = 0;
               nextRow[9] = null;
             }
@@ -246,6 +246,8 @@ class ObjectsByDescribe {
           }
           nextRow[8] = 0;
           nextRow[10] = 10;
+          // TODO(SNOW-3740741): unlike getProcedureColumns, never checks typeName for "NOT NULL",
+          //  so NUMBER NOT NULL return values still report functionNullableUnknown.
           nextRow[11] = DatabaseMetaData.functionNullableUnknown;
           nextRow[12] = remarks;
           if (type == Types.BINARY
@@ -344,8 +346,8 @@ class ObjectsByDescribe {
   private static ParsedParams parseColumns(String retType, String args) {
     List<String> columns = new ArrayList<>();
     int resultsetColumnNum = -1;
-    // Divergence from snowflake-jdbc: use regionMatches instead of substring(0,5) to avoid
-    // StringIndexOutOfBoundsException on short return types like DATE, TIME, REAL
+    // use regionMatches instead of substring(0,5) to avoid StringIndexOutOfBoundsException
+    // on short return types like DATE, TIME, REAL
     if (retType.regionMatches(true, 0, "table", 0, 5)) {
       String typeStr = retType.substring(retType.indexOf('(') + 1, retType.lastIndexOf(')'));
       String[] types = typeStr.split("\\s+|, ");
@@ -383,6 +385,8 @@ class ObjectsByDescribe {
         unparsedName.substring(unparsedName.indexOf("("), unparsedName.indexOf(" RETURN"));
     String quotedName = "\"" + unparsedName.substring(0, unparsedName.indexOf("(")) + "\"";
     String qualifiedName = quotedName + paramSignature;
+    // TODO(SNOW-3740743): catalog/schema are unquoted here, unlike MetaDataQueryBuilder commands.
+    //  Mixed-case or special-character names can make this DESC fail or reference the wrong object.
     if (!isNullOrEmpty(catalog) && !isNullOrEmpty(schema)) {
       return "desc " + routineType + " " + catalog + "." + schema + "." + qualifiedName;
     } else if (!isNullOrEmpty(schema)) {

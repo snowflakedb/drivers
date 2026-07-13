@@ -6,6 +6,7 @@ use sf_core::config::param_names;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::path_resolver::ConfigPaths;
 use sf_core::config::resolver;
+use sf_core::config::toml_loader::FilePermissionCheck;
 use std::fs;
 use tempfile::TempDir;
 
@@ -249,7 +250,7 @@ account = "myaccount"
     );
 
     // When sf_core loads the log section
-    let result = load_config_section_with_paths("log", &paths);
+    let result = load_config_section_with_paths("log", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
 
     // Then The log settings should be returned
@@ -286,7 +287,8 @@ account = "myaccount"
     );
 
     // When sf_core loads all config sections
-    let merged = load_all_config_merged_toml_with_paths(&paths).unwrap();
+    let merged =
+        load_all_config_merged_toml_with_paths(&paths, FilePermissionCheck::Enabled).unwrap();
     let sections = merged.as_table().expect("root must be a table");
 
     // Then all sections should be returned, with nesting preserved, and
@@ -333,7 +335,7 @@ file = "connections_log.txt"
     );
 
     // When sf_core loads the log config section
-    let result = load_config_section_with_paths("log", &paths);
+    let result = load_config_section_with_paths("log", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
 
     // Then The config.toml log values should be used
@@ -369,7 +371,8 @@ level = "info"
     );
 
     // When sf_core loads a nonexistent section
-    let result = load_config_section_with_paths("nonexistent_section", &paths);
+    let result =
+        load_config_section_with_paths("nonexistent_section", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
 
     // Then None should be returned
@@ -392,7 +395,8 @@ account = "myaccount"
     );
 
     // When sf_core loads section connections
-    let result = load_config_section_with_paths("connections", &paths);
+    let result =
+        load_config_section_with_paths("connections", &paths, FilePermissionCheck::Enabled);
 
     // Then None should be returned
     assert!(result.is_ok());
@@ -423,7 +427,8 @@ max_size = 10485760
     );
 
     // When sf_core loads a nested section by dotted path
-    let result = load_config_section_with_paths("database.connection", &paths);
+    let result =
+        load_config_section_with_paths("database.connection", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
     let section = result.unwrap();
     assert!(section.is_some());
@@ -434,7 +439,8 @@ max_size = 10485760
     assert!(matches!(settings.get("max_retries"), Some(Setting::Int(5))));
 
     // Also verify other nested sections
-    let result = load_config_section_with_paths("database.pool", &paths);
+    let result =
+        load_config_section_with_paths("database.pool", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
     let section = result.unwrap();
     assert!(section.is_some());
@@ -442,7 +448,8 @@ max_size = 10485760
     let settings = section.unwrap();
     assert!(matches!(settings.get("max_size"), Some(Setting::Int(20))));
 
-    let result = load_config_section_with_paths("app.logging.file", &paths);
+    let result =
+        load_config_section_with_paths("app.logging.file", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
     let section = result.unwrap();
     assert!(section.is_some());
@@ -473,13 +480,15 @@ account = "prod_account"
     );
 
     // When sf_core loads section connections.dev
-    let result = load_config_section_with_paths("connections.dev", &paths);
+    let result =
+        load_config_section_with_paths("connections.dev", &paths, FilePermissionCheck::Enabled);
 
     // Then None should be returned
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
-    let result = load_config_section_with_paths("connections.prod", &paths);
+    let result =
+        load_config_section_with_paths("connections.prod", &paths, FilePermissionCheck::Enabled);
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 }
@@ -499,13 +508,18 @@ timeout = 30
     );
 
     // When sf_core loads section database.pool
-    let result = load_config_section_with_paths("database.pool", &paths);
+    let result =
+        load_config_section_with_paths("database.pool", &paths, FilePermissionCheck::Enabled);
 
     // Then None should be returned
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
-    let result = load_config_section_with_paths("database.connection.invalid", &paths);
+    let result = load_config_section_with_paths(
+        "database.connection.invalid",
+        &paths,
+        FilePermissionCheck::Enabled,
+    );
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 }

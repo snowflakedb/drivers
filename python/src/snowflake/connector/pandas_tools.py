@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from ._internal.decorators import snowpark_compat
+from ._internal.decorators import api_telemetry, snowpark_compat
 from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy
 from ._internal.write_pandas_operation import (
@@ -76,6 +76,7 @@ def _reject_kwargs(*names: str) -> Callable[[F], F]:
 
 
 @requires_dependency(pandas)
+@api_telemetry
 def write_pandas(
     conn: Connection,
     df: DataFrame,

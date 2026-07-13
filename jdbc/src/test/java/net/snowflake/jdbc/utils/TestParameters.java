@@ -72,6 +72,15 @@ public class TestParameters {
     return result;
   }
 
+  /** Builds a {@link Properties} from alternating key/value arguments. */
+  public static Properties props(String... keyValues) {
+    Properties p = new Properties();
+    for (int i = 0; i < keyValues.length; i += 2) {
+      p.setProperty(keyValues[i], keyValues[i + 1]);
+    }
+    return p;
+  }
+
   /**
    * Loads the base connection properties that are independent of authentication: {@code account},
    * {@code host}, {@code role}, {@code schema}, {@code db}, {@code warehouse}, and the optional

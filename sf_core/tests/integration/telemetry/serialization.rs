@@ -156,6 +156,86 @@ fn span_with_multiple_events_produces_multiple_entries() {
 }
 
 #[test]
+fn api_call_event_inherits_wrapper_identity_from_span() {
+    use opentelemetry::trace::Event;
+
+    let mut span = make_span(
+        "wrapper_api_usage",
+        vec![
+            KeyValue::new("snowflake.session.id", 99i64),
+            KeyValue::new("service.name", "snowflake-connector-python"),
+            KeyValue::new("service.version", "3.5.0"),
+            KeyValue::new("process.runtime.name", "CPython"),
+            KeyValue::new("process.runtime.version", "3.12.1"),
+            KeyValue::new("process.runtime.compiler", "GCC 13.2.0"),
+        ],
+    );
+    let mut events = opentelemetry_sdk::trace::SpanEvents::default();
+    events.events.push(Event::new(
+        "api_call",
+        UNIX_EPOCH + Duration::from_millis(1700000000100),
+        vec![KeyValue::new("api_method", "SnowflakeCursor.execute")],
+        0,
+    ));
+    span.events = events;
+
+    let payload = spans_to_snowflake_payload(&[span]);
+    let logs = payload["logs"].as_array().unwrap();
+
+    assert_eq!(logs.len(), 1);
+    let msg = &logs[0]["message"];
+    assert_eq!(msg["type"], "api_call");
+    assert_eq!(msg["api_method"], "SnowflakeCursor.execute");
+    assert_eq!(msg["snowflake.session.id"], 99);
+    assert_eq!(msg["service.name"], "snowflake-connector-python");
+    assert_eq!(msg["service.version"], "3.5.0");
+    assert_eq!(msg["process.runtime.name"], "CPython");
+    assert_eq!(msg["process.runtime.version"], "3.12.1");
+    assert_eq!(msg["process.runtime.compiler"], "GCC 13.2.0");
+}
+
+#[test]
+fn exception_event_inherits_wrapper_identity_from_span() {
+    use opentelemetry::trace::Event;
+
+    let mut span = make_span(
+        "wrapper_error",
+        vec![
+            KeyValue::new("snowflake.session.id", 42i64),
+            KeyValue::new("service.name", "snowflake-connector-python"),
+            KeyValue::new("service.version", "3.5.0"),
+            KeyValue::new("process.runtime.name", "CPython"),
+            KeyValue::new("process.runtime.version", "3.12.1"),
+        ],
+    );
+    let mut events = opentelemetry_sdk::trace::SpanEvents::default();
+    events.events.push(Event::new(
+        "exception",
+        UNIX_EPOCH + Duration::from_millis(1700000000200),
+        vec![
+            KeyValue::new("exception.type", "ProgrammingError"),
+            KeyValue::new("exception.source", "wrapper"),
+        ],
+        0,
+    ));
+    span.events = events;
+
+    let payload = spans_to_snowflake_payload(&[span]);
+    let logs = payload["logs"].as_array().unwrap();
+
+    assert_eq!(logs.len(), 1);
+    let msg = &logs[0]["message"];
+    assert_eq!(msg["type"], "exception");
+    assert_eq!(msg["exception.type"], "ProgrammingError");
+    assert_eq!(msg["exception.source"], "wrapper");
+    assert_eq!(msg["snowflake.session.id"], 42);
+    assert_eq!(msg["service.name"], "snowflake-connector-python");
+    assert_eq!(msg["service.version"], "3.5.0");
+    assert_eq!(msg["process.runtime.name"], "CPython");
+    assert_eq!(msg["process.runtime.version"], "3.12.1");
+}
+
+#[test]
 fn api_call_event_serializes_passed_arguments() {
     use opentelemetry::trace::Event;
 

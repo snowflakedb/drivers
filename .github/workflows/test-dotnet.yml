@@ -73,13 +73,15 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      # TODO: e2e tests skipped for now — new driver stubs always fail.
-      # Uncomment once implementation is underway.
-      # - name: Run tests (new driver)
-      #   run: dotnet test --no-build --filter "Category=E2E"
-      #   working-directory: dotnet
-      #   env:
-      #     PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+      - name: Build Rust components
+        run: cargo build --package sf_core
+
+      - name: Run tests (new driver)
+        run: dotnet run --no-build
+        working-directory: dotnet/tests/Snowflake.Data.Tests
+        env:
+           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so # TODO test-matrix support will need this hardcoded extension changed
 
       - name: Check formatting
         run: dotnet format Snowflake.Data.sln --verify-no-changes

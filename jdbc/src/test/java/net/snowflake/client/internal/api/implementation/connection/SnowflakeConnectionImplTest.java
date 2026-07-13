@@ -1,8 +1,10 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
+import static net.snowflake.jdbc.utils.TestParameters.props;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,10 +25,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.SQLWarning;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
@@ -209,6 +213,19 @@ class SnowflakeConnectionImplTest {
     }
 
     @Test
+    void shouldCloseConnectionWhenAborted() throws Exception {
+      Connection conn = createConnection();
+      assertFalse(conn.isClosed());
+
+      conn.abort(null);
+
+      assertTrue(conn.isClosed());
+      verify(mockCoreApi).connectionClose(any());
+      verify(mockCoreApi).connectionRelease(any());
+      verify(mockCoreApi).databaseRelease(any());
+    }
+
+    @Test
     void manuallyClosedStatementIsNotDoubleClosedOnConnectionClose() throws Exception {
       StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
       when(mockCoreApi.statementNew(any()))
@@ -338,6 +355,8 @@ class SnowflakeConnectionImplTest {
           .thenReturn(ConnectionUseDatabaseResponse.getDefaultInstance());
       when(mockCoreApi.connectionGetInfo(any()))
           .thenReturn(
+              // First read happens at connect time (login-parity warning check).
+              ConnectionGetInfoResponse.newBuilder().setDatabase("TEST_DB").build(),
               ConnectionGetInfoResponse.newBuilder().setDatabase("TEST_DB").build(),
               ConnectionGetInfoResponse.newBuilder().setDatabase("SECOND_DB").build());
 
@@ -579,6 +598,8 @@ class SnowflakeConnectionImplTest {
           .thenReturn(ConnectionUseSchemaResponse.getDefaultInstance());
       when(mockCoreApi.connectionGetInfo(any()))
           .thenReturn(
+              // First read happens at connect time (login-parity warning check).
+              ConnectionGetInfoResponse.newBuilder().setSchema("TEST_SCHEMA").build(),
               ConnectionGetInfoResponse.newBuilder().setSchema("TEST_SCHEMA").build(),
               ConnectionGetInfoResponse.newBuilder().setSchema("SECOND_SCHEMA").build());
 
@@ -943,6 +964,82 @@ class SnowflakeConnectionImplTest {
                         ResultSet.HOLD_CURSORS_OVER_COMMIT));
         assertEquals("0A000", ex.getSQLState());
         assertEquals(200035, ex.getErrorCode());
+      }
+    }
+  }
+
+  @Nested
+  class Warnings {
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = stubConnectionMock();
+    }
+
+    private Connection openConnectionRequesting(
+        Properties requested, ConnectionGetInfoResponse info) throws SQLException {
+      when(mockCoreApi.connectionGetInfo(any())).thenReturn(info);
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", MOCK_PASSWORD);
+      props.putAll(requested);
+      return new SnowflakeConnectionImpl(
+          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    }
+
+    @Test
+    void shouldExposeLoginMismatchWarningComputedAtConnect() throws Exception {
+      try (Connection conn =
+          openConnectionRequesting(
+              props("database", "REQ_DB"),
+              ConnectionGetInfoResponse.newBuilder().setDatabase("SERVER_DB").build())) {
+        SQLWarning warning = conn.getWarnings();
+        assertNotNull(warning);
+        assertEquals(
+            ErrorCode.CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP.getMessageCode(),
+            warning.getErrorCode());
+      }
+    }
+
+    @Test
+    void shouldReturnNullGetWarningsWhenNoPropertiesRequested() throws Exception {
+      try (Connection conn =
+          openConnectionRequesting(
+              props(), ConnectionGetInfoResponse.newBuilder().setDatabase("SERVER_DB").build())) {
+        assertNull(conn.getWarnings());
+      }
+    }
+
+    @Test
+    void shouldReturnNullAfterClearWarnings() throws Exception {
+      try (Connection conn =
+          openConnectionRequesting(
+              props("database", "REQ_DB"),
+              ConnectionGetInfoResponse.newBuilder().setDatabase("SERVER_DB").build())) {
+        assertNotNull(conn.getWarnings());
+        conn.clearWarnings();
+        assertNull(conn.getWarnings());
+      }
+    }
+
+    @Test
+    void shouldThrowOnGetWarningsAfterClose() throws Exception {
+      try (Connection conn =
+          openConnectionRequesting(props(), ConnectionGetInfoResponse.getDefaultInstance())) {
+        conn.close();
+        assertThrows(SQLException.class, conn::getWarnings);
+      }
+    }
+
+    @Test
+    void shouldThrowOnClearWarningsAfterClose() throws Exception {
+      try (Connection conn =
+          openConnectionRequesting(props(), ConnectionGetInfoResponse.getDefaultInstance())) {
+        conn.close();
+        assertThrows(SQLException.class, conn::clearWarnings);
       }
     }
   }

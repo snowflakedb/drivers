@@ -4,7 +4,7 @@ use super::types::{
     MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
     UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
-use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
+use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::refresh::{Refresher, execute_with_refresh};
 use crate::sensitive::SensitiveString;
@@ -667,25 +667,13 @@ async fn upload_to_gcs(
 /// presigned URL — blind retry against the same dead URL would just burn the
 /// retry budget. The legacy no-refresher path keeps 400 retryable to preserve
 /// today's behavior for callers that don't pass a refresher.
-pub(crate) fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> RetryPolicy {
-    let mut extra = vec![403];
+pub(crate) fn gcs_retry_policy(using_presigned_url: bool, base: &RetryPolicy) -> RetryPolicy {
+    let mut policy = base.clone();
+    policy.extra_retryable_statuses.insert(403);
     if using_presigned_url {
-        extra.push(400);
+        policy.extra_retryable_statuses.insert(400);
     }
-    RetryPolicy {
-        max_attempts,
-        backoff: BackoffConfig {
-            base: Duration::from_secs(1),
-            factor: 2.0,
-            cap: Duration::from_secs(16),
-            jitter: Jitter::None,
-        },
-        // Must exceed REQUEST_TIMEOUT_SECS (300s) to allow at least one full
-        // request + retries. 600s accommodates ~2 full-timeout attempts plus backoff.
-        max_elapsed: Duration::from_secs(600),
-        extra_retryable_statuses: extra,
-        ..RetryPolicy::default()
-    }
+    policy
 }
 
 /// Returns a clone of `policy` with HTTP 400 removed from the retryable set.
@@ -695,7 +683,7 @@ pub(crate) fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> 
 /// must not also fire.
 fn without_400(policy: &RetryPolicy) -> RetryPolicy {
     let mut p = policy.clone();
-    p.extra_retryable_statuses.retain(|&s| s != 400);
+    p.extra_retryable_statuses.remove(&400);
     p
 }
 
@@ -1417,9 +1405,15 @@ pub enum GcsDownloadError {
 mod tests {
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+    use crate::config::retry::Jitter;
     use crate::file_manager::types::{RefreshFuture, StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
+
+    fn base_policy() -> RetryPolicy {
+        use crate::config::param_store::ParamStore;
+        RetryPolicy::put_get(&ParamStore::new())
+    }
 
     // Zero-backoff test policy lives in `file_manager::internal` so the in-crate
     // and external integration tests share one definition that derives from the
@@ -1687,7 +1681,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_403() {
-        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let policy = gcs_retry_policy(false, &base_policy());
         assert!(
             policy.extra_retryable_statuses.contains(&403),
             "403 should be retryable for GCS (matches JDBC/ODBC)"
@@ -1696,7 +1690,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_400_for_presigned_urls() {
-        let policy = gcs_retry_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let policy = gcs_retry_policy(true, &base_policy());
         assert!(
             policy.extra_retryable_statuses.contains(&400),
             "400 should be retryable when using presigned URLs"
@@ -1705,10 +1699,35 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_excludes_400_without_presigned_urls() {
-        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let policy = gcs_retry_policy(false, &base_policy());
         assert!(
             !policy.extra_retryable_statuses.contains(&400),
             "400 should not be retryable without presigned URLs"
+        );
+    }
+
+    #[test]
+    fn gcs_retry_policy_preserves_user_configured_status_codes() {
+        use crate::config::param_registry::param_names;
+        use crate::config::param_store::ParamStore;
+        use crate::config::settings::Setting;
+
+        // A user-configured extra status code (via `retry_extra_status_codes`)
+        // must survive the GCS-specific additions rather than being replaced.
+        let mut params = ParamStore::new();
+        params.insert(
+            param_names::RETRY_EXTRA_STATUS_CODES.as_str().to_string(),
+            Setting::String("404".to_string()),
+        );
+        let policy = gcs_retry_policy(true, &RetryPolicy::put_get(&params));
+
+        assert!(
+            policy.extra_retryable_statuses.contains(&404),
+            "user-configured 404 should survive GCS policy construction"
+        );
+        assert!(
+            policy.extra_retryable_statuses.contains(&403),
+            "GCS should still add 403 on top of user-configured codes"
         );
     }
 
@@ -1746,7 +1765,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        let policy = gcs_retry_policy(false, &base_policy());
         assert_eq!(
             policy.max_elapsed,
             Duration::from_secs(600),
@@ -1760,25 +1779,25 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_max_attempts() {
-        assert_eq!(gcs_retry_policy(false, 25).max_attempts, 25);
-        assert_eq!(gcs_retry_policy(false, 1).max_attempts, 1);
+        let mut base = base_policy();
+        base.max_attempts = 25;
+        assert_eq!(gcs_retry_policy(false, &base).max_attempts, 25);
+        base.max_attempts = 1;
+        assert_eq!(gcs_retry_policy(false, &base).max_attempts, 1);
     }
 
     #[test]
     fn gcs_retry_policy_backoff_bounds() {
-        // Pins the real production backoff so the zero-backoff test variant
-        // (`internal::gcs_test_retry_policy`) can't silently match the
-        // production shape — proving `gcs_retry_policy` is honest.
-        let p = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
-        assert_eq!(p.backoff.base, Duration::from_secs(1));
+        let p = gcs_retry_policy(false, &base_policy());
+        assert_eq!(p.backoff.base, Duration::from_millis(250));
         assert_eq!(p.backoff.cap, Duration::from_secs(16));
         assert_eq!(p.backoff.factor, 2.0);
-        assert!(matches!(p.backoff.jitter, Jitter::None));
+        assert!(matches!(p.backoff.jitter, Jitter::Decorrelated));
     }
 
     #[test]
     fn without_400_drops_400_and_keeps_403() {
-        let p = without_400(&gcs_retry_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS));
+        let p = without_400(&gcs_retry_policy(true, &base_policy()));
         assert!(!p.extra_retryable_statuses.contains(&400));
         assert!(p.extra_retryable_statuses.contains(&403));
     }
