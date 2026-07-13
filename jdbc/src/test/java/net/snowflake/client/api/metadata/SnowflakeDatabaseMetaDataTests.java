@@ -1,5 +1,7 @@
 package net.snowflake.client.api.metadata;
 
+import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
+import static net.snowflake.jdbc.utils.DriverCompatibility.isOldDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -2185,6 +2187,80 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
             }
           } finally {
             stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT, VARCHAR)");
+          }
+        }
+      }
+    }
+
+    /**
+     * BD#19: the universal driver resolves null catalog/schema to the session context in result
+     * rows; legacy snowflake-jdbc echoed the raw null params (null FUNCTION_CAT / FUNCTION_SCHEM).
+     */
+    @Test
+    void shouldResolveSessionCatalogAndSchemaInGetFunctionColumnsWhenParamsAreNull()
+        throws Exception {
+      try (Connection conn = openConnection("CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "true")) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String funcName = "BD_FUNC_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "CREATE OR REPLACE FUNCTION "
+                  + funcName
+                  + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
+          try {
+            try (ResultSet rs = metaData.getFunctionColumns(null, null, funcName, "%")) {
+              assertTrue(rs.next());
+              if (isNewDriver()) {
+                assertEquals(currentDatabase, rs.getString("FUNCTION_CAT"));
+                assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+              }
+              if (isOldDriver()) {
+                assertNull(rs.getString("FUNCTION_CAT"));
+                assertNull(rs.getString("FUNCTION_SCHEM"));
+              }
+            }
+          } finally {
+            stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT)");
+          }
+        }
+      }
+    }
+
+    /**
+     * BD#20: the universal driver populates FUNCTION_SCHEM from the SHOW FUNCTIONS row; legacy
+     * snowflake-jdbc echoed the input schemaPattern (e.g. "%") into every result row.
+     */
+    @Test
+    void shouldReturnActualSchemaInGetFunctionColumnsWhenSchemaPatternIsWildcard()
+        throws Exception {
+      try (Connection conn = openConnection()) {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String currentDatabase = conn.getCatalog();
+        String currentSchema = conn.getSchema();
+
+        String suffix = UUID.randomUUID().toString().replace("-", "").toUpperCase();
+        String funcName = "BD_FUNC_" + suffix;
+        try (Statement stmt = conn.createStatement()) {
+          stmt.execute(
+              "CREATE OR REPLACE FUNCTION "
+                  + funcName
+                  + "(N FLOAT) RETURNS VARCHAR LANGUAGE JAVASCRIPT AS 'return N.toString();'");
+          try {
+            try (ResultSet rs = metaData.getFunctionColumns(currentDatabase, "%", funcName, "%")) {
+              assertTrue(rs.next());
+              if (isNewDriver()) {
+                assertEquals(currentSchema, rs.getString("FUNCTION_SCHEM"));
+              }
+              if (isOldDriver()) {
+                assertEquals("%", rs.getString("FUNCTION_SCHEM"));
+              }
+            }
+          } finally {
+            stmt.execute("DROP FUNCTION IF EXISTS " + funcName + "(FLOAT)");
           }
         }
       }

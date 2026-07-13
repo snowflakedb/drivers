@@ -6,17 +6,21 @@
 //! `Arguments`, and no padding machinery, and are unit-proven byte-identical
 //! to the `{:0N}` specs they replace.
 
+/// Number of decimal digits in `mag` (1 for `0`).
+#[inline]
+fn digit_count(mag: u32) -> usize {
+    if mag == 0 {
+        1
+    } else {
+        mag.ilog10() as usize + 1
+    }
+}
+
 /// Number of bytes [`put_year`] will write for `year` — an optional `-` plus
 /// the magnitude zero-padded to at least 4 digits (matching `"{:04}"`).
 #[inline]
 pub(crate) fn year_width(year: i32) -> usize {
-    let mag = year.unsigned_abs();
-    let digits = if mag == 0 {
-        1
-    } else {
-        mag.ilog10() as usize + 1
-    };
-    (digits + (year < 0) as usize).max(4)
+    (digit_count(year.unsigned_abs()) + (year < 0) as usize).max(4)
 }
 
 /// Write `value` as exactly `width` zero-padded ASCII decimal digits into
@@ -59,9 +63,73 @@ pub(crate) fn put_year(buf: &mut [u8], pos: usize, year: i32) -> usize {
     end
 }
 
+/// Write the decimal digits of `value` right-aligned into `buf`, returning the
+/// written slice (no leading zeros; `"0"` for zero). `buf` must hold at least
+/// 39 bytes (the width of `u128::MAX`).
+///
+/// A `u64` fast path avoids 128-bit division for the common case where the
+/// magnitude fits in 64 bits (e.g. every realistic NUMBER mantissa). Output is
+/// byte-identical to `core::fmt`'s `Display`, but without the `Formatter`
+/// overhead that dominated `number.rs::format_decimal_into`.
+#[inline]
+pub(crate) fn uint_digits(value: u128, buf: &mut [u8]) -> &[u8] {
+    // u128::MAX is 39 digits; a shorter buffer would underflow `i` below.
+    debug_assert!(buf.len() >= 39, "uint_digits buffer must hold >= 39 bytes");
+    let mut i = buf.len();
+    // 128-bit `/` and `%` lower to a `__udivti3` / `__umodti3` libcall on
+    // targets without native 128-bit division (i.e. all of ours), several
+    // times slower than a native 64-bit divide. Snowflake NUMBER mantissas
+    // overwhelmingly fit in u64, so peel that case off to the 64-bit loop and
+    // only pay the 128-bit cost for genuinely large values.
+    if let Ok(mut v) = u64::try_from(value) {
+        loop {
+            i -= 1;
+            buf[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+            if v == 0 {
+                break;
+            }
+        }
+    } else {
+        let mut v = value;
+        loop {
+            i -= 1;
+            buf[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+            if v == 0 {
+                break;
+            }
+        }
+    }
+    &buf[i..]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uint_digits_matches_core_fmt() {
+        let cases: [u128; 12] = [
+            0,
+            1,
+            9,
+            10,
+            99,
+            12345,
+            u64::MAX as u128,
+            u64::MAX as u128 + 1,
+            1_000_000_000_000_000_000_000,
+            u128::MAX,
+            123_456_789,
+            90_000_099,
+        ];
+        for v in cases {
+            let mut buf = [0u8; 40];
+            let got = uint_digits(v, &mut buf);
+            assert_eq!(std::str::from_utf8(got).unwrap(), format!("{v}"));
+        }
+    }
 
     #[test]
     fn put_padded_matches_core_fmt_width2() {

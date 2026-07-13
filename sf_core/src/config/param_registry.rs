@@ -118,8 +118,25 @@ pub mod param_names {
     pub const LOGOUT_TOTAL_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_total_timeout_seconds");
     pub const LOGOUT_MAX_ATTEMPTS: ParamKey = ParamKey("logout_max_attempts");
     pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
+    // HTTP retry configuration
+    pub const RETRY_MAX_ATTEMPTS: ParamKey = ParamKey("retry_max_attempts");
+    // Exponential-backoff curve, shared by the HTTP and PUT/GET retry
+    // pipelines (a single set of knobs overrides both).
+    pub const RETRY_BACKOFF_BASE_MS: ParamKey = ParamKey("retry_backoff_base_ms");
+    pub const RETRY_BACKOFF_CAP_MS: ParamKey = ParamKey("retry_backoff_cap_ms");
+    pub const RETRY_BACKOFF_FACTOR: ParamKey = ParamKey("retry_backoff_factor");
+    pub const RETRY_BACKOFF_JITTER: ParamKey = ParamKey("retry_backoff_jitter");
+    pub const RETRY_EXTRA_STATUS_CODES: ParamKey = ParamKey("retry_extra_status_codes");
     // PUT/GET file transfer configuration
     pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
+    /// When `true`, skip file permission checks on `config.toml` and
+    /// `connections.toml` during connection setup (SNOW-3548119). Use this
+    /// in environments where file permissions cannot be controlled (shared CI
+    /// runners, containers, mounted volumes). The `unsafe_` prefix signals that
+    /// skipping the check weakens protection against local tampering. Default
+    /// `false`. Unix-only; ignored on Windows.
+    pub const UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK: ParamKey =
+        ParamKey("unsafe_skip_config_file_permissions_check");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
     pub const CLIENT_APP_VERSION: ParamKey = ParamKey("client_app_version");
@@ -190,8 +207,21 @@ pub mod param_names {
     pub const WORKLOAD_IDENTITY_TOKEN: ParamKey = ParamKey("token");
 }
 
+/// Default `retry_max_attempts` for general HTTP calls (mirrors the `ParamDef`).
+pub const DEFAULT_RETRY_MAX_ATTEMPTS: u32 = 6;
+
 /// Default `put_get_max_attempts` (mirrors the `ParamDef`).
 pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
+
+/// Common exponential-backoff defaults shared by the HTTP and PUT/GET retry
+/// pipelines. These are the single source of truth: both the `ParamDef`
+/// defaults below and `RetryPolicy`'s backoff construction in
+/// [`crate::config::retry`] reference them.
+pub const DEFAULT_RETRY_BACKOFF_BASE_MS: u64 = 250;
+pub const DEFAULT_RETRY_BACKOFF_CAP_MS: u64 = 16_000;
+pub const DEFAULT_RETRY_BACKOFF_FACTOR: f64 = 2.0;
+/// Default backoff jitter strategy (see `Jitter` in [`crate::config::retry`]).
+pub const DEFAULT_RETRY_BACKOFF_JITTER: &str = "decorrelated";
 
 /// Which API layer owns writes for a parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,7 +278,6 @@ pub struct ParamDef {
 pub enum ValueType {
     String,
     Int,
-    #[allow(dead_code)]
     Double,
     #[allow(dead_code)]
     Bytes,
@@ -1177,6 +1206,34 @@ static PARAM_DEFS: &[ParamDef] = &[
         mutable_after_connect: true,
     },
     ParamDef {
+        canonical_name: param_names::RETRY_MAX_ATTEMPTS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64)),
+        sensitive: false,
+        description: "Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::RETRY_EXTRA_STATUS_CODES.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Additional HTTP status codes (comma-separated) to retry on general HTTP and PUT/GET calls, beyond the built-in 408/429/307/308/5xx set",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
         canonical_name: param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
         aliases: &[],
         value_type: ValueType::Int,
@@ -1189,6 +1246,79 @@ static PARAM_DEFS: &[ParamDef] = &[
         scope: ParamScope::Connection,
         used_at_connect: false,
         mutable_after_connect: true,
+    },
+    // ── Retry backoff curve (shared by HTTP and PUT/GET pipelines) ──────
+    ParamDef {
+        canonical_name: param_names::RETRY_BACKOFF_BASE_MS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_RETRY_BACKOFF_BASE_MS as i64)),
+        sensitive: false,
+        description: "Initial exponential-backoff delay in milliseconds between retry attempts",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::RETRY_BACKOFF_CAP_MS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_RETRY_BACKOFF_CAP_MS as i64)),
+        sensitive: false,
+        description: "Maximum exponential-backoff delay in milliseconds between retry attempts",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::RETRY_BACKOFF_FACTOR.as_str(),
+        aliases: &[],
+        value_type: ValueType::Double,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Double(DEFAULT_RETRY_BACKOFF_FACTOR)),
+        sensitive: false,
+        description: "Multiplier applied to the backoff delay after each retry attempt",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::RETRY_BACKOFF_JITTER.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::String(DEFAULT_RETRY_BACKOFF_JITTER.to_string())),
+        sensitive: false,
+        description: "Backoff jitter strategy: 'none', 'full', or 'decorrelated'",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "When true, skip file permission checks on config.toml and connections.toml \
+                      during connection setup. Use in environments where permissions cannot be \
+                      controlled (CI runners, containers). Unix-only; ignored on Windows",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CLIENT_APP_ID.as_str(),
@@ -1789,6 +1919,30 @@ mod tests {
         assert_eq!(freq.value_type, ValueType::Int);
         assert_eq!(freq.scope, ParamScope::Session);
         assert!(freq.used_at_connect);
+    }
+
+    #[test]
+    fn retry_backoff_params_have_correct_metadata() {
+        let r = registry();
+
+        for (key, value_type) in [
+            ("retry_backoff_base_ms", ValueType::Int),
+            ("retry_backoff_cap_ms", ValueType::Int),
+            ("retry_backoff_factor", ValueType::Double),
+            ("retry_backoff_jitter", ValueType::String),
+        ] {
+            let d = r
+                .resolve(key)
+                .unwrap_or_else(|| panic!("expected registry entry for {key}"));
+            assert_eq!(d.canonical_name, key);
+            assert_eq!(d.value_type, value_type, "key {key}");
+            assert_eq!(d.scope, ParamScope::Connection, "key {key}");
+            // Client-only knobs: not sent at login, immutable after connect.
+            assert!(!d.used_at_connect, "key {key}");
+            assert!(!d.mutable_after_connect, "key {key}");
+            assert!(!d.sensitive, "key {key}");
+            assert!(d.default.is_some(), "key {key} must have a static default");
+        }
     }
 
     #[test]

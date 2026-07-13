@@ -3433,6 +3433,7 @@ dependencies = [
  "arrow",
  "base64 0.22.1",
  "chrono",
+ "criterion",
  "dirs",
  "embed-resource",
  "error_trace",

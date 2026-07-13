@@ -53,7 +53,9 @@ impl BrowserOpener for DefaultBrowserOpener {
             );
             return Ok(());
         }
-        webbrowser::open(url).map_err(|e| e.to_string())
+        // Route through the WSL-safe launcher (SNOW-3649282); off WSL this
+        // defers to the `webbrowser` crate.
+        super::browser::open_url(url)
     }
 }
 
@@ -138,6 +140,7 @@ pub(crate) async fn external_browser_authenticate(
     username: &str,
     authentication_timeout_secs: u64,
     browser_opener: &dyn BrowserOpener,
+    retry_policy: &RetryPolicy,
 ) -> Result<ExternalBrowserAuthResult, ExternalBrowserError> {
     let budget = Duration::from_secs(authentication_timeout_secs);
     let start = Instant::now();
@@ -149,18 +152,16 @@ pub(crate) async fn external_browser_authenticate(
     let local_port = listener.local_addr().context(ListenerBindSnafu)?.port();
     tracing::debug!(port = local_port, "Local callback listener bound");
 
-    let idp_data = request_authenticator(client, login_parameters, username, local_port).await?;
+    let idp_data =
+        request_authenticator(client, login_parameters, username, local_port, retry_policy).await?;
     let proof_key = idp_data.proof_key;
     tracing::debug!("Received SSO URL and proof key from Snowflake");
 
-    if !idp_data.sso_url.starts_with("https://") {
-        return BrowserOpenSnafu {
-            reason: format!(
-                "SSO URL must use https scheme, got: {}",
-                idp_data.sso_url.chars().take(50).collect::<String>()
-            ),
-        }
-        .fail();
+    // Validate the SSO URL before handing it to the system browser: reject
+    // non-https URLs and URLs carrying characters unsafe to pass to a
+    // launcher. See SNOW-3649282.
+    if let Err(reason) = super::browser::validate_browser_url(&idp_data.sso_url) {
+        return BrowserOpenSnafu { reason }.fail();
     }
 
     // Unconditionally print the SSO URL to stderr so the user can manually
@@ -234,6 +235,7 @@ async fn request_authenticator(
     login_parameters: &LoginParameters,
     username: &str,
     redirect_port: u16,
+    retry_policy: &RetryPolicy,
 ) -> Result<AuthenticatorRequestData, ExternalBrowserError> {
     let mut data: AuthRequestData = super::base_auth_request_data(login_parameters);
     data.login_name = Some(username.to_string());
@@ -247,7 +249,6 @@ async fn request_authenticator(
 
     let body_string = serde_json::to_string(&authn_req).context(JsonSerializeSnafu)?;
     let ctx = HttpContext::new(Method::POST, SF_AUTHENTICATOR_REQUEST_PATH).allow_post_retry();
-    let policy = RetryPolicy::default();
     let (status, text) = super::request_text_with_retry(
         || {
             client
@@ -261,7 +262,7 @@ async fn request_authenticator(
                 .body(body_string.clone())
         },
         &ctx,
-        &policy,
+        retry_policy,
     )
     .await
     .context(RetryExhaustedSnafu)?;

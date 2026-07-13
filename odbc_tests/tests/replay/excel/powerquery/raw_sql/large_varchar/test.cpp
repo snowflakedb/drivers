@@ -10,7 +10,7 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Replay: excel powerquery raw_sql large_varchar", "[excel][powerquery][raw_sql][flaky]") {
+TEST_CASE("Replay: excel powerquery raw_sql large_varchar", "[excel][powerquery][raw_sql]") {
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
@@ -1207,7 +1207,10 @@ TEST_CASE("Replay: excel powerquery raw_sql large_varchar", "[excel][powerquery]
       const size_t code_units = buf.size() / sizeof(char32_t) - 1;
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == std::u32string(65535, U'X'));
-      CHECK(ind == 262176);
+      // Old driver reports SQL_NO_TOTAL for truncated SQL_C_WCHAR (BD#23); the
+      // new driver reports the remaining byte count (65,544 * 4).
+      OLD_DRIVER_ONLY("BD#23") { CHECK(ind == SQL_NO_TOTAL); }
+      NEW_DRIVER_ONLY("BD#23") { CHECK(ind == 262176); }
     }
   }
 

@@ -1,13 +1,16 @@
-package net.snowflake.client.internal.api.implementation.connection;
+package net.snowflake.client.internal.api.implementation.parameters;
 
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
+import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 
-final class ConnectionOptionsResolver {
-  private ConnectionOptionsResolver() {}
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public final class ConnectionOptionsResolver {
 
-  static Properties resolve(String url, Properties properties) {
+  public static Properties resolve(String url, Properties properties) {
     Properties resolved = new Properties();
     if (properties != null) {
       resolved.putAll(properties);
@@ -28,7 +31,6 @@ final class ConnectionOptionsResolver {
     }
 
     setIfAbsent(resolved, "host", parsed.getHost());
-    setIfAbsent(resolved, "protocol", parsed.getScheme());
     if (parsed.getPort() > 0) {
       setIfAbsentInt(resolved, "port", parsed.getPort());
     }
@@ -44,6 +46,12 @@ final class ConnectionOptionsResolver {
       }
       Object value = entry.getValue();
       setIfAbsent(resolved, normalizedKey, value.toString());
+    }
+
+    // Derive "protocol" from the scheme only when "ssl" is absent: sf_core derives the scheme from
+    // ssl itself and rejects ssl + protocol set together (ConflictingParameters).
+    if (!containsKeyIgnoreCase(resolved, "ssl")) {
+      setIfAbsent(resolved, "protocol", parsed.getScheme());
     }
   }
 

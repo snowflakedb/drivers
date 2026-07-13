@@ -4,13 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -37,35 +35,17 @@ public class PreparedStatementBindingSerializerTest {
   }
 
   @Test
-  public void testSerializeEmptyParametersReturnsNullBindings() throws Exception {
+  public void shouldReturnNullBindingsWhenNoParametersBound() throws Exception {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(
-            SqlPlaceholderMetadata.analyze("SELECT 1"), params)) {
+        PreparedStatementBindingSerializer.serialize(params)) {
       assertNull(nativeBindings.bindings(), "Expected null bindings for empty parameter list");
     }
   }
 
   @Test
-  public void testSerializeMissingParameterFailsWithIndex() {
-    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
-    params.put(
-        1, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.TEXT, "hello"));
-
-    SQLException ex =
-        assertThrows(
-            SQLException.class,
-            () ->
-                PreparedStatementBindingSerializer.serialize(
-                    SqlPlaceholderMetadata.analyze("SELECT ?, ?"), params));
-    assertTrue(
-        ex.getMessage().contains("Missing value for parameter index: 2"),
-        "Expected missing-parameter index in error message");
-  }
-
-  @Test
-  public void testSerializeCreatesJsonBindingsWithExpectedPointerMetadata() throws Exception {
+  public void shouldSerializeBoundValuesToJsonWithExpectedPointerMetadata() throws Exception {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
     params.put(1, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.FIXED, "42"));
     params.put(
@@ -76,8 +56,7 @@ public class PreparedStatementBindingSerializerTest {
     byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(
-            SqlPlaceholderMetadata.analyze("SELECT ?, ?"), params)) {
+        PreparedStatementBindingSerializer.serialize(params)) {
       QueryBindings bindings = nativeBindings.bindings();
       assertNotNull(bindings, "Expected non-null bindings");
       assertTrue(bindings.hasJson(), "Expected JSON query bindings");
@@ -98,29 +77,28 @@ public class PreparedStatementBindingSerializerTest {
   }
 
   @Test
-  public void testSerializeNumericPlaceholdersUsesReferencedIndexes() throws Exception {
+  public void shouldSerializeNonContiguousIndexesSortedByIndex() throws Exception {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
-    params.put(2, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.TEXT, "two"));
     params.put(4, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.FIXED, "4"));
+    params.put(2, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.TEXT, "two"));
 
     String expectedJson =
         "{\"2\":{\"type\":\"TEXT\",\"value\":\"two\"},\"4\":{\"type\":\"FIXED\",\"value\":\"4\"}}";
     byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(
-            SqlPlaceholderMetadata.analyze("SELECT :4, :2, :4"), params)) {
+        PreparedStatementBindingSerializer.serialize(params)) {
       QueryBindings bindings = nativeBindings.bindings();
       assertNotNull(bindings, "Expected non-null bindings");
       assertEquals(
           expectedJsonBytes.length,
           bindings.getJson().getLength(),
-          "JSON byte length should match numeric placeholder payload length");
+          "JSON byte length should match sparse-index payload length");
     }
   }
 
   @Test
-  public void testSerializeListValuedParameterEmitsJsonArrayWithNullSlots() throws Exception {
+  public void shouldEmitJsonArrayWithNullSlotsForListValuedParameter() throws Exception {
     Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
     params.put(
         1,
@@ -137,8 +115,7 @@ public class PreparedStatementBindingSerializerTest {
     byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(
-            SqlPlaceholderMetadata.analyze("INSERT INTO t VALUES (?, ?)"), params)) {
+        PreparedStatementBindingSerializer.serialize(params)) {
       QueryBindings bindings = nativeBindings.bindings();
       assertNotNull(bindings, "Expected non-null bindings for array bind");
       assertTrue(bindings.hasJson(), "Expected JSON variant for array bind");
@@ -174,8 +151,7 @@ public class PreparedStatementBindingSerializerTest {
     byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serialize(
-            SqlPlaceholderMetadata.analyze("INSERT INTO t VALUES (?, ?)"), params)) {
+        PreparedStatementBindingSerializer.serialize(params)) {
       QueryBindings bindings = nativeBindings.bindings();
       assertNotNull(bindings, "Expected non-null bindings for timestamp array bind");
       assertTrue(bindings.hasJson(), "Expected JSON variant for timestamp array bind");

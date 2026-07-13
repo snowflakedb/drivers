@@ -272,13 +272,14 @@ impl DatabaseDriverV1 {
         retry_policy: &RetryPolicy,
         csv_bytes: &[u8],
     ) -> Result<String, ApiError> {
-        let (use_s3_regional_url_session_param, flags) = {
+        let (use_s3_regional_url_session_param, flags, put_get_policy) = {
             let conn = conn_arc.lock().await;
             let regional = conn.use_s3_regional_url_session_param().await;
             let flags = crate::stage_binding::StageBindingFlags {
                 stage_state: conn.stage_state.clone(),
             };
-            (regional, flags)
+            let put_get_policy = RetryPolicy::put_get(&conn.connection_seed);
+            (regional, flags, put_get_policy)
         };
 
         let mut upload_refresh = RefreshContext::from_arc(conn_arc).await?;
@@ -289,6 +290,7 @@ impl DatabaseDriverV1 {
             query_parameters,
             session_token: &session_token,
             retry_policy,
+            put_get_policy: &put_get_policy,
             use_s3_regional_url_session_param,
         };
         let request_id = uuid::Uuid::new_v4();
@@ -436,12 +438,12 @@ impl DatabaseDriverV1 {
                         query_parameters,
                         conn: conn.clone(),
                     });
-                // Late-bind `put_get_max_attempts` so post-init `set_option`
+                // Late-bind connection params so post-init `set_option`
                 // overrides take effect (mirrors `LogoutConfig`).
-                let (put_get_max_attempts, use_s3_regional_url_session_param, tls_config) = {
+                let (retry_policy, use_s3_regional_url_session_param, tls_config) = {
                     let conn = conn.lock().await;
                     (
-                        conn.put_get_max_attempts(),
+                        crate::config::retry::RetryPolicy::put_get(&conn.connection_seed),
                         conn.use_s3_regional_url_session_param().await,
                         conn.tls_config(),
                     )
@@ -450,7 +452,7 @@ impl DatabaseDriverV1 {
                     command,
                     &data,
                     &self.wrapper_presets,
-                    put_get_max_attempts,
+                    &retry_policy,
                     stage_info_refresh_context,
                     use_s3_regional_url_session_param,
                     skip_upload_on_content_match,

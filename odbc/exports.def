@@ -14,6 +14,7 @@ EXPORTS
     SQLCloseCursor
     SQLColAttributeW
     SQLConnectW
+    SQLCopyDesc
     SQLDescribeColW
     SQLDisconnect
     SQLDriverConnectW
@@ -46,10 +47,14 @@ EXPORTS
     SQLRowCount
     SQLSetConnectAttrW
     SQLSetDescFieldW
+    SQLSetDescRec
     SQLSetEnvAttr
     SQLSetStmtAttrW
     SQLTablesW
     SQLColumnsW
+    SQLPrimaryKeysW
+    SQLForeignKeysW
+    SQLProceduresW
     SQLSpecialColumnsW
     SQLColumnPrivilegesW
     SQLTablePrivilegesW

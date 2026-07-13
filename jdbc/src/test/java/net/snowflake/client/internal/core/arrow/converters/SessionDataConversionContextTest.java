@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -15,10 +16,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
+import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import org.junit.jupiter.api.Test;
 
@@ -27,8 +29,8 @@ public class SessionDataConversionContextTest {
   private static final LocalTime SAMPLE =
       LocalTime.ofNanoOfDay((12 * 3600L + 34 * 60L + 56L) * 1_000_000_000L + 123_456_789L);
 
-  // 2024-01-15 12:34:56 UTC, scale 0.
   private static final TimeZone UTC = TimeZone.getTimeZone("UTC");
+  // 2024-01-15 12:34:56 UTC, scale 0.
   private static final Timestamp SAMPLE_TS =
       new Timestamp(Instant.parse("2024-01-15T12:34:56Z").toEpochMilli());
 
@@ -39,17 +41,18 @@ public class SessionDataConversionContextTest {
   /** Build a context from a server-parameter map, mirroring the connection-init path. */
   private static DataConversionContext contextFrom(Map<String, String> params) throws Exception {
     CoreDriverApi api = mock(CoreDriverApi.class);
-    when(api.connectionGetAllParameters(any()))
-        .thenReturn(
-            ConnectionGetAllParametersResponse.newBuilder().putAllParameters(params).build());
-    return SessionDataConversionContext.fromConnection(
-        api, ConnectionHandle.getDefaultInstance(), null);
+    for (Map.Entry<String, String> entry : params.entrySet()) {
+      when(api.connectionGetParameter(any(), eq(entry.getKey())))
+          .thenReturn(
+              ConnectionGetParameterResponse.newBuilder().setValue(entry.getValue()).build());
+    }
+    ParametersRegistry registry =
+        new ParametersRegistry(api, ConnectionHandle.getDefaultInstance());
+    return SessionDataConversionContext.fromConnection(registry);
   }
 
   @Test
   public void shouldBuildDefaultTimeFormatter() {
-    assertEquals("12:34:56", format(null, 9));
-    assertEquals("12:34:56", format("", 9));
     assertEquals("12:34:56", format("HH24:MI:SS", 9));
   }
 
@@ -69,14 +72,11 @@ public class SessionDataConversionContextTest {
 
   @Test
   public void shouldBuildDefaultDateFormatter() {
-    // Default DATE_OUTPUT_FORMAT (absent or "YYYY-MM-DD") renders dates in ISO yyyy-MM-dd, matching
+    // Default DATE_OUTPUT_FORMAT ("YYYY-MM-DD") renders dates in ISO yyyy-MM-dd, matching
     // snowflake-jdbc's ResultUtil default. buildDateFormatter replaced the former
-    // translateDateFormat
-    // helper, so assert on the rendered output rather than the intermediate Java pattern.
+    // translateDateFormat helper, so assert on the rendered output rather than the intermediate
+    // Java pattern.
     Date date = Date.valueOf("2024-01-15");
-    assertEquals(
-        "2024-01-15",
-        ArrowDateUtil.getDateAsString(date, SessionDataConversionContext.buildDateFormatter(null)));
     assertEquals(
         "2024-01-15",
         ArrowDateUtil.getDateAsString(
@@ -91,35 +91,49 @@ public class SessionDataConversionContextTest {
   }
 
   @Test
-  public void shouldParseGetDateUseNullTimezoneFromParams() throws Exception {
-    Map<String, String> falseParam = new HashMap<>();
-    falseParam.put("JDBC_GET_DATE_USE_NULL_TIMEZONE", "false");
-    assertFalse(contextFrom(falseParam).isGetDateUseNullTimezone());
+  public void shouldParseGetDateUseNullTimezoneFromParam() throws Exception {
+    Map<String, String> params = new HashMap<>();
+    params.put("JDBC_GET_DATE_USE_NULL_TIMEZONE", "false");
+    assertFalse(contextFrom(params).isGetDateUseNullTimezone());
 
-    Map<String, String> trueParam = new HashMap<>();
-    trueParam.put("JDBC_GET_DATE_USE_NULL_TIMEZONE", "true");
-    assertTrue(contextFrom(trueParam).isGetDateUseNullTimezone());
+    params = new HashMap<>();
+    params.put("JDBC_GET_DATE_USE_NULL_TIMEZONE", "true");
+    assertTrue(contextFrom(params).isGetDateUseNullTimezone());
   }
 
   @Test
-  public void shouldFallBackToGenericFormatWhenSpecializedTimestampFormatIsEmpty() {
-    String generic = "YYYY-MM-DD HH24:MI:SS";
+  public void shouldBuildTimestampFormatterFromFormat() {
     assertEquals(
         "2024-01-15 12:34:56",
-        SessionDataConversionContext.buildTimestampFormatter(null, generic)
+        SessionDataConversionContext.buildTimestampFormatter("YYYY-MM-DD HH24:MI:SS")
             .format(SAMPLE_TS, UTC, 0));
-    assertEquals(
-        "2024-01-15 12:34:56",
-        SessionDataConversionContext.buildTimestampFormatter("", generic)
-            .format(SAMPLE_TS, UTC, 0));
-  }
-
-  @Test
-  public void shouldUseSpecializedTimestampFormatWhenSet() {
     assertEquals(
         "2024/01/15",
-        SessionDataConversionContext.buildTimestampFormatter("YYYY/MM/DD", "YYYY-MM-DD HH24:MI:SS")
+        SessionDataConversionContext.buildTimestampFormatter("YYYY/MM/DD")
             .format(SAMPLE_TS, UTC, 0));
+  }
+
+  @Test
+  public void shouldDefaultFormattersWhenParamsAbsent() throws Exception {
+    // Defaulting for absent/empty params now lives in ParametersRegistry, so assert it through the
+    // end-to-end build path rather than the (now default-free) buildXFormatter helpers.
+    DataConversionContext ctx = contextFrom(Collections.emptyMap());
+    assertEquals("America/Los_Angeles", ctx.getSessionTimeZone().getID());
+    assertEquals(
+        "2024-01-15",
+        ArrowDateUtil.getDateAsString(Date.valueOf("2024-01-15"), ctx.getDateFormatter()));
+    assertEquals("12:34:56", ctx.getTimeFormatter().format(SAMPLE, 9));
+  }
+
+  @Test
+  public void shouldFallBackToGenericTimestampFormatWhenSpecializedFormatsAbsent()
+      throws Exception {
+    // With no per-type or generic overrides, all three timestamp formatters resolve to the same
+    // default generic format, so they render identically.
+    DataConversionContext ctx = contextFrom(Collections.emptyMap());
+    String ntz = ctx.getTimestampNTZFormatter().format(SAMPLE_TS, UTC, 0);
+    assertEquals(ntz, ctx.getTimestampLTZFormatter().format(SAMPLE_TS, UTC, 0));
+    assertEquals(ntz, ctx.getTimestampTZFormatter().format(SAMPLE_TS, UTC, 0));
   }
 
   @Test
