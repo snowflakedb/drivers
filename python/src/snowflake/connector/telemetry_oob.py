@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 from queue import Queue
 from threading import Lock
 from typing import Any
@@ -23,6 +25,12 @@ class TelemetryService:
 
     @classmethod
     def get_instance(cls) -> TelemetryService:
+        warnings.warn(
+            "TelemetryService (OOB telemetry) is not implemented in the Universal Driver. "
+            "All telemetry calls are silently dropped. (BD#42)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         with cls.__lock_init:
             if cls.__instance is None:
                 cls.__instance = cls.__new__(cls)
