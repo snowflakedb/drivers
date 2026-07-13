@@ -91,7 +91,9 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     StatementSetOptionsResponse,
     StatementSetSqlQueryRequest,
     StatementSetSqlQueryResponse,
+    TelemetryAddLogToBatchRequest,
     TelemetrySendApiUsageRequest,
+    TelemetrySendLogBatchRequest,
     TelemetrySendResponse,
     TelemetrySendWrapperErrorRequest,
     TokenRequestType,
@@ -524,6 +526,18 @@ class CoreDriver:
             error_source=error_source,
         )
         return self.client.telemetry_send_wrapper_error(request)
+
+    def telemetry_add_log_to_batch(
+        self, conn_handle: ConnectionHandle, message_json: str, timestamp_ms: int
+    ) -> TelemetrySendResponse:
+        request = TelemetryAddLogToBatchRequest(
+            conn_handle=conn_handle, message_json=message_json, timestamp_ms=timestamp_ms
+        )
+        return self.client.telemetry_add_log_to_batch(request)
+
+    def telemetry_send_log_batch(self, conn_handle: ConnectionHandle) -> TelemetrySendResponse:
+        request = TelemetrySendLogBatchRequest(conn_handle=conn_handle)
+        return self.client.telemetry_send_log_batch(request)
 
     # =====================================================================
     # Config

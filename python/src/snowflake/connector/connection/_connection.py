@@ -47,7 +47,6 @@ from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from ..errors import Error, NotSupportedError, ProgrammingError
-from ..telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ..version import __version__
 from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 
@@ -534,8 +533,11 @@ class Connection(ConnectionMixin):
     @property
     @internal_api
     @backward_compatibility
-    def _telemetry(self) -> _BackwardCompatTelemetryClient:
-        return _BackwardCompatTelemetryClient()
+    def _telemetry(self) -> _InternalTelemetryClient:
+        # Return the live in-band telemetry client so consumers (e.g. Snowpark)
+        # that call try_add_log_to_batch / send_log_batch actually reach
+        # /telemetry/send, instead of a throwaway no-op.
+        return self._telemetry_client
 
     @property
     def _errorhandler_connection(self) -> Connection:

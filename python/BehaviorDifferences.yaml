@@ -605,3 +605,27 @@ behavior_differences:
       `create_temp_table` is the legacy boolean spelling accepted for Snowpark
       backward-compatibility. The warning nudges callers toward the canonical
       `table_type` parameter without breaking existing usage.
+
+  41:
+    name: "connection._telemetry log-batch methods now send in-band telemetry"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `connection._telemetry` returned a throwaway no-op `TelemetryClient`; its
+      `add_log_to_batch` / `try_add_log_to_batch` / `send_log_batch` / `close`
+      methods did nothing, so caller-produced in-band telemetry (e.g. Snowpark's)
+      was silently discarded.
+    new_driver_behavior: |
+      `connection._telemetry` returns the live in-band telemetry client. Its
+      log-batch methods forward entries to sf_core, which batches them per session
+      and POSTs `{"logs": [...]}` to `/telemetry/send`. Gated by the
+      `CLIENT_TELEMETRY_ENABLED` session parameter, so deployments with telemetry
+      disabled are unaffected.
+    description: |
+      Restores the legacy in-band log-telemetry path (SNOW-3774686) so Snowpark and
+      other consumers that call `connection._telemetry.try_add_log_to_batch(...)`
+      reach Snowflake again. Batching, flush thresholds, and egress live in the
+      Rust core's LogBatcher.
