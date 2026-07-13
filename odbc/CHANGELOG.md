@@ -9,3 +9,4 @@ New features:
 - Implemented `SQLPrimaryKeys` and `SQLPrimaryKeysW` catalog functions using `SHOW PRIMARY KEYS`. (snowflakedb/universal-driver#455)
 - Implemented `SQLForeignKeys` and `SQLForeignKeysW` catalog functions using `SHOW IMPORTED KEYS` / `SHOW EXPORTED KEYS`. (snowflakedb/universal-driver#456)
 - Implemented `SQLProcedures` and `SQLProceduresW` catalog functions using `information_schema.procedures`. (snowflakedb/universal-driver#TBD)
+- Implemented `SQLProcedureColumns` and `SQLProcedureColumnsW` catalog functions using `information_schema.procedures`, parsing the argument signature and return type into per-column metadata. (snowflakedb/universal-driver#TBD)

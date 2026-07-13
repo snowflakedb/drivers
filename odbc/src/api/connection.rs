@@ -1948,7 +1948,6 @@ impl OdbcFunction {
                 | Self::Drivers
                 | Self::GetCursorName
                 | Self::ParamOptions
-                | Self::ProcedureColumns
                 | Self::SetCursorName
                 | Self::SetPos
                 | Self::SetScrollOptions
