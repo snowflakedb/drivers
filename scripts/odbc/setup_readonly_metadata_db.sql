@@ -35,6 +35,8 @@ USE ROLE TESTROLE_UNIVERSAL;
 
 CREATE DATABASE IF NOT EXISTS ODBCMETADATATESTDB;
 USE DATABASE ODBCMETADATATESTDB;
+-- Drop the cross-schema FK child schema before its parent schema.
+DROP SCHEMA IF EXISTS FKREMOTESCHEMA CASCADE;
 DROP SCHEMA IF EXISTS CATALOGTESTS CASCADE;
 CREATE SCHEMA CATALOGTESTS;
 USE SCHEMA CATALOGTESTS;
@@ -80,6 +82,15 @@ CREATE TABLE FKMULTIPARENT (id INT PRIMARY KEY);
 CREATE TABLE FKMULTICHILDA (id INT, parentid INT, FOREIGN KEY (parentid) REFERENCES FKMULTIPARENT(id));
 CREATE TABLE FKMULTICHILDB (id INT, refid INT, FOREIGN KEY (refid) REFERENCES FKMULTIPARENT(id));
 
+-- Cross-schema FK: the parent lives here in CATALOGTESTS; the child (XSCHILD)
+-- lives in FKREMOTESCHEMA (created below) and references this table. Exercises
+-- FK-side connection-context resolution across schemas.
+CREATE TABLE XSPARENT (id INT PRIMARY KEY);
+
+-- Composite (multi-column) FK for KEY_SEQ ordering tests.
+CREATE TABLE CFKPARENT (a INT, b INT, PRIMARY KEY (a, b));
+CREATE TABLE CFKCHILD (x INT, y INT, FOREIGN KEY (x, y) REFERENCES CFKPARENT(a, b));
+
 -- =============================================================================
 -- Views (used by SQLTables VIEW type tests)
 -- =============================================================================
@@ -99,6 +110,11 @@ CREATE PROCEDURE PROCDTYPEA(p1 VARCHAR) RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN R
 CREATE PROCEDURE PROCDTYPEB(p1 INT) RETURNS INT LANGUAGE SQL AS 'BEGIN RETURN p1; END';
 CREATE PROCEDURE PROCNUMA(p1 INT) RETURNS INT LANGUAGE SQL AS 'BEGIN RETURN p1; END';
 CREATE PROCEDURE PROCNUMB(p1 INT) RETURNS INT LANGUAGE SQL AS 'BEGIN RETURN p1; END';
+-- Table-valued procedure (RETURNS TABLE): drives NUM_RESULT_SETS=1 in
+-- SQLProcedures and SQL_RESULT_COL rows in SQLProcedureColumns. The body must
+-- stay single-quoted (the setup runner splits on ';' but preserves quoted
+-- semicolons; it does not understand $$ dollar-quoting).
+CREATE PROCEDURE TABLEPROC(pid INTEGER) RETURNS TABLE(id INTEGER, name VARCHAR(100)) LANGUAGE SQL AS 'DECLARE res RESULTSET DEFAULT (SELECT id, name FROM BASICTABLE); BEGIN RETURN TABLE(res); END';
 
 -- =============================================================================
 -- SQLDescribeCol tables (used by e2e/query/sql_describe_col.cpp)
@@ -117,6 +133,21 @@ CREATE TABLE DESCDIGITSVARCHARTABLE (val VARCHAR(50));
 CREATE TABLE DESCNULLABLETABLE (val VARCHAR(50));
 CREATE TABLE DESCNOTNULLTABLE (val VARCHAR(50) NOT NULL);
 CREATE TABLE DESCMULTITABLE (strcol VARCHAR(50), numcol NUMBER(8,2), boolcol BOOLEAN);
+
+-- =============================================================================
+-- FKREMOTESCHEMA schema -- cross-schema FK child. XSCHILD references
+-- CATALOGTESTS.XSPARENT (same database, different schema) so SQLForeignKeys
+-- cross-schema resolution can be exercised in both directions.
+-- =============================================================================
+
+CREATE SCHEMA FKREMOTESCHEMA;
+USE SCHEMA FKREMOTESCHEMA;
+
+CREATE TABLE XSCHILD (
+  id INT,
+  parentid INT,
+  FOREIGN KEY (parentid) REFERENCES ODBCMETADATATESTDB.CATALOGTESTS.XSPARENT(id)
+);
 
 -- =============================================================================
 -- DATATYPETESTS schema -- data-bearing fixtures for Excel/PQ trace replay tests.

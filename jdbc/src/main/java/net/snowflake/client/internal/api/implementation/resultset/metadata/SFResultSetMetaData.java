@@ -21,7 +21,7 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 /** Snowflake ResultSetMetaData */
 // ported from snowflake-jdbc
 class SFResultSetMetaData {
-  // TODO(SNOW-3695645): maybe we should validate column index on all accessors and throw
+  // TODO(SNOW-3740749): maybe we should validate column index on all accessors and throw
   // SFException
   //   with COLUMN_DOES_NOT_EXIST (surfaced as SQLException by the wrapper)
   //   instead of letting out-of-range indices propagate as IndexOutOfBoundsException

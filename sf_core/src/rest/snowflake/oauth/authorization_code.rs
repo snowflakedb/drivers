@@ -18,7 +18,8 @@
 //!
 //! HTTP transport, body encoding, CSRF generation, and PKCE generation
 //! are owned by the `oauth2` crate; we only orchestrate the moving parts
-//! via [`OAuthHttpClient`], [`webbrowser`], and [`loopback_server`].
+//! via [`OAuthHttpClient`], the WSL-safe [`crate::rest::snowflake::browser`]
+//! module, and [`loopback_server`].
 
 use std::future::Future;
 use std::pin::Pin;
@@ -117,9 +118,11 @@ pub(crate) struct AcquiredOAuthToken {
 }
 
 /// Closure-shaped browser launcher. Production callers go through
-/// [`webbrowser::open`] with a stdout paste fallback (drift C.6 — the
-/// fallback URL is stdout per `doc/oauth.md` §3); tests can substitute a
-/// deterministic driver that pokes the loopback directly.
+/// [`crate::rest::snowflake::browser::open_url`] (WSL-safe; see
+/// SNOW-3649282) with a stdout paste fallback (drift C.6 — the fallback
+/// URL is stdout per `doc/oauth.md` §3), and only after the URL passes
+/// [`crate::rest::snowflake::browser::validate_browser_url`]; tests can
+/// substitute a deterministic driver that pokes the loopback directly.
 ///
 /// Exposed at `pub(crate)` so [`OAuthAuthorizationCodeConfig`] can carry
 /// an `Arc<dyn Fn() -> BrowserLaunchFn + …>` factory field — letting
@@ -136,12 +139,40 @@ fn default_browser_launch() -> BrowserLaunchFn {
                 path = %authorize_url.path(),
                 "Opening system browser for OAuth authorization"
             );
-            if let Err(e) = webbrowser::open(authorize_url.as_str()) {
-                tracing::warn!(error = %e, "Failed to launch system browser; printing paste fallback");
-                println!("Open this URL in your browser to continue: {authorize_url}");
-            }
+            // Validate the URL and route it through the WSL-safe launcher
+            // (SNOW-3649282). The paste fallback is printed only when a
+            // *validated* URL fails to launch.
+            let url = authorize_url.to_string();
+            launch_authorize_url(&url, crate::rest::snowflake::browser::open_url, || {
+                println!("Open this URL in your browser to continue: {url}")
+            });
         })
     })
+}
+
+/// Drive the "open the OAuth authorization URL" decision, factored out of
+/// the launcher closure so its security-relevant control flow is unit-
+/// testable without spawning a browser or capturing stdout.
+///
+/// Contract (SNOW-3649282):
+/// * URL fails validation ⇒ refuse; `open` is **not** called and the paste
+///   `fallback` is **not** shown (printing it would invite the user to
+///   hand-open the very URL we rejected as a possible injection).
+/// * URL is valid ⇒ hand it to `open`; only if that *launch* fails do we
+///   show the manual-paste `fallback`.
+fn launch_authorize_url(
+    url: &str,
+    open: impl FnOnce(&str) -> Result<(), String>,
+    fallback: impl FnOnce(),
+) {
+    if let Err(e) = crate::rest::snowflake::browser::validate_browser_url(url) {
+        tracing::error!(error = %e, "Refusing to open browser: authorization URL failed validation");
+        return;
+    }
+    if let Err(e) = open(url) {
+        tracing::warn!(error = %e, "Failed to launch system browser; printing paste fallback");
+        fallback();
+    }
 }
 
 #[tracing::instrument(
@@ -803,6 +834,67 @@ mod tests {
     use std::sync::Mutex;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ─── launch_authorize_url control flow (SNOW-3649282) ────────────────
+
+    #[test]
+    fn launch_rejects_malicious_url_without_opening_or_fallback() {
+        use std::cell::Cell;
+        let opened = Cell::new(false);
+        let fell_back = Cell::new(false);
+        launch_authorize_url(
+            "https://idp.example.com/authorize?state=poc|calc",
+            |_| {
+                opened.set(true);
+                Ok(())
+            },
+            || fell_back.set(true),
+        );
+        assert!(
+            !opened.get(),
+            "a rejected URL must never reach the launcher"
+        );
+        assert!(
+            !fell_back.get(),
+            "a rejected URL must NOT be printed as a paste fallback (would invite the user \
+             to hand-open the injection payload)"
+        );
+    }
+
+    #[test]
+    fn launch_valid_url_opens_and_skips_fallback_on_success() {
+        use std::cell::Cell;
+        let opened = Cell::new(false);
+        let fell_back = Cell::new(false);
+        launch_authorize_url(
+            "https://idp.example.com/authorize?client_id=abc&state=xyz",
+            |_| {
+                opened.set(true);
+                Ok(())
+            },
+            || fell_back.set(true),
+        );
+        assert!(opened.get(), "a valid URL must be handed to the launcher");
+        assert!(
+            !fell_back.get(),
+            "no paste fallback when the launch succeeds"
+        );
+    }
+
+    #[test]
+    fn launch_valid_url_shows_fallback_when_launch_fails() {
+        use std::cell::Cell;
+        let fell_back = Cell::new(false);
+        launch_authorize_url(
+            "https://idp.example.com/authorize?client_id=abc",
+            |_| Err("no browser available".to_string()),
+            || fell_back.set(true),
+        );
+        assert!(
+            fell_back.get(),
+            "the paste fallback must show when a validated URL fails to launch"
+        );
+    }
 
     struct StubTokenCache {
         store: Mutex<HashMap<String, String>>,

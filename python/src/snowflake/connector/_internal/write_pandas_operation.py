@@ -94,22 +94,24 @@ def _convert_value_to_sql_option(value: str | bool | int | float) -> str:
 
 def _create_temp_object(
     cursor: SnowflakeCursor,
-    sql_builder: Callable[[str], str],
+    sql_builder: Callable[[str], tuple[str, tuple]],
     qualified_name: str,
     bare_name: str,
 ) -> str:
     """Try creating in target schema; fall back to current schema on privilege error."""
+    sql, params = sql_builder(qualified_name)
     try:
-        cursor.execute(sql_builder(qualified_name))
+        cursor.execute(sql, params=params, _force_qmark_paramstyle=True)
         return qualified_name
     except ProgrammingError:
-        cursor.execute(sql_builder(bare_name))
+        sql, params = sql_builder(bare_name)
+        cursor.execute(sql, params=params, _force_qmark_paramstyle=True)
         return bare_name
 
 
 def _drop_object(cursor: SnowflakeCursor, name: str, object_type: str) -> None:
     """Drop a Snowflake object if it exists."""
-    cursor.execute(f"DROP {object_type} IF EXISTS {name}")
+    cursor.execute(f"DROP {object_type} IF EXISTS IDENTIFIER(?)", params=(name,), _force_qmark_paramstyle=True)
 
 
 def _stage_sql(
@@ -399,6 +401,9 @@ class WritePandasOperation:
 
     def _put_file(self, cursor: SnowflakeCursor, stage_location: str, path: Path) -> None:
         uri = escape_path_for_sql(path.as_posix())
+        # PUT does not support IDENTIFIER(?) or ? bindings for stage paths or file URIs.
+        # stage_location is a connector-internal name produced by generate_temp_name()
+        # (secrets.token_hex suffix); uri is escaped by escape_path_for_sql().
         cursor.execute(
             f"PUT 'file://{uri}' @{stage_location} "
             f"PARALLEL={self._cfg.parallel} AUTO_COMPRESS=FALSE "
@@ -407,6 +412,9 @@ class WritePandasOperation:
 
     def _put_directory(self, cursor: SnowflakeCursor, stage_location: str, directory: str) -> None:
         uri = escape_path_for_sql(Path(directory).as_posix())
+        # PUT does not support IDENTIFIER(?) or ? bindings for stage paths or file URIs.
+        # stage_location is a connector-internal name produced by generate_temp_name()
+        # (secrets.token_hex suffix); uri is escaped by escape_path_for_sql().
         cursor.execute(
             f"PUT 'file://{uri}/*' @{stage_location} "
             f"PARALLEL={self._cfg.parallel} AUTO_COMPRESS=FALSE "
@@ -437,11 +445,10 @@ class WritePandasOperation:
         file_format_location: str,
     ) -> dict[str, str]:
         """Run INFER_SCHEMA and return {UPPER_COL_NAME: SQL_TYPE} mapping."""
-        escaped_stage = stage_location.replace("'", "\\'")
         rows = cursor.execute(
-            f"SELECT * FROM TABLE(INFER_SCHEMA("
-            f"LOCATION => '@{escaped_stage}', "
-            f"FILE_FORMAT => '{file_format_location}'))"
+            "SELECT * FROM TABLE(INFER_SCHEMA(LOCATION => ?, FILE_FORMAT => ?))",
+            params=(f"@{stage_location}", file_format_location),
+            _force_qmark_paramstyle=True,
         ).fetchall()
         return {row[0].upper(): row[1] for row in rows}
 
@@ -472,11 +479,15 @@ class WritePandasOperation:
 
         cursor.execute(
             f"CREATE {table_type_clause}{iceberg_prefix}TABLE IF NOT EXISTS "
-            f"{target_location} ({', '.join(col_defs)}) {iceberg_clause}"
+            f"IDENTIFIER(?) ({', '.join(col_defs)}) {iceberg_clause}",
+            params=(target_location,),
+            _force_qmark_paramstyle=True,
         )
 
     def _truncate_table(self, cursor: SnowflakeCursor, target_location: str) -> None:
-        cursor.execute(f"TRUNCATE TABLE IF EXISTS {target_location}")
+        cursor.execute(
+            "TRUNCATE TABLE IF EXISTS IDENTIFIER(?)", params=(target_location,), _force_qmark_paramstyle=True
+        )
 
     def _swap_tables(self, cursor: SnowflakeCursor, target_location: str) -> None:
         """Replace original table with temp target via DROP + RENAME.
@@ -503,15 +514,15 @@ class WritePandasOperation:
         target_location: str,
         column_type_map: dict[str, str] | None,
     ) -> list:
-        sql = self._build_copy_into_sql(stage_location, target_location, column_type_map)
-        return cursor.execute(sql).fetchall()
+        sql, params = self._build_copy_into_sql(stage_location, target_location, column_type_map)
+        return cursor.execute(sql, params=params, _force_qmark_paramstyle=True).fetchall()
 
     def _build_copy_into_sql(
         self,
         stage_location: str,
         target_location: str,
         column_type_map: dict[str, str] | None,
-    ) -> str:
+    ) -> tuple[str, tuple[str, str]]:
         cfg = self._cfg
         target_cols: list[str] = []
         select_exprs: list[str] = []
@@ -536,23 +547,32 @@ class WritePandasOperation:
         if cfg.use_vectorized_scanner:
             file_format_parts.append(f"USE_VECTORIZED_SCANNER={_sql_bool(cfg.use_vectorized_scanner)}")
 
-        return (
-            f"COPY INTO {target_location} ({', '.join(target_cols)}) "
+        sql = (
+            f"COPY INTO IDENTIFIER(?) ({', '.join(target_cols)}) "
             f"FROM (SELECT {', '.join(select_exprs)} "
             f"FROM '@{escaped_stage}') "
             f"FILE_FORMAT = ({' '.join(file_format_parts)}) "
-            f"PURGE=TRUE ON_ERROR={cfg.on_error}"
+            f"PURGE=TRUE ON_ERROR=?"
         )
+        return sql, (target_location, cfg.on_error)
 
     # -- Shared helpers --------------------------------------------------
 
-    def _build_create_stage_sql(self, name: str) -> str:
-        return _stage_sql(name, self._cfg.compression, self._cfg.binary_as_text_false_on_stage)
-
-    def _build_create_file_format_sql(self, name: str) -> str:
+    def _build_create_stage_sql(self, name: str) -> tuple[str, tuple]:
         cfg = self._cfg
-        suffix = f" USE_LOGICAL_TYPE={_sql_bool(cfg.use_logical_type)}" if cfg.use_logical_type is not None else ""
-        return _file_format_sql(name, cfg.compression, suffix)
+        mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
+        fmt_opts = [f"TYPE=PARQUET COMPRESSION={mapped}"]
+        if cfg.binary_as_text_false_on_stage:
+            fmt_opts.append("BINARY_AS_TEXT=FALSE")
+        return f"CREATE TEMPORARY STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})", (name,)
+
+    def _build_create_file_format_sql(self, name: str) -> tuple[str, tuple]:
+        cfg = self._cfg
+        mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
+        parts = [f"CREATE TEMPORARY FILE FORMAT IDENTIFIER(?) TYPE=PARQUET COMPRESSION={mapped}"]
+        if cfg.use_logical_type is not None:
+            parts.append(f"USE_LOGICAL_TYPE={_sql_bool(cfg.use_logical_type)}")
+        return " ".join(parts), (name,)
 
     def _build_iceberg_config_sql(self) -> str:
         cfg = self._cfg

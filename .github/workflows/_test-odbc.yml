@@ -288,7 +288,7 @@ jobs:
           export DRIVER_MANAGER=${{ matrix.driver_manager || 'unixodbc' }}
           export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
-          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS \
+          ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running" $REPEAT_ARGS \
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
       - name: Run flaky ODBC tests (Unix)
@@ -312,7 +312,7 @@ jobs:
           $env:DRIVER_TYPE = "NEW"
           $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
           $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
-          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs `
+          .\scripts\odbc\run_tests_windows.ps1 -LE "flaky|long_running" @repeatArgs `
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
       - name: Run flaky ODBC tests (Windows)

@@ -17,6 +17,8 @@ mod date;
 mod decfloat;
 #[cfg(test)]
 mod decfloat_tests;
+#[cfg(test)]
+mod getdata_probe_tests;
 mod int_fmt;
 mod interval;
 mod interval_str;
@@ -153,8 +155,15 @@ fn per_cell_convert_range(
         };
         match converter.convert_arrow_value(array, batch_idx, &binding, &mut None) {
             Ok(w) => {
-                if let Ok(existing) = &mut outputs[i] {
-                    existing.extend(w);
+                // Warnings are rare; gating the `outputs[i]` index + extend on the
+                // empty-warning check is worth ~3% on NUMBER fetches. Kept as a
+                // nested `if` (not a `&& let` chain) per review preference — the
+                // clippy collapse suggestion would reintroduce the let-chain.
+                #[allow(clippy::collapsible_if)]
+                if !w.is_empty() {
+                    if let Ok(existing) = &mut outputs[i] {
+                        existing.extend(w);
+                    }
                 }
             }
             Err(e) => {
@@ -229,17 +238,39 @@ impl<
             return;
         };
 
+        // Incremental striding: materialize the first row's binding once
+        // (handling `bind_offset` and the pathological stride-overflow case),
+        // then advance the pointers by a constant per-row stride each cell via
+        // `Binding::stepped`, instead of recomputing `row_idx * stride` through
+        // three overflow-checked `advance_ptr` calls in `for_row` on every
+        // cell. If the very first row already overflows we fall back to the
+        // per-cell path so overflow is still reported per row, exactly as
+        // before.
+        let mut binding = match strides.for_row(base_binding, out_row_start) {
+            Ok(b) => b,
+            Err(_) => {
+                per_cell_convert_range(
+                    self,
+                    array,
+                    arrow_row_range,
+                    base_binding,
+                    out_row_start,
+                    strides,
+                    outputs,
+                );
+                return;
+            }
+        };
+        let (value_stride, indicator_stride) =
+            strides.row_step(base_binding.target_type, base_binding.buffer_length);
+
         for (i, batch_idx) in arrow_row_range.enumerate() {
+            if i > 0 {
+                binding = binding.stepped(value_stride, indicator_stride);
+            }
             if outputs[i].is_err() {
                 continue;
             }
-            let binding = match strides.for_row(base_binding, out_row_start + i) {
-                Ok(b) => b,
-                Err(e) => {
-                    outputs[i] = Err(e);
-                    continue;
-                }
-            };
             let result = self
                 .snowflake_type
                 .read_arrow_type(arrow_array, batch_idx)
@@ -252,8 +283,15 @@ impl<
                 });
             match result {
                 Ok(w) => {
-                    if let Ok(existing) = &mut outputs[i] {
-                        existing.extend(w);
+                    // Warnings are rare; gating the `outputs[i]` index + extend on
+                    // the empty-warning check is worth ~3% on NUMBER fetches. Kept
+                    // as a nested `if` (not a `&& let` chain) per review preference
+                    // — the clippy collapse suggestion would reintroduce it.
+                    #[allow(clippy::collapsible_if)]
+                    if !w.is_empty() {
+                        if let Ok(existing) = &mut outputs[i] {
+                            existing.extend(w);
+                        }
                     }
                 }
                 Err(e) => {
@@ -689,11 +727,25 @@ pub fn make_converter(
     }
 }
 
+/// The `conciseSqlType` Arrow-metadata value that tags catalog SMALLINT columns
+/// as ODBC `SQL_SMALLINT`. Single source of truth for the write side
+/// (`catalog::catalog_key_seq_field`) and the read side (`sql_type_from_field`)
+/// so the two cannot drift apart.
+pub(crate) const SMALLINT_CONCISE_SQL_TYPE: i16 = odbc_sys::SqlDataType::SMALLINT.0;
+
 /// Map a Snowflake Arrow field to the corresponding SQL data type.
 pub fn sql_type_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SqlDataType, ConversionError> {
+    if field
+        .metadata()
+        .get("conciseSqlType")
+        .and_then(|v| v.parse::<i16>().ok())
+        .is_some_and(|v| v == SMALLINT_CONCISE_SQL_TYPE)
+    {
+        return Ok(odbc_sys::SqlDataType::SMALLINT);
+    }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }
 

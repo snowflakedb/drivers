@@ -22,6 +22,13 @@ repos:
         pass_filenames: false
         types: [file, rust]
         language: system
+    -   id: rust-version-alignment
+        name: rust-version / toolchain alignment
+        description: Ensure [workspace.package] rust-version matches rust-toolchain.toml (major.minor).
+        entry: bash scripts/check-rust-version-alignment.sh
+        pass_filenames: false
+        files: (rust-toolchain\.toml$|Cargo\.toml$)
+        language: system
     -   id: clang-format
         name: clang-format
         description: Run clang-format on C/C++ files included in the commit. clang-format should be installed before-hand.

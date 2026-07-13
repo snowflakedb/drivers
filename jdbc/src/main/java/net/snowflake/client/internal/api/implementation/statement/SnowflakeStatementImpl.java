@@ -530,6 +530,17 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement, De
     return connection;
   }
 
+  /**
+   * Returns the owning connection without a closed-state check. Used during ResultSet construction,
+   * which must succeed even if the statement was concurrently closed after {@code execute()}
+   * returned (parity with legacy snowflake-jdbc, which does not re-validate the statement while
+   * assembling the result set). Callers must not use this to bypass {@link #checkClosed()} on the
+   * public API path.
+   */
+  public InternalSnowflakeConnection getConnectionInternal() {
+    return connection;
+  }
+
   public Set<ResultSet> getOpenResultSets() {
     return Collections.unmodifiableSet(openResultSets);
   }

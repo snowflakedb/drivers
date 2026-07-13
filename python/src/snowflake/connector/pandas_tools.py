@@ -9,11 +9,13 @@ Implementation details are in snowflake.connector._internal.write_pandas_operati
 
 from __future__ import annotations
 
+import warnings
+
 from collections.abc import Callable, Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from ._internal.decorators import snowpark_compat
+from ._internal.decorators import api_telemetry, snowpark_compat
 from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy
 from ._internal.write_pandas_operation import (
@@ -79,6 +81,7 @@ def _reject_kwargs(*names: str) -> Callable[[F], F]:
 
 
 @requires_dependency(pandas)
+@api_telemetry
 def write_pandas(
     conn: Connection,
     df: DataFrame,
@@ -110,6 +113,11 @@ def write_pandas(
     # Snowpark still passes it. Translate it and do not forward it to the config.
     if create_temp_table and not table_type:
         table_type = "temp"
+        warnings.warn(
+            "'create_temp_table' is deprecated; use 'table_type=\"temp\"' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     try:
         cfg = WritePandasConfig(
             conn,
@@ -165,7 +173,7 @@ def _create_temp_stage(
     binary_as_text_false = auto_create_table or overwrite
     return _create_temp_object(
         cursor,
-        lambda n: _stage_sql(n, compression, binary_as_text_false, use_scoped_temp_object),
+        lambda n: (_stage_sql(n, compression, binary_as_text_false, use_scoped_temp_object), ()),
         qualified,
         name,
     )
@@ -185,7 +193,7 @@ def _create_temp_file_format(
     qualified = qualify_name(database, schema, name, quote_identifiers)
     return _create_temp_object(
         cursor,
-        lambda n: _file_format_sql(n, compression, sql_use_logical_type, use_scoped_temp_object),
+        lambda n: (_file_format_sql(n, compression, sql_use_logical_type, use_scoped_temp_object), ()),
         qualified,
         name,
     )

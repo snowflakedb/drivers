@@ -4,10 +4,11 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>Snowflake.Data</RootNamespace>
     <AssemblyName>Snowflake.Data.UD</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests" />
   </ItemGroup>
-
 </Project>

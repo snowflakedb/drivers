@@ -3,8 +3,26 @@ use snafu::ResultExt;
 use std::fs;
 use std::path::Path;
 
-/// Load a TOML file from disk and parse it
-pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
+/// Controls whether file-permission safety checks are performed when reading
+/// config files.
+///
+/// Pass `UnsafeDisabled` only when the `unsafe_skip_file_permissions_check`
+/// connection parameter is explicitly set by the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilePermissionCheck {
+    Enabled,
+    UnsafeDisabled,
+}
+
+/// Load a TOML file from disk and parse it.
+///
+/// When `permission_check` is `UnsafeDisabled`, the file-permission safety check is
+/// bypassed (mirrors the `unsafe_skip_file_permissions_check` connection
+/// parameter).
+pub fn load_toml_file(
+    path: &Path,
+    permission_check: FilePermissionCheck,
+) -> Result<toml::Value, ConfigError> {
     match path.try_exists() {
         Ok(false) => return Ok(toml::Value::Table(toml::map::Map::new())),
         Err(e) => {
@@ -17,15 +35,12 @@ pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
         Ok(true) => {}
     }
 
-    // Check file permissions before reading
-    check_file_permissions(path)?;
+    check_file_permissions(path, permission_check)?;
 
-    // Read file contents
     let contents = fs::read_to_string(path).context(ConfigFileReadSnafu {
         path: path.display().to_string(),
     })?;
 
-    // Parse TOML
     let value = toml::from_str(&contents).context(TomlParseSnafu {
         path: path.display().to_string(),
     })?;
@@ -33,11 +48,25 @@ pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
     Ok(value)
 }
 
-/// Check file permissions for security (Unix only)
+/// Check file permissions for security (Unix only).
+///
+/// When `permission_check` is `Disabled`, all checks are bypassed and a
+/// security-relevant info log is emitted so that the skip is auditable.
 #[allow(unused_variables)]
-pub fn check_file_permissions(path: &Path) -> Result<(), ConfigError> {
+pub fn check_file_permissions(
+    path: &Path,
+    permission_check: FilePermissionCheck,
+) -> Result<(), ConfigError> {
     #[cfg(unix)]
     {
+        if permission_check == FilePermissionCheck::UnsafeDisabled {
+            tracing::info!(
+                path = %path.display(),
+                "skipping file permission check (unsafe_skip_file_permissions_check=true)"
+            );
+            return Ok(());
+        }
+
         use super::InsecurePermissionsSnafu;
         use std::os::unix::fs::PermissionsExt;
 
@@ -78,7 +107,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("nonexistent.toml");
 
-        let result = load_toml_file(&file_path);
+        let result = load_toml_file(&file_path, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
 
         // Should return empty table for non-existent file
@@ -104,7 +133,7 @@ number = 42
             fs::set_permissions(&file_path, fs::Permissions::from_mode(0o600)).unwrap();
         }
 
-        let result = load_toml_file(&file_path);
+        let result = load_toml_file(&file_path, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
 
         let value = result.unwrap();
@@ -129,7 +158,7 @@ number = 42
             fs::set_permissions(&file_path, fs::Permissions::from_mode(0o600)).unwrap();
         }
 
-        let result = load_toml_file(&file_path);
+        let result = load_toml_file(&file_path, FilePermissionCheck::Enabled);
         assert!(result.is_err());
         // Should be a parse error
         assert!(result.unwrap_err().to_string().contains("parse TOML"));
@@ -147,13 +176,31 @@ number = 42
         // Set writable by others
         fs::set_permissions(&file_path, fs::Permissions::from_mode(0o666)).unwrap();
 
-        let result = check_file_permissions(&file_path);
+        let result = check_file_permissions(&file_path, FilePermissionCheck::Enabled);
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
                 .contains("Insecure file permissions")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_check_file_permissions_skipped_when_skip_is_true() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("insecure.toml");
+        fs::write(&file_path, "key = \"value\"\n").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o666)).unwrap();
+
+        assert!(check_file_permissions(&file_path, FilePermissionCheck::UnsafeDisabled).is_ok());
+        let result = load_toml_file(&file_path, FilePermissionCheck::UnsafeDisabled);
+        assert!(
+            result.is_ok(),
+            "world-writable file should load when skip=true"
         );
     }
 
@@ -175,7 +222,7 @@ number = 42
 
         // Should not print warning (we can't easily test stderr output,
         // but at least verify it doesn't error)
-        let result = check_file_permissions(&file_path);
+        let result = check_file_permissions(&file_path, FilePermissionCheck::Enabled);
         assert!(result.is_ok());
 
         // SAFETY: Test-only, not run in parallel.

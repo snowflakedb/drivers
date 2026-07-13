@@ -11,6 +11,7 @@ use crate::conversion::error::{
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::int_fmt;
 use crate::conversion::interval::read_single_field_interval_i128;
 use crate::conversion::numeric_helpers::{
     check_integer_range, fractional_warning, reject_multi_field_interval, whole_digits_len,
@@ -254,25 +255,12 @@ impl SnowflakeNumber {
             }
             .fail();
         }
-        // Stage the absolute-value digits through `itoa`-equivalent formatting
-        // (via the std library's `Display` for unsigned integers, which writes
-        // directly into the provided buffer without heap allocation).
-        let mut abs_tmp = [0u8; 40]; // 39 digits for u128::MAX + headroom
-        let abs_len = {
-            let mut cur = std::io::Cursor::new(&mut abs_tmp[..]);
-            use std::io::Write as _;
-            if write!(cur, "{}", value.unsigned_abs()).is_err() {
-                return NumericValueOutOfRangeSnafu {
-                    reason: format!(
-                        "unsigned abs of i128 {value} does not fit in the {}-byte digit buffer",
-                        abs_tmp.len()
-                    ),
-                }
-                .fail();
-            }
-            cur.position() as usize
-        };
-        let digits = &abs_tmp[..abs_len];
+        // Stage the absolute-value digits with a hand-rolled writer (u64 fast
+        // path), avoiding the `core::fmt`/`write!` Formatter overhead that
+        // profiling showed dominated this path. `uint_digits` is byte-identical
+        // to `Display` and a 40-byte buffer always fits u128 (max 39 digits).
+        let mut abs_tmp = [0u8; 40];
+        let digits = int_fmt::uint_digits(value.unsigned_abs(), &mut abs_tmp);
         let is_negative = value < 0;
         let scale = scale as usize;
 

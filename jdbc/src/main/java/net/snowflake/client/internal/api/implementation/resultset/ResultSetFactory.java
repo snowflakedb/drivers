@@ -14,7 +14,6 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
@@ -132,13 +131,12 @@ public class ResultSetFactory {
 
   private static DataConversionContext buildConversionContext(SnowflakeStatementImpl statement)
       throws SQLException {
-    // unwrap() returns the caller's live connection, not a new one; this method borrows it rather
-    // than owning it, so it must not be closed here (try-with-resources would close the user's
-    // connection before any rows are read).
-    InternalSnowflakeConnection connection =
-        statement.getConnection().unwrap(InternalSnowflakeConnection.class);
-    return SessionDataConversionContext.fromConnection(
-        ProtobufApis.coreDriverApi, connection.getHandle(), connection.getResolvedProperties());
+    // Borrow the statement's live connection without a closed-state check: ResultSet construction
+    // must succeed even if the statement was concurrently closed after execute() returned (parity
+    // with legacy snowflake-jdbc). getConnectionInternal() returns the connection directly rather
+    // than owning it, so it must not be closed here.
+    InternalSnowflakeConnection connection = statement.getConnectionInternal();
+    return SessionDataConversionContext.fromConnection(connection.getParameters());
   }
 
   private static ResultSetGetStreamResponse fetchStreamAndRelease(

@@ -233,6 +233,10 @@ class ConfigManager:
 
         Passes file_path and slice paths to the Rust core so it reads
         the correct files. Translates core errors to Python exceptions.
+
+        When ``skip_file_permissions_check`` is ``True``, file-permission checks
+        on ``config.toml`` and ``connections.toml`` are bypassed (mirrors the
+        ``unsafe_skip_config_file_permissions_check`` connection parameter).
         """
         if self.file_path is None:
             raise ConfigManagerError("ConfigManager is trying to read config file, but it doesn't have one")
@@ -243,10 +247,13 @@ class ConfigManager:
             response = core_driver.config_load_all_sections(
                 config_file=str(self.file_path),
                 connections_file=str(connections_file) if connections_file is not None else None,
+                skip_permissions=skip_file_permissions_check,
             )
         except (ProtoApplicationException, DriverError) as e:
             msg = _extract_error_msg(e)
-            if "permission" in msg.lower() or "Permission denied" in msg:
+            if "permission denied" in msg.lower():
+                # OS-level read failure (e.g. restrictive parent-directory permissions).
+                # Silently return empty cache — the process simply can't see this file.
                 LOGGER.debug(
                     "Config file '%s' could not be read due to no permission on its parent directory",
                     self.file_path,

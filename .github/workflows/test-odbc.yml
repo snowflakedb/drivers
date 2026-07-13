@@ -27,7 +27,7 @@ concurrency:
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
-  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly","run_long_running_tests"]'), github.event.label.name) }}
 
 jobs:
   # Filter out PR runs triggered solely by adding an unrelated label
@@ -46,7 +46,7 @@ jobs:
        || github.event_name == 'workflow_dispatch'
        || startsWith(github.ref, 'refs/heads/release/'))
       && (github.event.action != 'labeled'
-          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
+          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly","run_long_running_tests"]'), github.event.label.name))
     runs-on: ubuntu-latest
     steps:
       - run: 'true'
@@ -127,6 +127,106 @@ jobs:
     uses: ./.github/workflows/_test-odbc.yml
     # See odbc_tests_reference above for the secrets-inherit rationale.
     secrets: inherit
+
+  # Label-gated lane for `[long_running]`-tagged ODBC tests (e.g. the
+  # multi-round-trip catalog metadata suites that would otherwise time out on a
+  # normal PR run). Those tests are excluded from the default gating runs via
+  # `-LE "flaky|long_running"` in _test-odbc.yml / _test-odbc-reference.yml; this
+  # job opts them back in on demand.
+  #
+  # Triggers when the PR carries the `run_long_running_tests` label (applying the
+  # label re-runs the workflow — see scope-label-gate's labeled-event allowlist)
+  # and on the nightly schedule. Single Linux x64 / AWS lane. Intentionally NOT a
+  # dependency of `odbc-status`, so it never blocks a merge — it is an on-demand
+  # diagnostic lane, mirroring the label-gated `run_full_put_get_tests` workflow.
+  odbc_long_running:
+    needs: scope-label-gate
+    if: >-
+      github.event_name == 'schedule'
+      || contains(github.event.pull_request.labels.*.name, 'run_long_running_tests')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "odbc"
+
+      - name: Restore test dependencies cache
+        id: test-deps-cache
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: test-deps
+          key-suffix: default
+
+      - name: Restore ccache
+        id: ccache
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: ccache
+          key-suffix: default
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache ninja-build
+          # odbc_tests/CMakeLists.txt requires CMake >= 4.0; ubuntu-latest ships ~3.30.
+          python3 -m pip install 'cmake>=4.0.3'
+          cmake --version
+
+      - name: Build ODBC driver
+        # Workaround for the Rust 1.89+ linker bug (rust-lang/rust#131292),
+        # mirroring odbc_unit_tests in test-odbc.yml.
+        run: cargo build --package odbc
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      # run_tests_unix.sh forwards trailing args to ctest; `-L long_running`
+      # selects exactly the tests carrying the Catch2 `[long_running]` tag
+      # (mapped to a ctest label via ADD_TAGS_AS_LABELS in odbc_tests/CMakeLists.txt).
+      - name: Build and run long-running ODBC tests
+        run: |
+          export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          export DRIVER_TYPE=NEW
+          ./scripts/odbc/run_tests_unix.sh -L long_running \
+            --output-junit "${{ github.workspace }}/odbc-long-running-junit.xml"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odbc-long-running-tests
+          path: odbc-long-running-junit.xml
+          if-no-files-found: warn
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "odbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
 
   odbc-status:

@@ -65,6 +65,7 @@ class Connection(ConnectionMixin):
     # Initialization
     # ------------------------------------------------------------------
 
+    @api_telemetry
     def __init__(
         self,
         *,
@@ -411,6 +412,7 @@ class Connection(ConnectionMixin):
         return self._autocommit
 
     @pep249
+    @api_telemetry
     def autocommit(self, value: bool) -> None:
         """Set autocommit mode."""
         self.set_autocommit(value)
@@ -419,6 +421,7 @@ class Connection(ConnectionMixin):
     # Connection state
     # ------------------------------------------------------------------
 
+    @api_telemetry
     def is_closed(self) -> bool:
         """
         Check if the connection is closed.
@@ -434,6 +437,7 @@ class Connection(ConnectionMixin):
             return True
 
     @property
+    @api_telemetry
     def expired(self) -> bool:
         """
         True if the connection's master token has expired and the session can
@@ -445,13 +449,18 @@ class Connection(ConnectionMixin):
 
         Matches the legacy snowflake-connector-python ``SnowflakeConnection.expired``
         flag — intended as a read-only signal for external pool / application code.
+
+        Fails closed: if the expiry check itself errors, returns True so pools
+        evict the connection on uncertainty rather than reuse a possibly-dead one
+        (mirrors the async ``is_expired()`` coroutine).
         """
         try:
             response = core_driver.connection_is_expired(conn_handle=self.conn_handle)  # type: ignore[arg-type]
             return bool(response.is_expired)
         except Exception:
-            return False
+            return True
 
+    @api_telemetry
     def is_valid(self) -> bool:
         """Check whether the connection is still usable for sending queries.
 
@@ -537,6 +546,7 @@ class Connection(ConnectionMixin):
     # ------------------------------------------------------------------
 
     @cached_property
+    @api_telemetry
     def snowflake_version(self) -> str:
         """The current Snowflake server version string."""
         with self.cursor(DictCursor) as cur:

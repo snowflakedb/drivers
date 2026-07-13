@@ -26,6 +26,16 @@ PLATFORM get_platform() {
 #endif
 }
 
+ARCH get_arch() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  return ARCH::ARCH_AARCH64;
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__amd64__)
+  return ARCH::ARCH_X86_64;
+#else
+  return ARCH::ARCH_UNKNOWN;
+#endif
+}
+
 bool is_iodbc_test_suite() {
 #ifdef _WIN32
   return false;

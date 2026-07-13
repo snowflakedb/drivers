@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
 import java.util.Properties;
+import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -118,8 +119,37 @@ public class ConnectionOptionsResolverTest {
         ConnectionOptionsResolver.resolve(
             "jdbc:snowflake://testaccount.snowflakecomputing.com?ssl=off", new Properties());
 
-    assertEquals("http", resolved.get("protocol"));
+    // ssl is present (from the URL query), so protocol is not auto-derived; sf_core resolves the
+    // http scheme from ssl=off.
+    assertFalse(resolved.containsKey("protocol"));
+    assertEquals("off", resolved.get("ssl"));
     assertEquals(80, resolved.get("port"));
+  }
+
+  @Test
+  public void shouldNotDeriveProtocolWhenSslSuppliedInProperties() {
+    // A caller-supplied ssl (e.g. Metabase's ssl=true) must not also get protocol=https, which
+    // sf_core rejects as ConflictingParameters.
+    Properties input = new Properties();
+    input.setProperty("ssl", "true");
+
+    Properties resolved =
+        ConnectionOptionsResolver.resolve("jdbc:snowflake://acct.snowflakecomputing.com", input);
+
+    assertFalse(
+        resolved.containsKey("protocol"), "protocol must not be auto-derived alongside ssl");
+    assertEquals("true", resolved.get("ssl"));
+    assertEquals("acct.snowflakecomputing.com", resolved.get("host"));
+  }
+
+  @Test
+  public void shouldDeriveProtocolFromSchemeWhenSslAbsent() {
+    Properties resolved =
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake://acct.snowflakecomputing.com", new Properties());
+
+    assertEquals("https", resolved.get("protocol"));
+    assertFalse(resolved.containsKey("ssl"));
   }
 
   @Test
