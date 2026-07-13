@@ -9,6 +9,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{Layer, Registry};
 
 use crate::fs_adapter::{FsAdapter, RealFs};
+use crate::telemetry::log_batch::LogBatcher;
 use crate::telemetry::os_details::detect_os_details;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::telemetry::snowflake_processor::SessionFlushHandle;
@@ -112,6 +113,7 @@ pub struct LogManager {
     dispatch: tracing::dispatcher::Dispatch,
     telemetry_sessions: SessionRegistry,
     session_flusher: Option<SessionFlushHandle>,
+    log_batcher: LogBatcher,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
     fs: Arc<dyn FsAdapter>,
     /// Process-wide default for `log_query_text` parsed from `sf.odbc.ini` /
@@ -129,14 +131,22 @@ impl LogManager {
         &self.telemetry_sessions
     }
 
-    /// Flush buffered telemetry spans for a specific session.
-    /// Called during connection release before the connection span is dropped.
-    /// Awaits the export so it completes while session tokens are still alive
+    /// Returns the raw log-telemetry batcher (shares the session registry with
+    /// the span exporter, so it honors the same `CLIENT_TELEMETRY_ENABLED` gate).
+    pub fn log_batcher(&self) -> &LogBatcher {
+        &self.log_batcher
+    }
+
+    /// Flush buffered telemetry for a specific session — both the OTel span
+    /// buffer and the raw log-telemetry batch. Called during connection release
+    /// before the connection span is dropped. Awaits the exports so they complete
+    /// while session tokens are still alive
     /// (see [`crate::telemetry::snowflake_processor::SessionFlushHandle::flush_session`]).
     pub async fn flush_session(&self, session_id: i64) {
         if let Some(ref flusher) = self.session_flusher {
             flusher.flush_session(session_id).await;
         }
+        self.log_batcher.flush_session(session_id).await;
     }
 
     /// Lazily detects and caches OS details (e.g. `/etc/os-release` on Linux).
@@ -183,9 +193,11 @@ impl LogManager {
     /// application or test harness already configures tracing).
     pub fn with_none_subscriber(fs: Arc<dyn FsAdapter>) -> Self {
         let noop = tracing::dispatcher::Dispatch::none();
+        let telemetry_sessions = SessionRegistry::default();
         Self {
             dispatch: noop,
-            telemetry_sessions: SessionRegistry::default(),
+            log_batcher: LogBatcher::new(telemetry_sessions.clone()),
+            telemetry_sessions,
             session_flusher: None,
             os_details: once_cell::sync::OnceCell::new(),
             fs,
@@ -222,6 +234,7 @@ impl LogManager {
             Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?;
         Ok(Self {
             dispatch,
+            log_batcher: LogBatcher::new(sessions.clone()),
             telemetry_sessions: sessions,
             session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
@@ -249,6 +262,7 @@ impl LogManager {
         let (dispatch, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
         Ok(Self {
             dispatch,
+            log_batcher: LogBatcher::new(registry.clone()),
             telemetry_sessions: registry,
             session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),

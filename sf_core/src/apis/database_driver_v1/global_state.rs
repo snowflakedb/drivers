@@ -178,6 +178,37 @@ impl DatabaseDriverV1 {
         }
     }
 
+    /// Buffer one caller-produced telemetry entry for a connection's session.
+    /// No-ops when telemetry is unconfigured or the session id is not yet known
+    /// (login incomplete / handle released) — the batcher itself also drops
+    /// entries for sessions telemetry is disabled for.
+    pub(crate) async fn telemetry_add_log_to_batch(
+        &self,
+        conn_handle: Handle,
+        message_json: String,
+        timestamp_ms: i64,
+    ) {
+        let Some(lm) = self.log_manager.as_ref() else {
+            return;
+        };
+        let Some(session_id) = self.session_id_for_conn(conn_handle).await else {
+            return;
+        };
+        lm.log_batcher()
+            .add_log(session_id, message_json, timestamp_ms);
+    }
+
+    /// Flush a connection session's buffered log-telemetry batch to `/telemetry/send`.
+    pub(crate) async fn telemetry_send_log_batch(&self, conn_handle: Handle) {
+        let Some(lm) = self.log_manager.as_ref() else {
+            return;
+        };
+        let Some(session_id) = self.session_id_for_conn(conn_handle).await else {
+            return;
+        };
+        lm.log_batcher().send_log_batch(session_id).await;
+    }
+
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {
         self.token_cache.get_or_try_init(KeyringTokenCache::new)
     }

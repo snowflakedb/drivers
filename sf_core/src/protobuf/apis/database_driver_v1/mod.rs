@@ -1056,8 +1056,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(TelemetrySendResponse {})
     }
 
-    // Buffer one caller-produced telemetry entry. Real batching + `/telemetry/send`
-    // egress is wired in SNOW-3774686 -core; this stub keeps the stack green.
+    // Buffer one caller-produced telemetry entry (e.g. Snowpark) on the
+    // connection's per-session log batch; the batcher flushes on threshold/close.
     #[instrument(
         name = "DatabaseDriverV1::telemetry_add_log_to_batch",
         skip(self, input)
@@ -1066,17 +1066,27 @@ impl DatabaseDriver for DatabaseDriverImpl {
         &self,
         input: TelemetryAddLogToBatchRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
-        required(input.conn_handle, "Connection handle is required")?;
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        self.driver
+            .telemetry_add_log_to_batch(
+                Handle::from(conn_handle),
+                input.message_json,
+                input.timestamp_ms,
+            )
+            .await;
         Ok(TelemetrySendResponse {})
     }
 
-    // Flush the connection's buffered log-telemetry batch. Wired in SNOW-3774686 -core.
+    // Flush the connection's buffered log-telemetry batch to `/telemetry/send`.
     #[instrument(name = "DatabaseDriverV1::telemetry_send_log_batch", skip(self, input))]
     async fn telemetry_send_log_batch(
         &self,
         input: TelemetrySendLogBatchRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
-        required(input.conn_handle, "Connection handle is required")?;
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        self.driver
+            .telemetry_send_log_batch(Handle::from(conn_handle))
+            .await;
         Ok(TelemetrySendResponse {})
     }
 }

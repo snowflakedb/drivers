@@ -6,12 +6,25 @@ use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMe
 use opentelemetry_sdk::trace::SpanData;
 use serde_json::{Value, json};
 
+/// Wrap a list of log entries in Snowflake's `/telemetry/send` envelope.
+/// Shared by every telemetry lane (spans, metrics, raw log batch) so they
+/// cannot drift from the wire contract.
+pub(crate) fn logs_payload(logs: Vec<Value>) -> Value {
+    json!({ "logs": logs })
+}
+
+/// Build one `/telemetry/send` log entry. `timestamp` is any epoch-millis value;
+/// it is serialized to a JSON *string*, matching the legacy `TelemetryData` format.
+pub(crate) fn log_entry(message: Value, timestamp: impl std::fmt::Display) -> Value {
+    json!({ "message": message, "timestamp": timestamp.to_string() })
+}
+
 /// Convert a batch of OTel spans into Snowflake's `/telemetry/send` JSON payload.
 ///
 /// Format: `{"logs": [{"message": {...}, "timestamp": "..."}]}`
 pub fn spans_to_snowflake_payload(spans: &[SpanData]) -> Value {
     let logs: Vec<Value> = spans.iter().flat_map(span_to_log_entries).collect();
-    json!({ "logs": logs })
+    logs_payload(logs)
 }
 
 fn span_to_log_entries(span: &SpanData) -> Vec<Value> {
@@ -72,10 +85,7 @@ fn attrs_to_log_entry(
     }
 
     let ts = system_time_to_epoch_millis(timestamp);
-    json!({
-        "message": message,
-        "timestamp": ts.to_string()
-    })
+    log_entry(Value::Object(message), ts)
 }
 
 macro_rules! collect_sum_data_points {
@@ -88,10 +98,7 @@ macro_rules! collect_sum_data_points {
             for kv in dp.attributes() {
                 message.insert(kv.key.as_str().to_string(), otel_value_to_json(&kv.value));
             }
-            $logs.push(json!({
-                "message": message,
-                "timestamp": timestamp.to_string()
-            }));
+            $logs.push(log_entry(Value::Object(message), timestamp));
         }
     }};
 }
@@ -120,7 +127,7 @@ pub fn metrics_to_snowflake_payload(metrics: &ResourceMetrics) -> Value {
         }
     }
 
-    json!({ "logs": logs })
+    logs_payload(logs)
 }
 
 fn otel_value_to_json(value: &opentelemetry::Value) -> Value {

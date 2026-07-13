@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use opentelemetry::trace::{
@@ -8,54 +7,16 @@ use opentelemetry::trace::{
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use serde_json::json;
-use sf_core::config::rest_parameters::QueryParameters;
-use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
-use sf_core::telemetry::snowflake_exporter::{
-    ExporterSession, SessionRegistry, SnowflakeInBandExporter,
-};
+use sf_core::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
 use tokio::sync::RwLock as AsyncRwLock;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use super::common::{make_active_session, make_registry, test_query_parameters};
+
 const SESSION_ID: i64 = 42;
-
-fn test_query_parameters(server_url: &str) -> QueryParameters {
-    QueryParameters {
-        server_url: server_url.to_string(),
-        client_info: test_client_info(),
-        log_max_query_length: 80,
-        log_query_text: false,
-        log_query_parameters: false,
-    }
-}
-
-fn make_session(server_url: &str, token: Option<SessionTokens>) -> Arc<ExporterSession> {
-    Arc::new(ExporterSession {
-        client: reqwest::Client::new(),
-        query_parameters: test_query_parameters(server_url),
-        session_token: Arc::new(AsyncRwLock::new(token)),
-    })
-}
-
-fn make_active_session(server_url: &str) -> Arc<ExporterSession> {
-    let tokens = SessionTokens {
-        session_token: SensitiveString::from("test_token"),
-        master_token: SensitiveString::from("master_token"),
-        session_id: SESSION_ID,
-        session_expires_at: None,
-        master_expires_at: None,
-        master_validity: None,
-    };
-    make_session(server_url, Some(tokens))
-}
-
-fn make_registry(session_id: i64, session: Arc<ExporterSession>) -> SessionRegistry {
-    let mut map = HashMap::new();
-    map.insert(session_id, session);
-    Arc::new(RwLock::new(map))
-}
 
 fn make_span(name: &'static str, attributes: Vec<KeyValue>) -> SpanData {
     SpanData {

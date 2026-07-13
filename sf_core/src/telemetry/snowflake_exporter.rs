@@ -53,8 +53,12 @@ impl SnowflakeInBandExporter {
 }
 
 /// Clone the session token under a short-lived read guard, then send
-/// telemetry without holding the lock across the network call.
-async fn send_with_token(session: &ExporterSession, payload: &serde_json::Value) -> OTelSdkResult {
+/// telemetry without holding the lock across the network call. Shared by the
+/// span exporter and the raw log-batch lane so both egress through one path.
+pub(crate) async fn send_with_token(
+    session: &ExporterSession,
+    payload: &serde_json::Value,
+) -> OTelSdkResult {
     let token = {
         let guard = session.session_token.read().await;
         match guard.as_ref() {
