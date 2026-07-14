@@ -73,12 +73,19 @@ pub enum TzOffsetFormatCache {
 }
 
 impl NumericSettings {
-    /// The cached offset token to use for TZ -> CHAR/WCHAR rendering.
-    /// `None` until the first successful load and whenever the parameter
-    /// is unset; this is what the fetch path consumes.
+    /// The offset token the TZ -> CHAR/WCHAR fetch path should use.
+    ///
+    /// Always `None`: TIMESTAMP_TZ fetched into `SQL_C_CHAR` / `SQL_C_WCHAR`
+    /// renders as the bare UTC wall-clock and never carries an offset suffix,
+    /// regardless of `TIMESTAMP_TZ_OUTPUT_FORMAT`. The format is still parsed
+    /// and cached (and the offset-aware renderer stays unit tested), so
+    /// enabling offset-aware fetch later is a one-line change here.
     pub fn tz_offset_format(&self) -> Option<crate::conversion::timestamp::TzOffsetFormat> {
         match self.tz_offset_format_cache {
-            TzOffsetFormatCache::Loaded(format) => format,
+            TzOffsetFormatCache::Loaded(cached) => {
+                let _ = cached;
+                None
+            }
             TzOffsetFormatCache::Unloaded => None,
         }
     }
