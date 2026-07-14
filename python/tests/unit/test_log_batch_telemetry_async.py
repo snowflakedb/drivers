@@ -43,7 +43,7 @@ class TestAsyncAddLogToBatch:
 
     def test_raises_when_closed(self):
         client = _client()
-        asyncio.run(client.close())
+        client._closed = True
         with patch.object(async_core_driver, "telemetry_add_log_to_batch", new_callable=AsyncMock) as rpc:
             with pytest.raises(InterfaceError):
                 asyncio.run(client.add_log_to_batch(TelemetryData(message={"type": "ct"}, timestamp=1)))
@@ -60,10 +60,21 @@ class TestAsyncAddLogToBatch:
 class TestAsyncTryAddLogToBatch:
     def test_swallows_closed_client_error(self):
         client = _client()
-        asyncio.run(client.close())
+        client._closed = True
         with patch.object(async_core_driver, "telemetry_add_log_to_batch", new_callable=AsyncMock) as rpc:
             asyncio.run(client.try_add_log_to_batch(TelemetryData(message={"type": "ct"}, timestamp=1)))
             rpc.assert_not_awaited()
+
+    def test_swallows_arbitrary_rpc_error(self):
+        client = _client()
+        with patch.object(
+            async_core_driver,
+            "telemetry_add_log_to_batch",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("network"),
+        ) as rpc:
+            asyncio.run(client.try_add_log_to_batch(TelemetryData(message={"type": "ct"}, timestamp=1)))
+            rpc.assert_awaited_once()
 
 
 class TestAsyncSendLogBatch:
@@ -86,6 +97,14 @@ class TestAsyncClose:
     def test_close_flushes_then_marks_closed(self):
         client = _client()
         with patch.object(async_core_driver, "telemetry_send_log_batch", new_callable=AsyncMock) as rpc:
+            asyncio.run(client.close())
+        rpc.assert_awaited_once_with(conn_handle=_CONN_HANDLE)
+        assert client._closed is True
+
+    def test_close_is_idempotent(self):
+        client = _client()
+        with patch.object(async_core_driver, "telemetry_send_log_batch", new_callable=AsyncMock) as rpc:
+            asyncio.run(client.close())
             asyncio.run(client.close())
         rpc.assert_awaited_once_with(conn_handle=_CONN_HANDLE)
         assert client._closed is True
