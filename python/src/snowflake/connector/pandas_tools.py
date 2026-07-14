@@ -22,9 +22,13 @@ from ._internal.write_pandas_operation import (
     WritePandasConfig,
     WritePandasOperation,
     WritePandasResult,
+    _create_temp_object,
+    _file_format_sql,
+    _stage_sql,
+    generate_temp_name,
     qualify_name,
 )
-from .errors import Error, NotSupportedError, ProgrammingError
+from .errors import Error, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -33,6 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy import engine
 
     from .connection import Connection
+    from .cursor import SnowflakeCursor
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -153,13 +158,45 @@ build_location_helper = qualify_name
 
 
 @snowpark_compat
-def _create_temp_stage(*args: Any, **kwargs: Any) -> str:
-    raise NotSupportedError("_create_temp_stage is not supported by the Universal Driver (no PUT/staging yet).")
+def _create_temp_stage(
+    cursor: SnowflakeCursor,
+    database: str | None,
+    schema: str | None,
+    quote_identifiers: bool,
+    compression: str,
+    auto_create_table: bool,
+    overwrite: bool,
+    use_scoped_temp_object: bool = False,
+) -> str:
+    name = generate_temp_name("STAGE")
+    qualified = qualify_name(database, schema, name, quote_identifiers)
+    binary_as_text_false = auto_create_table or overwrite
+    return _create_temp_object(
+        cursor,
+        lambda n: (_stage_sql(n, compression, binary_as_text_false, use_scoped_temp_object), ()),
+        qualified,
+        name,
+    )
 
 
 @snowpark_compat
-def _create_temp_file_format(*args: Any, **kwargs: Any) -> str:
-    raise NotSupportedError("_create_temp_file_format is not supported by the Universal Driver (no PUT/staging yet).")
+def _create_temp_file_format(
+    cursor: SnowflakeCursor,
+    database: str | None,
+    schema: str | None,
+    quote_identifiers: bool,
+    compression: str,
+    sql_use_logical_type: str,
+    use_scoped_temp_object: bool = False,
+) -> str:
+    name = generate_temp_name("FILE_FORMAT")
+    qualified = qualify_name(database, schema, name, quote_identifiers)
+    return _create_temp_object(
+        cursor,
+        lambda n: (_file_format_sql(n, compression, sql_use_logical_type, use_scoped_temp_object), ()),
+        qualified,
+        name,
+    )
 
 
 @requires_dependency(pandas, sqlalchemy)
