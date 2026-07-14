@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -72,5 +73,34 @@ public class ResultSetIsLastTests extends SnowflakeIntegrationTestBase {
       assertTrue(resultSet.isLast(), "isLast() should match snowflake-jdbc on an empty result set");
       assertFalse(resultSet.next(), "Expected an empty result set");
     }
+  }
+
+  @Test
+  @SkipOldDriver("BD#21")
+  public void shouldReportIsLastOverMetadataResultSet() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When a metadata result set is iterated (these flow through the projecting/filtering
+    // ConvertingRowReader, unlike the Arrow query path above). getSchemas() always returns at least
+    // the current schema, so the count is non-empty without depending on any fixture.
+    int rowCount = 0;
+    int lastRowIndex = -1;
+    int isLastTrueCount = 0;
+    try (ResultSet resultSet = connection.getMetaData().getSchemas()) {
+      while (resultSet.next()) {
+        rowCount++;
+        if (resultSet.isLast()) {
+          isLastTrueCount++;
+          lastRowIndex = rowCount;
+        }
+      }
+      assertFalse(resultSet.isLast(), "isLast() should be false after the last row");
+    }
+
+    // Then isLast() is true for exactly one row, and that row is the final one.
+    assertTrue(rowCount > 0, "getSchemas() should return at least one schema");
+    assertEquals(1, isLastTrueCount, "isLast() should be true for exactly one metadata row");
+    assertEquals(rowCount, lastRowIndex, "isLast() should be true only on the final metadata row");
   }
 }

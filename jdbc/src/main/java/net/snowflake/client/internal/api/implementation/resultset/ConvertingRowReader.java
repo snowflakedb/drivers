@@ -38,20 +38,47 @@ class ConvertingRowReader implements RowReader {
   private int currentRowIndex = -1;
   private boolean afterLast;
 
+  // One-row look-ahead buffer, populated by isLast() to peek past the current row. When
+  // hasPendingRow is true, pendingRow holds the next projected row (or null if the delegate is
+  // exhausted) so that a subsequent next() consumes it instead of re-advancing the delegate.
+  private Object[] pendingRow;
+  private boolean hasPendingRow;
+
   // --- RowCursor ---
 
   @Override
   public boolean next() throws SQLException {
+    Object[] row;
+    if (hasPendingRow) {
+      row = pendingRow;
+      pendingRow = null;
+      hasPendingRow = false;
+    } else {
+      row = nextProjectedRow();
+    }
+    if (row == null) {
+      currentRow = null;
+      afterLast = true;
+      return false;
+    }
+    currentRow = row;
+    currentRowIndex++;
+    return true;
+  }
+
+  /**
+   * Advances the delegate to the next row the converter keeps, returning the projected columns, or
+   * {@code null} once the delegate is exhausted. Rows the converter drops (returns {@code null})
+   * are skipped.
+   */
+  private Object[] nextProjectedRow() throws SQLException {
     while (delegate.next()) {
-      currentRow = converter.convert(delegate);
-      if (currentRow != null) {
-        currentRowIndex++;
-        return true;
+      Object[] projected = converter.convert(delegate);
+      if (projected != null) {
+        return projected;
       }
     }
-    currentRow = null;
-    afterLast = true;
-    return false;
+    return null;
   }
 
   @Override
@@ -82,11 +109,20 @@ class ConvertingRowReader implements RowReader {
 
   @Override
   public boolean isLast() throws SQLException {
-    // The converter may drop rows, so the delegate's row count does not map to the projected
-    // count and isLast() cannot be answered without buffering ahead.
-    // TODO: add a one-row look-ahead buffer so isLast() returns a correct boolean here (legacy
-    //  parity for metadata result sets) instead of throwing.
-    throw new SQLException("isLast not supported for projected result sets");
+    // The converter may drop rows, so the delegate's row count does not map to the projected count.
+    // Peek one projected row ahead (buffering it for the next next()) and report last when none
+    // follows the current position.
+    //
+    // Parity with snowflake-jdbc: this also reports the before-first cursor of an empty projected
+    // result as last, matching the count-based readers where currentRow (-1) + 1 == total (0).
+    if (afterLast) {
+      return false;
+    }
+    if (!hasPendingRow) {
+      pendingRow = nextProjectedRow();
+      hasPendingRow = true;
+    }
+    return pendingRow == null;
   }
 
   @Override
