@@ -1071,3 +1071,75 @@ TEST_CASE("SQLGetStmtAttr: SQL_INVALID_HANDLE for null statement handle", "[odbc
   const SQLRETURN ret = SQLGetStmtAttr(SQL_NULL_HSTMT, SQL_ATTR_ROW_NUMBER, &value, 0, nullptr);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
+
+// ============================================================================
+// SQL_ATTR_PARAM_OPERATION_PTR (19) — APD per-set operation array (SNOW-3235553)
+// ============================================================================
+
+TEST_CASE("should set and get SQL_ATTR_PARAM_OPERATION_PTR", "[odbc-api][stmt_attr][param_operation_ptr]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // Default is a null pointer (pre-fill with a non-null sentinel to detect a write)
+  SQLUSMALLINT sentinel = 0;
+  SQLUSMALLINT* current = &sentinel;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, &current, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(current == nullptr);
+
+  // When a per-set operation array pointer is set
+  SQLUSMALLINT param_ops[3] = {SQL_PARAM_PROCEED, SQL_PARAM_IGNORE, SQL_PARAM_PROCEED};
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, param_ops, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting it back returns the same pointer
+  SQLUSMALLINT* got = nullptr;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, &got, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(got == param_ops);
+}
+
+// SNOW-3235553: SQL_ATTR_PARAM_OPERATION_PTR must be routed to the *effective*
+// APD, so an explicit SQL_ATTR_APP_PARAM_DESC is honored (not the implicit APD,
+// which the array-binding path never consults when an explicit descriptor is
+// assigned). Consistent with SQL_ATTR_PARAM_BIND_TYPE / PARAM_BIND_OFFSET_PTR.
+TEST_CASE("should route SQL_ATTR_PARAM_OPERATION_PTR to an explicit APP_PARAM_DESC",
+          "[odbc-api][stmt_attr][param_operation_ptr]") {
+  // Given A connected statement with an explicit application parameter descriptor
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // RAII: the descriptor is freed on scope exit even if an assertion below
+  // throws. Per the ODBC spec, freeing an explicit descriptor reverts the
+  // statement to its implicit APD, so no manual reset/free is needed.
+  HandleWrapper explicit_apd(conn.handleWrapper().getHandle(), SQL_HANDLE_DESC);
+
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, explicit_apd.getHandle(), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Direction 1: set via the statement attribute -> the value must land on the
+  // explicit descriptor (read it back independently via SQLGetDescField on the
+  // explicit handle's SQL_DESC_ARRAY_STATUS_PTR). Before the fix, the set wrote
+  // the now-inactive implicit APD, so the explicit descriptor stayed null.
+  SQLUSMALLINT param_ops[3] = {SQL_PARAM_PROCEED, SQL_PARAM_IGNORE, SQL_PARAM_PROCEED};
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, param_ops, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT* desc_ptr = nullptr;
+  ret = SQLGetDescField(explicit_apd.getHandle(), 0, SQL_DESC_ARRAY_STATUS_PTR, &desc_ptr, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_ptr == param_ops);
+
+  // Direction 2: set directly on the explicit descriptor -> the statement
+  // attribute get must read it back from the effective (explicit) APD. Before
+  // the fix, the get read the inactive implicit APD and returned the wrong ptr.
+  SQLUSMALLINT other_ops[2] = {SQL_PARAM_IGNORE, SQL_PARAM_PROCEED};
+  ret = SQLSetDescField(explicit_apd.getHandle(), 0, SQL_DESC_ARRAY_STATUS_PTR, other_ops, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT* got = nullptr;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, &got, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(got == other_ops);
+}

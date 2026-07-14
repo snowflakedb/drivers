@@ -58,6 +58,31 @@ Feature: Large (stage-based) parameter binding
     And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
     Then Result should contain rows [[0, "stage-0"], [9, "stage-9"]]
 
+  @odbc_e2e
+  Scenario: should skip SQL_PARAM_IGNORE sets during array execution
+    Given Snowflake client is logged in
+    And A temporary table with an id column exists
+    When 5 sets {10, 20, 30, 40, 50} are inserted with the 2nd and 4th marked SQL_PARAM_IGNORE
+    Then SQL_ATTR_PARAMS_PROCESSED_PTR reports all 5 sets and the status array marks ignored sets SQL_PARAM_UNUSED
+    And Query "SELECT id FROM {table} ORDER BY id" is executed
+    Then Result should contain only the proceeded rows [10, 30, 50]
+
+  @odbc_e2e
+  Scenario: should skip SQL_PARAM_IGNORE sets with an explicit APP_PARAM_DESC
+    Given Snowflake client is logged in
+    And A temporary table with an id column exists
+    And An explicit SQL_ATTR_APP_PARAM_DESC is assigned to the statement
+    When 5 sets {10, 20, 30, 40, 50} are inserted with the 2nd and 4th marked SQL_PARAM_IGNORE
+    Then SQL_ATTR_PARAMS_PROCESSED_PTR reports all 5 sets and the status array marks ignored sets SQL_PARAM_UNUSED
+    And Query "SELECT id FROM {table} ORDER BY id" is executed
+    Then Result should contain only the proceeded rows [10, 30, 50]
+
+  # TODO(SNOW-3235553): add a scenario for the all-ignored edge case (every set
+  # marked SQL_PARAM_IGNORE -> zero rows -> empty INSERT). Deferred until the
+  # server's response to an empty payload (error vs no-op) is verified; the
+  # driver-side path is already covered by the
+  # `json_all_param_ignore_yields_empty_value_arrays` unit test.
+
   @python_e2e
   Scenario: should fall back to per-row execution for non-INSERT statements
     Given Snowflake client is logged in

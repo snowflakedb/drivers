@@ -145,6 +145,16 @@ fn get_ard_field(
                 }
                 Ok(())
             }
+            DescField::ArrayStatusPtr => {
+                // SQL_DESC_ARRAY_STATUS_PTR — the array operation pointer
+                // (SQL_ATTR_ROW_OPERATION_PTR on an ARD, or SQL_ATTR_PARAM_OPERATION_PTR
+                // when an explicit descriptor is used as an APD). Explicit descriptors
+                // always route here, so this is the read path for both.
+                unsafe {
+                    std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
+                }
+                Ok(())
+            }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD header field {:?}", field);
                 crate::api::error::InvalidDescriptorFieldIdSnafu {
@@ -870,6 +880,16 @@ fn set_ard_field(
                 desc.bind_offset_ptr = ptr;
                 Ok(())
             }
+            DescField::ArrayStatusPtr => {
+                // SQL_DESC_ARRAY_STATUS_PTR — array operation pointer
+                // (SQL_ATTR_ROW_OPERATION_PTR on an ARD, or SQL_ATTR_PARAM_OPERATION_PTR
+                // when an explicit descriptor is used as an APD). Explicit descriptors
+                // always route here, so this is the write path for both.
+                let ptr = value_ptr as *mut u16;
+                tracing::debug!("set_desc_field: ARD ArrayStatusPtr = {:?}", ptr);
+                desc.array_status_ptr = ptr;
+                Ok(())
+            }
             _ => {
                 tracing::warn!("set_desc_field: unsupported ARD header field {:?}", field);
                 crate::api::error::InvalidDescriptorFieldIdSnafu {
@@ -1094,6 +1114,7 @@ fn get_apd_field(
             return Ok(());
         }
         DescField::ArrayStatusPtr => {
+            // SQL_ATTR_PARAM_OPERATION_PTR — per-set PROCEED/IGNORE array.
             unsafe {
                 std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
             }
@@ -1197,6 +1218,7 @@ fn set_apd_field(
                 Ok(())
             }
             DescField::ArrayStatusPtr => {
+                // SQL_ATTR_PARAM_OPERATION_PTR — per-set PROCEED/IGNORE array.
                 desc.array_status_ptr = value_ptr as *mut u16;
                 Ok(())
             }
