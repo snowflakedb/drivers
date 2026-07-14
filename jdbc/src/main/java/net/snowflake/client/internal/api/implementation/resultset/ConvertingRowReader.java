@@ -81,6 +81,15 @@ class ConvertingRowReader implements RowReader {
   }
 
   @Override
+  public boolean isLast() throws SQLException {
+    // The converter may drop rows, so the delegate's row count does not map to the projected
+    // count and isLast() cannot be answered without buffering ahead.
+    // TODO: add a one-row look-ahead buffer so isLast() returns a correct boolean here (legacy
+    //  parity for metadata result sets) instead of throwing.
+    throw new SQLException("isLast not supported for projected result sets");
+  }
+
+  @Override
   public int getCurrentRow() {
     return currentRowIndex;
   }

@@ -1,7 +1,6 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
 import java.sql.SQLException;
-import java.util.List;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
@@ -14,7 +13,7 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
@@ -42,8 +41,7 @@ public class ResultSetFactory {
       throws SQLException {
     ResultSetGetStreamResponse response =
         fetchStreamAndRelease(coreDriverApi, rs.getResultSetHandle());
-    return resultSetFromResponse(
-        statement, queryId, response, rs.getResultDescriptor().getColumnsList());
+    return resultSetFromResponse(statement, queryId, response, rs.getResultDescriptor());
   }
 
   public static InternalAsyncResultSet createAsync(
@@ -63,8 +61,7 @@ public class ResultSetFactory {
     ResultSetGetStreamResponse response =
         fetchStreamAndRelease(coreDriverApi, rs.getResultSetHandle());
     if (response.hasStream() && !response.getStream().getValue().isEmpty()) {
-      return resultSetFromResponse(
-          statement, queryId, response, rs.getResultDescriptor().getColumnsList());
+      return resultSetFromResponse(statement, queryId, response, rs.getResultDescriptor());
     }
     return null;
   }
@@ -117,15 +114,17 @@ public class ResultSetFactory {
       SnowflakeStatementImpl statement,
       String queryId,
       ResultSetGetStreamResponse response,
-      List<ColumnMetadata> columns)
+      ResultSetDescriptor descriptor)
       throws SQLException {
     byte[] streamPointerBytes = response.getStream().getValue().toByteArray();
     long pointer = ArrowStreamFactory.pointerFromBytes(streamPointerBytes);
     ArrowResources arrowResources = ArrowStreamFactory.createFromPointer(pointer);
     DataConversionContext conversionContext = buildConversionContext(statement);
     SnowflakeResultSetMetaDataImpl metaData =
-        SnowflakeResultSetMetaDataImpl.from(queryId, columns, conversionContext);
-    ArrowRowReader rowReader = new ArrowRowReader(arrowResources, conversionContext);
+        SnowflakeResultSetMetaDataImpl.from(
+            queryId, descriptor.getColumnsList(), conversionContext);
+    long totalRowCount = descriptor.hasRowCount() ? descriptor.getRowCount() : -1;
+    ArrowRowReader rowReader = new ArrowRowReader(arrowResources, conversionContext, totalRowCount);
     return new SnowflakeResultSetImpl(statement, queryId, rowReader, metaData, false);
   }
 

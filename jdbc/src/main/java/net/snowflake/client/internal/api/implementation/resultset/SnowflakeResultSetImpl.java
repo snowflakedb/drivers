@@ -377,7 +377,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
 
   @Override
   public boolean isLast() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return rowReader.isLast();
   }
 
   @Override
