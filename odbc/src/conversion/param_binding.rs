@@ -12,7 +12,7 @@ use snafu::ResultExt;
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::{OdbcEncoding, Wide, WideChar, wchar_byte_size, wide_strlen_bounded};
-use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding};
+use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding, SQL_PARAM_IGNORE};
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
@@ -390,6 +390,11 @@ pub fn odbc_bindings_to_json(
         let mut values: Vec<Value> = Vec::with_capacity(array_size);
 
         for row_idx in 0..array_size {
+            // SQL_ATTR_PARAM_OPERATION_PTR: skip sets marked SQL_PARAM_IGNORE so
+            // every parameter omits the same rows and the value arrays stay aligned.
+            if param_set_ignored(apd, row_idx) {
+                continue;
+            }
             let binding = binding_for_row(apd_rec, ipd_rec, row_idx, bind_type, bind_offset);
 
             // NULL rows are emitted as JSON `null`; the per-parameter
@@ -445,6 +450,10 @@ pub fn odbc_bindings_to_csv(
     let mut output = String::new();
 
     for row_idx in 0..array_size {
+        // SQL_ATTR_PARAM_OPERATION_PTR: skip parameter sets marked SQL_PARAM_IGNORE.
+        if param_set_ignored(apd, row_idx) {
+            continue;
+        }
         for param_num in 1..=max_params {
             let apd_rec = apd.records.get(&param_num).ok_or_else(|| {
                 tracing::error!(
@@ -483,7 +492,19 @@ pub fn odbc_bindings_to_csv(
     Ok(output)
 }
 
-/// Build a `ParameterBinding` for a specific row in a parameter array.
+/// Whether parameter set `row_idx` is marked `SQL_PARAM_IGNORE` via the APD's
+/// `SQL_ATTR_PARAM_OPERATION_PTR` array. A null pointer (the common case) means
+/// every set is processed, preserving behavior when the attribute is unset.
+fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
+    if apd.array_status_ptr.is_null() {
+        return false;
+    }
+    // Safety: the application owns an array of at least `apd.array_size`
+    // `SQLUSMALLINT`s when it sets SQL_ATTR_PARAM_OPERATION_PTR; `row_idx` is
+    // always < array_size at every call site.
+    unsafe { *apd.array_status_ptr.add(row_idx) == SQL_PARAM_IGNORE }
+}
+
 ///
 /// **Column-wise binding** (`bind_type == 0`, i.e. `SQL_PARAM_BIND_BY_COLUMN`):
 /// * For each column the application provided a contiguous array of values.
@@ -2581,6 +2602,75 @@ mod tests {
         assert_eq!(parsed["1"]["value"], serde_json::json!(["10", "20", "30"]));
         assert_eq!(parsed["2"]["type"], "TEXT");
         assert_eq!(parsed["2"]["value"], serde_json::json!(["a", "bb", "ccc"]));
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_skips_param_ignore_sets() -> TestResult {
+        // SNOW-3235553: SQL_ATTR_PARAM_OPERATION_PTR marks the middle set
+        // SQL_PARAM_IGNORE, so only rows 0 and 2 are serialized for every param.
+        use crate::api::SQL_PARAM_PROCEED;
+        let ids: [i32; 3] = [10, 20, 30];
+        const NAME_BUF: usize = 8;
+        let mut names = [0u8; NAME_BUF * 3];
+        for (i, s) in ["a", "bb", "ccc"].iter().enumerate() {
+            names[i * NAME_BUF..i * NAME_BUF + s.len()].copy_from_slice(s.as_bytes());
+        }
+        let mut name_inds: [sql::Len; 3] = [1, 2, 3];
+
+        let (mut apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                ids.as_ptr() as sql::Pointer,
+                mem::size_of::<i32>() as sql::Len,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                names.as_ptr() as sql::Pointer,
+                NAME_BUF as sql::Len,
+                name_inds.as_mut_ptr(),
+            ),
+        ]);
+        apd.array_size = 3;
+        let ops: [u16; 3] = [SQL_PARAM_PROCEED, SQL_PARAM_IGNORE, SQL_PARAM_PROCEED];
+        apd.array_status_ptr = ops.as_ptr() as *mut u16;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 2)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["value"], serde_json::json!(["10", "30"]));
+        assert_eq!(parsed["2"]["value"], serde_json::json!(["a", "ccc"]));
+        Ok(())
+    }
+
+    #[test]
+    fn json_all_param_ignore_yields_empty_value_arrays() -> TestResult {
+        // SNOW-3235553: when every set is marked SQL_PARAM_IGNORE, all rows are
+        // skipped and each parameter's value array is empty. Verifies the
+        // driver-side serialization stays well-formed (no panic, no stray or
+        // misaligned values) when the operation array skips everything. The
+        // server's response to the resulting empty INSERT is an e2e deferral
+        // tracked in large_bindings.feature.
+        let ids: [i32; 2] = [10, 20];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            ids.as_ptr() as sql::Pointer,
+            mem::size_of::<i32>() as sql::Len,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 2;
+        let ops: [u16; 2] = [SQL_PARAM_IGNORE, SQL_PARAM_IGNORE];
+        apd.array_status_ptr = ops.as_ptr() as *mut u16;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["value"], serde_json::json!([]));
         Ok(())
     }
 

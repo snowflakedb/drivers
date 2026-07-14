@@ -19,8 +19,9 @@ use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
     FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
     SQL_CONCUR_READ_ONLY, SQL_CONCUR_VALUES, SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF,
-    SQL_NOSCAN_ON, SQL_RD_OFF, SQL_RD_ON, SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType,
-    StatementInner, StatementState, stmt_from_handle,
+    SQL_NOSCAN_ON, SQL_PARAM_IGNORE, SQL_PARAM_SUCCESS, SQL_PARAM_UNUSED, SQL_RD_OFF, SQL_RD_ON,
+    SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner, StatementState,
+    stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::{odbc_bindings_to_csv, odbc_bindings_to_json};
@@ -260,19 +261,31 @@ fn finalize_execute_response(
     let param_set_size = inner.with_effective_apd(|apd| apd.array_size);
     let rows_processed_ptr = inner.ipd.rows_processed_ptr;
     let param_status_ptr = inner.ipd.array_status_ptr;
+    // Read from the effective APD (implicit or explicit SQL_ATTR_APP_PARAM_DESC)
+    // so the PARAM_STATUS write-back agrees with the sets the binding path
+    // actually skipped.
+    let param_operation_ptr = inner.with_effective_apd(|apd| apd.array_status_ptr);
 
     let result = apply_execute_response(inner, conn_handle, response, origin);
     inner.rows_returned = 0;
 
     // Write PARAMS_PROCESSED and PARAM_STATUS regardless of result so the
-    // application always gets feedback for the rows that were sent.
+    // application always gets feedback for the rows that were sent. Parameter
+    // sets marked SQL_PARAM_IGNORE (via SQL_ATTR_PARAM_OPERATION_PTR) were not
+    // sent, so they are reported as SQL_PARAM_UNUSED rather than success.
     unsafe {
         if !rows_processed_ptr.is_null() {
             *rows_processed_ptr = param_set_size as sql::ULen;
         }
         if !param_status_ptr.is_null() {
             for i in 0..param_set_size {
-                *param_status_ptr.add(i) = 0u16; // SQL_PARAM_SUCCESS
+                let ignored = !param_operation_ptr.is_null()
+                    && *param_operation_ptr.add(i) == SQL_PARAM_IGNORE;
+                *param_status_ptr.add(i) = if ignored {
+                    SQL_PARAM_UNUSED
+                } else {
+                    SQL_PARAM_SUCCESS
+                };
             }
         }
     }
@@ -2032,13 +2045,24 @@ pub fn set_stmt_attr(
         StmtAttr::ParamBindType => {
             let raw = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: ParamBindType (raw) = {}", raw);
-            inner.with_effective_apd_header_mut(|_, bind_type, _| *bind_type = raw);
+            inner.with_effective_apd_header_mut(|_, bind_type, _, _| *bind_type = raw);
             Ok(())
         }
         StmtAttr::ParamBindOffsetPtr => {
             let ptr = value_ptr as *mut sql::Len;
             tracing::debug!("set_stmt_attr: ParamBindOffsetPtr = {:?}", ptr);
-            inner.with_effective_apd_header_mut(|_, _, bind_offset_ptr| *bind_offset_ptr = ptr);
+            inner.with_effective_apd_header_mut(|_, _, bind_offset_ptr, _| *bind_offset_ptr = ptr);
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            // SQL_DESC_ARRAY_STATUS_PTR on the APD: per-set SQL_PARAM_PROCEED/
+            // SQL_PARAM_IGNORE array consulted during array execution. Routed to
+            // the *effective* APD so an explicit SQL_ATTR_APP_PARAM_DESC is
+            // honored, consistent with ParamBindType / ParamBindOffsetPtr.
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamOperationPtr = {:?}", ptr);
+            inner
+                .with_effective_apd_header_mut(|_, _, _, array_status_ptr| *array_status_ptr = ptr);
             Ok(())
         }
         StmtAttr::ParamStatusPtr => {
@@ -2062,7 +2086,7 @@ pub fn set_stmt_attr(
             } else {
                 size
             };
-            inner.with_effective_apd_header_mut(|array_size, _, _| *array_size = coerced);
+            inner.with_effective_apd_header_mut(|array_size, _, _, _| *array_size = coerced);
             Ok(())
         }
         StmtAttr::MetadataId => {
@@ -2469,6 +2493,13 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             let bind_offset_ptr = inner.with_effective_apd(|apd| apd.bind_offset_ptr);
             unsafe {
                 *(value_ptr as *mut *mut sql::Len) = bind_offset_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            let array_status_ptr = inner.with_effective_apd(|apd| apd.array_status_ptr);
+            unsafe {
+                *(value_ptr as *mut *mut u16) = array_status_ptr;
             }
             Ok(())
         }

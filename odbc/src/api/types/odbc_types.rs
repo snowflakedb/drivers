@@ -568,6 +568,18 @@ pub const SQL_RD_OFF: sql::ULen = 0;
 /// `SQL_RD_ON` (1) — retrieve data after positioned update (default).
 pub const SQL_RD_ON: sql::ULen = 1;
 
+// Per-parameter-set operation (`SQL_ATTR_PARAM_OPERATION_PTR`) and status
+// (`SQL_ATTR_PARAM_STATUS_PTR`) array values. These arrays are `SQLUSMALLINT`.
+/// `SQL_PARAM_PROCEED` (0) — process this parameter set (default).
+#[allow(dead_code)] // Completeness; the binding path tests `== SQL_PARAM_IGNORE`.
+pub const SQL_PARAM_PROCEED: u16 = 0;
+/// `SQL_PARAM_IGNORE` (1) — skip this parameter set during array execution.
+pub const SQL_PARAM_IGNORE: u16 = 1;
+/// `SQL_PARAM_SUCCESS` (0) — parameter set processed successfully.
+pub const SQL_PARAM_SUCCESS: u16 = 0;
+/// `SQL_PARAM_UNUSED` (7) — parameter set not used (e.g. `SQL_PARAM_IGNORE`).
+pub const SQL_PARAM_UNUSED: u16 = 7;
+
 /// ODBC statement attribute identifiers (matching `SQL_ATTR_*` constants from `sql.h`).
 #[repr(i32)]
 #[allow(clippy::enum_variant_names)]
@@ -610,6 +622,10 @@ pub enum StmtAttr {
     ParamBindOffsetPtr = 17,
     /// `SQL_ATTR_PARAM_BIND_TYPE` (18) — column-wise (0) vs row-wise parameter binding.
     ParamBindType = 18,
+    /// `SQL_ATTR_PARAM_OPERATION_PTR` (19) — pointer to the per-parameter-set
+    /// operation array (`SQL_DESC_ARRAY_STATUS_PTR` on the APD); `SQL_PARAM_IGNORE`
+    /// sets are skipped during array execution.
+    ParamOperationPtr = 19,
     /// `SQL_ATTR_PARAM_STATUS_PTR` (20) — pointer to per-parameter-set status array (written by driver).
     ParamStatusPtr = 20,
     /// `SQL_ATTR_PARAMS_PROCESSED_PTR` (21) — pointer where driver writes count of processed param sets.
@@ -669,6 +685,7 @@ impl TryFrom<i32> for StmtAttr {
             15 => Ok(StmtAttr::EnableAutoIpd),
             17 => Ok(StmtAttr::ParamBindOffsetPtr),
             18 => Ok(StmtAttr::ParamBindType),
+            19 => Ok(StmtAttr::ParamOperationPtr),
             20 => Ok(StmtAttr::ParamStatusPtr),
             21 => Ok(StmtAttr::ParamsProcessedPtr),
             22 => Ok(StmtAttr::ParamsetSize),
@@ -1220,7 +1237,9 @@ pub struct ApdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
-    /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
+    /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_PARAM_OPERATION_PTR` — app-owned
+    /// per-set operation array (`SQL_PARAM_PROCEED`/`SQL_PARAM_IGNORE`). Ignored
+    /// sets are skipped during array execution. Default null.
     pub array_status_ptr: *mut u16,
 }
 
@@ -1980,6 +1999,7 @@ impl StatementInner {
                     apd.array_size = ard.array_size;
                     apd.bind_type = ard.bind_type;
                     apd.bind_offset_ptr = ard.bind_offset_ptr;
+                    apd.array_status_ptr = ard.array_status_ptr;
                     for (&param, binding) in &ard.bindings {
                         apd.records.insert(param, apd_record_from_binding(binding));
                     }
@@ -2013,18 +2033,21 @@ impl StatementInner {
         }
     }
 
-    /// Route an APD *header* write (`array_size`, `bind_type`, `bind_offset_ptr`)
-    /// to the active descriptor. The implicit `ApdDescriptor` and an explicit
-    /// `ArdDescriptor` share these three field names; `f` receives all three.
+    /// Route an APD *header* write (`array_size`, `bind_type`, `bind_offset_ptr`,
+    /// `array_status_ptr`) to the active descriptor. The implicit `ApdDescriptor`
+    /// and an explicit `ArdDescriptor` share these four field names; `f` receives
+    /// all four so `SQL_ATTR_PARAM_OPERATION_PTR` lands on whichever descriptor is
+    /// effective, matching the other parameter-array attributes.
     pub fn with_effective_apd_header_mut<R>(
         &mut self,
-        f: impl FnOnce(&mut usize, &mut sql::ULen, &mut *mut sql::Len) -> R,
+        f: impl FnOnce(&mut usize, &mut sql::ULen, &mut *mut sql::Len, &mut *mut u16) -> R,
     ) -> R {
         match &self.active_apd {
             None => f(
                 &mut self.apd.array_size,
                 &mut self.apd.bind_type,
                 &mut self.apd.bind_offset_ptr,
+                &mut self.apd.array_status_ptr,
             ),
             Some((_, arc)) => {
                 let mut g = arc.lock();
@@ -2033,6 +2056,7 @@ impl StatementInner {
                     &mut ard.array_size,
                     &mut ard.bind_type,
                     &mut ard.bind_offset_ptr,
+                    &mut ard.array_status_ptr,
                 )
             }
         }
@@ -2371,6 +2395,12 @@ mod tests {
         // SNOW-3235555: SQL_ATTR_ROW_NUMBER (14) and SQL_ATTR_ROW_OPERATION_PTR (24).
         assert_eq!(StmtAttr::try_from(14).unwrap(), StmtAttr::RowNumber);
         assert_eq!(StmtAttr::try_from(24).unwrap(), StmtAttr::RowOperationPtr);
+    }
+
+    #[test]
+    fn stmt_attr_try_from_maps_param_operation_ptr() {
+        // SNOW-3235553: SQL_ATTR_PARAM_OPERATION_PTR (19).
+        assert_eq!(StmtAttr::try_from(19).unwrap(), StmtAttr::ParamOperationPtr);
     }
 
     #[test]
