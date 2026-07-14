@@ -629,3 +629,31 @@ behavior_differences:
       other consumers that call `connection._telemetry.try_add_log_to_batch(...)`
       reach Snowflake again. Batching, flush thresholds, and egress live in the
       Rust core's LogBatcher.
+
+  42:
+    name: "telemetry client does not self-disable on HTTP-level send failure"
+    status: allowed
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Any HTTP-level failure from `POST /telemetry/send` — whether a network
+      exception or a `{"success": false}` response body — causes
+      `TelemetryClient._enabled` to be set `False` for the connection lifetime.
+      All subsequent `add_log_to_batch` calls become immediate no-ops; the client
+      quiesces silently until the connection is closed and a new one is opened.
+    new_driver_behavior: |
+      HTTP-level failures from `/telemetry/send` are swallowed inside the Rust
+      core (`send_with_token` discards the error, `TelemetrySendLogBatch` always
+      returns `Ok`). The Python `TelemetryClient._enabled` flag is only set `False`
+      by a gRPC channel-level error (dead process, channel reset). Under normal
+      HTTP-layer failures the client continues forwarding entries; each batch is
+      discarded in Rust but the Python client does not quiesce.
+    description: |
+      The legacy self-disable was a best-effort back-off: if the telemetry endpoint
+      rejects events, stop accumulating and sending them for the session. UD's
+      architecture moves the HTTP call into the Rust core behind a gRPC RPC boundary,
+      so Python-layer error visibility requires an explicit propagation path that has
+      not been added. Callers relying on `_telemetry._enabled` to detect a failed
+      telemetry endpoint will no longer observe it going False on HTTP-layer failures.
