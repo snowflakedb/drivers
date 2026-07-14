@@ -8,7 +8,7 @@ machine and error posture in isolation, with the CoreDriver facade mocked.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -75,7 +75,7 @@ class TestTryAddLogToBatch:
         client = _client()
         with patch.object(core_driver, "telemetry_add_log_to_batch") as rpc:
             client.try_add_log_to_batch(TelemetryData(message={"type": "ok"}, timestamp=2))
-        rpc.assert_called_once()
+        rpc.assert_called_once_with(conn_handle=ANY, message_json=ANY, timestamp_ms=ANY)
 
 
 class TestSendLogBatch:
@@ -117,4 +117,4 @@ class TestClose:
         with patch.object(core_driver, "telemetry_send_log_batch") as rpc:
             client.close()
             client.close()  # second close must not flush again
-        rpc.assert_called_once()
+        rpc.assert_called_once_with(conn_handle=ANY)
