@@ -158,6 +158,15 @@ class CursorBaseMixin(ErrorHandlerMixin):
         return self._query_result.sfqid
 
     @property
+    def _request_id(self) -> str | None:
+        """Client-generated UUID v4 sent as ?requestId= on the submission request.
+
+        Set after execution; used by Snowpark for logging. Distinct from sfqid,
+        which is the server-assigned query identifier.
+        """
+        return self._query_result.request_id
+
+    @property
     @api_telemetry
     def stats(self) -> QueryResultStats:
         """Returns detailed row-level statistics for DML operations."""

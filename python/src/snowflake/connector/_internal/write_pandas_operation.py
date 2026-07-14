@@ -114,6 +114,33 @@ def _drop_object(cursor: SnowflakeCursor, name: str, object_type: str) -> None:
     cursor.execute(f"DROP {object_type} IF EXISTS IDENTIFIER(?)", params=(name,), _force_qmark_paramstyle=True)
 
 
+def _stage_sql(
+    name: str,
+    compression: str,
+    binary_as_text_false: bool,
+    use_scoped: bool = False,
+) -> str:
+    """Build CREATE [SCOPED] TEMPORARY STAGE SQL for a Parquet stage."""
+    mapped = VALID_COMPRESSIONS_MAP[compression]
+    temp_type = "SCOPED TEMPORARY" if use_scoped else "TEMPORARY"
+    fmt_opts = [f"TYPE=PARQUET COMPRESSION={mapped}"]
+    if binary_as_text_false:
+        fmt_opts.append("BINARY_AS_TEXT=FALSE")
+    return f"CREATE {temp_type} STAGE {name} FILE_FORMAT=({' '.join(fmt_opts)})"
+
+
+def _file_format_sql(
+    name: str,
+    compression: str,
+    use_logical_type_suffix: str = "",
+    use_scoped: bool = False,
+) -> str:
+    """Build CREATE [SCOPED] TEMPORARY FILE FORMAT SQL for Parquet."""
+    mapped = VALID_COMPRESSIONS_MAP[compression]
+    temp_type = "SCOPED TEMPORARY" if use_scoped else "TEMPORARY"
+    return f"CREATE {temp_type} FILE FORMAT {name} TYPE=PARQUET COMPRESSION={mapped}{use_logical_type_suffix}"
+
+
 # ---------------------------------------------------------------------------
 # WritePandasResult
 # ---------------------------------------------------------------------------
