@@ -86,8 +86,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         # -- ResultSet guard (set by _execute, cleared on reset) --
         self._result_set = _ResultSetWrapper()
-        # Backward compat: Snowpark reads _request_id for logging.
-        self._request_id: str | None = None
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
         self._prefetch_hook: Callable[[], Awaitable[None]] | None = None
 
