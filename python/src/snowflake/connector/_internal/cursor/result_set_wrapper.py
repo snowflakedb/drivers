@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import logging
-
 from ...errors import ProgrammingError
 from ..api_client.client_api import core_driver
 from ..errorcode import ER_NO_DATA_FOUND
+from ..logging import get_logger
 from ..protobuf_gen.database_driver_v1_pb2 import ResultSetHandle
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ResultSetWrapperBase:

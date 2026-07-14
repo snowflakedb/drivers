@@ -10,7 +10,7 @@ does. For the author-facing rules, see [logging-guidelines.md](logging-guideline
 
 > [TODO(SNOW-3744959)]: Document text vs structured logging - the core emits structured `tracing` events, but the wrapper bridge (FFI/JNI) forwards flattened text today.
 
-> [TODO(SNOW-3725848)]: All logs should go through core (i.e. even if we log from wrapper directly logs go round-trip)
+> [TODO(SNOW-3725848)]: All wrapper logs should round-trip through core. Python does this today (see "Wrapper logs round-tripping through core" below); JDBC and ODBC still log directly.
 
 ---
 
@@ -24,7 +24,8 @@ The registry fans out to a stack of layers:
 
 - core file layer, via `tracing-appender`, when a log path is configured,
 - optional wrapper sink (app sink - `Python CallbackLayer` / `JDBC SFLoggerLayer`),
-- OpenTelemetry OTLP layer (when enabled),
+- OpenTelemetry OTLP layer (disabled by default; enabled via `open_telemetry` in
+  `LoggingConfig`),
 - Snowflake in-band telemetry layer (when a session registry is present),
 - optional ERROR-only stderr layer,
 - a feature-gated perf-timing layer.
@@ -46,14 +47,90 @@ so core and wrapper logs share one pipeline that the host application controls.
 
 ---
 
+## Wrapper logs round-tripping through core (Python)
+
+Python wrapper modules do not log to the stdlib directly. They use a
+`CoreLogger` (`get_logger(__name__)`) so their own logs share the single core
+pipeline instead of bypassing it.
+
+The flow for one wrapper log call:
+
+1. `CoreLogger` gates on the stdlib logger's level (`isEnabledFor`) - a filtered
+   message never crosses FFI.
+2. It sends the record to core via the `sf_core_log_event` FFI call, carrying
+   `level`, `message`, `file`, `line`, `function`, and `logger_name` (the
+   originating module logger name, e.g. `snowflake.connector.cursor._base`).
+3. Core re-emits it as a `tracing` event on the `sf_wrapper` target. With
+   Python's default `LoggingConfig` the **file layer is inactive** (`log_path` is
+   unset) and the **OTLP layer is disabled** (`open_telemetry: false`), so the
+   only layer that handles the event is the `CallbackLayer`. Wrapper log events
+   are not sent to in-band telemetry (see below).
+4. The `CallbackLayer` hands it back across FFI. For wrapper round-trip events
+   `logger_name` is set, so the Python callback rebuilds the record on that
+   module logger; core-originated events leave `logger_name` empty and land on
+   `snowflake.connector._core`.
+
+**Initialization / fallback.** `sf_core_log_event` returns `0` when the event
+was accepted and non-zero when the pipeline is not live yet (before
+`sf_core_init`) or unusable (interpreter shutdown). The FFI return code - not a
+Python-side flag - is the single source of truth: on any non-zero result
+`CoreLogger` emits the record straight onto the stdlib logger, so early-import
+records are never lost.
+
+**Levels.** DEBUG is the finest level Python supports. Outbound, `CoreLogger`
+clamps to DEBUG; inbound, core levels finer than DEBUG (e.g. TRACE) are dropped
+rather than downgraded.
+
+**Python configuration.** Standard `logging` APIs - no special treatment.
+`CoreLogger` and the inbound FFI callback both gate on the underlying stdlib
+logger's level and handlers. By default `snowflake.connector` and
+`snowflake.connector._core` use a `NullHandler` with `propagate=True`, so
+`basicConfig`, root handlers, `dictConfig`, and `pytest caplog` work without
+extra setup. Configure levels and handlers on those loggers (or any
+`snowflake.connector.*` child) as usual.
+
+---
+
+## In-band telemetry
+
+In-band telemetry is a **separate channel** from logging. It ships structured
+product telemetry (e.g. `session_init`, `api_usage`, `wrapper_error`) to
+Snowflake's `/telemetry/send` endpoint over the authenticated session - not
+driver debug/info log text.
+
+The `LogManager` installs an OpenTelemetry span exporter when a session registry
+is present (always for Python, created at `sf_core_init`). That layer:
+
+- exports **completed spans** tagged with `snowflake.session.id`, not `tracing`
+  log events;
+- is filtered to the `sf_core` target, so `sf_wrapper` round-trip log events
+  never reach it;
+- registers a session after login when the server returns
+  `CLIENT_TELEMETRY_ENABLED=true` (defaults to enabled when absent);
+- POSTs serialized span data using the live session token; spans are flushed on
+  connection close while the token is still valid.
+
+Python wrapper code also records telemetry explicitly via `TelemetryClient`
+(`@api_telemetry` decorators, wrapper-error reporting) - those RPC calls create
+`sf_core` spans that follow the same in-band export path. In-band telemetry is
+not configured through Python `logging`; it is automatic and server-gated.
+
+---
+
 ## Log filtering
 
 Level filtering is **per output**, not a single global gate. The core owns the
 `tracing` subscriber; each layer in the stack applies its own filter independently.
 
-**Core-owned outputs** (file, stderr, OpenTelemetry, in-band telemetry):
+**Core-owned outputs** (file, stderr, OpenTelemetry OTLP, in-band telemetry):
 
-- The **file layer** honors `LoggingConfig.level` (default INFO; set via ODBC INI `LogLevel`).
+- The **file layer** is active only when `log_path` is set; it honors
+  `LoggingConfig.level` (default INFO; set via ODBC INI `LogLevel`). For Python,
+  `log_path` is unset by default so the file layer is inactive.
+- The **OTLP layer** is off unless `open_telemetry: true` in `LoggingConfig`
+  (disabled by default for Python).
+- **In-band telemetry** exports `sf_core` spans only; it does not receive
+  wrapper log events (see "In-band telemetry" above).
 - Other core layers have their own filters (e.g. stderr accepts ERROR only).
 
 **Wrapper sink** (Python `CallbackLayer`, JDBC `SFLoggerLayer`):

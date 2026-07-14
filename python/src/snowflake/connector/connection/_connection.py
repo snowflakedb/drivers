@@ -26,7 +26,7 @@ from .._internal.connection import (
 )
 from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from .._internal.errorcode import ER_INVALID_VALUE
-from .._internal.logging import safe_log
+from .._internal.logging import get_logger
 from .._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
@@ -52,7 +52,7 @@ from ..version import __version__
 from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Connection(ConnectionMixin):
@@ -230,7 +230,7 @@ class Connection(ConnectionMixin):
             if not self.is_closed():
                 self.close(retry=False)
         except Exception:
-            safe_log(logger, logging.DEBUG, "close() failed during cleanup", exc_info=True)
+            logger.safe_log(logging.DEBUG, "close() failed during cleanup", exc_info=True)
 
     def _should_auto_cleanup(self) -> bool:
         """Whether this connection should auto-close on GC/exit.
@@ -294,8 +294,7 @@ class Connection(ConnectionMixin):
 
             self._try_close()
         except Exception:
-            safe_log(
-                logger,
+            logger.safe_log(
                 logging.WARNING,
                 "_close_at_process_exit failed during interpreter shutdown",
                 exc_info=True,

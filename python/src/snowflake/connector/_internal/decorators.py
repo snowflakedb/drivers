@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-import logging
 import types
 
 from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
@@ -19,9 +18,10 @@ from contextvars import ContextVar
 from typing import Any, Generic, ParamSpec, Protocol, TypeVar, cast
 
 from .backward_compatibility import apply_backward_compatibility
+from .logging import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 P = ParamSpec("P")
