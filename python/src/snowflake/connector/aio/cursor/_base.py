@@ -889,26 +889,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         )
         return response.success
 
-    # ------------------------------------------------------------------
-    # File-transfer stubs (Snowpark compatibility only)
-    # ------------------------------------------------------------------
-
-    @snowpark_compat
-    def _upload(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_upload is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _download(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_download is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _upload_stream(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_upload_stream is not yet supported by the Universal Driver.")
-
-    @snowpark_compat
-    def _download_stream(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("_download_stream is not yet supported by the Universal Driver.")
-
     @snowpark_compat
     @backward_compatibility
     async def _describe_internal(
