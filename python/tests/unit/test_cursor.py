@@ -26,7 +26,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
 )
 from snowflake.connector.aio.cursor import SnowflakeCursor as AsyncSnowflakeCursor
 from snowflake.connector.constants import QueryStatus, StatementParameterName
-from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
+from snowflake.connector.cursor import QueryResultStats, ResultMetadataV2, SnowflakeCursor
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
@@ -2674,3 +2674,212 @@ class TestParamsAliasAndForceQmark:
         assert request.bindings is not None  # flag survived to inner execute()
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated
+
+
+class TestDescribeInternal:
+    """Unit tests for Cursor._describe_internal (Snowpark describe-only path).
+
+    Mirrors TestDescribe but asserts the new-format ``ResultMetadataV2`` return
+    contract that Snowpark's ``run_new_describe`` consumes.
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def _setup_prepare(self, mock_core_client, columns=None, query_id="", query="", sql_state=None):
+        result = MagicMock()
+        result.columns = columns or []
+        result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        result.query_id = query_id
+        result.query = query
+        result.sql_state = sql_state
+        mock_core_client.statement_prepare.return_value.result = result
+        return result
+
+    @staticmethod
+    def _fixed_column(name="COL1"):
+        col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
+        col.name = name
+        col.HasField = lambda f: f in ("precision", "scale")
+        return col
+
+    def test_returns_list_of_result_metadata_v2(self, cursor, mock_core_client):
+        """_describe_internal returns a list of the real ResultMetadataV2 class."""
+        self._setup_prepare(mock_core_client, columns=[self._fixed_column()])
+
+        result = cursor._describe_internal("SELECT 1 AS COL1")
+
+        assert result is not None
+        assert len(result) == 1
+        assert isinstance(result[0], ResultMetadataV2)
+        assert result[0].name == "COL1"
+        assert result[0].type_code == 0  # FIXED
+
+    def test_returns_none_when_no_columns(self, cursor, mock_core_client):
+        """_describe_internal returns None for a statement with no result set."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        assert cursor._describe_internal("INSERT INTO t VALUES (1)") is None
+
+    def test_updates_cursor_description(self, cursor, mock_core_client):
+        """_describe_internal updates cursor.description as an observable side effect."""
+        self._setup_prepare(mock_core_client, columns=[self._fixed_column()])
+
+        cursor._describe_internal("SELECT 1 AS COL1")
+
+        assert cursor.description is not None
+        assert cursor.description[0].name == "COL1"
+
+    def test_rownumber_reset_when_columns_present(self, cursor, mock_core_client):
+        """_describe_internal resets _rownumber to -1 when columns are returned,
+        and leaves it untouched when there are none.
+
+        Sentinel seeded at 5 to defeat the tautology: reset() preserves rownumber
+        (backward-compat), so only the explicit `self._rownumber = -1` production
+        line inside _describe_internal can change it from 5 → -1.
+        """
+        # With columns: sentinel must change to -1.
+        cursor._rownumber = 5
+        self._setup_prepare(mock_core_client, columns=[self._fixed_column()])
+        cursor._describe_internal("SELECT 1")
+        assert cursor._rownumber == -1
+        assert cursor.rownumber is None  # property maps -1 → None
+
+        # Without columns: the branch is skipped, sentinel must survive.
+        cursor._rownumber = 5
+        self._setup_prepare(mock_core_client, columns=[])
+        cursor._describe_internal("INSERT INTO t VALUES (1)")
+        assert cursor._rownumber == 5
+
+    def test_releases_statement_handle(self, cursor, mock_core_client):
+        """_describe_internal allocates and releases exactly one statement handle."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        cursor._describe_internal("SELECT 1")
+
+        mock_core_client.statement_new.assert_called_once()
+        mock_core_client.statement_release.assert_called_once()
+
+    def test_raises_when_cursor_closed(self, cursor, mock_connection):
+        """_describe_internal rejects a closed cursor (parity with describe() and legacy)."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor._describe_internal("SELECT 1")
+
+        fresh = SnowflakeCursor(mock_connection)
+        mock_connection.is_closed.return_value = True
+        with pytest.raises(InterfaceError):
+            fresh._describe_internal("SELECT 1")
+
+    def test_propagates_prepare_error(self, cursor, mock_core_client):
+        """_describe_internal propagates ProgrammingError from the prepare RPC."""
+        mock_core_client.statement_prepare.side_effect = ProgrammingError("syntax error", sqlstate="42601")
+
+        with pytest.raises(ProgrammingError):
+            cursor._describe_internal("INVALID SQL")
+
+        assert cursor.sqlstate == "42601"
+
+    def test_params_alias_forwarded_to_prepare_query(self, cursor, mock_core_client):
+        """`params=` is the Snowpark alias for `parameters=`; _resolve_alias forwards it."""
+        self._setup_prepare(mock_core_client, columns=[])
+
+        with patch.object(cursor, "_prepare_query", return_value=("SELECT 1", None)) as spy:
+            cursor._describe_internal("SELECT 1", params=[42])
+
+        assert spy.call_args.args[1] == [42]
+
+
+class TestAsyncDescribeInternal:
+    """Async parity for _describe_internal: same ResultMetadataV2 return contract,
+    same handle lifecycle, same closed-cursor rejection as the sync cursor.
+    """
+
+    @pytest.fixture
+    def mock_async_core_client(self):
+        from snowflake.connector._internal.api_client.client_api import async_core_driver
+
+        client = MagicMock()
+        client.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
+        client.statement_set_sql_query = AsyncMock()
+        client.statement_release = AsyncMock()
+        client.result_set_release = AsyncMock()
+        old = async_core_driver._client
+        async_core_driver.client = client
+        yield client
+        async_core_driver.client = old
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed = AsyncMock(return_value=False)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_async_core_client, mock_connection):
+        return AsyncSnowflakeCursor(mock_connection)
+
+    def _setup_prepare(self, client, columns=None):
+        result = MagicMock()
+        result.columns = columns or []
+        result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        result.query_id = ""
+        result.query = ""
+        result.sql_state = None
+        client.statement_prepare = AsyncMock(return_value=MagicMock(result=result))
+        return result
+
+    @staticmethod
+    def _fixed_column(name="COL1"):
+        col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
+        col.name = name
+        col.HasField = lambda f: f in ("precision", "scale")
+        return col
+
+    def test_returns_list_of_result_metadata_v2(self, cursor, mock_async_core_client):
+        """Async _describe_internal returns a list of the real ResultMetadataV2 class."""
+        self._setup_prepare(mock_async_core_client, columns=[self._fixed_column()])
+
+        result = asyncio.run(cursor._describe_internal("SELECT 1 AS COL1"))
+
+        assert result is not None
+        assert len(result) == 1
+        assert isinstance(result[0], ResultMetadataV2)
+        assert result[0].name == "COL1"
+        assert result[0].type_code == 0  # FIXED
+
+    def test_returns_none_when_no_columns(self, cursor, mock_async_core_client):
+        """Async _describe_internal returns None for a statement with no result set."""
+        self._setup_prepare(mock_async_core_client, columns=[])
+
+        assert asyncio.run(cursor._describe_internal("INSERT INTO t VALUES (1)")) is None
+
+    def test_releases_statement_handle(self, cursor, mock_async_core_client):
+        """Async _describe_internal allocates and releases exactly one statement handle."""
+        self._setup_prepare(mock_async_core_client, columns=[])
+
+        asyncio.run(cursor._describe_internal("SELECT 1"))
+
+        mock_async_core_client.statement_new.assert_awaited_once()
+        mock_async_core_client.statement_release.assert_awaited_once()
+
+    def test_raises_when_cursor_closed(self, cursor, mock_connection):
+        """Async _describe_internal rejects a closed cursor and a closed connection."""
+        asyncio.run(cursor.close())
+        with pytest.raises(InterfaceError):
+            asyncio.run(cursor._describe_internal("SELECT 1"))
+
+        fresh = AsyncSnowflakeCursor(mock_connection)
+        mock_connection.is_closed = AsyncMock(return_value=True)
+        with pytest.raises(InterfaceError):
+            asyncio.run(fresh._describe_internal("SELECT 1"))

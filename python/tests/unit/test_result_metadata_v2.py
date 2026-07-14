@@ -245,3 +245,110 @@ class TestDescribeInternal:
 
         assert result is not None
         assert result[0].display_size == 256
+
+
+class TestResultMetadataV2FromColumnFieldSizes:
+    """Verify display_size and internal_size proto-field mapping (BD#43)."""
+
+    def test_display_size_populated_for_text_column(self):
+        col = _mock_column(col_type="TEXT", length=100)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.display_size == 100
+
+    def test_display_size_none_for_non_text_column(self):
+        # FIXED with length present — type guard must suppress display_size.
+        col = _mock_column(col_type="FIXED", length=100)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.display_size is None
+
+    def test_display_size_none_when_length_field_absent(self):
+        col = _mock_column(col_type="TEXT")  # length=None → HasField("length") False
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.display_size is None
+
+    def test_internal_size_populated_from_byte_length(self):
+        col = _mock_column(col_type="TEXT", byte_length=400)
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.internal_size == 400
+
+    def test_internal_size_none_when_byte_length_absent(self):
+        col = _mock_column(col_type="TEXT")  # byte_length=None → HasField False
+        v2 = ResultMetadataV2.from_column(col)
+        assert v2.internal_size is None
+
+
+class TestResultMetadataV2ToV1:
+    """Verify _to_result_metadata_v1 downcast to PEP 249 ResultMetadata."""
+
+    def test_returns_result_metadata_instance(self):
+        v2 = ResultMetadataV2(name="col", type_code=2, is_nullable=True)
+        assert isinstance(v2._to_result_metadata_v1(), ResultMetadata)
+
+    def test_all_fields_round_trip(self):
+        v2 = ResultMetadataV2(
+            name="amount",
+            type_code=0,
+            is_nullable=False,
+            display_size=None,
+            internal_size=16,
+            precision=18,
+            scale=6,
+            vector_dimension=128,
+            fields=None,
+        )
+        v1 = v2._to_result_metadata_v1()
+        assert v1.name == "amount"
+        assert v1.type_code == 0
+        assert v1.is_nullable is False
+        assert v1.display_size is None
+        assert v1.internal_size == 16
+        assert v1.precision == 18
+        assert v1.scale == 6
+
+    def test_none_fields_pass_through(self):
+        v2 = ResultMetadataV2(name="x", type_code=1, is_nullable=True)
+        v1 = v2._to_result_metadata_v1()
+        assert v1.display_size is None
+        assert v1.internal_size is None
+        assert v1.precision is None
+        assert v1.scale is None
+
+    def test_vector_dimension_not_in_v1(self):
+        # ResultMetadata is a NamedTuple — vector_dimension must not leak into it.
+        v2 = ResultMetadataV2(name="v", type_code=7, is_nullable=False, vector_dimension=3)
+        v1 = v2._to_result_metadata_v1()
+        assert not hasattr(v1, "vector_dimension")
+
+
+class TestResultMetadataV2Protocol:
+    """Protocol contracts: repr format, equality edge cases."""
+
+    def test_repr_contains_required_fields(self):
+        # Regression anchor — format must survive refactors.
+        v2 = ResultMetadataV2(name="col", type_code=2, is_nullable=True, vector_dimension=3)
+        r = repr(v2)
+        assert r.startswith("ResultMetadataV2(")
+        assert "name=" in r
+        assert "type_code=" in r
+        assert "is_nullable=" in r
+        assert "vector_dimension=" in r
+        assert "fields=" in r
+
+    def test_eq_with_non_v2_returns_not_implemented(self):
+        v2 = ResultMetadataV2(name="x", type_code=2, is_nullable=True)
+        assert v2.__eq__("not-a-v2") is NotImplemented
+        assert v2.__eq__(42) is NotImplemented
+
+    def test_eq_recurses_into_non_none_fields(self):
+        # Manually construct non-None fields to confirm equality recurses.
+        child_a = ResultMetadataV2(name="elem", type_code=0, is_nullable=False)
+        child_b = ResultMetadataV2(name="elem", type_code=2, is_nullable=False)
+        a = ResultMetadataV2(name="arr", type_code=12, is_nullable=True, fields=[child_a])
+        b = ResultMetadataV2(name="arr", type_code=12, is_nullable=True, fields=[child_b])
+        assert a != b
+
+    def test_eq_with_matching_non_none_fields(self):
+        child = ResultMetadataV2(name="elem", type_code=0, is_nullable=True)
+        a = ResultMetadataV2(name="arr", type_code=12, is_nullable=True, fields=[child])
+        b = ResultMetadataV2(name="arr", type_code=12, is_nullable=True, fields=[child])
+        assert a == b
