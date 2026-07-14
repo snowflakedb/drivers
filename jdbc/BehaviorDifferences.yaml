@@ -316,3 +316,15 @@ behavior_differences:
       schemaPattern argument (a pre-existing bug), so a wildcard/pattern leaks into the result instead
       of the function's real schema. The universal driver uses schema_name from the SHOW FUNCTIONS
       result row, so FUNCTION_SCHEM reflects each function's actual schema.
+  21:
+    name: "ResultSet.isLast() works on query-backed DatabaseMetaData result sets; legacy throws"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Legacy snowflake-jdbc returns query-backed metadata result sets (getSchemas, getTables, etc.)
+      as SnowflakeDatabaseMetaDataQueryResultSet, whose isLast() throws
+      SnowflakeLoggedFeatureNotSupportedException. The universal driver routes every result set
+      through one RowReader stack, so isLast() returns a correct boolean uniformly.
