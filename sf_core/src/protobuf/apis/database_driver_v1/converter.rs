@@ -1,6 +1,7 @@
 use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
+use crate::apis::database_driver_v1::ExecuteQueryOutcome as NativeExecuteQueryOutcome;
 use crate::apis::database_driver_v1::ExecuteQueryResult as NativeExecuteQueryResult;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
@@ -340,11 +341,15 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
     }
 }
 
+/// Used by `connection_get_query_result`, which has no client-generated UUID.
+/// The proto field is `optional string`, so leaving it `None` is correct —
+/// legacy `get_results_from_sfqid` never set `_request_id` on the outer cursor.
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
         match result {
             NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
                 result: Some(execute_query_response::Result::Single(info.into())),
+                request_id: None,
             },
             NativeExecuteQueryResult::Multi {
                 parent,
@@ -358,6 +363,33 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
                         statement_type_ids,
                     },
                 )),
+                request_id: None,
+            },
+        }
+    }
+}
+
+impl From<NativeExecuteQueryOutcome> for ExecuteQueryResponse {
+    fn from(outcome: NativeExecuteQueryOutcome) -> Self {
+        let request_id = Some(outcome.request_id.to_string());
+        match outcome.result {
+            NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
+                result: Some(execute_query_response::Result::Single(info.into())),
+                request_id,
+            },
+            NativeExecuteQueryResult::Multi {
+                parent,
+                query_ids,
+                statement_type_ids,
+            } => ExecuteQueryResponse {
+                result: Some(execute_query_response::Result::Multi(
+                    MultiStatementResult {
+                        parent: Some(parent.into()),
+                        query_ids,
+                        statement_type_ids,
+                    },
+                )),
+                request_id,
             },
         }
     }

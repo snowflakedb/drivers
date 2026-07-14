@@ -2,6 +2,9 @@
 Integration tests for PEP 249 Cursor objects.
 """
 
+import uuid
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
 import pytest
@@ -2696,3 +2699,113 @@ class TestInterpolateEmptySequences:
         cursor.execute("SELECT %s AS a, 100 %% 7 AS b", [42])
         row = cursor.fetchone()
         assert row == (42, 2)
+
+
+class TestRequestIdIsolation:
+    """Integration tests proving _request_id is populated and per-cursor isolated.
+
+    Each cursor gets a unique, distinct _request_id after execution, and no
+    _request_id equals any sfqid (they are different ID spaces).
+    """
+
+    N_CURSORS = 8
+
+    def test_request_id_is_none_before_execute(self, connection):
+        cursor = connection.cursor()
+        assert cursor._request_id is None
+
+    def test_request_id_is_populated_after_execute(self, cursor):
+        """_request_id is a non-None string after a simple execute."""
+        cursor.execute("SELECT 1")
+        assert cursor._request_id is not None
+        assert isinstance(cursor._request_id, str)
+        assert len(cursor._request_id) > 0
+        uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
+
+    def test_request_id_distinct_from_sfqid(self, cursor):
+        """_request_id must not equal sfqid — they are different ID spaces."""
+        cursor.execute("SELECT 1")
+        assert cursor._request_id is not None
+        assert cursor.sfqid is not None
+        assert cursor._request_id != cursor.sfqid
+
+    def test_request_id_changes_per_execution(self, cursor):
+        """Each execute on the same cursor produces a new _request_id."""
+        cursor.execute("SELECT 1")
+        first = cursor._request_id
+
+        cursor.execute("SELECT 2")
+        second = cursor._request_id
+
+        assert first is not None
+        assert second is not None
+        assert first != second
+
+    def test_request_id_isolated_across_concurrent_cursors(self, connection):
+        """N cursors executing concurrently each get a distinct _request_id.
+
+        Proves per-cursor isolation: no two cursors share the same UUID and
+        no _request_id leaks into the sfqid space (or vice-versa).
+        """
+
+        def run_cursor(_):
+            cur = connection.cursor()
+            cur.execute("SELECT 1")
+            return cur._request_id, cur.sfqid
+
+        with ThreadPoolExecutor(max_workers=self.N_CURSORS) as pool:
+            futures = [pool.submit(run_cursor, i) for i in range(self.N_CURSORS)]
+            results = [f.result() for f in as_completed(futures)]
+
+        request_ids = [r[0] for r in results]
+        sfqids = [r[1] for r in results]
+
+        # All request_ids must be non-None valid UUID strings.
+        for rid in request_ids:
+            assert rid is not None, "request_id should not be None after execute"
+            uuid.UUID(rid)  # raises ValueError if not a valid UUID
+
+        # All N request_ids must be distinct (no cross-cursor contamination).
+        assert len(set(request_ids)) == self.N_CURSORS, (
+            f"Expected {self.N_CURSORS} distinct _request_ids, got {len(set(request_ids))}: {request_ids}"
+        )
+
+        # All N sfqids must be distinct.
+        assert len(set(sfqids)) == self.N_CURSORS, (
+            f"Expected {self.N_CURSORS} distinct sfqids, got {len(set(sfqids))}: {sfqids}"
+        )
+
+        # No request_id should equal any sfqid (different ID spaces).
+        all_sfqids_set = set(sfqids)
+        for rid in request_ids:
+            assert rid not in all_sfqids_set, (
+                f"request_id {rid!r} found in sfqid set — they must be different identifiers"
+            )
+
+    @pytest.mark.skip_async
+    def test_request_id_none_after_get_results_from_sfqid(self, connection):
+        """get_results_from_sfqid does not set _request_id on the fetching cursor.
+
+        Legacy behavior (confirmed): the outer cursor's _request_id is None
+        because no new submission was made — only the server-issued sfqid matters
+        for result retrieval.
+        """
+        cur1 = connection.cursor()
+        cur1.execute("SELECT 1")
+        qid = cur1.sfqid
+        assert qid is not None
+
+        cur2 = connection.cursor()
+        cur2.get_results_from_sfqid(qid)
+        assert cur2._request_id is None, (
+            f"get_results_from_sfqid must not populate _request_id; got {cur2._request_id!r}"
+        )
+
+    @pytest.mark.skip_async
+    def test_request_id_populated_after_execute_async(self, connection):
+        """execute_async sets _request_id from StatementExecuteAsyncResponse."""
+        cursor = connection.cursor()
+        cursor.execute_async("SELECT 1")
+        assert cursor._request_id is not None, "_request_id must be set after execute_async"
+        uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
+        assert cursor._request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"
