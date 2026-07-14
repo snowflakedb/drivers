@@ -807,19 +807,20 @@ behavior_differences:
     description: |
       Migration is forward-compatible: any application that previously caught the legacy 40620 will now find these bindings succeed with predictable, spec-conformant results. Applications that intentionally relied on the failure (e.g. as a feature gate) should switch to validating their bind path explicitly. Round-tripping a non-UTC TIMESTAMP_TZ via SQLBindParameter is now possible without falling through TIMESTAMP_LTZ + session TIMEZONE.
   52:
-    #TODO: Product to decide. First of all, verify how many sessions use the TIMESTAMP_TZ_OUTPUT_FORMAT to see if it is used. The parameter is not documented publicly.
-    name: "TIMESTAMP_TZ -> SQL_C_CHAR/SQL_C_WCHAR fetch honors session TIMESTAMP_TZ_OUTPUT_FORMAT"
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: high
+    name: "TIMESTAMP_TZ -> SQL_C_CHAR/SQL_C_WCHAR fetch renders bare UTC (offset dropped), matching the reference driver"
+    status: fixed
+    type: bug
+    reviewed: true
+    status_rationale: |
+      The universal driver intentionally matches the reference ODBC driver on this path: a TIMESTAMP_TZ column fetched into SQL_C_CHAR / SQL_C_WCHAR renders the bare UTC wall-clock with no offset suffix, regardless of TIMESTAMP_TZ_OUTPUT_FORMAT. This keeps the driver a drop-in replacement and does not change the string output for sessions that set the parameter.
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
-      SQLGetData / SQLBindCol of a TIMESTAMP_TZ column to SQL_C_CHAR or SQL_C_WCHAR always renders the bare UTC wall-clock string (e.g. `2024-01-15 09:00:45`) regardless of the session's TIMESTAMP_TZ_OUTPUT_FORMAT setting. The token's `TZH:TZM` / `TZHTZM` / `TZH` placeholders are silently dropped, so the original observer's offset is lost on the wire-to-application boundary even though the server stored it.
+      SQLGetData / SQLBindCol of a TIMESTAMP_TZ column to SQL_C_CHAR or SQL_C_WCHAR always renders the bare UTC wall-clock string (e.g. `2024-01-15 09:00:45`) regardless of the session's TIMESTAMP_TZ_OUTPUT_FORMAT setting. The token's `TZH:TZM` / `TZHTZM` / `TZH` placeholders are silently dropped.
     new_driver_behavior: |
-      The driver reads TIMESTAMP_TZ_OUTPUT_FORMAT once per execute (matching the rest of the per-execute sequential RPC) and formats the rendered string accordingly. With `TZH:TZM` the offset suffix is appended as `+HH:MM`; with `TZHTZM` as `+HHMM`; with `TZH` as `+HH`. The format is re-read on every execute, so `ALTER SESSION SET / UNSET TIMESTAMP_TZ_OUTPUT_FORMAT` mid-connection takes effect on the next statement. Unrecognised TZ-shaped tokens (`TZHM`, `TZM`, etc.) are tolerated -- the driver emits a `tracing::warn!` and falls back to the bare-UTC default rather than rejecting the format string.
+      Identical to the reference driver: a TIMESTAMP_TZ column fetched into SQL_C_CHAR / SQL_C_WCHAR renders the bare UTC wall-clock with no offset suffix (e.g. `2024-01-15 09:00:45`), regardless of TIMESTAMP_TZ_OUTPUT_FORMAT. The session format is still read and cached, but the fetch path never appends an offset.
     description: |
-      Migration is forward-compatible. Applications relying on the legacy bare-UTC rendering must either (a) leave TIMESTAMP_TZ_OUTPUT_FORMAT unset, (b) set it to a value containing none of `TZH:TZM`, `TZHTZM`, `TZH`, in which case the driver still emits bare UTC, or (c) parse the new offset-suffixed strings on the application side. The new behaviour matches what Snowsight, snowsql, and the Python connector already render for the same column with the same session format, removing a long-standing surprise where ODBC was the only client silently dropping the offset.
+      No behavioral difference from the reference driver on this path: default sessions and sessions that set a `TZH` TIMESTAMP_TZ_OUTPUT_FORMAT both see the bare UTC wall-clock. Applications that need the original offset can use the typed SQL_SF_TIMESTAMP_TZ path.
   53:
     name: "SQLGetStmtAttr/SQLGetConnectAttr with negative buffer length returns SQL_ERROR (HY090) instead of SQL_ERROR (HY000)"
     status: allowed
