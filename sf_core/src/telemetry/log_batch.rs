@@ -249,7 +249,6 @@ mod tests {
     #[tokio::test]
     async fn should_be_noop_on_empty_send_log_batch() {
         let batcher = LogBatcher::new(registry_with(1));
-        // No entries buffered: must not panic and must issue no HTTP.
         batcher.send_log_batch(1).await;
         assert_eq!(buffer_len(&batcher, 1), 0);
     }
@@ -271,10 +270,6 @@ mod tests {
         }];
         let payload = raw_entries_to_payload(&entries);
         assert_eq!(payload["logs"][0]["timestamp"], "1700000000123");
-        assert!(
-            payload["logs"][0]["timestamp"].is_string(),
-            "timestamp must be a JSON string, not a number"
-        );
     }
 
     #[test]
