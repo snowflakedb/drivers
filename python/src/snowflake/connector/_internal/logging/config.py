@@ -1,9 +1,6 @@
-"""
-Logging configuration for the snowflake.connector module.
+"""Stdlib logger configuration for snowflake.connector."""
 
-This module provides utilities to configure logging for the Snowflake connector,
-including the native sf_core library logs.
-"""
+from __future__ import annotations
 
 import logging
 
@@ -27,14 +24,9 @@ _connector_logger.addHandler(logging.NullHandler())
 
 
 def _needs_handler(logger: logging.Logger) -> bool:
-    """
-    Check if a logger needs a handler to be added.
-
-    Returns True if the logger has no handlers or only has NullHandler(s).
-    """
+    """Return True if the logger has no handlers or only NullHandler(s)."""
     if not logger.handlers:
         return True
-    # Check if all existing handlers are NullHandlers
     return all(isinstance(h, logging.NullHandler) for h in logger.handlers)
 
 
@@ -44,12 +36,7 @@ def setup_logging(
     format_string: str | None = None,
     stream: object | None = None,
 ) -> None:
-    """
-    Configure basic logging for the snowflake.connector module.
-
-    This function sets up logging handlers and formatters for both the
-    snowflake.connector logger and the sf_core logger (which receives
-    logs from the native Rust library).
+    """Configure basic logging for the snowflake.connector module.
 
     Propagation behaviour
     ---------------------
@@ -98,10 +85,8 @@ def setup_logging(
     handler = logging.StreamHandler(stream)  # type: ignore [arg-type]
     handler.setFormatter(formatter)
 
-    # Level is always updated regardless of whether a handler is added.
     _connector_logger.setLevel(level)
     if _needs_handler(_connector_logger):
-        # No real handler yet: attach ours and stop propagation to avoid duplicate output via the root logger.
         _connector_logger.addHandler(handler)
         _connector_logger.propagate = False
 
@@ -111,50 +96,19 @@ def setup_logging(
         _sf_core_logger.propagate = False
 
 
-def get_connector_logger() -> logging.Logger:
-    """
-    Get the snowflake.connector logger.
+def _get_connector_stdlib_logger() -> logging.Logger:
+    """Return the package stdlib logger used by logging infrastructure.
 
-    Returns:
-        The logger instance for snowflake.connector.
+    Internal — not for wrapper contributor use.  Call :func:`logging.get_logger`
+    to obtain a :class:`~.core_logger.CoreLogger` for module logging.
     """
     return _connector_logger
 
 
-def get_sf_core_logger() -> logging.Logger:
-    """
-    Get the sf_core logger.
+def _get_sf_core_stdlib_logger() -> logging.Logger:
+    """Return the stdlib logger that receives core-originated FFI callback events.
 
-    This logger receives log messages from the native Rust library
-    via the FFI callback mechanism.
-
-    Returns:
-        The logger instance for sf_core.
+    Internal — used by :mod:`~.api_client.c_api._init` callback dispatch only.
+    Wrapper code should use :func:`logging.get_logger` instead.
     """
     return _sf_core_logger
-
-
-def safe_log(
-    logger: logging.Logger,
-    level: int,
-    msg: str,
-    *args: object,
-    exc_info: bool = False,
-) -> None:
-    """Best-effort log call — never raises.
-
-    Use this on cleanup paths that run during interpreter shutdown
-    (``atexit`` handlers, ``__del__``) where the ``logging`` module
-    itself may be partially torn down — stream handlers closed, module
-    globals being collected — so an ordinary ``logger.debug(...)`` call
-    can raise. Swallowing the failure is the desired behaviour: the
-    caller is already in a best-effort path and has nothing useful to
-    do with a logging error.
-
-    For all other call sites, prefer the standard ``logger.<level>(...)``
-    methods so genuine logging misconfiguration is not silently hidden.
-    """
-    try:
-        logger.log(level, msg, *args, exc_info=exc_info)
-    except Exception:
-        pass

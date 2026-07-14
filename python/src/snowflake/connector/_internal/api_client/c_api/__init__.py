@@ -8,6 +8,7 @@ from ._init import (
     logger_callback,
     register_default_logger_callback,
     sf_core_init,
+    sf_core_log_event,
 )
 from ._performance import (
     CoreInstrumentationData,
@@ -34,6 +35,7 @@ __all__ = [
     "sf_core_free_buffer",
     "sf_core_get_perf_data",
     "sf_core_init",
+    "sf_core_log_event",
     "sf_core_perf_enabled",
     "sf_core_reset_perf_metrics",
 ]

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import platform
 import warnings
 
@@ -24,6 +23,7 @@ from ..._internal.connection import (
 )
 from ..._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ..._internal.errorcode import ER_INVALID_VALUE
+from ..._internal.logging import get_logger
 from ..._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
@@ -46,7 +46,7 @@ from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from ._freezable_proxy import _ConnectionInfoProxy, _SessionParametersProxy
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Connection(ConnectionMixin):

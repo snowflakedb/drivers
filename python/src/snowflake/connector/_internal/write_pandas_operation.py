@@ -11,7 +11,6 @@ import secrets
 import warnings
 
 from collections.abc import Callable, Iterator
-from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
@@ -19,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from ..cursor import SnowflakeCursor
 from ..errors import ProgrammingError
 from .extras import pandas
+from .logging import get_logger
 
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from ..connection import Connection
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 # Maps user-facing compression name → Snowflake FILE_FORMAT COMPRESSION value.
 # Parquet FILE_FORMAT doesn't accept "gzip" directly; "auto" handles it.

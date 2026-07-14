@@ -378,12 +378,12 @@ python:
 
     - name: logging
       paths:
-        - "python/src/**/logging.py"
-        - "python/src/**/snow_logging.py"
+        - "python/src/**/logging/**"
         - "python/tests/unit/test_logging.py"
+        - "python/tests/unit/test_core_logger.py"
       tests:
         python:
-          unit: "tests/unit/test_logging.py"
+          unit: "tests/unit/test_logging.py tests/unit/test_core_logger.py"
 
     - name: packaging
       paths:

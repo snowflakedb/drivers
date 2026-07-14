@@ -17,8 +17,8 @@ std::string Logger::formatString(const char* format, ...) {
 
 void Logger::setupPyLogger() {
   py::UniqueRef pyLoggingModule;
-  py::importPythonModule("snowflake.connector._internal.snow_logging", pyLoggingModule);
-  PyObject* logger = PyObject_CallMethod(pyLoggingModule.get(), "get_snow_logger", "s", m_name);
+  py::importPythonModule("snowflake.connector._internal.logging.native_extension_logger", pyLoggingModule);
+  PyObject* logger = PyObject_CallMethod(pyLoggingModule.get(), "get_native_extension_logger", "s", m_name);
 
   m_pyLogger.reset(logger);
 }
@@ -35,7 +35,7 @@ void Logger::log(int level, const char* path_name, const char* func_name, int li
   py::UniqueRef keywords(PyDict_New());
   py::UniqueRef call_log(PyObject_GetAttrString(logger, "log"));
 
-  // prepare keyword args for snow_logger
+  // prepare keyword args for native_extension_logger
   py::UniqueRef level_ref(Py_BuildValue("i", level));
   py::UniqueRef path_name_ref(Py_BuildValue("s", path_name));
   py::UniqueRef func_name_ref(Py_BuildValue("s", func_name));
@@ -48,7 +48,7 @@ void Logger::log(int level, const char* path_name, const char* func_name, int li
   PyDict_SetItemString(keywords.get(), "line_num", line_num_ref.get());
   PyDict_SetItemString(keywords.get(), "msg", msg_ref.get());
 
-  // call snow_logging.SnowLogger.log()
+  // call native_extension_logger.NativeExtensionLogger.log()
   PyObject_Call(call_log.get(), Py_BuildValue("()"), keywords.get());
 }
 

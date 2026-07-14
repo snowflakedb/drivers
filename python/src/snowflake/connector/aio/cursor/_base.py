@@ -35,6 +35,7 @@ from ..._internal.cursor.decorators import (
 from ..._internal.decorators import api_telemetry, pep249
 from ..._internal.errorcode import ER_INVALID_VALUE
 from ..._internal.extras import pandas, pyarrow, requires_dependency
+from ..._internal.logging import get_logger
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     ExecuteQueryResponse,
     MultiStatementResult,
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
 
     from ..connection import Connection
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Distinguishes "stream exhausted" from a legitimate ``None`` row value.
 _FETCH_DONE = object()
@@ -217,7 +218,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.is_enabled_for(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
         query, binding_params = self._prepare_query(operation, parameters)
