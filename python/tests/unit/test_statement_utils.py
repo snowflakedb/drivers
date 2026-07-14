@@ -80,7 +80,7 @@ class TestExtractRowcount:
             0x4400,  # SHOW
             0x4500,  # DESCRIBE
             0x4701,  # LIST_FILES
-            0x7102,  # GET_FILES (stage file ops)
+            0x7102,  # PUT_FILES (stage file ops)
             0x9000,  # CALL
         ],
     )
