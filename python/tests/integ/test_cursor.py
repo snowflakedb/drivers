@@ -2781,3 +2781,31 @@ class TestRequestIdIsolation:
             assert rid not in all_sfqids_set, (
                 f"request_id {rid!r} found in sfqid set — they must be different identifiers"
             )
+
+    @pytest.mark.skip_async
+    def test_request_id_none_after_get_results_from_sfqid(self, connection):
+        """get_results_from_sfqid does not set _request_id on the fetching cursor.
+
+        Legacy behavior (confirmed): the outer cursor's _request_id is None
+        because no new submission was made — only the server-issued sfqid matters
+        for result retrieval.
+        """
+        cur1 = connection.cursor()
+        cur1.execute("SELECT 1")
+        qid = cur1.sfqid
+        assert qid is not None
+
+        cur2 = connection.cursor()
+        cur2.get_results_from_sfqid(qid)
+        assert cur2._request_id is None, (
+            f"get_results_from_sfqid must not populate _request_id; got {cur2._request_id!r}"
+        )
+
+    @pytest.mark.skip_async
+    def test_request_id_populated_after_execute_async(self, connection):
+        """execute_async sets _request_id from StatementExecuteAsyncResponse."""
+        cursor = connection.cursor()
+        cursor.execute_async("SELECT 1")
+        assert cursor._request_id is not None, "_request_id must be set after execute_async"
+        uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
+        assert cursor._request_id != cursor.sfqid, "_request_id and sfqid must be different identifiers"

@@ -956,13 +956,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
         query, binding_params = self._prepare_query(command, params)
 
-        response = None
         with statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
 
-        query_id = (response.query_id if response.query_id else None) if response else None
-        request_id = (response.request_id if response.request_id else None) if response else None
+        query_id = response.query_id or None
+        request_id = response.request_id or None
         self._query_result = QueryResult(sfqid=query_id, request_id=request_id)
 
         return {"queryId": query_id}

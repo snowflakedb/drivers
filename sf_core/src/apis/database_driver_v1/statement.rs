@@ -21,8 +21,7 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, execute_sync_with_request_id, query_response,
-    snowflake_abort_query, snowflake_query_with_client,
+    QueryExecutionMode, QueryInput, execute_query_tracked, query_response, snowflake_abort_query,
 };
 
 use crate::config::rest_parameters::QueryParameters;
@@ -359,35 +358,18 @@ impl DatabaseDriverV1 {
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
-                // For Blocking mode, call the tracked variant so the client-generated
-                // requestId is available for the caller (e.g. Snowpark logging).
-                if matches!(execution_mode, QueryExecutionMode::Blocking) {
-                    match execute_sync_with_request_id(
-                        &http_client,
-                        &query_parameters,
-                        session_token.reveal(),
-                        &query_input,
-                        &retry_policy,
-                    )
-                    .await
-                    {
-                        Ok((result, id)) => break Ok((result, Some(id))),
-                        Err(e) => last_error = Some(e),
-                    }
-                } else {
-                    match snowflake_query_with_client(
-                        &http_client,
-                        query_parameters.clone(),
-                        session_token.reveal(),
-                        query_input.clone(),
-                        &retry_policy,
-                        execution_mode,
-                    )
-                    .await
-                    {
-                        Ok(result) => break Ok((result, None)),
-                        Err(e) => last_error = Some(e),
-                    }
+                match execute_query_tracked(
+                    &http_client,
+                    &query_parameters,
+                    session_token.reveal(),
+                    &query_input,
+                    &retry_policy,
+                    execution_mode,
+                )
+                .await
+                {
+                    Ok(pair) => break Ok(pair),
+                    Err(e) => last_error = Some(e),
                 }
             }
         }?;

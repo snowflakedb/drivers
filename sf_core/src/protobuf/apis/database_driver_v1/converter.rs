@@ -341,19 +341,37 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
     }
 }
 
+/// Used by `connection_get_query_result`, which has no client-generated UUID.
+/// The proto field is `optional string`, so leaving it `None` is correct —
+/// legacy `get_results_from_sfqid` never set `_request_id` on the outer cursor.
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
-        NativeExecuteQueryOutcome {
-            result,
-            request_id: None,
+        match result {
+            NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
+                result: Some(execute_query_response::Result::Single(info.into())),
+                request_id: None,
+            },
+            NativeExecuteQueryResult::Multi {
+                parent,
+                query_ids,
+                statement_type_ids,
+            } => ExecuteQueryResponse {
+                result: Some(execute_query_response::Result::Multi(
+                    MultiStatementResult {
+                        parent: Some(parent.into()),
+                        query_ids,
+                        statement_type_ids,
+                    },
+                )),
+                request_id: None,
+            },
         }
-        .into()
     }
 }
 
 impl From<NativeExecuteQueryOutcome> for ExecuteQueryResponse {
     fn from(outcome: NativeExecuteQueryOutcome) -> Self {
-        let request_id = outcome.request_id.map(|id: uuid::Uuid| id.to_string());
+        let request_id = Some(outcome.request_id.to_string());
         match outcome.result {
             NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
                 result: Some(execute_query_response::Result::Single(info.into())),
