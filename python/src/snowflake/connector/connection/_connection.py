@@ -588,6 +588,7 @@ class Connection(ConnectionMixin):
     # ------------------------------------------------------------------
 
     @snowpark_compat
+    @api_telemetry
     def upload_stream(self, *args: Any, **kwargs: Any) -> None:
         """Noop stub — Snowpark calls this on the connection for streaming PUT.
 
