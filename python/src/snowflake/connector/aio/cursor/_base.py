@@ -25,7 +25,6 @@ from ..._internal.cursor import (
     MultiStatementQueryResultState,
     QueryResult,
     ResultMetadata,
-    ResultMetadataV2,
     Row,
 )
 from ..._internal.cursor.decorators import (
@@ -33,7 +32,7 @@ from ..._internal.cursor.decorators import (
     requires_open_cursor_not_connection,
     with_prefetch_hook,
 )
-from ..._internal.decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
+from ..._internal.decorators import api_telemetry, pep249
 from ..._internal.errorcode import ER_INVALID_VALUE
 from ..._internal.extras import pandas, pyarrow, requires_dependency
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -887,20 +886,3 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             query_id=qid,
         )
         return response.success
-
-    @snowpark_compat
-    @backward_compatibility
-    def _describe_internal(
-        self,
-        operation: str,
-        parameters: Sequence[Any] | dict[str, Any] | None = None,
-        *,
-        params: Sequence[Any] | dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> list[ResultMetadataV2] | None:
-        """Describe-only path returning new-format metadata (see BD#39).
-
-        Not implemented: UD's ResultMetadataV2 is an alias for ResultMetadata and
-        lacks vector_dimension / fields. Snowpark falls back to cursor.description.
-        """
-        raise NotImplementedError
