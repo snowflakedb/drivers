@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Test;
 
 class ArrowRowReaderTest {
 
+  private static final long UNKNOWN_ROW_COUNT = -1;
+
   private static ArrowResources buildResources(
       BufferAllocator allocator, int[][] ids, String[][] names) throws IOException {
     Map<String, String> intMeta = new HashMap<>();
@@ -75,7 +77,8 @@ class ArrowRowReaderTest {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res =
           buildResources(alloc, new int[][] {{1, 2, 3}}, new String[][] {{"a", "b", "c"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         assertTrue(reader.isBeforeFirst());
         assertFalse(reader.isAfterLast());
 
@@ -106,7 +109,8 @@ class ArrowRowReaderTest {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res =
           buildResources(alloc, new int[][] {{10}, {20, 30}}, new String[][] {{"x"}, {"y", "z"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         assertTrue(reader.next());
         assertEquals(10, reader.getInt(1));
 
@@ -121,13 +125,82 @@ class ArrowRowReaderTest {
     }
   }
 
+  // --- isLast ---
+
+  @Test
+  void shouldReportIsLastOnLastRowOfSingleBatch() throws Exception {
+    try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
+      ArrowResources res =
+          buildResources(alloc, new int[][] {{1, 2, 3}}, new String[][] {{"a", "b", "c"}});
+      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub(), 3)) {
+        assertFalse(reader.isLast());
+
+        assertTrue(reader.next());
+        assertFalse(reader.isLast());
+
+        assertTrue(reader.next());
+        assertFalse(reader.isLast());
+
+        assertTrue(reader.next());
+        assertTrue(reader.isLast());
+
+        assertFalse(reader.next());
+        assertFalse(reader.isLast());
+      }
+    }
+  }
+
+  @Test
+  void shouldReportIsLastOnLastRowAcrossBatches() throws Exception {
+    try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
+      ArrowResources res =
+          buildResources(alloc, new int[][] {{10}, {20, 30}}, new String[][] {{"x"}, {"y", "z"}});
+      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub(), 3)) {
+        assertTrue(reader.next());
+        assertFalse(reader.isLast());
+
+        assertTrue(reader.next());
+        assertFalse(reader.isLast());
+
+        assertTrue(reader.next());
+        assertTrue(reader.isLast());
+      }
+    }
+  }
+
+  @Test
+  void shouldReportIsLastBeforeFirstRowOfEmptyResult() throws Exception {
+    try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
+      ArrowResources res = buildResources(alloc, new int[][] {{}}, new String[][] {{}});
+      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub(), 0)) {
+        // Parity with snowflake-jdbc: before-first cursor of an empty result is reported as last.
+        assertTrue(reader.isLast());
+        assertFalse(reader.next());
+        assertFalse(reader.isLast());
+      }
+    }
+  }
+
+  @Test
+  void shouldNotReportIsLastWhenRowCountUnknown() throws Exception {
+    try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
+      ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
+        reader.next();
+        assertFalse(reader.isLast());
+      }
+    }
+  }
+
   // --- typed getters ---
 
   @Test
   void shouldReturnIntAsString() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{42}}, new String[][] {{"hi"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.next();
         assertEquals("42", reader.getString(1));
         assertEquals("hi", reader.getString(2));
@@ -139,7 +212,8 @@ class ArrowRowReaderTest {
   void shouldReturnNumericValuesFromIntColumn() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{7}}, new String[][] {{"ignored"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.next();
         assertEquals((byte) 7, reader.getByte(1));
         assertEquals((short) 7, reader.getShort(1));
@@ -155,7 +229,8 @@ class ArrowRowReaderTest {
   void shouldReturnBooleanFromIntColumn() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{0, 1}}, new String[][] {{"a", "b"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.next();
         assertFalse(reader.getBoolean(1));
 
@@ -171,7 +246,8 @@ class ArrowRowReaderTest {
   void shouldReturnColumnCountAndNames() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         assertEquals(2, reader.getColumnCount());
         assertEquals("id", reader.getColumnName(1));
         assertEquals("name", reader.getColumnName(2));
@@ -183,7 +259,8 @@ class ArrowRowReaderTest {
   void shouldThrowOnColumnIndexOutOfRange() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         assertThrows(SQLException.class, () -> reader.getColumnName(0));
         assertThrows(SQLException.class, () -> reader.getColumnName(3));
       }
@@ -196,7 +273,8 @@ class ArrowRowReaderTest {
   void shouldThrowOnGetterBeforeNext() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         assertThrows(SQLException.class, () -> reader.getInt(1));
       }
     }
@@ -206,7 +284,8 @@ class ArrowRowReaderTest {
   void shouldThrowOnGetterAfterExhausted() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.next();
         reader.next();
         assertTrue(reader.isAfterLast());
@@ -219,7 +298,8 @@ class ArrowRowReaderTest {
   void shouldReturnFalseOnNextAfterClose() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.close();
         assertTrue(reader.isClosed());
         assertFalse(reader.next());
@@ -231,7 +311,8 @@ class ArrowRowReaderTest {
   void shouldCloseIdempotently() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{1}}, new String[][] {{"a"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.close();
         reader.close();
         assertTrue(reader.isClosed());
@@ -245,7 +326,8 @@ class ArrowRowReaderTest {
   void shouldReportNonNullAfterNonNullGet() throws Exception {
     try (BufferAllocator alloc = new RootAllocator(Long.MAX_VALUE)) {
       ArrowResources res = buildResources(alloc, new int[][] {{5}}, new String[][] {{"val"}});
-      try (ArrowRowReader reader = new ArrowRowReader(res, new DataContextStub())) {
+      try (ArrowRowReader reader =
+          new ArrowRowReader(res, new DataContextStub(), UNKNOWN_ROW_COUNT)) {
         reader.next();
         reader.getInt(1);
         assertFalse(reader.wasNull());

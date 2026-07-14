@@ -166,6 +166,7 @@ message ResultSetDescriptor {
   optional int64 statement_type_id = 4;
   optional string sql_state = 5;
   optional QueryStats stats = 6;
+  optional int64 row_count = 7;
 }
 
 message ResultSetResponse {

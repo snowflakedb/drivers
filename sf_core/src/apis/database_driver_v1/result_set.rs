@@ -39,6 +39,7 @@ pub struct ResultSetDescriptor {
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
     pub rows_affected: Option<i64>,
+    pub row_count: Option<i64>,
     pub statement_type_id: Option<i64>,
     pub sql_state: Option<String>,
     pub stats: Option<Stats>,
@@ -244,6 +245,7 @@ pub(super) fn response_to_descriptor(
         query_id,
         columns,
         rows_affected,
+        row_count: data.total,
         statement_type_id,
         sql_state: data.sql_state.clone(),
         stats: data.stats.clone(),
@@ -537,6 +539,7 @@ impl DatabaseDriverV1 {
             query_id: String::new(),
             columns: Vec::new(),
             rows_affected: Some(-1),
+            row_count: None,
             statement_type_id: None,
             sql_state: None,
             stats: None,
@@ -714,6 +717,28 @@ mod tests {
 
         assert_id_name_reader(reader);
         drop(runtime);
+    }
+
+    #[test]
+    fn response_to_descriptor_sets_row_count_from_total() {
+        let json = r#"{
+            "queryResultFormat": "json",
+            "total": 42,
+            "rowset": [["1"]],
+            "rowtype": [
+                {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0}
+            ]
+        }"#;
+        let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.row_count, Some(42));
+    }
+
+    #[test]
+    fn response_to_descriptor_leaves_row_count_none_without_total() {
+        let data: Data = serde_json::from_str(JSON_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.row_count, None);
     }
 
     #[test]

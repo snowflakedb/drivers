@@ -333,6 +333,7 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
             query_id: d.query_id,
             columns: d.columns.into_iter().map(ColumnMetadata::from).collect(),
             rows_affected: d.rows_affected,
+            row_count: d.row_count,
             statement_type_id: d.statement_type_id,
             sql_state: d.sql_state,
             stats: native_stats_to_proto(&d.stats),
