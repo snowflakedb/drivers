@@ -698,7 +698,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self,
         force_return_table: bool = False,
         force_microsecond_precision: bool = False,
-        **kwargs: Any,  # Snowpark may pass split_blocks=...; ignored by the UD
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         stream_ptr = await self._result_set.get_arrow_stream_ptr()
@@ -727,7 +726,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @requires_open
     async def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
-        table: Table = await self.fetch_arrow_all(force_return_table=True, **kwargs)
+        table: Table = await self.fetch_arrow_all(force_return_table=True)
         return await to_pandas_async(table)
 
     # ------------------------------------------------------------------
