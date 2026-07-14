@@ -17,7 +17,6 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import Co
 from snowflake.connector._internal.telemetry import TelemetryClient
 from snowflake.connector.errors import InterfaceError
 from snowflake.connector.telemetry import TelemetryData
-from tests.compatibility import NEW_DRIVER_ONLY
 
 
 _CONN_HANDLE = ConnectionHandle(id=1)
@@ -98,22 +97,6 @@ class TestSendLogBatch:
         with patch.object(core_driver, "telemetry_send_log_batch", side_effect=RuntimeError("boom")):
             client.send_log_batch()  # must not raise
         assert client._enabled is False
-
-    def test_bd42_http_failure_swallowed_in_core_client_stays_enabled(self):
-        """BD#42: the Rust core swallows HTTP-layer failures and returns RPC success,
-        so the Python client never sees an exception and _enabled is NOT cleared.
-
-        Old driver (OLD_DRIVER_ONLY): an HTTP error or ``success: false`` response
-        from ``/telemetry/send`` sets TelemetryClient._enabled = False immediately,
-        quiescing all further log entries for the connection lifetime.
-        """
-        if not NEW_DRIVER_ONLY("BD#42"):
-            return
-        client = _client()
-        # No side_effect = RPC returns success, simulating Rust having swallowed an HTTP error.
-        with patch.object(core_driver, "telemetry_send_log_batch"):
-            client.send_log_batch()
-        assert client._enabled is True
 
 
 class TestLogBatchAlias:

@@ -657,3 +657,9 @@ behavior_differences:
       so Python-layer error visibility requires an explicit propagation path that has
       not been added. Callers relying on `_telemetry._enabled` to detect a failed
       telemetry endpoint will no longer observe it going False on HTTP-layer failures.
+
+      Parity proof lives in the Rust integration tests: sf_core must assert that
+      `send_log_batch` returns `Ok(())` when the mock HTTP server returns 500, and
+      that the Python `send_log_batch()` does not set `_enabled = False` in that case.
+      A Python unit test cannot prove this because the mock removes the Rust HTTP
+      layer entirely — it would be trivially true regardless of production behavior.
