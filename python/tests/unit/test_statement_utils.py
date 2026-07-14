@@ -58,6 +58,22 @@ class TestExtractRowcount:
     @pytest.mark.parametrize(
         "statement_type_id",
         [
+            0xBEEF,  # garbage / unrecognized family
+            0xB000,  # unmapped family
+            0xF000,  # unmapped family
+            0xA000,  # MULTI_STMT parent (not a no-result-success family)
+            0xA100,  # MULTI_STMT child
+        ],
+    )
+    def test_unrecognized_family_is_unknown(self, statement_type_id):
+        # Only known no-result families (SYSCMD/TCL/DDL/MISC) get the compat 1;
+        # anything outside them is reported as unknown rather than a spurious 1.
+        desc = ResultSetDescriptor(statement_type_id=statement_type_id)
+        assert extract_rowcount(desc) == -1
+
+    @pytest.mark.parametrize(
+        "statement_type_id",
+        [
             0x1000,  # SELECT
             0x2000,  # EXPLAIN
             0x3600,  # COPY (DML family, cursor-producing)

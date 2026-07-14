@@ -146,6 +146,18 @@ _CURSOR_EXACT_IDS = frozenset(
         0x6244,  # MANAGE_PATS: DDL-family id that returns a browsable result set
     }
 )
+# Level-3 (0xF000) families that produce no affected-row count but which the
+# legacy connector reported as rowcount == 1. Restricting the compat fallback
+# to these known families means an unrecognized/future id (e.g. 0xBEEF) is
+# reported as unknown (-1) rather than a spurious success.
+_NO_RESULT_FAMILIES = frozenset(
+    {
+        0x4000,  # SYSCMD (ALTER SESSION 0x4100, USE 0x4300, ...)
+        0x5000,  # TCL (BEGIN/COMMIT/ROLLBACK, e.g. 0x5100, 0x5400)
+        0x6000,  # DDL (CREATE/DROP/ALTER, e.g. 0x6100/0x6101/0x6300)
+        0x8000,  # MISC_QUERY_TYPES
+    }
+)
 
 
 def _produces_result_or_count(statement_type_id: int) -> bool:
@@ -167,10 +179,10 @@ def extract_rowcount(descriptor: ResultSetDescriptor | None) -> int:
 
     Returns the server's ``rows_affected`` when present (SELECT/DML, including
     ``0``). When it is absent the statement produced no affected-row count: for
-    a classified no-result statement (DDL, session/transaction control, etc.)
+    a recognized no-result statement (DDL, session/transaction control, etc.)
     this returns ``1`` to match the legacy connector, and ``-1`` for
-    cursor/DML statements with a missing count or an absent/unknown statement
-    type.
+    cursor/DML statements with a missing count or an absent/unrecognized
+    statement type.
 
     Args:
         descriptor: The ResultSetDescriptor from a proto response.
@@ -188,7 +200,8 @@ def extract_rowcount(descriptor: ResultSetDescriptor | None) -> int:
     if not descriptor.HasField("statement_type_id"):
         return -1
     statement_type_id = descriptor.statement_type_id
-    if statement_type_id == 0x0000 or _produces_result_or_count(statement_type_id):
+    if _produces_result_or_count(statement_type_id):
         return -1
-
-    return 1
+    if (statement_type_id & 0xF000) in _NO_RESULT_FAMILIES:
+        return 1
+    return -1
