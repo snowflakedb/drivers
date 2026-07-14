@@ -36,9 +36,18 @@ impl QueryType {
     pub const MULTI_TABLE_INSERT: Self = Self(0x3500);
     pub const COPY: Self = Self(0x3600);
     pub const SYSCMD: Self = Self(0x4000);
+    /// SYSCMD subtype observed for `ALTER SESSION SET` / `ALTER SESSION UNSET`.
+    /// No result set; classified as NoResult via the SYSCMD default.
+    pub const SET: Self = Self(0x4100);
+    /// SYSCMD subtype observed for `USE <object>`. No result set.
+    pub const USE: Self = Self(0x4300);
     pub const SHOW: Self = Self(0x4400);
     pub const DESCRIBE: Self = Self(0x4500);
     pub const LIST_FILES: Self = Self(0x4701);
+    /// Transaction-control family (`BEGIN`/`COMMIT`/`ROLLBACK`/...). No result set.
+    pub const TCL: Self = Self(0x5000);
+    /// TCL subtype observed for `COMMIT`.
+    pub const COMMIT: Self = Self(0x5100);
     pub const DDL: Self = Self(0x6000);
     /// `MANAGE_PATS` — DDL-family statement that returns a browsable result set.
     /// Preserved as an explicit exception because it doesn't fit the DDL default.
@@ -48,10 +57,6 @@ impl QueryType {
     pub const PUT_FILES: Self = Self(0x7102);
     pub const REMOVE_FILES: Self = Self(0x7103);
     pub const MISC_QUERY_TYPES: Self = Self(0x8000);
-    pub const BEGIN: Self = Self(0x8101);
-    pub const END: Self = Self(0x8102);
-    pub const COMMIT: Self = Self(0x8103);
-    pub const SET: Self = Self(0x8104);
     pub const CALL: Self = Self(0x9000);
     pub const MULTI_STMT: Self = Self(0xA000);
 
@@ -94,8 +99,9 @@ impl QueryType {
     /// Precedence: `has_result_set` → `is_dml` → default `NoResult`.
     /// Matches the reference driver (`snowflake-odbc` `SFResults.cpp`), which
     /// whitelists cursor-producing types and DML, and treats everything else
-    /// (DDL, TCL / MISC, MULTI_STMT parents, SYSCMD subtypes we haven't
-    /// whitelisted, and unknown / future ids) as "no cursor, unknown row count".
+    /// (DDL, transaction control, SYSCMD/MISC subtypes we haven't whitelisted,
+    /// MULTI_STMT parents, and unknown / future ids) as "no cursor, unknown
+    /// row count".
     pub fn result_kind(self) -> ResultKind {
         if self.has_result_set() {
             ResultKind::Cursor
@@ -197,10 +203,8 @@ mod tests {
     #[test]
     fn result_kind_no_result_for_ddl_and_tcl() {
         assert_eq!(QueryType::DDL.result_kind(), ResultKind::NoResult);
-        assert_eq!(QueryType::BEGIN.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::TCL.result_kind(), ResultKind::NoResult);
         assert_eq!(QueryType::COMMIT.result_kind(), ResultKind::NoResult);
-        assert_eq!(QueryType::END.result_kind(), ResultKind::NoResult);
-        assert_eq!(QueryType::SET.result_kind(), ResultKind::NoResult);
     }
 
     #[test]
@@ -228,8 +232,14 @@ mod tests {
     #[test]
     fn result_kind_no_result_for_syscmd_subtypes_not_whitelisted() {
         assert_eq!(QueryType::SYSCMD.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::SET.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::USE.result_kind(), ResultKind::NoResult);
         assert_eq!(
-            QueryType::from_raw(Some(0x4104)).result_kind(),
+            QueryType::from_raw(Some(0x4100)).result_kind(),
+            ResultKind::NoResult
+        );
+        assert_eq!(
+            QueryType::from_raw(Some(0x4300)).result_kind(),
             ResultKind::NoResult
         );
     }

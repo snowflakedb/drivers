@@ -116,22 +116,79 @@ def extract_sqlstate(result: PrepareResult | ResultSetDescriptor | None) -> str 
     return None
 
 
+# Snowflake statement_type_id families/classes that produce a browsable result
+# set or a real update count. When the server omits rows_affected for one of
+# these, the row count is genuinely unknown (-1); for every other classified
+# statement (DDL, session/transaction control, etc.) the legacy connector
+# reported the generic success marker 1, which we reproduce for compatibility.
+# Classification mirrors the core's mask-based taxonomy (level-3 0xF000 family,
+# level-2 0xFF00 class) rather than exact ids, because the concrete ids the
+# server returns (e.g. ALTER SESSION 0x4100, COMMIT 0x5100) do not match named
+# constants but do classify correctly by family.
+_CURSOR_OR_DML_FAMILIES = frozenset(
+    {
+        0x1000,  # SELECT
+        0x2000,  # EXPLAIN
+        0x3000,  # DML (INSERT/UPDATE/DELETE/MERGE/COPY/...)
+        0x7000,  # stage file operations (PUT/GET/LIST/REMOVE)
+        0x9000,  # CALL
+    }
+)
+_CURSOR_CLASSES = frozenset(
+    {
+        0x4400,  # SHOW
+        0x4500,  # DESCRIBE
+        0x4700,  # LIST_FILES
+    }
+)
+_CURSOR_EXACT_IDS = frozenset(
+    {
+        0x6244,  # MANAGE_PATS: DDL-family id that returns a browsable result set
+    }
+)
+
+
+def _produces_result_or_count(statement_type_id: int) -> bool:
+    """Whether the statement type produces a cursor or a real update count.
+
+    These are the statements for which an absent ``rows_affected`` means the
+    count is genuinely unknown; everything else classified is a no-result
+    statement that the legacy connector reported as ``1``.
+    """
+    if (statement_type_id & 0xF000) in _CURSOR_OR_DML_FAMILIES:
+        return True
+    if (statement_type_id & 0xFF00) in _CURSOR_CLASSES:
+        return True
+    return statement_type_id in _CURSOR_EXACT_IDS
+
+
 def extract_rowcount(descriptor: ResultSetDescriptor | None) -> int:
     """Return the number of rows affected from a ResultSetDescriptor.
 
-    Returns the rows_affected value from the server if present, otherwise -1.
+    Returns the server's ``rows_affected`` when present (SELECT/DML, including
+    ``0``). When it is absent the statement produced no affected-row count: for
+    a classified no-result statement (DDL, session/transaction control, etc.)
+    this returns ``1`` to match the legacy connector, and ``-1`` for
+    cursor/DML statements with a missing count or an absent/unknown statement
+    type.
 
     Args:
         descriptor: The ResultSetDescriptor from a proto response.
 
     Returns:
-        Row count from server, or ``-1`` when unavailable.
+        Row count from server, ``1`` for legacy no-result successes, or ``-1``
+        when unavailable.
     """
     if not descriptor:
         return -1
 
-    # Return rows_affected if present (for SELECT, DML, and DDL)
     if descriptor.HasField("rows_affected"):
         return descriptor.rows_affected
 
-    return -1
+    if not descriptor.HasField("statement_type_id"):
+        return -1
+    statement_type_id = descriptor.statement_type_id
+    if statement_type_id == 0x0000 or _produces_result_or_count(statement_type_id):
+        return -1
+
+    return 1
