@@ -2700,7 +2700,7 @@ class TestRequestId:
         cursor._query_result.request_id = "550e8400-e29b-41d4-a716-446655440000"
         assert cursor._request_id == "550e8400-e29b-41d4-a716-446655440000"
 
-    def test_request_id_distinct_from_sfqid(self, cursor):
+    def test_request_id_property_does_not_alias_sfqid(self, cursor):
         cursor._query_result.request_id = "aaaaaaaa-0000-4000-8000-000000000001"
         cursor._query_result.sfqid = "bbbbbbbb-0000-4000-8000-000000000002"
         assert cursor._request_id != cursor.sfqid

@@ -2720,6 +2720,7 @@ class TestRequestIdIsolation:
         assert cursor._request_id is not None
         assert isinstance(cursor._request_id, str)
         assert len(cursor._request_id) > 0
+        uuid.UUID(cursor._request_id)  # raises ValueError if not a valid UUID
 
     def test_request_id_distinct_from_sfqid(self, cursor):
         """_request_id must not equal sfqid — they are different ID spaces."""
