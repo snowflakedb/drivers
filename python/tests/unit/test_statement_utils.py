@@ -4,6 +4,7 @@ import pytest
 
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
+
 pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires universal driver")
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (  # noqa: E402
