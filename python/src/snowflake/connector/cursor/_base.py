@@ -103,8 +103,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._result_set = _ResultSetWrapper()
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
         self._prefetch_hook: Callable[[], None] | None = None
-        # Backward compat: Snowpark reads _request_id for logging.
-        self._request_id: str | None = None
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
@@ -270,11 +268,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = self._execute_query(stmt_handle, bindings)
+            request_id = response.request_id or None
 
             if response.HasField("multi"):
                 self._handle_multi_statement_response(response.multi, query)
             else:
                 self._apply_result_set(response.single, query)
+
+            self._query_result.request_id = request_id
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
@@ -955,13 +956,13 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
         query, binding_params = self._prepare_query(command, params)
 
-        response = None
         with statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             response = core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
 
-        query_id = (response.query_id if response.query_id else None) if response else None
-        self._query_result = QueryResult(sfqid=query_id)
+        query_id = response.query_id or None
+        request_id = response.request_id or None
+        self._query_result = QueryResult(sfqid=query_id, request_id=request_id)
 
         return {"queryId": query_id}
 
