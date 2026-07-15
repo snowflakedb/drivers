@@ -359,10 +359,16 @@ impl DatabaseDriverV1 {
                     )
                 };
 
-                let http_client = crate::tls::create_tls_client_with_proxy(
+                let timeout_config = {
+                    let conn = conn_ptr.lock().await;
+                    crate::config::retry::TimeoutConfig::from_params(&conn.connection_seed)
+                };
+
+                let http_client = crate::tls::create_tls_client_with_proxy_and_timeouts(
                     config.tls.clone(),
                     Some(&config.proxy),
                     self.crl_worker.clone(),
+                    timeout_config.connect_timeout,
                 )
                 .context(TlsClientCreationSnafu)?;
                 let login_parameters = LoginParameters::from_connection_config(
@@ -496,6 +502,7 @@ impl DatabaseDriverV1 {
                         login_server_version,
                         resolved_snapshot,
                         logout_config,
+                        timeout_config,
                     )
                     .await;
 
@@ -1101,10 +1108,12 @@ impl Connection {
         server_version: Option<String>,
         resolved_connect: ParamStore,
         logout_config: LogoutConfig,
+        timeout_config: crate::config::retry::TimeoutConfig,
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.retry_policy = RetryPolicy::http(&self.connection_seed);
+        self.timeout_config = timeout_config;
         self.host = host;
         self.port = port;
         self.server_url = Some(server_url);

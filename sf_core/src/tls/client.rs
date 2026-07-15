@@ -35,25 +35,27 @@ pub fn create_tls_client_with_proxy(
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
 ) -> Result<Client, TlsError> {
-    // Note: `proxy` is always forwarded to `configure_http_client` even when
-    // `proxy.host` is `None`.  That path needs the full `ProxyConfig` to
-    // honor `use_proxy_env=false` (default-deny env detection).
+    create_tls_client_with_proxy_and_timeouts(tls_config, proxy, crl_worker, None)
+}
 
-    // Handle insecure configurations
-    if !tls_config.verify_certificates {
-        tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        let builder = apply_reqwest_tls_versions(
-            configure_http_client(Client::builder(), proxy)?,
-            &tls_config,
-        );
-        return builder
-            .danger_accept_invalid_certs(true)
-            .danger_accept_invalid_hostnames(true)
-            .build()
-            .context(ClientBuildSnafu);
-    }
+pub fn create_no_verify_tls_client(
+    tls_config: TlsConfig,
+    proxy: Option<&ProxyConfig>,
+) -> Result<ClientBuilder, TlsError> {
+    tracing::warn!("Creating insecure TLS client - certificate verification disabled");
+    Ok(apply_reqwest_tls_versions(
+        configure_http_client(Client::builder(), proxy)?,
+        &tls_config,
+    )
+    .danger_accept_invalid_certs(true)
+    .danger_accept_invalid_hostnames(true))
+}
 
-    // Install aws-lc-rs provider (idempotent)
+pub fn create_verify_tls_client(
+    tls_config: TlsConfig,
+    proxy: Option<&ProxyConfig>,
+    crl_worker: SharedCrlWorker,
+) -> Result<ClientBuilder, TlsError> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let custom_pem = if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
@@ -87,7 +89,7 @@ pub fn create_tls_client_with_proxy(
                 tracing::warn!("Hostname verification disabled");
                 builder = builder.danger_accept_invalid_hostnames(true);
             }
-            builder.build().context(ClientBuildSnafu)
+            Ok(builder)
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!(
@@ -112,6 +114,32 @@ pub fn create_tls_client_with_proxy(
             )
         }
     }
+}
+
+/// Like [`create_tls_client_with_proxy`], but with an optional TCP connect
+/// timeout: when `connect_timeout` is `Some`, it is applied to the underlying
+/// HTTP client; when `None`, the system default is used.
+pub fn create_tls_client_with_proxy_and_timeouts(
+    tls_config: TlsConfig,
+    proxy: Option<&ProxyConfig>,
+    crl_worker: SharedCrlWorker,
+    connect_timeout: Option<Duration>,
+) -> Result<Client, TlsError> {
+    // Note: `proxy` is always forwarded to `configure_http_client` even when
+    // `proxy.host` is `None`.  That path needs the full `ProxyConfig` to
+    // honor `use_proxy_env=false` (default-deny env detection).
+
+    // Handle insecure configurations
+    let mut builder = if !tls_config.verify_certificates {
+        create_no_verify_tls_client(tls_config, proxy)?
+    } else {
+        create_verify_tls_client(tls_config, proxy, crl_worker)?
+    };
+
+    if let Some(ct) = connect_timeout {
+        builder = builder.connect_timeout(ct);
+    }
+    builder.build().context(ClientBuildSnafu)
 }
 
 pub(crate) fn apply_reqwest_tls_versions(
@@ -234,7 +262,7 @@ pub(crate) fn create_crl_tls_client_with_root_store(
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
-) -> Result<Client, TlsError> {
+) -> Result<ClientBuilder, TlsError> {
     tracing::debug!("Creating custom TLS client with CRL handshake validation");
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -247,19 +275,7 @@ pub(crate) fn create_crl_tls_client_with_root_store(
         crl_worker,
     )?;
 
-    let client = configure_http_client(Client::builder(), proxy)?
-        .use_preconfigured_tls(rustls_cfg)
-        .timeout(Duration::from_secs(
-            crl_config.http_timeout.num_seconds() as u64
-        ))
-        .connect_timeout(Duration::from_secs(
-            crl_config.connection_timeout.num_seconds() as u64,
-        ))
-        .build()
-        .context(ClientBuildSnafu)?;
-
-    tracing::debug!("Created TLS client with full handshake CRL validation");
-    Ok(client)
+    Ok(configure_http_client(Client::builder(), proxy)?.use_preconfigured_tls(rustls_cfg))
 }
 
 /// Convert PEM certificate data to rustls RootCertStore
