@@ -90,25 +90,34 @@ rules:
       for attackers to cross-reference the exact weakness and target unpatched
       deployments.
 
-      **REQUIREMENT**: Flag any occurrence of:
+      **REQUIREMENT**: Flag **any** occurrence of the following, with no exceptions:
 
       1. **CWE identifiers** — patterns matching `CWE-\d+` (case-insensitive),
-         e.g. `CWE-89`, `CWE-79`, `cwe-416`.
+         e.g. `CWE-89`, `CWE-79`, `CWE-367`, `cwe-416`. This includes inline
+         comments, doc comments, changelogs, commit messages, and PR descriptions.
+         There are no "educational" exceptions — even a generic mention like
+         "CWE-295" without version context is flagged.
       2. **CVE identifiers** — patterns matching `CVE-\d{4}-\d+` (case-insensitive),
-         e.g. `CVE-2024-12345`.
-      3. **Vulnerability category names paired with a version or fix context** — e.g.
-         "SQL injection in 2.x", "buffer overflow fixed in this PR", "path traversal
-         vulnerability", "SSRF when the proxy URL is user-controlled". Generic
-         educational mentions without a version or fix context are acceptable (e.g.,
-         a README section titled "Security" that says "always use TLS").
+         e.g. `CVE-2024-12345`, `CVE-2025-46326`. Same blanket rule — no
+         exceptions for context or framing.
+      3. **Vulnerability category names or weakness descriptions** — e.g.
+         "SQL injection", "buffer overflow", "path traversal vulnerability",
+         "race condition vulnerability", "TOCTOU", "SSRF", "improper certificate
+         validation". Flag these regardless of whether they are paired with a
+         version, fix context, or used in an educational tone. The only acceptable
+         phrasing describes the *correct behaviour* without naming the attack class
+         (see examples below).
 
       **SCOPE**: Apply to all code files, documentation, changelogs, and — when
-      reviewing the diff as a whole — to the PR title and description.
+      reviewing the diff as a whole — to the PR title, description, and commit
+      messages.
 
       ❌ **BAD:**
       ```
       // Fixes CWE-295: improper certificate validation in versions < 4.2
       // CVE-2024-98765: attacker-controlled redirect URI bypass
+      // Prevent TOCTOU race condition (CWE-367)
+      // Fix SQL injection in query builder
       ```
 
       ```markdown
@@ -120,9 +129,110 @@ rules:
       ✅ **GOOD:**
       ```
       // Enforce certificate validation on all outbound TLS connections.
+      // Use atomic file operations to avoid interleaved reads.
+      // Parameterise user-supplied values in the query builder.
       ```
 
       ```markdown
       ## Security
       Improved input handling in the query builder.
+      ```
+
+  - id: ud-security-fix-snow-ticket-only
+    rule: |
+      **OBJECTIVE**: The only cross-reference allowed in security-fix code and PRs
+      is a `SNOW-\d+` Jira ticket number. All other vulnerability tracking
+      identifiers must stay out of the public codebase.
+
+      **REQUIREMENT**: When a code change fixes a security issue:
+
+      1. The **only** acceptable tracking reference in code comments, doc comments,
+         changelogs, commit messages, PR titles, and PR descriptions is a Snowflake
+         Jira ticket in the form `SNOW-\d+` (e.g. `SNOW-12345`).
+      2. Flag any other vulnerability tracking identifier used as a cross-reference,
+         including but not limited to:
+         - CVE identifiers (`CVE-\d{4}-\d+`)
+         - CWE identifiers (`CWE-\d+`)
+         - GHSA identifiers (`GHSA-[a-z0-9-]+`)
+         - NVD links (`nvd.nist.gov/…`)
+         - MITRE links (`cve.mitre.org/…`)
+         - Snyk, OSV, or other advisory database references
+      3. A bare `SNOW-\d+` with no vulnerability description is the ideal form:
+         ```rust
+         // SNOW-98765
+         fn validate_token(…) { … }
+         ```
+
+      **SCOPE**: Apply to all code files, documentation, changelogs, and — when
+      reviewing the diff as a whole — to the PR title, description, and commit
+      messages.
+
+      ❌ **BAD:**
+      ```rust
+      // Fix for CVE-2025-46326 (SNOW-98765)
+      // See https://nvd.nist.gov/vuln/detail/CVE-2025-46326
+      // GHSA-abcd-1234-efgh: token validation bypass
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      // SNOW-98765
+      fn validate_token(…) { … }
+      ```
+
+  - id: ud-security-fix-minimal-comments
+    rule: |
+      **OBJECTIVE**: Comments on security-fix code must be technical and minimal.
+      Verbose narration of what was wrong, why it was dangerous, or what the fix
+      achieves from a security standpoint turns the comment into a disclosure.
+
+      **REQUIREMENT**: Flag any comment in a security-related diff that:
+
+      1. **Narrates the vulnerability** — phrases like "this fixes a vulnerability
+         where…", "before this change, an attacker could…", "the old code was
+         susceptible to…", "this patch addresses a security flaw in…".
+      2. **Describes the attack vector or exploitation method** — e.g. "by sending a
+         crafted payload", "via a man-in-the-middle", "through a forged redirect".
+      3. **Explains the security impact** — e.g. "which could lead to remote code
+         execution", "allowing privilege escalation", "enabling data exfiltration".
+      4. **Labels the change as a security fix** — phrases like "security fix",
+         "security patch", "vulnerability fix", "CVE fix", "hardening against".
+         The change should look like normal code improvement.
+
+      **WHAT IS ACCEPTABLE**: Short, technical comments that describe *what the code
+      does*, not *what it prevents*:
+      - `// Validate the redirect URI against the registered set.`
+      - `// Use constant-time comparison for token matching.`
+      - `// Bind parameters instead of string interpolation.`
+      - A bare `SNOW-\d+` reference (see `ud-security-fix-snow-ticket-only`).
+
+      **SCOPE**: Apply to all code files and — when reviewing the diff as a whole —
+      to the PR title and description. PR descriptions should frame security fixes
+      as normal improvements or bug fixes, not call attention to them as security
+      patches.
+
+      ❌ **BAD:**
+      ```rust
+      // Security fix: validate the nonce to prevent replay attacks that could
+      // allow session hijacking in multi-tenant environments.
+
+      // This patch hardens the token exchange flow against MITM interception
+      // by enforcing TLS certificate pinning on the OAuth callback.
+      ```
+
+      ```markdown
+      ## Summary
+      Security patch to fix a critical vulnerability in the authentication flow.
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      // Validate the nonce on token responses.
+
+      // Enforce certificate pinning on the OAuth callback.
+      ```
+
+      ```markdown
+      ## Summary
+      Improved validation in the authentication flow.
       ```
