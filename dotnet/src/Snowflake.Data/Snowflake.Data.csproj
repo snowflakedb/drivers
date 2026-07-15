@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Apache.Arrow" Version="18.0.0" />
     <ProjectReference Include="..\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests" />
   </ItemGroup>

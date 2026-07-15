@@ -13,6 +13,11 @@ public sealed class SnowflakeDbConnection : DbConnection
     private DatabaseHandle? _dbHandle;
     private ConnectionHandle? _connHandle;
 
+    internal IDatabaseDriverService Driver => _driver;
+
+    internal ConnectionHandle ConnHandle =>
+        _connHandle ?? throw new InvalidOperationException("Connection is not open.");
+
     internal SnowflakeDbConnection(ICoreTransport transport)
     {
         _driver = new DatabaseDriverServiceClient(transport);

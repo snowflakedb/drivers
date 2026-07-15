@@ -16,6 +16,10 @@ public class Fixture
             "release";
 #endif
 
+        // TODO make this work - future milestones
+        if (configurationMode == "debug")
+            Environment.SetEnvironmentVariable("RUST_BACKTRACE", "full", EnvironmentVariableTarget.Process);
+
         // TODO this path is fragile - use sth like CARGO_TARGET_DIR
         var fullPath = Path.Combine(currentDirectory, $"../../../../../../target/{configurationMode}");
         var currentDirectoryPath = Path.GetFullPath(fullPath);
