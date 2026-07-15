@@ -83,8 +83,9 @@ class TestCreateTempStageE2E:
             real_execute = cursor.execute
 
             def selective_execute(sql, *args, **kwargs):
-                # Intercept only CREATE STAGE DDL targeting a qualified name.
-                # The name is now bound via IDENTIFIER(?), so check params not SQL text.
+                # Intercept CREATE STAGE DDL for a qualified name.
+                # The name is bound via IDENTIFIER(?), so the dot that distinguishes
+                # "db.schema.stage" from a bare name is in params[0], not in the SQL.
                 is_create_stage = "CREATE" in sql.upper() and "STAGE" in sql.upper()
                 params = kwargs.get("params", ())
                 if is_create_stage and params and "." in str(params[0]):

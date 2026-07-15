@@ -49,6 +49,13 @@ ALLOWED_ICEBERG_CONFIGS: set[str] = {
 # ---------------------------------------------------------------------------
 
 
+class _BoundSql(NamedTuple):
+    """A parameterized SQL statement paired with its positional binding values."""
+
+    sql: str
+    params: tuple
+
+
 def quote_identifier(name: str) -> str:
     """Double-quote a SQL identifier, escaping internal double quotes."""
     return '"' + name.replace('"', '""') + '"'
@@ -94,18 +101,18 @@ def _convert_value_to_sql_option(value: str | bool | int | float) -> str:
 
 def _create_temp_object(
     cursor: SnowflakeCursor,
-    sql_builder: Callable[[str], tuple[str, tuple]],
+    sql_builder: Callable[[str], _BoundSql],
     qualified_name: str,
     bare_name: str,
 ) -> str:
     """Try creating in target schema; fall back to current schema on privilege error."""
-    sql, params = sql_builder(qualified_name)
+    stmt = sql_builder(qualified_name)
     try:
-        cursor.execute(sql, params=params, _force_qmark_paramstyle=True)
+        cursor.execute(stmt.sql, params=stmt.params, _force_qmark_paramstyle=True)
         return qualified_name
     except ProgrammingError:
-        sql, params = sql_builder(bare_name)
-        cursor.execute(sql, params=params, _force_qmark_paramstyle=True)
+        stmt = sql_builder(bare_name)
+        cursor.execute(stmt.sql, params=stmt.params, _force_qmark_paramstyle=True)
         return bare_name
 
 
@@ -119,14 +126,14 @@ def _stage_sql(
     compression: str,
     binary_as_text_false: bool,
     use_scoped: bool = False,
-) -> tuple[str, tuple]:
+) -> _BoundSql:
     """Build CREATE [SCOPED] TEMPORARY STAGE SQL for a Parquet stage."""
     mapped = VALID_COMPRESSIONS_MAP[compression]
     temp_type = "SCOPED TEMPORARY" if use_scoped else "TEMPORARY"
     fmt_opts = [f"TYPE=PARQUET COMPRESSION={mapped}"]
     if binary_as_text_false:
         fmt_opts.append("BINARY_AS_TEXT=FALSE")
-    return f"CREATE {temp_type} STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})", (name,)
+    return _BoundSql(f"CREATE {temp_type} STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})", (name,))
 
 
 def _file_format_sql(
@@ -134,12 +141,13 @@ def _file_format_sql(
     compression: str,
     use_logical_type_suffix: str = "",
     use_scoped: bool = False,
-) -> tuple[str, tuple]:
+) -> _BoundSql:
     """Build CREATE [SCOPED] TEMPORARY FILE FORMAT SQL for Parquet."""
     mapped = VALID_COMPRESSIONS_MAP[compression]
     temp_type = "SCOPED TEMPORARY" if use_scoped else "TEMPORARY"
-    return f"CREATE {temp_type} FILE FORMAT IDENTIFIER(?) TYPE=PARQUET COMPRESSION={mapped}{use_logical_type_suffix}", (
-        name,
+    return _BoundSql(
+        f"CREATE {temp_type} FILE FORMAT IDENTIFIER(?) TYPE=PARQUET COMPRESSION={mapped}{use_logical_type_suffix}",
+        (name,),
     )
 
 
@@ -560,21 +568,21 @@ class WritePandasOperation:
 
     # -- Shared helpers --------------------------------------------------
 
-    def _build_create_stage_sql(self, name: str) -> tuple[str, tuple]:
+    def _build_create_stage_sql(self, name: str) -> _BoundSql:
         cfg = self._cfg
         mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
         fmt_opts = [f"TYPE=PARQUET COMPRESSION={mapped}"]
         if cfg.binary_as_text_false_on_stage:
             fmt_opts.append("BINARY_AS_TEXT=FALSE")
-        return f"CREATE TEMPORARY STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})", (name,)
+        return _BoundSql(f"CREATE TEMPORARY STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})", (name,))
 
-    def _build_create_file_format_sql(self, name: str) -> tuple[str, tuple]:
+    def _build_create_file_format_sql(self, name: str) -> _BoundSql:
         cfg = self._cfg
         mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
         parts = [f"CREATE TEMPORARY FILE FORMAT IDENTIFIER(?) TYPE=PARQUET COMPRESSION={mapped}"]
         if cfg.use_logical_type is not None:
             parts.append(f"USE_LOGICAL_TYPE={_sql_bool(cfg.use_logical_type)}")
-        return " ".join(parts), (name,)
+        return _BoundSql(" ".join(parts), (name,))
 
     def _build_iceberg_config_sql(self) -> str:
         cfg = self._cfg
