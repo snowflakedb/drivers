@@ -430,7 +430,7 @@ impl DatabaseDriverV1 {
 
                 let retry_policy = {
                     let conn = conn_ptr.lock().await;
-                    RetryPolicy::http(&conn.connection_seed)
+                    RetryPolicy::login(&conn.connection_seed)
                 };
 
                 let login_fut = crate::rest::snowflake::snowflake_login_with_client(

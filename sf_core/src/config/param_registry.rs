@@ -154,6 +154,8 @@ pub mod param_names {
     pub const CONNECT_TIMEOUT: ParamKey = ParamKey("connect_timeout");
     pub const LOGIN_TIMEOUT: ParamKey = ParamKey("login_timeout");
     pub const QUERY_TIMEOUT: ParamKey = ParamKey("query_timeout");
+    pub const REQUEST_TIMEOUT: ParamKey = ParamKey("request_timeout");
+    pub const RETRY_TIMEOUT: ParamKey = ParamKey("retry_timeout");
     // Proxy configuration
     pub const PROXY_HOST: ParamKey = ParamKey("proxy_host");
     pub const PROXY_PORT: ParamKey = ParamKey("proxy_port");
@@ -222,6 +224,9 @@ pub const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 120;
 
 /// Default `query_timeout` in seconds. 0 = no timeout (queries can be long-running).
 pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 0;
+
+/// Default `request_timeout` in seconds for non-login, non-query operations.
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 120;
 
 /// Common exponential-backoff defaults shared by the HTTP and PUT/GET retry
 /// pipelines. These are the single source of truth: both the `ParamDef`
@@ -1338,6 +1343,34 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Int(DEFAULT_QUERY_TIMEOUT_SECS as i64)),
         sensitive: false,
         description: "Wall-clock timeout in seconds for query execution including retries (0 = no timeout)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::REQUEST_TIMEOUT.as_str(),
+        aliases: &["REQUEST_TIMEOUT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_REQUEST_TIMEOUT_SECS as i64)),
+        sensitive: false,
+        description: "Wall-clock timeout in seconds for all other operations (close session, heartbeat, etc.) including retries (0 = no timeout)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::RETRY_TIMEOUT.as_str(),
+        aliases: &["RETRY_TIMEOUT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Per-request timeout in seconds for a single HTTP attempt within a retry loop (0 or absent = no per-request timeout)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
