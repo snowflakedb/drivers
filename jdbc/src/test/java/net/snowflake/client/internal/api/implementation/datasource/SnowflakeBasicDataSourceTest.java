@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.datasource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -145,6 +146,131 @@ public class SnowflakeBasicDataSourceTest {
     Properties capturedProperties = testableDataSource.getLastProperties();
     assertEquals("user1", capturedProperties.getProperty("user"));
     assertNull(capturedProperties.getProperty("password"));
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsBlank() {
+    SnowflakeBasicDataSource blankUrlDataSource = new TestableSnowflakeBasicDataSource();
+    blankUrlDataSource.setUrl("   ");
+
+    SQLException ex =
+        assertThrows(SQLException.class, () -> blankUrlDataSource.getConnection("user", "pass"));
+    assertEquals("URL is not set.", ex.getMessage());
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsUnsetOnNoArgGetConnection() {
+    SnowflakeBasicDataSource unsetUrlDataSource = new TestableSnowflakeBasicDataSource();
+    unsetUrlDataSource.setUser("user");
+    unsetUrlDataSource.setPassword("pass");
+
+    SQLException ex = assertThrows(SQLException.class, unsetUrlDataSource::getConnection);
+    assertEquals("URL is not set.", ex.getMessage());
+  }
+
+  @Test
+  public void shouldNotOpenConnectionWhenUrlIsUnset() throws Exception {
+    SnowflakeBasicDataSource unsetUrlDataSource = new TestableSnowflakeBasicDataSource();
+    TestableSnowflakeBasicDataSource testable =
+        (TestableSnowflakeBasicDataSource) unsetUrlDataSource;
+    testable.setNextConnection(createDummyConnection());
+
+    assertThrows(SQLException.class, () -> unsetUrlDataSource.getConnection("user", "pass"));
+    assertNull(testable.getLastUrl());
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsBlankOnNoArgGetConnection() {
+    SnowflakeBasicDataSource blankUrlDataSource = new TestableSnowflakeBasicDataSource();
+    blankUrlDataSource.setUrl("   ");
+    blankUrlDataSource.setUser("user");
+    blankUrlDataSource.setPassword("pass");
+
+    SQLException ex = assertThrows(SQLException.class, blankUrlDataSource::getConnection);
+    assertEquals("URL is not set.", ex.getMessage());
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsEmpty() {
+    SnowflakeBasicDataSource emptyUrlDataSource = new TestableSnowflakeBasicDataSource();
+    emptyUrlDataSource.setUrl("");
+
+    SQLException ex =
+        assertThrows(SQLException.class, () -> emptyUrlDataSource.getConnection("user", "pass"));
+    assertEquals("URL is not set.", ex.getMessage());
+  }
+
+  @Test
+  public void shouldNotOpenConnectionWhenUrlIsBlank() throws Exception {
+    SnowflakeBasicDataSource blankUrlDataSource = new TestableSnowflakeBasicDataSource();
+    blankUrlDataSource.setUrl("   ");
+    TestableSnowflakeBasicDataSource testable =
+        (TestableSnowflakeBasicDataSource) blankUrlDataSource;
+    testable.setNextConnection(createDummyConnection());
+
+    assertThrows(SQLException.class, () -> blankUrlDataSource.getConnection("user", "pass"));
+    assertNull(testable.getLastUrl());
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsExplicitlyNull() {
+    SnowflakeBasicDataSource nullUrlDataSource = new TestableSnowflakeBasicDataSource();
+    nullUrlDataSource.setUrl(null);
+
+    SQLException ex =
+        assertThrows(SQLException.class, () -> nullUrlDataSource.getConnection("user", "pass"));
+    assertEquals("URL is not set.", ex.getMessage());
+    assertInstanceOf(IllegalStateException.class, ex.getCause());
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsEmptyOnNoArgGetConnection() {
+    SnowflakeBasicDataSource emptyUrlDataSource = new TestableSnowflakeBasicDataSource();
+    emptyUrlDataSource.setUrl("");
+    emptyUrlDataSource.setUser("user");
+    emptyUrlDataSource.setPassword("pass");
+
+    SQLException ex = assertThrows(SQLException.class, emptyUrlDataSource::getConnection);
+    assertEquals("URL is not set.", ex.getMessage());
+  }
+
+  @Test
+  public void shouldNotOpenConnectionWhenUrlIsUnsetOnNoArgGetConnection() throws Exception {
+    SnowflakeBasicDataSource unsetUrlDataSource = new TestableSnowflakeBasicDataSource();
+    TestableSnowflakeBasicDataSource testable =
+        (TestableSnowflakeBasicDataSource) unsetUrlDataSource;
+    testable.setNextConnection(createDummyConnection());
+
+    assertThrows(SQLException.class, unsetUrlDataSource::getConnection);
+    assertNull(testable.getLastUrl());
+  }
+
+  @Test
+  public void shouldNotOpenConnectionWhenUrlIsEmpty() throws Exception {
+    SnowflakeBasicDataSource emptyUrlDataSource = new TestableSnowflakeBasicDataSource();
+    emptyUrlDataSource.setUrl("");
+    TestableSnowflakeBasicDataSource testable =
+        (TestableSnowflakeBasicDataSource) emptyUrlDataSource;
+    testable.setNextConnection(createDummyConnection());
+
+    assertThrows(SQLException.class, () -> emptyUrlDataSource.getConnection("user", "pass"));
+    assertNull(testable.getLastUrl());
+  }
+
+  @Test
+  public void shouldGetUrlReturnNullWhenNeverConfigured() {
+    SnowflakeBasicDataSource unsetUrlDataSource = new TestableSnowflakeBasicDataSource();
+
+    assertNull(unsetUrlDataSource.getUrl());
+  }
+
+  @Test
+  public void shouldThrowSQLExceptionWhenUrlIsUnset() {
+    SnowflakeBasicDataSource unsetUrlDataSource = new TestableSnowflakeBasicDataSource();
+
+    SQLException ex =
+        assertThrows(SQLException.class, () -> unsetUrlDataSource.getConnection("user", "pass"));
+    assertEquals("URL is not set.", ex.getMessage());
   }
 
   @Test

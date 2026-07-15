@@ -1,5 +1,22 @@
 package net.snowflake.client.internal.api.implementation.datasource;
 
+import static java.lang.Integer.parseInt;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.DISABLE_SAML_URL_CHECK;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.LOGIN_TIMEOUT;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_AUTHORIZATION_URL;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_CLIENT_ID;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_CLIENT_SECRET;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_REDIRECT_URI;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_SCOPE;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OAUTH_TOKEN_REQUEST_URL;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.OKTA_USERNAME;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.PASSCODE_IN_PASSWORD;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.PASSWORD;
+import static net.snowflake.client.internal.api.implementation.parameters.SessionProperty.USER;
+import static net.snowflake.client.internal.util.UrlUtils.sanitize;
+
 import java.io.PrintWriter;
 import java.security.PrivateKey;
 import java.sql.Connection;
@@ -66,24 +83,48 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
 
   @Override
   public Connection getConnection(String username, String password) throws SQLException {
+    String resolvedUrl = resolveUrl();
     String effectiveUser = username != null ? username : user;
     try {
-      Properties properties = getProperties();
-      if (username != null) {
-        properties.setProperty(SessionProperty.USER.getKey(), username);
-      }
-      if (password != null) {
-        properties.setProperty(SessionProperty.PASSWORD.getKey(), password);
-      }
-
-      Connection con = openConnection(getUrl(), properties);
+      Properties properties = getProperties(username, password);
+      Connection con = openConnection(resolvedUrl, properties);
       logger.trace(
-          "Created a connection for {} at {}", effectiveUser, (Supplier<String>) this::getUrl);
+          "Created a connection for {} at {}",
+          effectiveUser,
+          (Supplier<String>) () -> sanitize(getUrl()));
       return con;
     } catch (SQLException e) {
-      logger.error("Failed to create a connection for {} at {}: {}", effectiveUser, getUrl(), e);
+      logger.error(
+          "Failed to create a connection for {} at {}: {}",
+          effectiveUser,
+          sanitize(resolvedUrl),
+          e.getClass().getName());
+      logger.debug("Connection failure detail", e);
       throw e;
     }
+  }
+
+  private String resolveUrl() throws SQLException {
+    try {
+      String resolved = getUrl();
+      if (resolved == null || resolved.trim().isEmpty()) {
+        throw new IllegalStateException("URL is not set.");
+      }
+      return resolved;
+    } catch (IllegalStateException e) {
+      throw new SQLException(e.getMessage(), e);
+    }
+  }
+
+  private Properties getProperties(String username, String password) {
+    Properties properties = getProperties();
+    if (username != null) {
+      properties.setProperty(USER.getKey(), username);
+    }
+    if (password != null) {
+      properties.setProperty(PASSWORD.getKey(), password);
+    }
+    return properties;
   }
 
   protected Connection openConnection(String url, Properties properties) throws SQLException {
@@ -105,18 +146,18 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
   @Override
   public int getLoginTimeout() {
     try {
-      return Integer.parseInt(properties.getProperty(SessionProperty.LOGIN_TIMEOUT.getKey()));
+      return parseInt(properties.getProperty(LOGIN_TIMEOUT.getKey()));
     } catch (NumberFormatException e) {
       logger.warn(
           "Could not parse loginTimeout property value '{}', returning default of 0",
-          properties.getProperty(SessionProperty.LOGIN_TIMEOUT.getKey()));
+          properties.getProperty(LOGIN_TIMEOUT.getKey()));
       return 0;
     }
   }
 
   @Override
   public void setLoginTimeout(int seconds) {
-    properties.put(SessionProperty.LOGIN_TIMEOUT.getKey(), Integer.toString(seconds));
+    properties.put(LOGIN_TIMEOUT.getKey(), Integer.toString(seconds));
   }
 
   @Override
@@ -206,63 +247,61 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
   @Override
   public void setPasscodeInPassword(boolean isPasscodeInPassword) {
     this.properties.setProperty(
-        SessionProperty.PASSCODE_IN_PASSWORD.getKey(), Boolean.toString(isPasscodeInPassword));
+        PASSCODE_IN_PASSWORD.getKey(), Boolean.toString(isPasscodeInPassword));
   }
 
   @Override
   public void setOktaUsername(String oktaUsername) {
-    this.properties.setProperty(SessionProperty.OKTA_USERNAME.getKey(), oktaUsername);
+    this.properties.setProperty(OKTA_USERNAME.getKey(), oktaUsername);
   }
 
   @Override
   public void setDisableSamlURLCheck(boolean disableSamlURLCheck) {
     this.properties.setProperty(
-        SessionProperty.DISABLE_SAML_URL_CHECK.getKey(), Boolean.toString(disableSamlURLCheck));
+        DISABLE_SAML_URL_CHECK.getKey(), Boolean.toString(disableSamlURLCheck));
   }
 
   @Override
   public void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential) {
     this.properties.setProperty(
-        SessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL.getKey(),
+        CLIENT_STORE_TEMPORARY_CREDENTIAL.getKey(),
         Boolean.toString(clientStoreTemporaryCredential));
   }
 
   @Override
   public void setOauthClientId(String oauthClientId) {
-    this.properties.setProperty(SessionProperty.OAUTH_CLIENT_ID.getKey(), oauthClientId);
+    this.properties.setProperty(OAUTH_CLIENT_ID.getKey(), oauthClientId);
   }
 
   @Override
   public void setOauthClientSecret(String oauthClientSecret) {
-    this.properties.setProperty(SessionProperty.OAUTH_CLIENT_SECRET.getKey(), oauthClientSecret);
+    this.properties.setProperty(OAUTH_CLIENT_SECRET.getKey(), oauthClientSecret);
   }
 
   @Override
   public void setOauthAuthorizationUrl(String oauthAuthorizationUrl) {
-    this.properties.setProperty(
-        SessionProperty.OAUTH_AUTHORIZATION_URL.getKey(), oauthAuthorizationUrl);
+    this.properties.setProperty(OAUTH_AUTHORIZATION_URL.getKey(), oauthAuthorizationUrl);
   }
 
   @Override
   public void setOauthTokenRequestUrl(String oauthTokenRequestUrl) {
-    this.properties.setProperty(
-        SessionProperty.OAUTH_TOKEN_REQUEST_URL.getKey(), oauthTokenRequestUrl);
+    this.properties.setProperty(OAUTH_TOKEN_REQUEST_URL.getKey(), oauthTokenRequestUrl);
   }
 
   @Override
   public void setOauthRedirectUri(String oauthRedirectUri) {
-    this.properties.setProperty(SessionProperty.OAUTH_REDIRECT_URI.getKey(), oauthRedirectUri);
+    this.properties.setProperty(OAUTH_REDIRECT_URI.getKey(), oauthRedirectUri);
   }
 
   @Override
   public void setOauthScope(String oauthScope) {
-    this.properties.setProperty(SessionProperty.OAUTH_SCOPE.getKey(), oauthScope);
+    this.properties.setProperty(OAUTH_SCOPE.getKey(), oauthScope);
   }
 
   @Override
   public void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens) {
     this.properties.setProperty(
-        SessionProperty.OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.getKey(),
+        OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.getKey(),
         Boolean.toString(oauthEnableSingleUseRefreshTokens));
   }
 
@@ -273,7 +312,6 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
 
   @Override
   public Properties getProperties() {
-    // returns the copy to avoid access to a shared mutable field
     Properties properties = new Properties();
     properties.putAll(this.properties);
     return properties;

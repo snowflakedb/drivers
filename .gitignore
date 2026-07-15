@@ -1,5 +1,6 @@
 .gradle/
 /bin/
+jdbc/bin/
 .idea/
 target/
 parameters*.json
