@@ -40,6 +40,21 @@ class SessionParametersProxy(_FreezableProxy):
     def __getitem__(self, name: str) -> str | None:
         if self._cache is not None:
             return self._cache.get(name.upper())
+        return self._fetch_one(name)
+
+    def get(self, name: str, default: str | None = None) -> str | None:
+        """Dict-style lookup returning ``default`` when the parameter is unset.
+
+        Legacy ``snowflake-connector-python`` stores ``_session_parameters`` as a
+        plain dict, so callers (e.g. Snowpark's ``ServerConnection``) use
+        ``.get(name, default)``. Delegates to ``__getitem__`` to keep the cache
+        and name-normalization behavior; a populated session parameter is always
+        a non-empty string, so a ``None`` result means "unset" here.
+        """
+        value = self[name]
+        return value if value is not None else default
+
+    def _fetch_one(self, name: str) -> str | None:
         response = core_driver.connection_get_parameter(conn_handle=self._conn_handle, key=name)
         return response.value if response.value else None
 
