@@ -13,17 +13,26 @@ use crate::api::error::{
     ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::get_info_bitmasks::{
-    AGGREGATE_FUNCTIONS, BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY,
-    CONVERT_BIT, CONVERT_CHAR, CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT,
-    CONVERT_FUNCTIONS, CONVERT_GUID, CONVERT_INTEGER, CONVERT_LONGVARBINARY, CONVERT_LONGVARCHAR,
-    CONVERT_NUMERIC, CONVERT_REAL, CONVERT_SMALLINT, CONVERT_TIME, CONVERT_TIMESTAMP,
-    CONVERT_TINYINT, CONVERT_VARBINARY, CONVERT_VARCHAR, CONVERT_WCHAR, CONVERT_WLONGVARCHAR,
-    CONVERT_WVARCHAR, DYNAMIC_CURSOR_ATTRIBUTES1, FORWARD_ONLY_CURSOR_ATTRIBUTES1,
-    FORWARD_ONLY_CURSOR_ATTRIBUTES2, KEYSET_CURSOR_ATTRIBUTES1, KEYSET_CURSOR_ATTRIBUTES2,
-    LOCK_TYPES, NUMERIC_FUNCTIONS, POS_OPERATIONS, SCHEMA_USAGE, SCROLL_CONCURRENCY,
-    SCROLL_OPTIONS, SQL92_PREDICATES, SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_VALUE_EXPRESSIONS,
-    STATIC_CURSOR_ATTRIBUTES1, STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS,
-    SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, synthesize,
+    AGGREGATE_FUNCTIONS, ALTER_DOMAIN, ALTER_TABLE, BATCH_ROW_COUNT, BATCH_SUPPORT,
+    BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY, CONVERT_BIT, CONVERT_CHAR,
+    CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT, CONVERT_FUNCTIONS, CONVERT_GUID,
+    CONVERT_INTEGER, CONVERT_INTERVAL_DAY_TIME, CONVERT_INTERVAL_YEAR_MONTH, CONVERT_LONGVARBINARY,
+    CONVERT_LONGVARCHAR, CONVERT_NUMERIC, CONVERT_REAL, CONVERT_SMALLINT, CONVERT_TIME,
+    CONVERT_TIMESTAMP, CONVERT_TINYINT, CONVERT_VARBINARY, CONVERT_VARCHAR, CONVERT_WCHAR,
+    CONVERT_WLONGVARCHAR, CONVERT_WVARCHAR, CREATE_ASSERTION, CREATE_CHARACTER_SET,
+    CREATE_COLLATION, CREATE_DOMAIN, CREATE_SCHEMA, CREATE_TABLE, CREATE_TRANSLATION, CREATE_VIEW,
+    DATETIME_LITERALS, DDL_INDEX, DROP_ASSERTION, DROP_CHARACTER_SET, DROP_COLLATION, DROP_DOMAIN,
+    DROP_SCHEMA, DROP_TABLE, DROP_TRANSLATION, DROP_VIEW, DYNAMIC_CURSOR_ATTRIBUTES1,
+    DYNAMIC_CURSOR_ATTRIBUTES2, FETCH_DIRECTION, FORWARD_ONLY_CURSOR_ATTRIBUTES1,
+    FORWARD_ONLY_CURSOR_ATTRIBUTES2, INFO_SCHEMA_VIEWS, INSERT_STATEMENT,
+    KEYSET_CURSOR_ATTRIBUTES1, KEYSET_CURSOR_ATTRIBUTES2, LOCK_TYPES, NUMERIC_FUNCTIONS,
+    OJ_CAPABILITIES, POS_OPERATIONS, POSITIONED_STATEMENTS, SCHEMA_USAGE, SCROLL_CONCURRENCY,
+    SCROLL_OPTIONS, SQL92_DATETIME_FUNCTIONS, SQL92_FOREIGN_KEY_DELETE_RULE,
+    SQL92_FOREIGN_KEY_UPDATE_RULE, SQL92_GRANT, SQL92_NUMERIC_VALUE_FUNCTIONS, SQL92_PREDICATES,
+    SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_REVOKE, SQL92_ROW_VALUE_CONSTRUCTOR,
+    SQL92_STRING_FUNCTIONS, SQL92_VALUE_EXPRESSIONS, STATIC_CURSOR_ATTRIBUTES1,
+    STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS, SUBQUERIES, SYSTEM_FUNCTIONS,
+    TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, UNION, synthesize,
 };
 use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
@@ -1658,6 +1667,28 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::SpecialCharacters => write_str(""),
         InfoType::NeedLongDataLen => write_str("N"),
         InfoType::CatalogName => write_str("Y"),
+        // New string InfoTypes
+        InfoType::ServerName => write_str("Snowflake"),
+        InfoType::RowUpdates => write_str("N"),
+        InfoType::AccessibleTables => write_str("Y"),
+        InfoType::AccessibleProcedures => write_str("Y"),
+        InfoType::Procedures => write_str("N"),
+        InfoType::ExpressionsInOrderby => write_str("Y"),
+        InfoType::MultipleActiveTxn => write_str("Y"),
+        InfoType::ProcedureTerm => write_str("procedure"),
+        InfoType::Integrity => write_str("N"),
+        InfoType::Keywords => write_str(""),
+        InfoType::MaxRowSizeIncludesLong => write_str("N"),
+        InfoType::LikeEscapeClause => write_str("Y"),
+        InfoType::XopenCliYear => write_str("1995"),
+        InfoType::DescribeParameter => write_str("Y"),
+        InfoType::CollationSeq => {
+            if cfg!(windows) {
+                write_str("UTF-16LE_BINARY")
+            } else {
+                write_str("UTF-32LE_BINARY")
+            }
+        }
 
         // ----- Scalar `SQLUSMALLINT` --------------------------------------
         InfoType::ActiveStatements => write_u16(0),
@@ -1674,6 +1705,23 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::CorrelationName => write_u16(2), // SQL_CN_ANY
         InfoType::NonNullableColumns => write_u16(0), // SQL_NNC_NULL
         InfoType::FileUsage => write_u16(0),  // SQL_FILE_NOT_SUPPORTED
+        // New SQLUSMALLINT InfoTypes
+        InfoType::MaxDriverConnections => write_u16(0),
+        InfoType::OdbcApiConformance => write_u16(2), // SQL_OAC_LEVEL2
+        InfoType::OdbcSqlConformance => write_u16(1), // SQL_OSC_CORE
+        InfoType::IdentifierCase => write_u16(1),     // SQL_IC_UPPER
+        InfoType::MaxColumnNameLen => write_u16(255),
+        InfoType::MaxCursorNameLen => write_u16(0),
+        InfoType::MaxProcedureNameLen => write_u16(0),
+        InfoType::MaxCatalogNameLen => write_u16(255),
+        InfoType::MaxTableNameLen => write_u16(255),
+        InfoType::NullCollation => write_u16(0), // SQL_NC_HIGH
+        InfoType::QuotedIdentifierCase => write_u16(3), // SQL_IC_SENSITIVE
+        InfoType::MaxColumnsInIndex => write_u16(0),
+        InfoType::MaxColumnsInTable => write_u16(65535),
+        InfoType::MaxTablesInSelect => write_u16(0),
+        InfoType::MaxUserNameLen => write_u16(0),
+        InfoType::ActiveEnvironments => write_u16(0),
 
         // ----- Scalar `SQLUINTEGER` ---------------------------------------
         InfoType::DefaultTxnIsolation => write_u32(SQL_TXN_READ_COMMITTED),
@@ -1683,6 +1731,18 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::MaxAsyncConcurrentStatements => write_u32(0),
         InfoType::AsyncDbcFunctions => write_u32(1), // SQL_ASYNC_DBC_CAPABLE
         InfoType::AsyncNotification => write_u32(0), // SQL_ASYNC_NOTIFICATION_NOT_CAPABLE
+        // New scalar SQLUINTEGER InfoTypes
+        InfoType::MaxBinaryLiteralLen => write_u32(0),
+        InfoType::MaxCharLiteralLen => write_u32(16_777_216),
+        InfoType::MaxIndexSize => write_u32(0),
+        InfoType::MaxRowSize => write_u32(16_777_216),
+        InfoType::MaxStatementLen => write_u32(0),
+        InfoType::CursorSensitivity => write_u32(0), // SQL_UNSPECIFIED
+        InfoType::DriverAwarePoolingSupported => write_u32(0),
+        InfoType::IndexKeywords => write_u32(0), // SQL_IK_NONE
+        InfoType::ParamArrayRowCounts => write_u32(2), // SQL_PARC_NO_BATCH
+        InfoType::ParamArraySelects => write_u32(2), // SQL_PAS_NO_BATCH
+        InfoType::StandardCliConformance => write_u32(2), // SQL_SCC_ISO92_CLI
 
         // ----- Bitmask `SQLUINTEGER` (with-slice families) -----------------
         InfoType::GetDataExtensions => write_u32(
@@ -1726,6 +1786,47 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::StaticCursorAttributes1 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES1)),
         InfoType::StaticCursorAttributes2 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES2)),
         InfoType::DynamicCursorAttributes1 => write_u32(synthesize(DYNAMIC_CURSOR_ATTRIBUTES1)),
+        // New bitmask InfoTypes
+        InfoType::FetchDirection => write_u32(synthesize(FETCH_DIRECTION)),
+        InfoType::AlterTable => write_u32(synthesize(ALTER_TABLE)),
+        InfoType::AlterDomain => write_u32(synthesize(ALTER_DOMAIN)),
+        InfoType::OjCapabilities => write_u32(synthesize(OJ_CAPABILITIES)),
+        InfoType::DatetimeLiterals => write_u32(synthesize(DATETIME_LITERALS)),
+        InfoType::BatchRowCount => write_u32(synthesize(BATCH_ROW_COUNT)),
+        InfoType::BatchSupport => write_u32(synthesize(BATCH_SUPPORT)),
+        InfoType::CreateAssertion => write_u32(synthesize(CREATE_ASSERTION)),
+        InfoType::CreateCharacterSet => write_u32(synthesize(CREATE_CHARACTER_SET)),
+        InfoType::CreateCollation => write_u32(synthesize(CREATE_COLLATION)),
+        InfoType::CreateDomain => write_u32(synthesize(CREATE_DOMAIN)),
+        InfoType::CreateSchema => write_u32(synthesize(CREATE_SCHEMA)),
+        InfoType::CreateTable => write_u32(synthesize(CREATE_TABLE)),
+        InfoType::CreateTranslation => write_u32(synthesize(CREATE_TRANSLATION)),
+        InfoType::CreateView => write_u32(synthesize(CREATE_VIEW)),
+        InfoType::DropAssertion => write_u32(synthesize(DROP_ASSERTION)),
+        InfoType::DropCharacterSet => write_u32(synthesize(DROP_CHARACTER_SET)),
+        InfoType::DropCollation => write_u32(synthesize(DROP_COLLATION)),
+        InfoType::DropDomain => write_u32(synthesize(DROP_DOMAIN)),
+        InfoType::DropSchema => write_u32(synthesize(DROP_SCHEMA)),
+        InfoType::DropTable => write_u32(synthesize(DROP_TABLE)),
+        InfoType::DropTranslation => write_u32(synthesize(DROP_TRANSLATION)),
+        InfoType::DropView => write_u32(synthesize(DROP_VIEW)),
+        InfoType::DynamicCursorAttributes2 => write_u32(synthesize(DYNAMIC_CURSOR_ATTRIBUTES2)),
+        InfoType::InfoSchemaViews => write_u32(synthesize(INFO_SCHEMA_VIEWS)),
+        InfoType::PositionedStatements => write_u32(synthesize(POSITIONED_STATEMENTS)),
+        InfoType::Subqueries => write_u32(synthesize(SUBQUERIES)),
+        InfoType::Union => write_u32(synthesize(UNION)),
+        InfoType::Sql92DatetimeFunctions => write_u32(synthesize(SQL92_DATETIME_FUNCTIONS)),
+        InfoType::Sql92ForeignKeyDeleteRule => write_u32(synthesize(SQL92_FOREIGN_KEY_DELETE_RULE)),
+        InfoType::Sql92ForeignKeyUpdateRule => write_u32(synthesize(SQL92_FOREIGN_KEY_UPDATE_RULE)),
+        InfoType::Sql92Grant => write_u32(synthesize(SQL92_GRANT)),
+        InfoType::Sql92NumericValueFunctions => {
+            write_u32(synthesize(SQL92_NUMERIC_VALUE_FUNCTIONS))
+        }
+        InfoType::Sql92Revoke => write_u32(synthesize(SQL92_REVOKE)),
+        InfoType::Sql92RowValueConstructor => write_u32(synthesize(SQL92_ROW_VALUE_CONSTRUCTOR)),
+        InfoType::Sql92StringFunctions => write_u32(synthesize(SQL92_STRING_FUNCTIONS)),
+        InfoType::DdlIndex => write_u32(synthesize(DDL_INDEX)),
+        InfoType::InsertStatement => write_u32(synthesize(INSERT_STATEMENT)),
 
         // ----- `SQL_CONVERT_<source>` bitmasks (per-source-type) ----------
         InfoType::ConvertBigint => write_u32(synthesize(CONVERT_BIGINT)),
@@ -1751,6 +1852,8 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::ConvertWchar => write_u32(synthesize(CONVERT_WCHAR)),
         InfoType::ConvertWlongVarchar => write_u32(synthesize(CONVERT_WLONGVARCHAR)),
         InfoType::ConvertWvarchar => write_u32(synthesize(CONVERT_WVARCHAR)),
+        InfoType::ConvertIntervalDayTime => write_u32(synthesize(CONVERT_INTERVAL_DAY_TIME)),
+        InfoType::ConvertIntervalYearMonth => write_u32(synthesize(CONVERT_INTERVAL_YEAR_MONTH)),
     }
 
     Ok(())
