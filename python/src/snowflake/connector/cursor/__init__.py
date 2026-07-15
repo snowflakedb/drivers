@@ -20,8 +20,11 @@ from ._snowflake_cursor import SnowflakeCursor
 CursorType = type[SnowflakeCursor] | type[DictCursor]
 CursorInstance = SnowflakeCursor | DictCursor
 
+# Temporary shim: remove when snowflakedb/snowpark-python#4282 merges
+ASYNC_RETRY_PATTERN = [1, 1, 2, 3, 4, 8, 10]
 
 __all__ = [
+    "ASYNC_RETRY_PATTERN",
     "CursorInstance",
     "CursorType",
     "DictCursor",
