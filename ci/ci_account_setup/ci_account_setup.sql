@@ -116,3 +116,33 @@ CREATE OR REPLACE GIT REPOSITORY testing_setup.public.ud_test_homebrew_git_repo
 GRANT READ ON GIT REPOSITORY testing_setup.public.ud_test_homebrew_git_repo TO ROLE testrole_universal;
 
 ALTER GIT REPOSITORY testing_setup.public.ud_test_homebrew_git_repo FETCH;
+
+-- ---------------------------------------------------------------------------
+-- Snowpark Container Services (SPCS) — pre-reqs for the SPCS auth e2e test.
+--
+-- The SPCS e2e test builds a probe image, pushes it to the image repository
+-- below, and runs it as a job service in the compute pool below. Inside the
+-- job, the driver authenticates with the platform-injected OAuth token (no
+-- user) and the driver attaches the SPCS_TOKEN service identifier, proving the
+-- in-SPCS login path end-to-end.
+--
+-- The pool uses an ARM instance family (GEN_ARM_G1_2): the probe image is
+-- built linux/arm64 and CI runs on ARM runners, so the whole path is ARM-native
+-- (no cross-arch emulation).
+-- ---------------------------------------------------------------------------
+
+CREATE COMPUTE POOL IF NOT EXISTS ud_test_spcs_pool
+  MIN_NODES = 1
+  MAX_NODES = 1
+  INSTANCE_FAMILY = GEN_ARM_G1_2
+  AUTO_RESUME = TRUE
+  AUTO_SUSPEND_SECS = 300;
+
+GRANT USAGE, MONITOR, OPERATE ON COMPUTE POOL ud_test_spcs_pool TO ROLE testrole_universal;
+
+CREATE IMAGE REPOSITORY IF NOT EXISTS testing_setup.public.ud_test_image_repo;
+
+GRANT READ, WRITE ON IMAGE REPOSITORY testing_setup.public.ud_test_image_repo TO ROLE testrole_universal;
+
+-- Allow the test role to create (and run) the job service in the schema.
+GRANT CREATE SERVICE ON SCHEMA testing_setup.public TO ROLE testrole_universal;

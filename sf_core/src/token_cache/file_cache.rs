@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
 use tracing::warn;
 
+use crate::env_vars;
 use crate::sensitive::SensitiveString;
 
 use super::{
@@ -58,7 +59,7 @@ fn create_subdir(path: &Path) -> Result<(), TokenCacheError> {
 /// 2. `$XDG_CACHE_HOME/snowflake` — `$XDG_CACHE_HOME` must exist, `snowflake` is created
 /// 3. `$HOME/.cache/snowflake` — `$HOME` must exist, `.cache` and `snowflake` are created
 fn ensure_cache_dir() -> Result<PathBuf, TokenCacheError> {
-    if let Ok(dir) = std::env::var("SF_TEMPORARY_CREDENTIAL_CACHE_DIR")
+    if let Ok(dir) = std::env::var(env_vars::SF_TEMPORARY_CREDENTIAL_CACHE_DIR)
         && !dir.is_empty()
     {
         let path = PathBuf::from(dir);
@@ -66,7 +67,7 @@ fn ensure_cache_dir() -> Result<PathBuf, TokenCacheError> {
         return Ok(path);
     }
 
-    if let Ok(dir) = std::env::var("XDG_CACHE_HOME")
+    if let Ok(dir) = std::env::var(env_vars::XDG_CACHE_HOME)
         && !dir.is_empty()
     {
         let root = PathBuf::from(dir);
@@ -76,7 +77,7 @@ fn ensure_cache_dir() -> Result<PathBuf, TokenCacheError> {
         return Ok(cache_dir);
     }
 
-    if let Ok(home) = std::env::var("HOME")
+    if let Ok(home) = std::env::var(env_vars::HOME)
         && !home.is_empty()
     {
         let root = PathBuf::from(home);
@@ -94,7 +95,7 @@ fn ensure_cache_dir() -> Result<PathBuf, TokenCacheError> {
 /// Resolves the cache file name from `$SF_TEMPORARY_CREDENTIAL_CACHE_FILE_NAME`,
 /// falling back to [`DEFAULT_CACHE_FILE_NAME`].
 fn resolve_cache_file_name() -> String {
-    std::env::var("SF_TEMPORARY_CREDENTIAL_CACHE_FILE_NAME")
+    std::env::var(env_vars::SF_TEMPORARY_CREDENTIAL_CACHE_FILE_NAME)
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| DEFAULT_CACHE_FILE_NAME.to_string())

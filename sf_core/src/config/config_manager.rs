@@ -2,6 +2,7 @@ use super::path_resolver::{ConfigPaths, get_config_paths};
 use super::settings::Setting;
 use super::toml_loader::{FilePermissionCheck, load_toml_file};
 use super::{ConfigError, ConnectionNotFoundSnafu};
+use crate::env_vars;
 use std::collections::HashMap;
 
 /// Load configuration for a specific connection from TOML files
@@ -97,7 +98,7 @@ pub(crate) fn get_default_connection_name_with_paths(
     paths: &ConfigPaths,
     permission_check: FilePermissionCheck,
 ) -> Result<String, ConfigError> {
-    let env_override = std::env::var("SNOWFLAKE_DEFAULT_CONNECTION_NAME").ok();
+    let env_override = std::env::var(env_vars::SNOWFLAKE_DEFAULT_CONNECTION_NAME).ok();
     resolve_default_connection_name(paths, env_override, permission_check)
 }
 
@@ -986,10 +987,10 @@ account = "acct"
 
         let _lock = ENV_MUTEX.lock().unwrap();
         // SAFETY: test-only; serialised by ENV_MUTEX.
-        unsafe { std::env::set_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME", "from_env_var") };
+        unsafe { std::env::set_var(env_vars::SNOWFLAKE_DEFAULT_CONNECTION_NAME, "from_env_var") };
         let result = get_default_connection_name_with_paths(&paths, FilePermissionCheck::Enabled);
         // SAFETY: test-only; serialised by ENV_MUTEX.
-        unsafe { std::env::remove_var("SNOWFLAKE_DEFAULT_CONNECTION_NAME") };
+        unsafe { std::env::remove_var(env_vars::SNOWFLAKE_DEFAULT_CONNECTION_NAME) };
         drop(_lock);
 
         assert_eq!(result.unwrap(), "from_env_var");
