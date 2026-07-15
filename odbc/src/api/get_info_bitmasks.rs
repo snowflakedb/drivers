@@ -3352,6 +3352,1239 @@ pub const CONVERT_WVARCHAR: &[Flag] = &[
     }, // bit 24
 ];
 
+/// `SQL_FETCH_DIRECTION` (8) — supported fetch directions (deprecated in ODBC 3.0).
+pub const FETCH_DIRECTION: &[Flag] = &[
+    Flag {
+        name: "SQL_FD_FETCH_NEXT",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_FD_FETCH_FIRST",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_FD_FETCH_LAST",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_FD_FETCH_PRIOR",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_FD_FETCH_ABSOLUTE",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_FD_FETCH_RELATIVE",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_FD_FETCH_RESUME",
+        enabled: false,
+    }, // bit 6
+    Flag {
+        name: "SQL_FD_FETCH_BOOKMARK",
+        enabled: false,
+    }, // bit 7
+];
+
+/// `SQL_ALTER_TABLE` (86) — supported ALTER TABLE sub-clauses.
+pub const ALTER_TABLE: &[Flag] = &[
+    Flag {
+        name: "SQL_AT_ADD_COLUMN",
+        enabled: false,
+    }, // bit 0  0x00001
+    Flag {
+        name: "SQL_AT_DROP_COLUMN",
+        enabled: false,
+    }, // bit 1  0x00002
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 2  0x00004
+    Flag {
+        name: "SQL_AT_ADD_CONSTRAINT",
+        enabled: false,
+    }, // bit 3  0x00008
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 4  0x00010
+    Flag {
+        name: "SQL_AT_ADD_COLUMN_SINGLE",
+        enabled: true,
+    }, // bit 5  0x00020
+    Flag {
+        name: "SQL_AT_ADD_COLUMN_DEFAULT",
+        enabled: true,
+    }, // bit 6  0x00040
+    Flag {
+        name: "SQL_AT_ADD_COLUMN_COLLATION",
+        enabled: false,
+    }, // bit 7  0x00080
+    Flag {
+        name: "SQL_AT_SET_COLUMN_DEFAULT",
+        enabled: false,
+    }, // bit 8  0x00100
+    Flag {
+        name: "SQL_AT_DROP_COLUMN_DEFAULT",
+        enabled: true,
+    }, // bit 9  0x00200
+    Flag {
+        name: "SQL_AT_DROP_COLUMN_CASCADE",
+        enabled: true,
+    }, // bit 10 0x00400
+    Flag {
+        name: "SQL_AT_DROP_COLUMN_RESTRICT",
+        enabled: true,
+    }, // bit 11 0x00800
+    Flag {
+        name: "SQL_AT_ADD_TABLE_CONSTRAINT",
+        enabled: true,
+    }, // bit 12 0x01000
+    Flag {
+        name: "SQL_AT_DROP_TABLE_CONSTRAINT_CASCADE",
+        enabled: true,
+    }, // bit 13 0x02000
+    Flag {
+        name: "SQL_AT_DROP_TABLE_CONSTRAINT_RESTRICT",
+        enabled: true,
+    }, // bit 14 0x04000
+    Flag {
+        name: "SQL_AT_CONSTRAINT_NAME_DEFINITION",
+        enabled: true,
+    }, // bit 15 0x08000
+    Flag {
+        name: "SQL_AT_CONSTRAINT_INITIALLY_DEFERRED",
+        enabled: true,
+    }, // bit 16 0x10000
+    Flag {
+        name: "SQL_AT_CONSTRAINT_INITIALLY_IMMEDIATE",
+        enabled: true,
+    }, // bit 17 0x20000
+    Flag {
+        name: "SQL_AT_CONSTRAINT_DEFERRABLE",
+        enabled: true,
+    }, // bit 18 0x40000
+    Flag {
+        name: "SQL_AT_CONSTRAINT_NON_DEFERRABLE",
+        enabled: true,
+    }, // bit 19 0x80000
+];
+
+/// `SQL_OJ_CAPABILITIES` (115) — supported outer join types.
+pub const OJ_CAPABILITIES: &[Flag] = &[
+    Flag {
+        name: "SQL_OJ_LEFT",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_OJ_RIGHT",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_OJ_FULL",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_OJ_NESTED",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_OJ_NOT_ORDERED",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_OJ_INNER",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_OJ_ALL_COMPARISON_OPS",
+        enabled: false,
+    }, // bit 6
+];
+
+/// `SQL_ALTER_DOMAIN` (117) — supported ALTER DOMAIN sub-clauses.
+pub const ALTER_DOMAIN: &[Flag] = &[
+    Flag {
+        name: "SQL_AD_CONSTRAINT_NAME_DEFINITION",
+        enabled: false,
+    }, // bit 0  0x001
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 1  0x002
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 2  0x004
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 3  0x008
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 4  0x010
+    Flag {
+        name: "SQL_AD_ADD_CONSTRAINT_INITIALLY_DEFERRED",
+        enabled: false,
+    }, // bit 5  0x020
+    Flag {
+        name: "SQL_AD_ADD_CONSTRAINT_INITIALLY_IMMEDIATE",
+        enabled: false,
+    }, // bit 6  0x040
+    Flag {
+        name: "SQL_AD_ADD_CONSTRAINT_DEFERRABLE",
+        enabled: false,
+    }, // bit 7  0x080
+    Flag {
+        name: "SQL_AD_ADD_CONSTRAINT_NON_DEFERRABLE",
+        enabled: false,
+    }, // bit 8  0x100
+];
+
+/// `SQL_DATETIME_LITERALS` (119) — supported SQL-92 datetime literal types.
+pub const DATETIME_LITERALS: &[Flag] = &[
+    Flag {
+        name: "SQL_DL_SQL92_DATE",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_DL_SQL92_TIME",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_DL_SQL92_TIMESTAMP",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_YEAR",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_MONTH",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_DAY",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_HOUR",
+        enabled: false,
+    }, // bit 6
+    Flag {
+        name: "(reserved)",
+        enabled: false,
+    }, // bit 7
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_SECOND",
+        enabled: false,
+    }, // bit 8
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_YEAR_TO_MONTH",
+        enabled: false,
+    }, // bit 9
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_DAY_TO_HOUR",
+        enabled: false,
+    }, // bit 10
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_DAY_TO_MINUTE",
+        enabled: false,
+    }, // bit 11
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_DAY_TO_SECOND",
+        enabled: false,
+    }, // bit 12
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_HOUR_TO_MINUTE",
+        enabled: false,
+    }, // bit 13
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_HOUR_TO_SECOND",
+        enabled: false,
+    }, // bit 14
+    Flag {
+        name: "SQL_DL_SQL92_INTERVAL_MINUTE_TO_SECOND",
+        enabled: false,
+    }, // bit 15
+];
+
+/// `SQL_BATCH_ROW_COUNT` (120) — batch row-count reporting behavior.
+pub const BATCH_ROW_COUNT: &[Flag] = &[
+    Flag {
+        name: "SQL_BRC_PROCEDURES",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_BRC_EXPLICIT",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_BRC_ROLLED_UP",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_BATCH_SUPPORT` (121) — driver support for batches.
+pub const BATCH_SUPPORT: &[Flag] = &[
+    Flag {
+        name: "SQL_BS_SELECT_EXPLICIT",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_BS_ROW_COUNT_EXPLICIT",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_BS_SELECT_PROC",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_BS_ROW_COUNT_PROC",
+        enabled: false,
+    }, // bit 3
+];
+
+/// `SQL_CONVERT_INTERVAL_DAY_TIME` (123) — conversion targets from INTERVAL DAY-TIME source.
+/// Layout mirrors the other SQL_CONVERT_* families (25 bits, 0..=24).
+pub const CONVERT_INTERVAL_DAY_TIME: &[Flag] = &[
+    Flag {
+        name: "SQL_CVT_CHAR",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_CVT_NUMERIC",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_CVT_DECIMAL",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_CVT_INTEGER",
+        enabled: true,
+    }, // bit 3
+    Flag {
+        name: "SQL_CVT_SMALLINT",
+        enabled: true,
+    }, // bit 4
+    Flag {
+        name: "SQL_CVT_FLOAT",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_CVT_REAL",
+        enabled: false,
+    }, // bit 6
+    Flag {
+        name: "SQL_CVT_DOUBLE",
+        enabled: false,
+    }, // bit 7
+    Flag {
+        name: "SQL_CVT_VARCHAR",
+        enabled: true,
+    }, // bit 8
+    Flag {
+        name: "SQL_CVT_LONGVARCHAR",
+        enabled: true,
+    }, // bit 9
+    Flag {
+        name: "SQL_CVT_BINARY",
+        enabled: true,
+    }, // bit 10
+    Flag {
+        name: "SQL_CVT_VARBINARY",
+        enabled: true,
+    }, // bit 11
+    Flag {
+        name: "SQL_CVT_BIT",
+        enabled: false,
+    }, // bit 12
+    Flag {
+        name: "SQL_CVT_TINYINT",
+        enabled: true,
+    }, // bit 13
+    Flag {
+        name: "SQL_CVT_BIGINT",
+        enabled: true,
+    }, // bit 14
+    Flag {
+        name: "SQL_CVT_DATE",
+        enabled: false,
+    }, // bit 15
+    Flag {
+        name: "SQL_CVT_TIME",
+        enabled: false,
+    }, // bit 16
+    Flag {
+        name: "SQL_CVT_TIMESTAMP",
+        enabled: false,
+    }, // bit 17
+    Flag {
+        name: "SQL_CVT_LONGVARBINARY",
+        enabled: false,
+    }, // bit 18
+    Flag {
+        name: "SQL_CVT_INTERVAL_YEAR_MONTH",
+        enabled: false,
+    }, // bit 19
+    Flag {
+        name: "SQL_CVT_INTERVAL_DAY_TIME",
+        enabled: true,
+    }, // bit 20
+    Flag {
+        name: "SQL_CVT_WCHAR",
+        enabled: false,
+    }, // bit 21
+    Flag {
+        name: "SQL_CVT_WLONGVARCHAR",
+        enabled: false,
+    }, // bit 22
+    Flag {
+        name: "SQL_CVT_WVARCHAR",
+        enabled: false,
+    }, // bit 23
+    Flag {
+        name: "SQL_CVT_GUID",
+        enabled: false,
+    }, // bit 24
+];
+
+/// `SQL_CONVERT_INTERVAL_YEAR_MONTH` (124) — conversion targets from INTERVAL YEAR-MONTH source.
+/// Layout mirrors the other SQL_CONVERT_* families (25 bits, 0..=24).
+pub const CONVERT_INTERVAL_YEAR_MONTH: &[Flag] = &[
+    Flag {
+        name: "SQL_CVT_CHAR",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_CVT_NUMERIC",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_CVT_DECIMAL",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_CVT_INTEGER",
+        enabled: true,
+    }, // bit 3
+    Flag {
+        name: "SQL_CVT_SMALLINT",
+        enabled: true,
+    }, // bit 4
+    Flag {
+        name: "SQL_CVT_FLOAT",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_CVT_REAL",
+        enabled: false,
+    }, // bit 6
+    Flag {
+        name: "SQL_CVT_DOUBLE",
+        enabled: false,
+    }, // bit 7
+    Flag {
+        name: "SQL_CVT_VARCHAR",
+        enabled: true,
+    }, // bit 8
+    Flag {
+        name: "SQL_CVT_LONGVARCHAR",
+        enabled: true,
+    }, // bit 9
+    Flag {
+        name: "SQL_CVT_BINARY",
+        enabled: true,
+    }, // bit 10
+    Flag {
+        name: "SQL_CVT_VARBINARY",
+        enabled: true,
+    }, // bit 11
+    Flag {
+        name: "SQL_CVT_BIT",
+        enabled: false,
+    }, // bit 12
+    Flag {
+        name: "SQL_CVT_TINYINT",
+        enabled: true,
+    }, // bit 13
+    Flag {
+        name: "SQL_CVT_BIGINT",
+        enabled: true,
+    }, // bit 14
+    Flag {
+        name: "SQL_CVT_DATE",
+        enabled: false,
+    }, // bit 15
+    Flag {
+        name: "SQL_CVT_TIME",
+        enabled: false,
+    }, // bit 16
+    Flag {
+        name: "SQL_CVT_TIMESTAMP",
+        enabled: false,
+    }, // bit 17
+    Flag {
+        name: "SQL_CVT_LONGVARBINARY",
+        enabled: false,
+    }, // bit 18
+    Flag {
+        name: "SQL_CVT_INTERVAL_YEAR_MONTH",
+        enabled: true,
+    }, // bit 19
+    Flag {
+        name: "SQL_CVT_INTERVAL_DAY_TIME",
+        enabled: false,
+    }, // bit 20
+    Flag {
+        name: "SQL_CVT_WCHAR",
+        enabled: false,
+    }, // bit 21
+    Flag {
+        name: "SQL_CVT_WLONGVARCHAR",
+        enabled: false,
+    }, // bit 22
+    Flag {
+        name: "SQL_CVT_WVARCHAR",
+        enabled: false,
+    }, // bit 23
+    Flag {
+        name: "SQL_CVT_GUID",
+        enabled: false,
+    }, // bit 24
+];
+
+/// `SQL_CREATE_ASSERTION` (127) — supported CREATE ASSERTION options.
+pub const CREATE_ASSERTION: &[Flag] = &[
+    Flag {
+        name: "SQL_CA_CREATE_ASSERTION",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_CA_CONSTRAINT_INITIALLY_DEFERRED",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_CA_CONSTRAINT_INITIALLY_IMMEDIATE",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_CA_CONSTRAINT_DEFERRABLE",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_CA_CONSTRAINT_NON_DEFERRABLE",
+        enabled: false,
+    }, // bit 4
+];
+
+/// `SQL_CREATE_CHARACTER_SET` (128) — supported CREATE CHARACTER SET options.
+pub const CREATE_CHARACTER_SET: &[Flag] = &[
+    Flag {
+        name: "SQL_CCS_CREATE_CHARACTER_SET",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_CCS_COLLATE_CLAUSE",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_CCS_LIMITED_COLLATION",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_CREATE_COLLATION` (129) — supported CREATE COLLATION options.
+pub const CREATE_COLLATION: &[Flag] = &[
+    Flag {
+        name: "SQL_CCO_CREATE_COLLATION",
+        enabled: false,
+    }, // bit 0
+];
+
+/// `SQL_CREATE_DOMAIN` (130) — supported CREATE DOMAIN options.
+pub const CREATE_DOMAIN: &[Flag] = &[
+    Flag {
+        name: "SQL_CDO_CREATE_DOMAIN",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_CDO_DEFAULT",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_CDO_CONSTRAINT",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_CDO_COLLATE",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_CDO_CONSTRAINT_NAME_DEFINITION",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_CDO_CONSTRAINT_INITIALLY_DEFERRED",
+        enabled: false,
+    }, // bit 5
+    Flag {
+        name: "SQL_CDO_CONSTRAINT_INITIALLY_IMMEDIATE",
+        enabled: false,
+    }, // bit 6
+    Flag {
+        name: "SQL_CDO_CONSTRAINT_DEFERRABLE",
+        enabled: false,
+    }, // bit 7
+    Flag {
+        name: "SQL_CDO_CONSTRAINT_NON_DEFERRABLE",
+        enabled: false,
+    }, // bit 8
+];
+
+/// `SQL_CREATE_SCHEMA` (131) — supported CREATE SCHEMA options.
+pub const CREATE_SCHEMA: &[Flag] = &[
+    Flag {
+        name: "SQL_CS_CREATE_SCHEMA",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_CS_AUTHORIZATION",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_CS_DEFAULT_CHARACTER_SET",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_CREATE_TABLE` (132) — supported CREATE TABLE options.
+pub const CREATE_TABLE: &[Flag] = &[
+    Flag {
+        name: "SQL_CT_CREATE_TABLE",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_CT_COMMIT_PRESERVE",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_CT_COMMIT_DELETE",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_CT_GLOBAL_TEMPORARY",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_CT_LOCAL_TEMPORARY",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_CT_CONSTRAINT_INITIALLY_DEFERRED",
+        enabled: true,
+    }, // bit 5
+    Flag {
+        name: "SQL_CT_CONSTRAINT_INITIALLY_IMMEDIATE",
+        enabled: true,
+    }, // bit 6
+    Flag {
+        name: "SQL_CT_CONSTRAINT_DEFERRABLE",
+        enabled: true,
+    }, // bit 7
+    Flag {
+        name: "SQL_CT_CONSTRAINT_NON_DEFERRABLE",
+        enabled: true,
+    }, // bit 8
+    Flag {
+        name: "SQL_CT_COLUMN_CONSTRAINT",
+        enabled: true,
+    }, // bit 9
+    Flag {
+        name: "SQL_CT_COLUMN_DEFAULT",
+        enabled: false,
+    }, // bit 10
+    Flag {
+        name: "SQL_CT_COLUMN_COLLATION",
+        enabled: false,
+    }, // bit 11
+    Flag {
+        name: "SQL_CT_TABLE_CONSTRAINT",
+        enabled: true,
+    }, // bit 12
+    Flag {
+        name: "SQL_CT_CONSTRAINT_NAME_DEFINITION",
+        enabled: true,
+    }, // bit 13
+];
+
+/// `SQL_CREATE_TRANSLATION` (133) — supported CREATE TRANSLATION options.
+pub const CREATE_TRANSLATION: &[Flag] = &[
+    Flag {
+        name: "SQL_CTR_CREATE_TRANSLATION",
+        enabled: false,
+    }, // bit 0
+];
+
+/// `SQL_CREATE_VIEW` (134) — supported CREATE VIEW options.
+pub const CREATE_VIEW: &[Flag] = &[
+    Flag {
+        name: "SQL_CV_CREATE_VIEW",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_CV_CHECK_OPTION",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_CV_CASCADED",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_CV_LOCAL",
+        enabled: false,
+    }, // bit 3
+];
+
+/// `SQL_DROP_ASSERTION` (136) — supported DROP ASSERTION options.
+pub const DROP_ASSERTION: &[Flag] = &[
+    Flag {
+        name: "SQL_DA_DROP_ASSERTION",
+        enabled: false,
+    }, // bit 0
+];
+
+/// `SQL_DROP_CHARACTER_SET` (137) — supported DROP CHARACTER SET options.
+pub const DROP_CHARACTER_SET: &[Flag] = &[
+    Flag {
+        name: "SQL_DCS_DROP_CHARACTER_SET",
+        enabled: false,
+    }, // bit 0
+];
+
+/// `SQL_DROP_COLLATION` (138) — supported DROP COLLATION options.
+pub const DROP_COLLATION: &[Flag] = &[
+    Flag {
+        name: "SQL_DC_DROP_COLLATION",
+        enabled: false,
+    }, // bit 0
+];
+
+/// `SQL_DROP_DOMAIN` (139) — supported DROP DOMAIN options.
+pub const DROP_DOMAIN: &[Flag] = &[
+    Flag {
+        name: "SQL_DD_DROP_DOMAIN",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_DD_CASCADE",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_DD_RESTRICT",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_DROP_SCHEMA` (140) — supported DROP SCHEMA options.
+pub const DROP_SCHEMA: &[Flag] = &[
+    Flag {
+        name: "SQL_DS_DROP_SCHEMA",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_DS_RESTRICT",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_DS_CASCADE",
+        enabled: true,
+    }, // bit 2
+];
+
+/// `SQL_DROP_TABLE` (141) — supported DROP TABLE options.
+pub const DROP_TABLE: &[Flag] = &[
+    Flag {
+        name: "SQL_DT_DROP_TABLE",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_DT_RESTRICT",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_DT_CASCADE",
+        enabled: true,
+    }, // bit 2
+];
+
+/// `SQL_DROP_TRANSLATION` (142) — supported DROP TRANSLATION options.
+pub const DROP_TRANSLATION: &[Flag] = &[
+    Flag {
+        name: "SQL_DTR_DROP_TRANSLATION",
+        enabled: false,
+    }, // bit 0
+];
+
+/// `SQL_DROP_VIEW` (143) — supported DROP VIEW options.
+pub const DROP_VIEW: &[Flag] = &[
+    Flag {
+        name: "SQL_DV_DROP_VIEW",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_DV_RESTRICT",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_DV_CASCADE",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_DYNAMIC_CURSOR_ATTRIBUTES2` (145).
+pub const DYNAMIC_CURSOR_ATTRIBUTES2: &[Flag] = ca2_cursor_attributes!();
+
+/// `SQL_INFO_SCHEMA_VIEWS` (149) — supported INFORMATION_SCHEMA views.
+pub const INFO_SCHEMA_VIEWS: &[Flag] = &[
+    Flag {
+        name: "SQL_ISV_ASSERTIONS",
+        enabled: false,
+    }, // bit 0  0x000001
+    Flag {
+        name: "SQL_ISV_CHARACTER_SETS",
+        enabled: false,
+    }, // bit 1  0x000002
+    Flag {
+        name: "SQL_ISV_CHECK_CONSTRAINTS",
+        enabled: false,
+    }, // bit 2  0x000004
+    Flag {
+        name: "SQL_ISV_COLLATIONS",
+        enabled: false,
+    }, // bit 3  0x000008
+    Flag {
+        name: "SQL_ISV_COLUMN_DOMAIN_USAGE",
+        enabled: false,
+    }, // bit 4  0x000010
+    Flag {
+        name: "SQL_ISV_COLUMN_PRIVILEGES",
+        enabled: false,
+    }, // bit 5  0x000020
+    Flag {
+        name: "SQL_ISV_COLUMNS",
+        enabled: true,
+    }, // bit 6  0x000040
+    Flag {
+        name: "SQL_ISV_CONSTRAINT_COLUMN_USAGE",
+        enabled: false,
+    }, // bit 7  0x000080
+    Flag {
+        name: "SQL_ISV_CONSTRAINT_TABLE_USAGE",
+        enabled: false,
+    }, // bit 8  0x000100
+    Flag {
+        name: "SQL_ISV_DOMAIN_CONSTRAINTS",
+        enabled: false,
+    }, // bit 9  0x000200
+    Flag {
+        name: "SQL_ISV_DOMAINS",
+        enabled: false,
+    }, // bit 10 0x000400
+    Flag {
+        name: "SQL_ISV_KEY_COLUMN_USAGE",
+        enabled: false,
+    }, // bit 11 0x000800
+    Flag {
+        name: "SQL_ISV_REFERENTIAL_CONSTRAINTS",
+        enabled: true,
+    }, // bit 12 0x001000
+    Flag {
+        name: "SQL_ISV_SCHEMATA",
+        enabled: true,
+    }, // bit 13 0x002000
+    Flag {
+        name: "SQL_ISV_SQL_LANGUAGES",
+        enabled: false,
+    }, // bit 14 0x004000
+    Flag {
+        name: "SQL_ISV_TABLE_CONSTRAINTS",
+        enabled: true,
+    }, // bit 15 0x008000
+    Flag {
+        name: "SQL_ISV_TABLE_PRIVILEGES",
+        enabled: true,
+    }, // bit 16 0x010000
+    Flag {
+        name: "SQL_ISV_TABLES",
+        enabled: true,
+    }, // bit 17 0x020000
+    Flag {
+        name: "SQL_ISV_TRANSLATIONS",
+        enabled: false,
+    }, // bit 18 0x040000
+    Flag {
+        name: "SQL_ISV_USAGE_PRIVILEGES",
+        enabled: true,
+    }, // bit 19 0x080000
+    Flag {
+        name: "SQL_ISV_VIEW_COLUMN_USAGE",
+        enabled: false,
+    }, // bit 20 0x100000
+    Flag {
+        name: "SQL_ISV_VIEW_TABLE_USAGE",
+        enabled: false,
+    }, // bit 21 0x200000
+    Flag {
+        name: "SQL_ISV_VIEWS",
+        enabled: true,
+    }, // bit 22 0x400000
+];
+
+/// `SQL_SUBQUERIES` (95) — supported subquery types.
+pub const SUBQUERIES: &[Flag] = &[
+    Flag {
+        name: "SQL_SQ_COMPARISON",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SQ_EXISTS",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SQ_IN",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_SQ_QUANTIFIED",
+        enabled: false,
+    }, // bit 3
+    Flag {
+        name: "SQL_SQ_CORRELATED_SUBQUERIES",
+        enabled: true,
+    }, // bit 4
+];
+
+/// `SQL_UNION` (96) — supported UNION clause types.
+pub const UNION: &[Flag] = &[
+    Flag {
+        name: "SQL_U_UNION",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_U_UNION_ALL",
+        enabled: true,
+    }, // bit 1
+];
+
+/// `SQL_SQL92_DATETIME_FUNCTIONS` (155) — supported SQL-92 datetime scalar functions.
+pub const SQL92_DATETIME_FUNCTIONS: &[Flag] = &[
+    Flag {
+        name: "SQL_SDF_CURRENT_DATE",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SDF_CURRENT_TIME",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SDF_CURRENT_TIMESTAMP",
+        enabled: true,
+    }, // bit 2
+];
+
+/// `SQL_SQL92_FOREIGN_KEY_DELETE_RULE` (156) — supported delete rules for foreign keys.
+pub const SQL92_FOREIGN_KEY_DELETE_RULE: &[Flag] = &[
+    Flag {
+        name: "SQL_SFKD_CASCADE",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SFKD_NO_ACTION",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SFKD_SET_DEFAULT",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_SFKD_SET_NULL",
+        enabled: true,
+    }, // bit 3
+];
+
+/// `SQL_SQL92_FOREIGN_KEY_UPDATE_RULE` (157) — supported update rules for foreign keys.
+pub const SQL92_FOREIGN_KEY_UPDATE_RULE: &[Flag] = &[
+    Flag {
+        name: "SQL_SFKU_CASCADE",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SFKU_NO_ACTION",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SFKU_SET_DEFAULT",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_SFKU_SET_NULL",
+        enabled: true,
+    }, // bit 3
+];
+
+/// `SQL_SQL92_GRANT` (158) — supported clauses in the SQL-92 GRANT statement.
+pub const SQL92_GRANT: &[Flag] = &[
+    Flag {
+        name: "SQL_SG_USAGE_ON_DOMAIN",
+        enabled: false,
+    }, // bit 0  0x0001
+    Flag {
+        name: "SQL_SG_USAGE_ON_CHARACTER_SET",
+        enabled: false,
+    }, // bit 1  0x0002
+    Flag {
+        name: "SQL_SG_USAGE_ON_COLLATION",
+        enabled: false,
+    }, // bit 2  0x0004
+    Flag {
+        name: "SQL_SG_USAGE_ON_TRANSLATION",
+        enabled: false,
+    }, // bit 3  0x0008
+    Flag {
+        name: "SQL_SG_WITH_GRANT_OPTION",
+        enabled: true,
+    }, // bit 4  0x0010
+    Flag {
+        name: "SQL_SG_DELETE_TABLE",
+        enabled: true,
+    }, // bit 5  0x0020
+    Flag {
+        name: "SQL_SG_INSERT_TABLE",
+        enabled: true,
+    }, // bit 6  0x0040
+    Flag {
+        name: "SQL_SG_INSERT_COLUMN",
+        enabled: false,
+    }, // bit 7  0x0080
+    Flag {
+        name: "SQL_SG_REFERENCES_TABLE",
+        enabled: true,
+    }, // bit 8  0x0100
+    Flag {
+        name: "SQL_SG_REFERENCES_COLUMN",
+        enabled: false,
+    }, // bit 9  0x0200
+    Flag {
+        name: "SQL_SG_SELECT_TABLE",
+        enabled: true,
+    }, // bit 10 0x0400
+    Flag {
+        name: "SQL_SG_UPDATE_TABLE",
+        enabled: true,
+    }, // bit 11 0x0800
+    Flag {
+        name: "SQL_SG_UPDATE_COLUMN",
+        enabled: false,
+    }, // bit 12 0x1000
+];
+
+/// `SQL_SQL92_NUMERIC_VALUE_FUNCTIONS` (159) — supported SQL-92 numeric value scalar functions.
+pub const SQL92_NUMERIC_VALUE_FUNCTIONS: &[Flag] = &[
+    Flag {
+        name: "SQL_SNVF_BIT_LENGTH",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SNVF_CHAR_LENGTH",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_SNVF_CHARACTER_LENGTH",
+        enabled: false,
+    }, // bit 2
+    Flag {
+        name: "SQL_SNVF_EXTRACT",
+        enabled: true,
+    }, // bit 3
+    Flag {
+        name: "SQL_SNVF_OCTET_LENGTH",
+        enabled: true,
+    }, // bit 4
+    Flag {
+        name: "SQL_SNVF_POSITION",
+        enabled: true,
+    }, // bit 5
+];
+
+/// `SQL_SQL92_REVOKE` (162) — supported clauses in the SQL-92 REVOKE statement.
+pub const SQL92_REVOKE: &[Flag] = &[
+    Flag {
+        name: "SQL_SR_USAGE_ON_DOMAIN",
+        enabled: false,
+    }, // bit 0  0x0001
+    Flag {
+        name: "SQL_SR_USAGE_ON_CHARACTER_SET",
+        enabled: false,
+    }, // bit 1  0x0002
+    Flag {
+        name: "SQL_SR_USAGE_ON_COLLATION",
+        enabled: false,
+    }, // bit 2  0x0004
+    Flag {
+        name: "SQL_SR_USAGE_ON_TRANSLATION",
+        enabled: false,
+    }, // bit 3  0x0008
+    Flag {
+        name: "SQL_SR_GRANT_OPTION_FOR",
+        enabled: true,
+    }, // bit 4  0x0010
+    Flag {
+        name: "SQL_SR_CASCADE",
+        enabled: true,
+    }, // bit 5  0x0020
+    Flag {
+        name: "SQL_SR_RESTRICT",
+        enabled: true,
+    }, // bit 6  0x0040
+    Flag {
+        name: "SQL_SR_DELETE_TABLE",
+        enabled: true,
+    }, // bit 7  0x0080
+    Flag {
+        name: "SQL_SR_INSERT_TABLE",
+        enabled: true,
+    }, // bit 8  0x0100
+    Flag {
+        name: "SQL_SR_INSERT_COLUMN",
+        enabled: false,
+    }, // bit 9  0x0200
+    Flag {
+        name: "SQL_SR_REFERENCES_TABLE",
+        enabled: true,
+    }, // bit 10 0x0400
+    Flag {
+        name: "SQL_SR_REFERENCES_COLUMN",
+        enabled: false,
+    }, // bit 11 0x0800
+    Flag {
+        name: "SQL_SR_SELECT_TABLE",
+        enabled: true,
+    }, // bit 12 0x1000
+    Flag {
+        name: "SQL_SR_UPDATE_TABLE",
+        enabled: true,
+    }, // bit 13 0x2000
+    Flag {
+        name: "SQL_SR_UPDATE_COLUMN",
+        enabled: false,
+    }, // bit 14 0x4000
+];
+
+/// `SQL_SQL92_ROW_VALUE_CONSTRUCTOR` (163) — supported row value constructor expressions.
+pub const SQL92_ROW_VALUE_CONSTRUCTOR: &[Flag] = &[
+    Flag {
+        name: "SQL_SRVC_VALUE_EXPRESSION",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SRVC_NULL",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SRVC_DEFAULT",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_SRVC_ROW_SUBQUERY",
+        enabled: true,
+    }, // bit 3
+];
+
+/// `SQL_SQL92_STRING_FUNCTIONS` (164) — supported SQL-92 string scalar functions.
+pub const SQL92_STRING_FUNCTIONS: &[Flag] = &[
+    Flag {
+        name: "SQL_SSF_CONVERT",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_SSF_LOWER",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_SSF_UPPER",
+        enabled: true,
+    }, // bit 2
+    Flag {
+        name: "SQL_SSF_SUBSTRING",
+        enabled: true,
+    }, // bit 3
+    Flag {
+        name: "SQL_SSF_TRANSLATE",
+        enabled: false,
+    }, // bit 4
+    Flag {
+        name: "SQL_SSF_TRIM_BOTH",
+        enabled: true,
+    }, // bit 5
+    Flag {
+        name: "SQL_SSF_TRIM_LEADING",
+        enabled: true,
+    }, // bit 6
+    Flag {
+        name: "SQL_SSF_TRIM_TRAILING",
+        enabled: true,
+    }, // bit 7
+];
+
+/// `SQL_POSITIONED_STATEMENTS` (80) — supported positioned statement types (deprecated).
+pub const POSITIONED_STATEMENTS: &[Flag] = &[
+    Flag {
+        name: "SQL_PS_POSITIONED_DELETE",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_PS_POSITIONED_UPDATE",
+        enabled: false,
+    }, // bit 1
+    Flag {
+        name: "SQL_PS_SELECT_FOR_UPDATE",
+        enabled: false,
+    }, // bit 2
+];
+
+/// `SQL_DDL_INDEX` (170) — support for CREATE INDEX and DROP INDEX.
+pub const DDL_INDEX: &[Flag] = &[
+    Flag {
+        name: "SQL_DI_CREATE_INDEX",
+        enabled: false,
+    }, // bit 0
+    Flag {
+        name: "SQL_DI_DROP_INDEX",
+        enabled: false,
+    }, // bit 1
+];
+
+/// `SQL_INSERT_STATEMENT` (172) — supported forms of INSERT statement.
+pub const INSERT_STATEMENT: &[Flag] = &[
+    Flag {
+        name: "SQL_IS_INSERT_LITERALS",
+        enabled: true,
+    }, // bit 0
+    Flag {
+        name: "SQL_IS_INSERT_SEARCHED",
+        enabled: true,
+    }, // bit 1
+    Flag {
+        name: "SQL_IS_SELECT_INTO",
+        enabled: false,
+    }, // bit 2
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3414,6 +4647,62 @@ mod tests {
         assert_eq!(synthesize(STATIC_CURSOR_ATTRIBUTES1), 0x0);
         assert_eq!(synthesize(STATIC_CURSOR_ATTRIBUTES2), 0x0);
         assert_eq!(synthesize(DYNAMIC_CURSOR_ATTRIBUTES1), 0x0);
+
+        // ---- New non-zero bitmask families ----------------------------------
+        assert_eq!(synthesize(FETCH_DIRECTION), 0x1);
+        assert_eq!(synthesize(OJ_CAPABILITIES), 0x7);
+        assert_eq!(synthesize(SUBQUERIES), 0x17);
+        assert_eq!(synthesize(UNION), 0x3);
+        assert_eq!(synthesize(SQL92_DATETIME_FUNCTIONS), 0x7);
+        assert_eq!(synthesize(SQL92_FOREIGN_KEY_DELETE_RULE), 0xF);
+        assert_eq!(synthesize(SQL92_FOREIGN_KEY_UPDATE_RULE), 0xF);
+        assert_eq!(synthesize(SQL92_GRANT), 0xD70);
+        assert_eq!(synthesize(SQL92_NUMERIC_VALUE_FUNCTIONS), 0x39);
+        assert_eq!(synthesize(SQL92_REVOKE), 0x35F0);
+        assert_eq!(synthesize(SQL92_ROW_VALUE_CONSTRUCTOR), 0xF);
+        assert_eq!(synthesize(SQL92_STRING_FUNCTIONS), 0xEF);
+        assert_eq!(synthesize(CREATE_SCHEMA), 0x3);
+        assert_eq!(synthesize(CREATE_TABLE), 0x33E1);
+        assert_eq!(synthesize(CREATE_VIEW), 0x1);
+        assert_eq!(synthesize(DROP_SCHEMA), 0x7);
+        assert_eq!(synthesize(DROP_TABLE), 0x7);
+        assert_eq!(synthesize(DROP_VIEW), 0x1);
+        assert_eq!(synthesize(INSERT_STATEMENT), 0x3);
+
+        // ---- New all-zero bitmask families ----------------------------------
+        assert_eq!(synthesize(ALTER_TABLE), 0xFFE60);
+        assert_eq!(synthesize(ALTER_DOMAIN), 0x0);
+        assert_eq!(synthesize(DATETIME_LITERALS), 0x0);
+        assert_eq!(synthesize(BATCH_ROW_COUNT), 0x0);
+        assert_eq!(synthesize(BATCH_SUPPORT), 0x0);
+        assert_eq!(synthesize(CREATE_ASSERTION), 0x0);
+        assert_eq!(synthesize(CREATE_CHARACTER_SET), 0x0);
+        assert_eq!(synthesize(CREATE_COLLATION), 0x0);
+        assert_eq!(synthesize(CREATE_DOMAIN), 0x0);
+        assert_eq!(synthesize(CREATE_TRANSLATION), 0x0);
+        assert_eq!(synthesize(DROP_ASSERTION), 0x0);
+        assert_eq!(synthesize(DROP_CHARACTER_SET), 0x0);
+        assert_eq!(synthesize(DROP_COLLATION), 0x0);
+        assert_eq!(synthesize(DROP_DOMAIN), 0x0);
+        assert_eq!(synthesize(DROP_TRANSLATION), 0x0);
+        assert_eq!(synthesize(POSITIONED_STATEMENTS), 0x0);
+        assert_eq!(synthesize(DDL_INDEX), 0x0);
+        assert_eq!(synthesize(DYNAMIC_CURSOR_ATTRIBUTES2), 0x0);
+        assert_eq!(synthesize(INFO_SCHEMA_VIEWS), 0x4BB040);
+
+        // ---- New CONVERT_INTERVAL families (25 bits each) -------------------
+        for (name, slice) in [
+            ("CONVERT_INTERVAL_DAY_TIME", CONVERT_INTERVAL_DAY_TIME),
+            ("CONVERT_INTERVAL_YEAR_MONTH", CONVERT_INTERVAL_YEAR_MONTH),
+        ] {
+            assert_eq!(slice.len(), 25, "{name} slice should cover bits 0..=24");
+            assert!(
+                synthesize(slice) != 0,
+                "{name}: CONVERT_INTERVAL family must advertise at least one target",
+            );
+        }
+        assert_eq!(synthesize(CONVERT_INTERVAL_DAY_TIME), 0x106F1F);
+        assert_eq!(synthesize(CONVERT_INTERVAL_YEAR_MONTH), 0x86F1F);
 
         // ---- SQL_CONVERT_<source> families ----------------------------------
         // Each must include the source type itself as a target plus the

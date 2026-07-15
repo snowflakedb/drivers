@@ -185,6 +185,9 @@ impl ConnectionAttribute {
 #[repr(u16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfoType {
+    /// `SQL_MAX_DRIVER_CONNECTIONS` (0) — max simultaneous connections supported (`SQLUSMALLINT`).
+    /// Alias of `SQL_ACTIVE_CONNECTIONS`. Zero means no limit or unknown.
+    MaxDriverConnections = 0,
     /// `SQL_ACTIVE_STATEMENTS` (1) — maximum number of active statements (`SQLUSMALLINT`).
     /// Alias of `SQL_MAX_CONCURRENT_ACTIVITIES`.
     ActiveStatements = 1,
@@ -192,18 +195,38 @@ pub enum InfoType {
     DriverName = 6,
     /// `SQL_DRIVER_VER` (7) — driver release version (string).
     DriverVer = 7,
+    /// `SQL_FETCH_DIRECTION` (8) — supported fetch direction bitmask (`SQLUINTEGER`). Deprecated in ODBC 3.0.
+    FetchDirection = 8,
+    /// `SQL_ODBC_API_CONFORMANCE` (9) — ODBC API conformance level (`SQLUSMALLINT`). Deprecated in ODBC 3.0.
+    OdbcApiConformance = 9,
+    /// `SQL_ROW_UPDATES` (11) — whether row-version bookmarks are supported (string `"Y"`/`"N"`).
+    RowUpdates = 11,
+    /// `SQL_SERVER_NAME` (13) — data-source-specific server name (string).
+    ServerName = 13,
     /// `SQL_SEARCH_PATTERN_ESCAPE` (14) — escape character for catalog wildcard patterns (string).
     SearchPatternEscape = 14,
+    /// `SQL_ODBC_SQL_CONFORMANCE` (15) — ODBC SQL conformance level (`SQLUSMALLINT`). Deprecated in ODBC 3.0.
+    OdbcSqlConformance = 15,
+    /// `SQL_DATABASE_NAME` (16) — name of the current catalog/database (string).
+    DatabaseName = 16,
     /// `SQL_DBMS_NAME` (17) — name of the DBMS product (string).
     DbmsName = 17,
     /// `SQL_DBMS_VER` (18) — version of the DBMS the connection is talking to (string).
     DbmsVer = 18,
-    /// `SQL_DATABASE_NAME` (16) — name of the current catalog/database (string).
-    DatabaseName = 16,
+    /// `SQL_ACCESSIBLE_TABLES` (19) — whether the user can SELECT from all tables in catalog functions (string).
+    AccessibleTables = 19,
+    /// `SQL_ACCESSIBLE_PROCEDURES` (20) — whether the user can execute all procedures in catalog functions (string).
+    AccessibleProcedures = 20,
+    /// `SQL_PROCEDURES` (21) — whether the data source supports procedures (string `"Y"`/`"N"`).
+    Procedures = 21,
     /// `SQL_DATA_SOURCE_READ_ONLY` (25) — whether the data source is read-only (string `"Y"`/`"N"`).
     DataSourceReadOnly = 25,
     /// `SQL_DEFAULT_TXN_ISOLATION` (26) — default transaction isolation level (`SQLUINTEGER`).
     DefaultTxnIsolation = 26,
+    /// `SQL_EXPRESSIONS_IN_ORDERBY` (27) — whether the data source supports expressions in ORDER BY (string).
+    ExpressionsInOrderby = 27,
+    /// `SQL_IDENTIFIER_CASE` (28) — case sensitivity of identifiers in SQL statements (`SQLUSMALLINT`).
+    IdentifierCase = 28,
     /// `SQL_CONCAT_NULL_BEHAVIOR` (22) — concat-with-null result (`SQLUSMALLINT`).
     ConcatNullBehavior = 22,
     /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
@@ -212,6 +235,18 @@ pub enum InfoType {
     CursorRollbackBehavior = 24,
     /// `SQL_IDENTIFIER_QUOTE_CHAR` (29) — identifier quote character (string).
     IdentifierQuoteChar = 29,
+    /// `SQL_MAX_COLUMN_NAME_LEN` (30) — max column name length in characters (`SQLUSMALLINT`).
+    MaxColumnNameLen = 30,
+    /// `SQL_MAX_CURSOR_NAME_LEN` (31) — max cursor name length in characters (`SQLUSMALLINT`).
+    MaxCursorNameLen = 31,
+    /// `SQL_MAX_PROCEDURE_NAME_LEN` (33) — max procedure name length in characters (`SQLUSMALLINT`).
+    MaxProcedureNameLen = 33,
+    /// `SQL_MAX_CATALOG_NAME_LEN` (34) — max catalog name length in characters (`SQLUSMALLINT`).
+    MaxCatalogNameLen = 34,
+    /// `SQL_MAX_TABLE_NAME_LEN` (35) — max table name length in characters (`SQLUSMALLINT`).
+    MaxTableNameLen = 35,
+    /// `SQL_MULTIPLE_ACTIVE_TXN` (37) — whether more than one transaction can be active at once (string).
+    MultipleActiveTxn = 37,
     /// `SQL_SCHEMA_TERM` (39) — DBMS term for schema (string). Aliased as `SQL_OWNER_TERM` in 2.x.
     SchemaTerm = 39,
     /// `SQL_CATALOG_NAME_SEPARATOR` (41) — catalog/schema separator character (string).
@@ -230,6 +265,8 @@ pub enum InfoType {
     TableTerm = 45,
     /// `SQL_TXN_CAPABLE` (46) — transaction support level (`SQLUSMALLINT`).
     TxnCapable = 46,
+    /// `SQL_PROCEDURE_TERM` (40) — DBMS term for procedure (string).
+    ProcedureTerm = 40,
     /// `SQL_CONVERT_FUNCTIONS` (48) — supported `CAST`/`CONVERT` function bitmask.
     ConvertFunctions = 48,
     /// `SQL_NUMERIC_FUNCTIONS` (49) — supported numeric scalar functions bitmask.
@@ -298,6 +335,8 @@ pub enum InfoType {
     GetDataExtensions = 81,
     /// `SQL_TXN_ISOLATION_OPTION` (72) — supported transaction isolation levels bitmask (`SQLUINTEGER`).
     TxnIsolationOption = 72,
+    /// `SQL_INTEGRITY` (73) — whether the data source supports Integrity Enhancement Facility (string).
+    Integrity = 73,
     /// `SQL_CORRELATION_NAME` (74) — correlation name support (`SQLUSMALLINT`).
     CorrelationName = 74,
     /// `SQL_NON_NULLABLE_COLUMNS` (75) — nullability of columns (`SQLUSMALLINT`).
@@ -306,56 +345,172 @@ pub enum InfoType {
     LockTypes = 78,
     /// `SQL_POS_OPERATIONS` (79) — supported positioned operations bitmask (`SQLUINTEGER`).
     PosOperations = 79,
+    /// `SQL_POSITIONED_STATEMENTS` (80) — supported positioned statement types bitmask (`SQLUINTEGER`). Deprecated.
+    PositionedStatements = 80,
     /// `SQL_BOOKMARK_PERSISTENCE` (82) — bookmark persistence bitmask (`SQLUINTEGER`).
     BookmarkPersistence = 82,
     /// `SQL_STATIC_SENSITIVITY` (83) — static cursor sensitivity bitmask (`SQLUINTEGER`).
     StaticSensitivity = 83,
+    /// `SQL_NULL_COLLATION` (85) — where NULLs are sorted in a result set (`SQLUSMALLINT`).
+    NullCollation = 85,
+    /// `SQL_ALTER_TABLE` (86) — supported `ALTER TABLE` sub-clauses bitmask (`SQLUINTEGER`).
+    AlterTable = 86,
     /// `SQL_FILE_USAGE` (84) — file-based data source usage (`SQLUSMALLINT`).
     FileUsage = 84,
     /// `SQL_COLUMN_ALIAS` (87) — whether the driver supports column aliases (string `"Y"`/`"N"`).
     ColumnAlias = 87,
     /// `SQL_GROUP_BY` (88) — `GROUP BY` relationship to selected columns (`SQLUSMALLINT`).
     GroupBy = 88,
+    /// `SQL_KEYWORDS` (89) — comma-separated list of data-source-specific keywords (string).
+    Keywords = 89,
     /// `SQL_ORDER_BY_COLUMNS_IN_SELECT` (90) — whether `ORDER BY` columns must appear in the select list (string).
     OrderByColumnsInSelect = 90,
     /// `SQL_SCHEMA_USAGE` (91) — schema usage bitmask. Aliased as `SQL_OWNER_USAGE` in 2.x.
     SchemaUsage = 91,
     /// `SQL_CATALOG_USAGE` (92) — catalog usage bitmask.
     CatalogUsage = 92,
+    /// `SQL_QUOTED_IDENTIFIER_CASE` (93) — case sensitivity of quoted identifiers (`SQLUSMALLINT`).
+    QuotedIdentifierCase = 93,
     /// `SQL_SPECIAL_CHARACTERS` (94) — non-alphanumeric characters allowed in identifiers (string).
     SpecialCharacters = 94,
+    /// `SQL_SUBQUERIES` (95) — supported subquery types bitmask (`SQLUINTEGER`).
+    Subqueries = 95,
+    /// `SQL_UNION` (96) — supported `UNION` clause types bitmask (`SQLUINTEGER`).
+    Union = 96,
     /// `SQL_MAX_COLUMNS_IN_GROUP_BY` (97) — max columns in a `GROUP BY` (`SQLUSMALLINT`).
     MaxColumnsInGroupBy = 97,
+    /// `SQL_MAX_COLUMNS_IN_INDEX` (98) — max columns in an index (`SQLUSMALLINT`). Zero means no limit.
+    MaxColumnsInIndex = 98,
     /// `SQL_MAX_COLUMNS_IN_ORDER_BY` (99) — max columns in an `ORDER BY` (`SQLUSMALLINT`).
     MaxColumnsInOrderBy = 99,
     /// `SQL_MAX_COLUMNS_IN_SELECT` (100) — max columns in a `SELECT` list (`SQLUSMALLINT`).
     MaxColumnsInSelect = 100,
+    /// `SQL_MAX_COLUMNS_IN_TABLE` (101) — max columns in a table (`SQLUSMALLINT`). Zero means no limit.
+    MaxColumnsInTable = 101,
+    /// `SQL_MAX_INDEX_SIZE` (102) — max bytes in the combined columns of an index (`SQLUINTEGER`). Zero means no limit.
+    MaxIndexSize = 102,
+    /// `SQL_MAX_ROW_SIZE_INCLUDES_LONG` (103) — whether `SQL_MAX_ROW_SIZE` includes LONG data types (string).
+    MaxRowSizeIncludesLong = 103,
+    /// `SQL_MAX_ROW_SIZE` (104) — max bytes in a single row (`SQLUINTEGER`). Zero means no limit.
+    MaxRowSize = 104,
+    /// `SQL_MAX_STATEMENT_LEN` (105) — max length of an SQL statement (`SQLUINTEGER`). Zero means no limit.
+    MaxStatementLen = 105,
+    /// `SQL_MAX_TABLES_IN_SELECT` (106) — max tables in a `SELECT` (`SQLUSMALLINT`). Zero means no limit.
+    MaxTablesInSelect = 106,
+    /// `SQL_MAX_USER_NAME_LEN` (107) — max characters in a user name (`SQLUSMALLINT`). Zero means no limit.
+    MaxUserNameLen = 107,
+    /// `SQL_MAX_CHAR_LITERAL_LEN` (108) — max length of a character literal (`SQLUINTEGER`). Zero means no limit.
+    MaxCharLiteralLen = 108,
     /// `SQL_TIMEDATE_ADD_INTERVALS` (109) — supported intervals for `TIMESTAMPADD` bitmask.
     TimedateAddIntervals = 109,
     /// `SQL_TIMEDATE_DIFF_INTERVALS` (110) — supported intervals for `TIMESTAMPDIFF` bitmask.
     TimedateDiffIntervals = 110,
     /// `SQL_NEED_LONG_DATA_LEN` (111) — whether long data length indicator is needed (string `"Y"`/`"N"`).
     NeedLongDataLen = 111,
+    /// `SQL_MAX_BINARY_LITERAL_LEN` (112) — max length of a binary literal in an SQL statement (`SQLUINTEGER`). Zero means no limit.
+    MaxBinaryLiteralLen = 112,
+    /// `SQL_LIKE_ESCAPE_CLAUSE` (113) — whether the data source supports escape character in LIKE patterns (string).
+    LikeEscapeClause = 113,
     /// `SQL_CATALOG_LOCATION` (114) — whether catalog appears before or after the schema (`SQLUSMALLINT`).
     CatalogLocation = 114,
+    /// `SQL_OJ_CAPABILITIES` (115) — supported outer join types bitmask (`SQLUINTEGER`).
+    OjCapabilities = 115,
+    /// `SQL_ACTIVE_ENVIRONMENTS` (116) — max active environments supported (`SQLUSMALLINT`). Zero means no limit.
+    ActiveEnvironments = 116,
+    /// `SQL_ALTER_DOMAIN` (117) — supported `ALTER DOMAIN` sub-clauses bitmask (`SQLUINTEGER`).
+    AlterDomain = 117,
     /// `SQL_SQL_CONFORMANCE` (118) — SQL-92 conformance level (`SQLUINTEGER`).
     SqlConformance = 118,
+    /// `SQL_DATETIME_LITERALS` (119) — supported SQL-92 datetime literal types bitmask (`SQLUINTEGER`).
+    DatetimeLiterals = 119,
+    /// `SQL_BATCH_ROW_COUNT` (120) — behavior of batch execution with respect to row counts bitmask (`SQLUINTEGER`).
+    BatchRowCount = 120,
+    /// `SQL_BATCH_SUPPORT` (121) — driver support for batches bitmask (`SQLUINTEGER`).
+    BatchSupport = 121,
+    /// `SQL_CONVERT_INTERVAL_DAY_TIME` (123) — conversion targets from `INTERVAL DAY-TIME` source bitmask.
+    ConvertIntervalDayTime = 123,
+    /// `SQL_CONVERT_INTERVAL_YEAR_MONTH` (124) — conversion targets from `INTERVAL YEAR-MONTH` source bitmask.
+    ConvertIntervalYearMonth = 124,
     /// `SQL_CONVERT_WCHAR` (122) — conversion targets from `WCHAR` source bitmask.
     ConvertWchar = 122,
     /// `SQL_CONVERT_WLONGVARCHAR` (125) — conversion targets from `WLONGVARCHAR` source bitmask.
     ConvertWlongVarchar = 125,
     /// `SQL_CONVERT_WVARCHAR` (126) — conversion targets from `WVARCHAR` source bitmask.
     ConvertWvarchar = 126,
+    /// `SQL_CREATE_ASSERTION` (127) — supported `CREATE ASSERTION` options bitmask (`SQLUINTEGER`).
+    CreateAssertion = 127,
+    /// `SQL_CREATE_CHARACTER_SET` (128) — supported `CREATE CHARACTER SET` options bitmask (`SQLUINTEGER`).
+    CreateCharacterSet = 128,
+    /// `SQL_CREATE_COLLATION` (129) — supported `CREATE COLLATION` options bitmask (`SQLUINTEGER`).
+    CreateCollation = 129,
+    /// `SQL_CREATE_DOMAIN` (130) — supported `CREATE DOMAIN` options bitmask (`SQLUINTEGER`).
+    CreateDomain = 130,
+    /// `SQL_CREATE_SCHEMA` (131) — supported `CREATE SCHEMA` options bitmask (`SQLUINTEGER`).
+    CreateSchema = 131,
+    /// `SQL_CREATE_TABLE` (132) — supported `CREATE TABLE` options bitmask (`SQLUINTEGER`).
+    CreateTable = 132,
+    /// `SQL_CREATE_TRANSLATION` (133) — supported `CREATE TRANSLATION` options bitmask (`SQLUINTEGER`).
+    CreateTranslation = 133,
+    /// `SQL_CREATE_VIEW` (134) — supported `CREATE VIEW` options bitmask (`SQLUINTEGER`).
+    CreateView = 134,
+    /// `SQL_DROP_ASSERTION` (136) — supported `DROP ASSERTION` options bitmask (`SQLUINTEGER`).
+    DropAssertion = 136,
+    /// `SQL_DROP_CHARACTER_SET` (137) — supported `DROP CHARACTER SET` options bitmask (`SQLUINTEGER`).
+    DropCharacterSet = 137,
+    /// `SQL_DROP_COLLATION` (138) — supported `DROP COLLATION` options bitmask (`SQLUINTEGER`).
+    DropCollation = 138,
+    /// `SQL_DROP_DOMAIN` (139) — supported `DROP DOMAIN` options bitmask (`SQLUINTEGER`).
+    DropDomain = 139,
+    /// `SQL_DROP_SCHEMA` (140) — supported `DROP SCHEMA` options bitmask (`SQLUINTEGER`).
+    DropSchema = 140,
+    /// `SQL_DROP_TABLE` (141) — supported `DROP TABLE` options bitmask (`SQLUINTEGER`).
+    DropTable = 141,
+    /// `SQL_DROP_TRANSLATION` (142) — supported `DROP TRANSLATION` options bitmask (`SQLUINTEGER`).
+    DropTranslation = 142,
+    /// `SQL_DROP_VIEW` (143) — supported `DROP VIEW` options bitmask (`SQLUINTEGER`).
+    DropView = 143,
+    /// `SQL_DYNAMIC_CURSOR_ATTRIBUTES2` (145) — dynamic-cursor attribute set 2 bitmask.
+    DynamicCursorAttributes2 = 145,
+    /// `SQL_INDEX_KEYWORDS` (148) — keywords supported in CREATE INDEX (`SQLUINTEGER`).
+    IndexKeywords = 148,
+    /// `SQL_INFO_SCHEMA_VIEWS` (149) — supported INFORMATION_SCHEMA views bitmask (`SQLUINTEGER`).
+    InfoSchemaViews = 149,
     /// `SQL_ODBC_INTERFACE_CONFORMANCE` (152) — ODBC interface conformance level (`SQLUINTEGER`).
     OdbcInterfaceConformance = 152,
+    /// `SQL_PARAM_ARRAY_ROW_COUNTS` (153) — driver behavior regarding row counts in parameterized execution (`SQLUINTEGER`).
+    ParamArrayRowCounts = 153,
+    /// `SQL_PARAM_ARRAY_SELECTS` (154) — driver behavior regarding result sets in parameterized execution (`SQLUINTEGER`).
+    ParamArraySelects = 154,
+    /// `SQL_SQL92_DATETIME_FUNCTIONS` (155) — supported SQL-92 datetime scalar functions bitmask.
+    Sql92DatetimeFunctions = 155,
+    /// `SQL_SQL92_FOREIGN_KEY_DELETE_RULE` (156) — supported rules for a foreign key in a DELETE statement bitmask.
+    Sql92ForeignKeyDeleteRule = 156,
+    /// `SQL_SQL92_FOREIGN_KEY_UPDATE_RULE` (157) — supported rules for a foreign key in an UPDATE statement bitmask.
+    Sql92ForeignKeyUpdateRule = 157,
+    /// `SQL_SQL92_GRANT` (158) — supported clauses in the GRANT statement bitmask.
+    Sql92Grant = 158,
+    /// `SQL_SQL92_NUMERIC_VALUE_FUNCTIONS` (159) — supported SQL-92 numeric value scalar functions bitmask.
+    Sql92NumericValueFunctions = 159,
     /// `SQL_SQL92_PREDICATES` (160) — supported SQL-92 predicates bitmask.
     Sql92Predicates = 160,
     /// `SQL_SQL92_RELATIONAL_JOIN_OPERATORS` (161) — supported SQL-92 join operators bitmask.
     Sql92RelationalJoinOperators = 161,
+    /// `SQL_SQL92_REVOKE` (162) — supported clauses in the REVOKE statement bitmask.
+    Sql92Revoke = 162,
+    /// `SQL_SQL92_ROW_VALUE_CONSTRUCTOR` (163) — supported row value constructor expressions bitmask.
+    Sql92RowValueConstructor = 163,
+    /// `SQL_SQL92_STRING_FUNCTIONS` (164) — supported SQL-92 string scalar functions bitmask.
+    Sql92StringFunctions = 164,
     /// `SQL_SQL92_VALUE_EXPRESSIONS` (165) — supported SQL-92 value expressions bitmask.
     Sql92ValueExpressions = 165,
+    /// `SQL_STANDARD_CLI_CONFORMANCE` (166) — CLI standards the driver conforms to bitmask (`SQLUINTEGER`).
+    StandardCliConformance = 166,
     /// `SQL_AGGREGATE_FUNCTIONS` (169) — supported aggregate functions bitmask.
     AggregateFunctions = 169,
+    /// `SQL_DDL_INDEX` (170) — support for `CREATE INDEX` and `DROP INDEX` bitmask (`SQLUINTEGER`).
+    DdlIndex = 170,
+    /// `SQL_INSERT_STATEMENT` (172) — supported forms of `INSERT` bitmask (`SQLUINTEGER`).
+    InsertStatement = 172,
     /// `SQL_CONVERT_GUID` (173) — conversion targets from `GUID` source bitmask.
     ConvertGuid = 173,
     /// `SQL_ASYNC_MODE` (10021) — async mode supported by the driver.
@@ -366,10 +521,20 @@ pub enum InfoType {
     AsyncDbcFunctions = 10023,
     /// `SQL_ASYNC_NOTIFICATION` (10025) — async notification capability.
     AsyncNotification = 10025,
+    /// `SQL_XOPEN_CLI_YEAR` (10000) — the year of publication of the X/Open CLI specification the driver conforms to (string).
+    XopenCliYear = 10000,
+    /// `SQL_CURSOR_SENSITIVITY` (10001) — support for cursor sensitivity (`SQLUINTEGER`).
+    CursorSensitivity = 10001,
+    /// `SQL_DESCRIBE_PARAMETER` (10002) — whether parameters can be described (string `"Y"`/`"N"`).
+    DescribeParameter = 10002,
     /// `SQL_CATALOG_NAME` (10003) — whether the driver supports catalog names (string `"Y"`/`"N"`).
     CatalogName = 10003,
+    /// `SQL_COLLATION_SEQ` (10004) — name of the collation sequence for the default character set (string).
+    CollationSeq = 10004,
     /// `SQL_MAX_IDENTIFIER_LEN` (10005) — max identifier length in characters (`SQLUSMALLINT`).
     MaxIdentifierLen = 10005,
+    /// `SQL_DRIVER_AWARE_POOLING_SUPPORTED` (10024) — driver-aware connection pooling capability (`SQLUINTEGER`).
+    DriverAwarePoolingSupported = 10024,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -377,22 +542,40 @@ impl TryFrom<u16> for InfoType {
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
+            0 => Ok(InfoType::MaxDriverConnections),
             1 => Ok(InfoType::ActiveStatements),
             6 => Ok(InfoType::DriverName),
             7 => Ok(InfoType::DriverVer),
+            8 => Ok(InfoType::FetchDirection),
+            9 => Ok(InfoType::OdbcApiConformance),
+            11 => Ok(InfoType::RowUpdates),
+            13 => Ok(InfoType::ServerName),
             14 => Ok(InfoType::SearchPatternEscape),
+            15 => Ok(InfoType::OdbcSqlConformance),
             16 => Ok(InfoType::DatabaseName),
             17 => Ok(InfoType::DbmsName),
             18 => Ok(InfoType::DbmsVer),
+            19 => Ok(InfoType::AccessibleTables),
+            20 => Ok(InfoType::AccessibleProcedures),
+            21 => Ok(InfoType::Procedures),
             22 => Ok(InfoType::ConcatNullBehavior),
             23 => Ok(InfoType::CursorCommitBehavior),
             24 => Ok(InfoType::CursorRollbackBehavior),
             25 => Ok(InfoType::DataSourceReadOnly),
             26 => Ok(InfoType::DefaultTxnIsolation),
+            27 => Ok(InfoType::ExpressionsInOrderby),
+            28 => Ok(InfoType::IdentifierCase),
             29 => Ok(InfoType::IdentifierQuoteChar),
+            30 => Ok(InfoType::MaxColumnNameLen),
+            31 => Ok(InfoType::MaxCursorNameLen),
             32 => Ok(InfoType::MaxSchemaNameLen),
+            33 => Ok(InfoType::MaxProcedureNameLen),
+            34 => Ok(InfoType::MaxCatalogNameLen),
+            35 => Ok(InfoType::MaxTableNameLen),
             36 => Ok(InfoType::MultResultSets),
+            37 => Ok(InfoType::MultipleActiveTxn),
             39 => Ok(InfoType::SchemaTerm),
+            40 => Ok(InfoType::ProcedureTerm),
             41 => Ok(InfoType::CatalogNameSeparator),
             42 => Ok(InfoType::CatalogTerm),
             43 => Ok(InfoType::ScrollConcurrency),
@@ -424,44 +607,103 @@ impl TryFrom<u16> for InfoType {
             70 => Ok(InfoType::ConvertVarchar),
             71 => Ok(InfoType::ConvertLongVarbinary),
             72 => Ok(InfoType::TxnIsolationOption),
+            73 => Ok(InfoType::Integrity),
             74 => Ok(InfoType::CorrelationName),
             75 => Ok(InfoType::NonNullableColumns),
             77 => Ok(InfoType::DriverOdbcVer),
             78 => Ok(InfoType::LockTypes),
             79 => Ok(InfoType::PosOperations),
+            80 => Ok(InfoType::PositionedStatements),
             81 => Ok(InfoType::GetDataExtensions),
             82 => Ok(InfoType::BookmarkPersistence),
             83 => Ok(InfoType::StaticSensitivity),
             84 => Ok(InfoType::FileUsage),
+            85 => Ok(InfoType::NullCollation),
+            86 => Ok(InfoType::AlterTable),
             87 => Ok(InfoType::ColumnAlias),
             88 => Ok(InfoType::GroupBy),
+            89 => Ok(InfoType::Keywords),
             90 => Ok(InfoType::OrderByColumnsInSelect),
             91 => Ok(InfoType::SchemaUsage),
             92 => Ok(InfoType::CatalogUsage),
+            93 => Ok(InfoType::QuotedIdentifierCase),
             94 => Ok(InfoType::SpecialCharacters),
+            95 => Ok(InfoType::Subqueries),
+            96 => Ok(InfoType::Union),
             97 => Ok(InfoType::MaxColumnsInGroupBy),
+            98 => Ok(InfoType::MaxColumnsInIndex),
             99 => Ok(InfoType::MaxColumnsInOrderBy),
             100 => Ok(InfoType::MaxColumnsInSelect),
+            101 => Ok(InfoType::MaxColumnsInTable),
+            102 => Ok(InfoType::MaxIndexSize),
+            103 => Ok(InfoType::MaxRowSizeIncludesLong),
+            104 => Ok(InfoType::MaxRowSize),
+            105 => Ok(InfoType::MaxStatementLen),
+            106 => Ok(InfoType::MaxTablesInSelect),
+            107 => Ok(InfoType::MaxUserNameLen),
+            108 => Ok(InfoType::MaxCharLiteralLen),
             109 => Ok(InfoType::TimedateAddIntervals),
             110 => Ok(InfoType::TimedateDiffIntervals),
             111 => Ok(InfoType::NeedLongDataLen),
+            112 => Ok(InfoType::MaxBinaryLiteralLen),
+            113 => Ok(InfoType::LikeEscapeClause),
             114 => Ok(InfoType::CatalogLocation),
+            115 => Ok(InfoType::OjCapabilities),
+            116 => Ok(InfoType::ActiveEnvironments),
+            117 => Ok(InfoType::AlterDomain),
             118 => Ok(InfoType::SqlConformance),
+            119 => Ok(InfoType::DatetimeLiterals),
+            120 => Ok(InfoType::BatchRowCount),
+            121 => Ok(InfoType::BatchSupport),
             122 => Ok(InfoType::ConvertWchar),
+            123 => Ok(InfoType::ConvertIntervalDayTime),
+            124 => Ok(InfoType::ConvertIntervalYearMonth),
             125 => Ok(InfoType::ConvertWlongVarchar),
             126 => Ok(InfoType::ConvertWvarchar),
+            127 => Ok(InfoType::CreateAssertion),
+            128 => Ok(InfoType::CreateCharacterSet),
+            129 => Ok(InfoType::CreateCollation),
+            130 => Ok(InfoType::CreateDomain),
+            131 => Ok(InfoType::CreateSchema),
+            132 => Ok(InfoType::CreateTable),
+            133 => Ok(InfoType::CreateTranslation),
+            134 => Ok(InfoType::CreateView),
+            136 => Ok(InfoType::DropAssertion),
+            137 => Ok(InfoType::DropCharacterSet),
+            138 => Ok(InfoType::DropCollation),
+            139 => Ok(InfoType::DropDomain),
+            140 => Ok(InfoType::DropSchema),
+            141 => Ok(InfoType::DropTable),
+            142 => Ok(InfoType::DropTranslation),
+            143 => Ok(InfoType::DropView),
             144 => Ok(InfoType::DynamicCursorAttributes1),
+            145 => Ok(InfoType::DynamicCursorAttributes2),
             146 => Ok(InfoType::ForwardOnlyCursorAttributes1),
             147 => Ok(InfoType::ForwardOnlyCursorAttributes2),
+            148 => Ok(InfoType::IndexKeywords),
+            149 => Ok(InfoType::InfoSchemaViews),
             150 => Ok(InfoType::KeysetCursorAttributes1),
             151 => Ok(InfoType::KeysetCursorAttributes2),
             152 => Ok(InfoType::OdbcInterfaceConformance),
+            153 => Ok(InfoType::ParamArrayRowCounts),
+            154 => Ok(InfoType::ParamArraySelects),
+            155 => Ok(InfoType::Sql92DatetimeFunctions),
+            156 => Ok(InfoType::Sql92ForeignKeyDeleteRule),
+            157 => Ok(InfoType::Sql92ForeignKeyUpdateRule),
+            158 => Ok(InfoType::Sql92Grant),
+            159 => Ok(InfoType::Sql92NumericValueFunctions),
             160 => Ok(InfoType::Sql92Predicates),
             161 => Ok(InfoType::Sql92RelationalJoinOperators),
+            162 => Ok(InfoType::Sql92Revoke),
+            163 => Ok(InfoType::Sql92RowValueConstructor),
+            164 => Ok(InfoType::Sql92StringFunctions),
             165 => Ok(InfoType::Sql92ValueExpressions),
+            166 => Ok(InfoType::StandardCliConformance),
             167 => Ok(InfoType::StaticCursorAttributes1),
             168 => Ok(InfoType::StaticCursorAttributes2),
             169 => Ok(InfoType::AggregateFunctions),
+            170 => Ok(InfoType::DdlIndex),
+            172 => Ok(InfoType::InsertStatement),
             173 => Ok(InfoType::ConvertGuid),
             10003 => Ok(InfoType::CatalogName),
             10005 => Ok(InfoType::MaxIdentifierLen),
@@ -469,6 +711,11 @@ impl TryFrom<u16> for InfoType {
             10022 => Ok(InfoType::MaxAsyncConcurrentStatements),
             10023 => Ok(InfoType::AsyncDbcFunctions),
             10025 => Ok(InfoType::AsyncNotification),
+            10000 => Ok(InfoType::XopenCliYear),
+            10001 => Ok(InfoType::CursorSensitivity),
+            10002 => Ok(InfoType::DescribeParameter),
+            10004 => Ok(InfoType::CollationSeq),
+            10024 => Ok(InfoType::DriverAwarePoolingSupported),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
                 Err(OdbcError::UnknownInfoType {
