@@ -359,6 +359,41 @@ rules:
       }
       ```
 
+  - id: ud-env-vars-registry
+    rule: |
+      **OBJECTIVE**: Ensure every environment variable name used in `sf_core` is declared as a `pub const` in `sf_core/src/env_vars.rs` so that the full set of env vars the driver reads is discoverable in one place.
+
+      **REQUIREMENT**: Any call to `std::env::var`, `std::env::var_os`, `std::env::set_var`, `std::env::remove_var`, or any other `std::env` accessor that takes an env-var name string MUST pass a constant from `crate::env_vars` (or `sf_core::env_vars`), not a raw string literal.
+
+      When a new env var is introduced in a PR:
+      1. Add a `pub const` for it in `sf_core/src/env_vars.rs` with a doc comment explaining its purpose and who sets it.
+      2. Reference `env_vars::THE_CONSTANT` at every call site instead of the raw string.
+
+      **EXEMPTIONS**: External / third-party env vars that are not Snowflake-specific and are read from a dynamic key (e.g., a function that iterates over an arbitrary key list passed in at runtime) are exempt from the constant requirement, but must still be called out with an inline comment explaining why no constant is appropriate.
+
+      ❌ **BAD** (raw string literal at the call site):
+      ```rust
+      // sf_core/src/rest/snowflake/workload_identity/azure.rs
+      let client_id = std::env::var("MANAGED_IDENTITY_CLIENT_ID").ok();
+      let endpoint  = std::env::var("IDENTITY_ENDPOINT")?;
+      ```
+
+      ✅ **GOOD** (constant declared in env_vars.rs, referenced at call site):
+      ```rust
+      // sf_core/src/env_vars.rs
+      /// Azure Managed Identity client ID, set by the Azure runtime environment.
+      pub const MANAGED_IDENTITY_CLIENT_ID: &str = "MANAGED_IDENTITY_CLIENT_ID";
+
+      /// Azure IMDS endpoint for Managed Identity, set by the Azure runtime.
+      pub const IDENTITY_ENDPOINT: &str = "IDENTITY_ENDPOINT";
+
+      // sf_core/src/rest/snowflake/workload_identity/azure.rs
+      use crate::env_vars;
+
+      let client_id = std::env::var(env_vars::MANAGED_IDENTITY_CLIENT_ID).ok();
+      let endpoint  = std::env::var(env_vars::IDENTITY_ENDPOINT)?;
+      ```
+
   - id: ud-box-large-error-sources
     rule: |
       **OBJECTIVE**: Keep Snafu error enum sizes small by boxing large source error types.
