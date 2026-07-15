@@ -128,6 +128,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     log_query_text: bool | str | None = False
     """Include the (truncated) SQL text in INFO query logs. Default: False"""
 
+    login_timeout: int | None = 120
+    """Wall-clock timeout in seconds for the entire login operation including retries (0 = no timeout). Default: 120"""
+
     logout_error_strategy: str | None = None
     """Error handling strategy for logout: 'best_effort' or 'strict'"""
 

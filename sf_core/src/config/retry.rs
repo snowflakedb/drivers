@@ -1,6 +1,7 @@
 use super::param_registry::{
-    DEFAULT_PUT_GET_MAX_ATTEMPTS, DEFAULT_RETRY_BACKOFF_BASE_MS, DEFAULT_RETRY_BACKOFF_CAP_MS,
-    DEFAULT_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_MAX_ATTEMPTS, param_names,
+    DEFAULT_LOGIN_TIMEOUT_SECS, DEFAULT_PUT_GET_MAX_ATTEMPTS, DEFAULT_RETRY_BACKOFF_BASE_MS,
+    DEFAULT_RETRY_BACKOFF_CAP_MS, DEFAULT_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_MAX_ATTEMPTS,
+    param_names,
 };
 use super::param_store::ParamStore;
 use std::collections::BTreeSet;
@@ -288,6 +289,7 @@ impl TimeoutConfig {
     /// yet read falls back to [`Self::default`].
     pub fn from_params(params: &ParamStore) -> Self {
         Self {
+            login_timeout: read_optional_duration_secs(params, param_names::LOGIN_TIMEOUT),
             connect_timeout: read_optional_duration_secs(params, param_names::CONNECT_TIMEOUT),
             ..Self::default()
         }
@@ -300,7 +302,7 @@ impl Default for TimeoutConfig {
     /// resolves the configured values.
     fn default() -> Self {
         Self {
-            login_timeout: Some(Duration::from_secs(120)),
+            login_timeout: Some(Duration::from_secs(DEFAULT_LOGIN_TIMEOUT_SECS)),
             query_timeout: None,
             connect_timeout: None,
         }
