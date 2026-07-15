@@ -34,8 +34,8 @@ public static class TestConnectionFactory
         var pat = ParametersReader.Get("SNOWFLAKE_TEST_PAT") ?? "";
 
         if (!string.IsNullOrEmpty(pat))
-            return $"account={account};role={role};db={database};schema={schema};warehouse={warehouse};authenticator=PROGRAMMATIC_ACCESS_TOKEN;user={user};token={pat}";
+            return $"account={account};role={role};db={database};database={database};schema={schema};warehouse={warehouse};authenticator=PROGRAMMATIC_ACCESS_TOKEN;user={user};token={pat}";
 
-        return $"account={account};user={user};password={password};warehouse={warehouse};db={database};schema={schema};role={role}";
+        return $"account={account};user={user};password={password};warehouse={warehouse};db={database};database={database};schema={schema};role={role}";
     }
 }
