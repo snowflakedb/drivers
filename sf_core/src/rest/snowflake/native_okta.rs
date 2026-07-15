@@ -192,7 +192,7 @@ fn remaining_policy(
         return AuthenticationTimeoutSnafu { budget }.fail();
     }
     let mut p = base.clone();
-    p.max_elapsed = budget - elapsed;
+    p.max_elapsed = Some(budget - elapsed);
     Ok(p)
 }
 

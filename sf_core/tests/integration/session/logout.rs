@@ -458,7 +458,7 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
 
     // Build retry policy with total budget matching connection_close behavior
     let retry_policy = RetryPolicy {
-        max_elapsed: total_timeout,
+        max_elapsed: Some(total_timeout),
         per_request_timeout: Some(per_request_timeout),
         ..Default::default()
     };
@@ -520,8 +520,7 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
     //And Retry policy allows 10 attempts
     let retry_policy = RetryPolicy {
         max_attempts: 10,
-        max_elapsed: total_timeout,
-        // Cap per-request at the total budget so in-flight requests can't overrun the deadline
+        max_elapsed: Some(total_timeout),
         per_request_timeout: Some(total_timeout),
         ..Default::default()
     };
@@ -1140,7 +1139,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 
         //And Retry policy allows the default attempt number
         let retry_policy = RetryPolicy {
-            max_elapsed: timeout,
+            max_elapsed: Some(timeout),
             ..Default::default()
         };
 
@@ -1653,7 +1652,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
 
     let retry_policy = RetryPolicy {
         max_attempts: 1,
-        max_elapsed: timeout,
+        max_elapsed: Some(timeout),
         per_request_timeout: Some(timeout),
         ..Default::default()
     };
@@ -1728,7 +1727,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
 
     let retry_policy = RetryPolicy {
         max_attempts: 1,
-        max_elapsed: timeout,
+        max_elapsed: Some(timeout),
         per_request_timeout: Some(timeout),
         ..Default::default()
     };

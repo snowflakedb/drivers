@@ -965,6 +965,8 @@ pub struct Connection {
 
     /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
     pub logout_config: LogoutConfig,
+    /// Resolved operation-level timeout configuration (populated at connect time).
+    pub timeout_config: crate::config::retry::TimeoutConfig,
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
@@ -1020,6 +1022,7 @@ impl Connection {
             is_closed: Arc::new(AtomicBool::new(false)),
             is_master_token_expired: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
+            timeout_config: crate::config::retry::TimeoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             server_version: RwLock::new(None),
             wrapper_identity: None,

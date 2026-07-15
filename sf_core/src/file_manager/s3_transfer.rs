@@ -600,7 +600,10 @@ fn to_aws_retry_config(policy: &RetryPolicy) -> AwsRetryConfig {
 ///   triggered on stuck connections rather than hanging forever).
 /// - `operation_timeout` bounds the total retry budget.
 fn to_aws_timeout_config(policy: &RetryPolicy) -> AwsTimeoutConfig {
-    let mut builder = AwsTimeoutConfig::builder().operation_timeout(policy.max_elapsed);
+    let mut builder = AwsTimeoutConfig::builder();
+    if let Some(budget) = policy.max_elapsed {
+        builder = builder.operation_timeout(budget);
+    }
     if let Some(per_attempt) = policy.per_request_timeout {
         builder = builder.operation_attempt_timeout(per_attempt);
     }
@@ -929,10 +932,10 @@ mod tests {
     fn s3_retry_policy_max_elapsed_exceeds_request_timeout() {
         let policy = s3_retry_policy(&base_policy());
         assert!(
-            policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
+            policy.max_elapsed > Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
             "retry budget must exceed a single request timeout"
         );
-        assert_eq!(policy.max_elapsed, Duration::from_secs(600));
+        assert_eq!(policy.max_elapsed, Some(Duration::from_secs(600)));
     }
 
     #[test]
@@ -958,7 +961,7 @@ mod tests {
     fn to_aws_timeout_config_sets_attempt_and_operation_timeouts() {
         let policy = s3_retry_policy(&base_policy());
         let cfg = to_aws_timeout_config(&policy);
-        assert_eq!(cfg.operation_timeout(), Some(policy.max_elapsed));
+        assert_eq!(cfg.operation_timeout(), policy.max_elapsed);
         assert_eq!(cfg.operation_attempt_timeout(), policy.per_request_timeout);
     }
 

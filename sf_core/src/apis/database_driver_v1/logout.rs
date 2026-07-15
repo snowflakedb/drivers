@@ -191,7 +191,7 @@ pub(super) fn prepare_logout_from_conn(
             if let Some(max_attempts) = config.max_attempts {
                 retry_policy.max_attempts = max_attempts;
             }
-            retry_policy.max_elapsed = config.logout_total_timeout;
+            retry_policy.max_elapsed = Some(config.logout_total_timeout);
             retry_policy.per_request_timeout = config.logout_request_timeout;
 
             tracing::debug!(
