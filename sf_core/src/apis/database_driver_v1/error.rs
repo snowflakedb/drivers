@@ -1,5 +1,6 @@
 use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
+use std::time::Duration;
 
 pub use crate::apis::database_driver_v1::query::QueryResponseProcessingError;
 pub use crate::apis::database_driver_v1::statement::StatementError;
@@ -187,6 +188,12 @@ pub enum ApiError {
     StageBindingFailed {
         #[snafu(source(from(crate::stage_binding::StageBindingError, Box::new)))]
         source: Box<crate::stage_binding::StageBindingError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Query timed out after {budget:?}"))]
+    QueryTimeout {
+        budget: Duration,
         #[snafu(implicit)]
         location: Location,
     },

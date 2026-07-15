@@ -153,6 +153,7 @@ pub mod param_names {
     // ── Timeout configuration ──────────────────────────────────────────
     pub const CONNECT_TIMEOUT: ParamKey = ParamKey("connect_timeout");
     pub const LOGIN_TIMEOUT: ParamKey = ParamKey("login_timeout");
+    pub const QUERY_TIMEOUT: ParamKey = ParamKey("query_timeout");
     // Proxy configuration
     pub const PROXY_HOST: ParamKey = ParamKey("proxy_host");
     pub const PROXY_PORT: ParamKey = ParamKey("proxy_port");
@@ -218,6 +219,9 @@ pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
 
 /// Default `login_timeout` in seconds (mirrors the `ParamDef`).
 pub const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 120;
+
+/// Default `query_timeout` in seconds. 0 = no timeout (queries can be long-running).
+pub const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 0;
 
 /// Common exponential-backoff defaults shared by the HTTP and PUT/GET retry
 /// pipelines. These are the single source of truth: both the `ParamDef`
@@ -1320,6 +1324,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Int(DEFAULT_LOGIN_TIMEOUT_SECS as i64)),
         sensitive: false,
         description: "Wall-clock timeout in seconds for the entire login operation including retries (0 = no timeout)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::QUERY_TIMEOUT.as_str(),
+        aliases: &["QUERY_TIMEOUT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_QUERY_TIMEOUT_SECS as i64)),
+        sensitive: false,
+        description: "Wall-clock timeout in seconds for query execution including retries (0 = no timeout)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,

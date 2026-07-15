@@ -820,6 +820,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::LogoutFailed { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
+        ApiError::QueryTimeout { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
     }
 }
 
@@ -994,6 +997,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         // map to it. Until then, `GenericError` is the right bucket — the
         // error trace carries enough detail for diagnostics.
         ApiError::StageBindingFailed { .. } => StatusCode::GenericError,
+        // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
+        // language wrappers can surface HYT00 / OperationalError correctly.
+        ApiError::QueryTimeout { .. } => StatusCode::GenericError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
