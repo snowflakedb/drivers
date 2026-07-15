@@ -657,7 +657,7 @@ fn rows_from_reader(
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
     let mut rows = Vec::new();
     for batch_result in reader {
-        let batch = batch_result.context(ArrowParsingSnafu)?;
+        let batch = batch_result.context(ArrowParseSnafu)?;
         let names: Vec<String> = batch
             .schema()
             .fields()
@@ -1248,8 +1248,8 @@ fn build_columns_batch(
 
     let db_schemas_array = build_full_columns_schema_list_array(&schema_maps)?;
 
-    let batch = RecordBatch::try_new(schema, vec![cat_array, db_schemas_array])
-        .context(ArrowParsingSnafu)?;
+    let batch =
+        RecordBatch::try_new(schema, vec![cat_array, db_schemas_array]).context(ArrowParseSnafu)?;
     Ok(batch)
 }
 

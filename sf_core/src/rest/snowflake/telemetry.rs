@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::{
-    CommunicationSnafu, InvalidSnowflakeResponseSnafu, PayloadEncodingSnafu,
+    CommunicationSnafu, InvalidSnowflakeResponseSnafu, PayloadEncodeSnafu,
     RequestConstructionSnafu, RestError, UrlJoinSnafu, apply_json_content_type,
     apply_query_headers, read_response_json,
 };
@@ -40,20 +40,20 @@ pub async fn send_telemetry(
     })?;
 
     let json_bytes = serde_json::to_vec(payload).map_err(|e| {
-        PayloadEncodingSnafu {
+        PayloadEncodeSnafu {
             reason: format!("JSON serialization failed: {e}"),
         }
         .build()
     })?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(&json_bytes).map_err(|e| {
-        PayloadEncodingSnafu {
+        PayloadEncodeSnafu {
             reason: format!("gzip compression failed: {e}"),
         }
         .build()
     })?;
     let compressed = encoder.finish().map_err(|e| {
-        PayloadEncodingSnafu {
+        PayloadEncodeSnafu {
             reason: format!("gzip finalization failed: {e}"),
         }
         .build()

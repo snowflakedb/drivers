@@ -19,7 +19,7 @@ use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 pub use error::ChunkError;
 use error::*;
-pub(crate) use error::{ArrowIpcEncodingSnafu, ChunkReadingSnafu};
+pub(crate) use error::{ArrowIpcEncodeSnafu, ChunkReadSnafu};
 pub use json_parser::convert_string_rowset_to_arrow_reader;
 use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, PrefetchChunkReader};
 use reqwest::Client;
@@ -96,16 +96,16 @@ pub async fn arrow_prefetch_reader(
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = if let Some(initial_base64) = initial_base64_opt {
-        let bytes = BASE64.decode(initial_base64).context(Base64DecodingSnafu)?;
+        let bytes = BASE64.decode(initial_base64).context(Base64DecodeSnafu)?;
         let cursor = io::Cursor::new(bytes);
-        StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?
+        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
     } else {
         let first = chunk_download_data
             .pop_front()
-            .context(InitialChunkMissingSnafu)?;
+            .context(MissingInitialChunkSnafu)?;
         let bytes = get_chunk_data(client.clone(), first).await?;
         let cursor = io::Cursor::new(bytes);
-        StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?
+        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
     };
     let downloader = HttpChunkDownloader { client };
     let parser = ArrowChunkParser;
@@ -124,9 +124,9 @@ pub fn single_chunk_reader(
     base64: &str,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let bytes = BASE64.decode(base64).context(Base64DecodingSnafu)?;
+    let bytes = BASE64.decode(base64).context(Base64DecodeSnafu)?;
     let cursor = io::Cursor::new(bytes);
-    let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
+    let reader = StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?;
     let boxed: Box<dyn RecordBatchReader + Send> = Box::new(reader);
     Ok(maybe_inject_nullable(boxed, nullable_flags))
 }

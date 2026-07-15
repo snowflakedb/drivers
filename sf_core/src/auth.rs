@@ -125,7 +125,7 @@ fn generate_jwt_token(
     // Create and sign token
     let token = Token::new(header, claim)
         .sign_with_key(&pkey_with_digest)
-        .context(JWTSigningSnafu)?;
+        .context(JWTSignSnafu)?;
 
     Ok(token.as_str().to_string())
 }
@@ -251,7 +251,7 @@ pub enum AuthError {
         location: Location,
     },
     #[snafu(display("Failed to sign JWT token"))]
-    JWTSigning {
+    JWTSign {
         source: jwt::Error,
         #[snafu(implicit)]
         location: Location,

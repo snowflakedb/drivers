@@ -76,7 +76,7 @@ impl DatabaseDriverV1 {
         }
 
         let bytes = match input {
-            FetchChunkInput::Inline(data) => BASE64.decode(&data).context(Base64DecodingSnafu)?,
+            FetchChunkInput::Inline(data) => BASE64.decode(&data).context(Base64DecodeSnafu)?,
             FetchChunkInput::Remote(chunk) => {
                 // TODO: Configure the client properly here
                 let client = reqwest::Client::new();
@@ -89,7 +89,7 @@ impl DatabaseDriverV1 {
         let reader: Box<dyn RecordBatchReader + Send> = match format {
             ChunkFormatKind::ArrowIpc => {
                 let cursor = io::Cursor::new(bytes);
-                let reader = StreamReader::try_new(cursor, None).context(ArrowParsingSnafu)?;
+                let reader = StreamReader::try_new(cursor, None).context(ArrowParseSnafu)?;
                 Box::new(reader)
             }
             ChunkFormatKind::Json => {
@@ -101,7 +101,7 @@ impl DatabaseDriverV1 {
                     .fail();
                 }
                 let parser = JsonChunkParser { row_types };
-                let batches = parser.parse_chunk(bytes).context(JsonChunkDecodingSnafu)?;
+                let batches = parser.parse_chunk(bytes).context(JsonChunkDecodeSnafu)?;
                 let schema = batches
                     .first()
                     .map(|b| b.schema())

@@ -475,7 +475,7 @@ impl DatabaseDriverV1 {
                     self.crl_worker.clone(),
                 )
                 .await
-                .context(QueryResponseProcessingSnafu)
+                .context(QueryResponseProcessSnafu)
             }
             None => Ok(data.into_rowset_data()),
         }

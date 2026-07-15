@@ -13,7 +13,7 @@ use tokio::sync::mpsc::error::SendError;
 use tracing::instrument::WithSubscriber;
 
 use super::memory_budget::{MemoryBudget, MemoryTicket};
-use super::{ChunkDownloadData, ChunkError, ChunkReadingSnafu, PrefetchConfig};
+use super::{ChunkDownloadData, ChunkError, ChunkReadSnafu, PrefetchConfig};
 
 pub trait DownloadChunk: Send + Sync + Clone + 'static {
     fn download_chunk(
@@ -67,7 +67,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         let initial = initial
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
-            .context(ChunkReadingSnafu)?;
+            .context(ChunkReadSnafu)?;
 
         let prefetch_concurrency = config.prefetch_threads;
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
