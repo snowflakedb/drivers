@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use crate::crl::config::CertRevocationCheckMode;
 use crate::crl::worker::SharedCrlWorker;
+use crate::log_foreign_error;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::client::create_root_store_from_pem;
 use crate::tls::config::TlsConfig;
@@ -114,8 +115,12 @@ fn build_aws_rustls_config(
             if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
                 match std::fs::read(pem_path).map(|pem| create_root_store_from_pem(&pem)) {
                     Ok(Ok(store)) => roots = store,
-                    Ok(Err(e)) => tracing::error!("failed to load custom root store: {e}"),
-                    Err(e) => tracing::error!("failed to read custom root store file: {e}"),
+                    Ok(Err(e)) => {
+                        log_foreign_error!(e, "failed to load custom root store");
+                    }
+                    Err(e) => {
+                        log_foreign_error!(e, "failed to read custom root store file");
+                    }
                 }
             } else {
                 let native = rustls_native_certs::load_native_certs();
@@ -133,11 +138,11 @@ fn build_aws_rustls_config(
                 match std::fs::read(p).map(|pem| create_root_store_from_pem(&pem)) {
                     Ok(Ok(store)) => Some(store),
                     Ok(Err(e)) => {
-                        tracing::error!("failed to load custom root store: {e}");
+                        log_foreign_error!(e, "failed to load custom root store");
                         None
                     }
                     Err(e) => {
-                        tracing::error!("failed to read custom root store file: {e}");
+                        log_foreign_error!(e, "failed to read custom root store file");
                         None
                     }
                 }
@@ -153,7 +158,7 @@ fn build_aws_rustls_config(
                     .with_custom_certificate_verifier(Arc::new(v))
                     .with_no_client_auth(),
                 Err(e) => {
-                    tracing::error!("failed to build CRL verifier for AWS client: {e}");
+                    log_foreign_error!(e, "failed to build CRL verifier for AWS client");
                     build_aws_rustls_config(&TlsConfig::default(), crl_worker)
                 }
             }

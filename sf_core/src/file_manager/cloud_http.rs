@@ -9,6 +9,7 @@
 use super::encryption::Encryptor;
 use super::types::{ByteSource, EncryptedFileMetadata};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
+use crate::log_foreign_error;
 use bytes::Bytes;
 use futures::StreamExt as _;
 use futures::stream::Stream;
@@ -47,7 +48,7 @@ pub(super) async fn read_error_body(response: reqwest::Response) -> String {
     match response.text().await {
         Ok(text) => text,
         Err(e) => {
-            tracing::warn!("Failed to read cloud error response body: {}", e);
+            log_foreign_error!(warn, e, "Failed to read cloud error response body");
             format!("<could not read body: {}>", e)
         }
     }

@@ -92,3 +92,43 @@ impl Default for LoggingConfig {
 pub(crate) struct EmptyLayer;
 
 impl<S: Subscriber> Layer<S> for EmptyLayer {}
+
+/// Log a foreign/external error: emit the error type name at `error` level (safe for
+/// WARN/ERROR logs) and the full `{:?}` detail at `debug` level.
+///
+/// # Usage
+/// ```ignore
+/// log_foreign_error!(e, "Failed to send result to channel");
+/// log_foreign_error!(warn, e, "Failed to read response body");
+/// ```
+#[macro_export]
+macro_rules! log_foreign_error {
+    ($e:expr, $msg:literal) => {{
+        tracing::error!(cause = ::std::any::type_name_of_val(&$e), $msg);
+        tracing::debug!(concat!($msg, ": {:?}"), $e);
+    }};
+    (warn, $e:expr, $msg:literal) => {{
+        tracing::warn!(cause = ::std::any::type_name_of_val(&$e), $msg);
+        tracing::debug!(concat!($msg, ": {:?}"), $e);
+    }};
+}
+pub use log_foreign_error;
+
+/// Extract host and path from a URL string for safe logging (strips query strings and
+/// fragments which can carry tokens and other sensitive identifiers).
+///
+/// Returns `"<unknown>"` if the URL cannot be parsed.
+pub fn url_for_log(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .map(|u| {
+            let host = u.host_str().unwrap_or("<unknown host>");
+            let path = u.path();
+            if path.is_empty() || path == "/" {
+                host.to_string()
+            } else {
+                format!("{host}{path}")
+            }
+        })
+        .unwrap_or_else(|| "<unknown>".into())
+}

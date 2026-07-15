@@ -1,4 +1,5 @@
 use crate::http::retry::HttpError;
+use crate::logging::url_for_log;
 use reqwest::StatusCode;
 use snafu::{Location, Snafu};
 use std::panic::Location as StdLocation;
@@ -79,7 +80,7 @@ pub enum SfError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to parse getResultUrl: {url}"))]
+    #[snafu(display("Failed to parse getResultUrl ({url_safe})", url_safe = url_for_log(url)))]
     ResultUrlParse {
         url: String,
         source: ParseError,

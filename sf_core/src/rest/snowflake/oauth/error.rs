@@ -8,6 +8,7 @@
 //! (e.g. `RefreshTokenExchange` should drop the cached refresh token and
 //! replay the full flow).
 
+use crate::logging::url_for_log;
 use crate::token_cache::TokenCacheError;
 use snafu::{Location, Snafu};
 
@@ -89,7 +90,7 @@ pub enum OAuthError {
     /// IdP endpoint URL (`oauth_authorization_url`, `oauth_token_url`)
     /// failed to parse, either as supplied or as constructed from the
     /// Snowflake server URL via the `https://{host}/oauth/...` defaults.
-    #[snafu(display("Failed to parse OAuth endpoint URL: {url}"))]
+    #[snafu(display("Failed to parse OAuth endpoint URL ({url_safe})", url_safe = url_for_log(url)))]
     EndpointUrlParse {
         url: String,
         source: url::ParseError,

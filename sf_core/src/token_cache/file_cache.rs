@@ -13,9 +13,9 @@ use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersist
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
-use tracing::warn;
 
 use crate::env_vars;
+use crate::log_foreign_error;
 use crate::sensitive::SensitiveString;
 
 use super::{
@@ -280,7 +280,11 @@ fn parse_cache_lenient(content: &str) -> CacheFileContent {
         };
     }
     serde_json::from_str(content).unwrap_or_else(|err| {
-        warn!("Failed to parse credential cache file as JSON, starting fresh: {err}");
+        log_foreign_error!(
+            warn,
+            err,
+            "Failed to parse credential cache file as JSON, starting fresh"
+        );
         CacheFileContent {
             tokens: HashMap::new(),
         }
@@ -294,7 +298,11 @@ fn parse_cache_strict(content: &str) -> Option<CacheFileContent> {
     }
     serde_json::from_str(content)
         .inspect_err(|err| {
-            warn!("Failed to parse credential cache file as JSON, treating as empty: {err}");
+            log_foreign_error!(
+                warn,
+                err,
+                "Failed to parse credential cache file as JSON, treating as empty"
+            );
         })
         .ok()
 }

@@ -34,6 +34,7 @@ use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParamete
 use crate::config::retry::RetryPolicy;
 use crate::crl::worker::SharedCrlWorker;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
+use crate::logging::url_for_log;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
     AuthResponse, authenticator,
@@ -2332,7 +2333,7 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Invalid URL: {url}"))]
+    #[snafu(display("Invalid URL ({url_safe})", url_safe = url_for_log(url)))]
     InvalidUrl {
         url: String,
         #[snafu(implicit)]

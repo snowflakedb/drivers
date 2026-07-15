@@ -9,6 +9,7 @@ use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::config::rest_parameters::QueryParameters;
+use crate::log_foreign_error;
 use crate::rest::snowflake::SessionTokens;
 use crate::rest::snowflake::telemetry as rest;
 
@@ -74,7 +75,7 @@ async fn send_with_token(session: &ExporterSession, payload: &serde_json::Value)
     )
     .await
     {
-        tracing::warn!("Failed to export telemetry: {e}");
+        log_foreign_error!(warn, e, "Failed to export telemetry");
     }
 
     // Best-effort: always return Ok
