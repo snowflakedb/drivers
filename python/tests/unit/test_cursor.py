@@ -1678,7 +1678,7 @@ class TestDescribe:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_connection):
+    def cursor(self, mock_connection, no_native_stream_ops):
         return SnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, mock_core_client, columns=None, query_id="", query="", sql_state=None):
@@ -2682,7 +2682,7 @@ class TestDescribeInternal:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_connection):
+    def cursor(self, mock_connection, no_native_stream_ops):
         return SnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, mock_core_client, columns=None, query_id="", query="", sql_state=None):
@@ -2816,7 +2816,7 @@ class TestAsyncDescribeInternal:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_async_core_client, mock_connection):
+    def cursor(self, mock_async_core_client, mock_connection, no_native_stream_ops):
         return AsyncSnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, client, columns=None):

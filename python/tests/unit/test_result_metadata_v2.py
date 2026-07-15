@@ -183,7 +183,7 @@ class TestDescribeInternal:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_connection):
+    def cursor(self, mock_connection, no_native_stream_ops):
         return SnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, mock_core_client, columns=None):

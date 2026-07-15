@@ -7,8 +7,8 @@ from unittest.mock import patch
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _no_native_stream_ops():
+@pytest.fixture
+def no_native_stream_ops():
     """Prevent QueryResult from touching real native memory in unit tests."""
     with (
         patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
