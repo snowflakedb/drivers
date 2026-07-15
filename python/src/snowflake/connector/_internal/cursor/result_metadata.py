@@ -161,6 +161,18 @@ class ResultMetadataV2:
             and self._fields == other._fields
         )
 
+    def _to_result_metadata_v1(self) -> ResultMetadata:
+        """Downcast to a PEP 249-compatible ``ResultMetadata`` NamedTuple."""
+        return ResultMetadata(
+            name=self._name,  # type: ignore[arg-type]  # sub-fields carry name=None (legacy parity)
+            type_code=self._type_code,
+            display_size=self._display_size,
+            internal_size=self._internal_size,
+            precision=self._precision,
+            scale=self._scale,
+            is_nullable=self._is_nullable,
+        )
+
     def __repr__(self) -> str:
         return (
             f"ResultMetadataV2(name={self._name!r}, type_code={self._type_code!r}, "

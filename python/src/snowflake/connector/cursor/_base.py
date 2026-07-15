@@ -480,6 +480,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     @snowpark_compat
     @backward_compatibility
+    @requires_open
     def _describe_internal(
         self,
         operation: str,
