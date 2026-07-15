@@ -131,7 +131,9 @@ class Connection(ConnectionMixin):
         # Set session parameters if provided (before connection_init)
         session_params = self.config.session_parameters
         if session_params:
-            core_driver.connection_set_session_parameters(conn_handle=self.conn_handle, parameters=session_params)
+            core_driver.connection_set_session_parameters(
+                conn_handle=self.conn_handle, parameters={k: str(v) for k, v in session_params.items()}
+            )
 
         # Initialise close-lifecycle state before ``_connect()`` so that the
         # ``__del__`` / atexit fail-safes always observe a sane object even
