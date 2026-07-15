@@ -1,6 +1,7 @@
 use crate::config::rest_parameters::{LoginParameters, NativeOktaConfig};
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError};
+use crate::logging::url_for_log;
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
 use html_escape::decode_html_entities;
 use reqwest::header;
@@ -21,7 +22,7 @@ pub enum NativeOktaError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to parse URL: {url}"))]
+    #[snafu(display("Failed to parse URL ({url_safe})", url_safe = url_for_log(url)))]
     UrlParse {
         url: String,
         source: url::ParseError,

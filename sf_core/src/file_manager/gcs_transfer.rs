@@ -6,6 +6,7 @@ use super::types::{
 };
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use crate::log_foreign_error;
 use crate::refresh::{Refresher, execute_with_refresh};
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode};
@@ -535,7 +536,11 @@ async fn check_file_exists_gcs(
             }
         },
         Err(e) => {
-            tracing::warn!("Error checking GCS file existence, proceeding with upload: {e}");
+            log_foreign_error!(
+                warn,
+                e,
+                "Error checking GCS file existence, proceeding with upload"
+            );
             GcsHeadResult::NotFound
         }
     }

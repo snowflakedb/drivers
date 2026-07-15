@@ -1,3 +1,4 @@
+use crate::logging::url_for_log;
 use snafu::{Location, Snafu};
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -44,7 +45,7 @@ pub enum TlsError {
         location: Location,
     },
 
-    #[snafu(display("Failed to build proxy from URL: {url}"))]
+    #[snafu(display("Failed to build proxy from {url_safe}", url_safe = url_for_log(url)))]
     ProxyBuild {
         url: String,
         source: reqwest::Error,

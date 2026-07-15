@@ -14,6 +14,7 @@ use tracing::instrument::WithSubscriber;
 
 use super::memory_budget::{MemoryBudget, MemoryTicket};
 use super::{ChunkDownloadData, ChunkError, ChunkReadSnafu, PrefetchConfig};
+use crate::log_foreign_error;
 
 pub trait DownloadChunk: Send + Sync + Clone + 'static {
     fn download_chunk(
@@ -107,7 +108,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
             let tx = &tx;
             async move {
                 if let Err(e) = tx.send(msg).await {
-                    tracing::error!("Failed to send result to channel: {e:?}");
+                    log_foreign_error!(e, "Failed to send result to channel");
                     return Err(e);
                 }
                 Ok(())
