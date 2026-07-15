@@ -187,12 +187,7 @@ pub(super) fn prepare_logout_from_conn(
         (Some(client), Some(url), Some(info)) => {
             let refresh_ctx = RefreshContext::new(conn)?;
 
-            let mut retry_policy = conn.retry_policy.clone();
-            if let Some(max_attempts) = config.max_attempts {
-                retry_policy.max_attempts = max_attempts;
-            }
-            retry_policy.max_elapsed = Some(config.logout_total_timeout);
-            retry_policy.per_request_timeout = config.logout_request_timeout;
+            let retry_policy = RetryPolicy::logout(&conn.connection_seed, config);
 
             tracing::debug!(
                 total_timeout_secs = config.logout_total_timeout.as_secs(),

@@ -677,7 +677,7 @@ async fn query_context(
         conn.http_client
             .clone()
             .context(ConnectionNotInitializedSnafu)?,
-        conn.retry_policy.clone(),
+        RetryPolicy::query(&conn.connection_seed),
     ))
 }
 
