@@ -792,6 +792,7 @@ fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsReque
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
+        stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
         ClientSetupSnafu {
@@ -1436,6 +1437,7 @@ mod tests {
             use_regional_url: overrides.use_regional_url,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: None,
         }
     }

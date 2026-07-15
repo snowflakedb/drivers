@@ -457,6 +457,7 @@ impl DatabaseDriverV1 {
                     use_s3_regional_url_session_param,
                     skip_upload_on_content_match,
                     tls_config,
+                    self.crl_worker.clone(),
                 )
                 .await
                 .context(QueryResponseProcessingSnafu)

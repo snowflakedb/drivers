@@ -16,4 +16,4 @@ pub use certificate_parser::{
 pub use config::{CertRevocationCheckMode, CrlConfig};
 pub use error::CrlError;
 pub use validator::CrlValidator;
-pub use worker::CrlWorker;
+pub use worker::{CrlWorker, SharedCrlWorker};

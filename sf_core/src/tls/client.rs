@@ -1,4 +1,5 @@
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
+use crate::crl::worker::SharedCrlWorker;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{
@@ -15,8 +16,11 @@ use std::time::Duration;
 ///
 /// This is the main entry point for creating HTTP clients in the application.
 /// Handles all TLS configuration including CRL validation, custom root stores, etc.
-pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, TlsError> {
-    create_tls_client_with_proxy(tls_config, None)
+pub fn create_tls_client_with_config(
+    tls_config: TlsConfig,
+    crl_worker: SharedCrlWorker,
+) -> Result<Client, TlsError> {
+    create_tls_client_with_proxy(tls_config, None, crl_worker)
 }
 
 /// Create a reqwest Client with TLS configuration and an optional explicit proxy.
@@ -29,6 +33,7 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
 pub fn create_tls_client_with_proxy(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
+    crl_worker: SharedCrlWorker,
 ) -> Result<Client, TlsError> {
     // Note: `proxy` is always forwarded to `configure_http_client` even when
     // `proxy.host` is `None`.  That path needs the full `ProxyConfig` to
@@ -103,6 +108,7 @@ pub fn create_tls_client_with_proxy(
                 tls_config.verify_hostname,
                 &protocol_versions,
                 proxy,
+                crl_worker,
             )
         }
     }
@@ -132,6 +138,7 @@ pub(crate) fn apply_reqwest_tls_versions_window(
 pub(crate) fn configure_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
+    crl_worker: SharedCrlWorker,
 ) -> Result<ClientBuilder, TlsError> {
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
@@ -179,6 +186,7 @@ pub(crate) fn configure_tls_builder(
                 custom_root_store,
                 tls_config.verify_hostname,
                 &protocol_versions,
+                crl_worker,
             )?;
             Ok(builder.use_preconfigured_tls(rustls_cfg))
         }
@@ -193,13 +201,18 @@ fn build_crl_rustls_config(
     custom_root_store: Option<rustls::RootCertStore>,
     verify_hostname: bool,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
+    crl_worker: SharedCrlWorker,
 ) -> Result<rustls::ClientConfig, TlsError> {
     if !verify_hostname {
         tracing::warn!("Hostname verification disabled (CRL path)");
     }
-    let crl_verifier =
-        CrlServerCertVerifier::new_with_root_store(crl_config, custom_root_store, verify_hostname)
-            .context(VerifierBuildSnafu)?;
+    let crl_verifier = CrlServerCertVerifier::new_with_root_store(
+        crl_config,
+        custom_root_store,
+        verify_hostname,
+        crl_worker,
+    )
+    .context(VerifierBuildSnafu)?;
 
     let version_builder = if protocol_versions.is_empty() {
         tracing::debug!("empty TLS protocol-version window; falling back to rustls defaults");
@@ -220,6 +233,7 @@ pub(crate) fn create_crl_tls_client_with_root_store(
     verify_hostname: bool,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     proxy: Option<&ProxyConfig>,
+    crl_worker: SharedCrlWorker,
 ) -> Result<Client, TlsError> {
     tracing::debug!("Creating custom TLS client with CRL handshake validation");
 
@@ -230,6 +244,7 @@ pub(crate) fn create_crl_tls_client_with_root_store(
         custom_root_store,
         verify_hostname,
         protocol_versions,
+        crl_worker,
     )?;
 
     let client = configure_http_client(Client::builder(), proxy)?

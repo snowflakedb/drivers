@@ -638,6 +638,7 @@ async fn create_s3_client(
     // connection's full TLS policy (version window, CRL, custom root store).
     loader = loader.http_client(crate::tls::aws_http_client::tls_configured_aws_http_client(
         &stage_info.tls_config,
+        stage_info.crl_worker.clone(),
     ));
     let config = loader.load().await;
 
@@ -1027,6 +1028,7 @@ mod tests {
             use_s3_regional_url,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
         }
     }
 
@@ -1374,6 +1376,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: None,
         };
 
@@ -1459,6 +1462,7 @@ mod tests {
             use_s3_regional_url: false,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
         };
 
         tokio::time::timeout(
@@ -1559,6 +1563,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: None,
         };
 
