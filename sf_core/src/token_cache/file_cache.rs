@@ -141,7 +141,7 @@ impl FileLock {
         for attempt in 0..retry_count {
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(FileLock { _file: file }),
-                Err(ref e) if Self::is_lock_contention(e) => {
+                Err(ref e) if crate::fs_lock::is_lock_contention(e) => {
                     if attempt < retry_count - 1 {
                         // Decorrelated jitter: sleep ∈ [base, min(3×prev, 16×base)]
                         let upper = (sleep_ms * 3.0).min(base_ms * 16.0);
@@ -156,39 +156,8 @@ impl FileLock {
         LockExhaustedSnafu.fail()
     }
 
-    /// Returns `true` when the error indicates the lock is held by another
-    /// handle/process and the caller should retry.
-    ///
-    /// On Unix, `flock` returns `EWOULDBLOCK` (`ErrorKind::WouldBlock`).
-    /// On Windows, `LockFileEx` with `LOCKFILE_FAIL_IMMEDIATELY` returns
-    /// `ERROR_LOCK_VIOLATION` (code 33) which Rust maps to
-    /// `ErrorKind::Uncategorized` rather than `WouldBlock`.
-    fn is_lock_contention(e: &std::io::Error) -> bool {
-        if e.kind() == std::io::ErrorKind::WouldBlock {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            const ERROR_LOCK_VIOLATION: i32 = 33;
-            if e.raw_os_error() == Some(ERROR_LOCK_VIOLATION) {
-                return true;
-            }
-        }
-        false
-    }
-
     fn open_lock_file(lock_path: &Path) -> Result<fs::File, TokenCacheError> {
-        let mut opts = fs::OpenOptions::new();
-        opts.create(true).truncate(false).write(true);
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.custom_flags(libc::O_NOFOLLOW);
-            opts.mode(0o600);
-        }
-
-        opts.open(lock_path).context(LockAcquisitionSnafu)
+        crate::fs_lock::open_lock_file(lock_path, Some(0o600)).context(LockAcquisitionSnafu)
     }
 }
 
@@ -248,13 +217,7 @@ fn open_existing(
     read: bool,
     write: bool,
 ) -> Result<Option<fs::File>, TokenCacheError> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut opts = fs::OpenOptions::new();
-    opts.read(read).write(write);
-    opts.custom_flags(libc::O_NOFOLLOW);
-
-    match opts.open(path) {
+    match crate::fs_lock::open_existing_nofollow(path, read, write) {
         Ok(file) => {
             validate_file_fd(&file, path)?;
             Ok(Some(file))
@@ -274,14 +237,7 @@ fn open_existing(
 /// to reject symlinks at the target path.
 #[cfg(unix)]
 fn create_exclusive(path: &Path) -> Result<fs::File, TokenCacheError> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .mode(0o600)
-        .open(path)
+    crate::fs_lock::create_new_nofollow(path, Some(0o600))
         .boxed()
         .context(TokenStorageSnafu)
 }
