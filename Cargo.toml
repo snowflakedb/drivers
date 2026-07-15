@@ -6,6 +6,7 @@ members = [
     "sf_mini_core_static",
     "odbc",
     "jdbc_bridge",
+    "nodejs_bridge",
     "proto_generator",
     "proto_utils",
     "sf_core/tests/common/arrow_deserialize_macro",

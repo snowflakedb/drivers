@@ -27,8 +27,24 @@
     "test:e2e": "vitest run --project e2e",
     "test:e2e-old-driver": "vitest run --project e2e-old-driver"
   },
+  "napi": {
+    "binaryName": "snowflake-sdk-core",
+    "packageName": "snowflake-sdk-core",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-pc-windows-msvc",
+      "x86_64-pc-windows-msvc",
+      "i686-pc-windows-msvc"
+    ]
+  },
   "devDependencies": {
     "@types/node": "^25.6.2",
+    "@napi-rs/cli": "^3.7.3",
     "@vitest/coverage-v8": "^4.1.5",
     "oxfmt": "^0.48.0",
     "oxlint": "^1.43.0",
