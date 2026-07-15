@@ -429,21 +429,49 @@ rules:
 
       **REQUIREMENT**: Flag assertions that are vacuous given the surrounding control flow. This is a scope split from `ud-java-no-weak-null-assertions`: those checks are not "weak" phrasings of a real condition — they are unnecessary. Common cases:
       - `assertNotNull(e)` on the value returned by `assertThrows(...)`. JUnit 5's `assertThrows` never returns null, so the check adds nothing — assert a meaningful property of the exception instead (`getSQLState()`, `getErrorCode()`, message content).
-      - `assertNotNull(x)` immediately after `x` was created with `new` or returned by an API contractually guaranteed non-null.
+      - `assertNotNull(x)` immediately after `x` was created with `new` or returned by an API contractually guaranteed non-null (e.g. a method whose body is `return new ByteArrayInputStream(...)` and which throws rather than returning null on failure).
       - Duplicate assertions on the same expression with no intervening state change.
 
-      **SEVERITY NOTE**: Medium — vacuous assertions mislead readers about coverage but never cause an incorrect pass. Always suggest the meaningful assertion that should replace the vacuous one.
+      **HOW TO FIX — decide in this order (do NOT skip to inventing a replacement):**
+      1. **Prefer removal when the value is already exercised.** If a later assertion in the same test already dereferences or compares the value (e.g. `assertArrayEquals(expected, readAll(stream))` reads the stream, `assertEquals(x, obj.field())` uses the object), the non-null / existence property is already covered. Recommend deleting the redundant assertion outright and say which existing assertion already covers it. Do NOT manufacture an extra assertion in this case.
+      2. **Only suggest a replacement when the value is otherwise unasserted.** If nothing else in the test inspects the value, suggest one assertion on a property that could realistically fail (`getSQLState()`, `getErrorCode()`, message content, field values, byte contents).
 
-      ❌ **BAD:**
+      **CONSTRAINTS ON ANY SUGGESTED REPLACEMENT** (a bad suggestion is worse than staying silent — the LLM judge penalizes it):
+      - The replacement MUST itself comply with `ud-java-no-weak-null-assertions`. Never suggest `assertFalse(x == 0)`, `assertTrue(x != 0)`, or `assertTrue(!cond)` — use the direct typed form (`assertTrue(x > 0)`, `assertNotEquals(0, x)`, `assertFalse(cond)`).
+      - Do NOT base a replacement on APIs that don't reliably reflect the property being tested. In particular, `InputStream.available()` is only a hint (it may legally return `0` for a non-empty stream), so never suggest `available()`-based checks to prove a stream is non-empty — compare the actual bytes read instead.
+      - Suggest exactly one replacement, not a menu. If removal is the right fix (case 1 above), recommend removal only and do not also offer a replacement.
+
+      **SEVERITY NOTE**: Medium — vacuous assertions mislead readers about coverage but never cause an incorrect pass.
+
+      ❌ **BAD (vacuous assertion):**
       ```java
       SQLException e = assertThrows(SQLException.class, () -> stmt.execute("SELECT * FROM missing"));
       assertNotNull(e);  // assertThrows already guarantees a non-null return
       ```
 
-      ✅ **GOOD:**
+      ✅ **GOOD (replace — value was otherwise unasserted):**
       ```java
       SQLException e = assertThrows(SQLException.class, () -> stmt.execute("SELECT * FROM missing"));
       assertEquals("42S02", e.getSQLState());
+      ```
+
+      ❌ **BAD (vacuous assertion whose value is already exercised below):**
+      ```java
+      InputStream result = conn.downloadStream(stage, file, false);  // never returns null; throws on failure
+      assertNotNull(result);                                         // redundant
+      assertArrayEquals(expected, result.readAllBytes());            // already reads/verifies the stream
+      ```
+
+      ✅ **GOOD (remove — do not invent a replacement):**
+      ```java
+      InputStream result = conn.downloadStream(stage, file, false);
+      assertArrayEquals(expected, result.readAllBytes());  // covers non-null and contents
+      ```
+
+      ❌ **BAD (reviewer suggestion that violates a sibling rule / uses an unreliable API):**
+      ```java
+      // "Replace assertNotNull(result) with assertFalse(result.available() == 0)"
+      // — assertFalse(x == 0) is a weak assertion, and available() may return 0 for a non-empty stream.
       ```
 
   - id: ud-java-no-bare-system-out-println
