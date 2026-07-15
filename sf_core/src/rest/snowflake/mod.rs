@@ -2179,6 +2179,14 @@ pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwe
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum RestError {
+    #[snafu(display("{operation} timed out after {budget:?}"))]
+    #[snafu(visibility(pub(crate)))]
+    OperationTimeout {
+        operation: String,
+        budget: std::time::Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Authentication failed"))]
     Authentication {
         source: AuthError,

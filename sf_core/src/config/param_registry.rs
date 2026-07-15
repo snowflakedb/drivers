@@ -152,6 +152,7 @@ pub mod param_names {
     pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
     // ── Timeout configuration ──────────────────────────────────────────
     pub const CONNECT_TIMEOUT: ParamKey = ParamKey("connect_timeout");
+    pub const LOGIN_TIMEOUT: ParamKey = ParamKey("login_timeout");
     // Proxy configuration
     pub const PROXY_HOST: ParamKey = ParamKey("proxy_host");
     pub const PROXY_PORT: ParamKey = ParamKey("proxy_port");
@@ -214,6 +215,9 @@ pub const DEFAULT_RETRY_MAX_ATTEMPTS: u32 = 6;
 
 /// Default `put_get_max_attempts` (mirrors the `ParamDef`).
 pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
+
+/// Default `login_timeout` in seconds (mirrors the `ParamDef`).
+pub const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 120;
 
 /// Common exponential-backoff defaults shared by the HTTP and PUT/GET retry
 /// pipelines. These are the single source of truth: both the `ParamDef`
@@ -1307,6 +1311,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         mutable_after_connect: false,
     },
     // ── Timeout configuration ─────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::LOGIN_TIMEOUT.as_str(),
+        aliases: &["LOGIN_TIMEOUT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(DEFAULT_LOGIN_TIMEOUT_SECS as i64)),
+        sensitive: false,
+        description: "Wall-clock timeout in seconds for the entire login operation including retries (0 = no timeout)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
     ParamDef {
         canonical_name: param_names::CONNECT_TIMEOUT.as_str(),
         aliases: &["CONNECT_TIMEOUT"],

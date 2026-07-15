@@ -433,15 +433,27 @@ impl DatabaseDriverV1 {
                     RetryPolicy::http(&conn.connection_seed)
                 };
 
-                let login_result = crate::rest::snowflake::snowflake_login_with_client(
+                let login_fut = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
                     token_cache.map(|c| c as &dyn TokenCache),
                     Some(&self.prompt_locks),
                     &retry_policy,
-                )
-                .await;
+                );
+
+                let login_result = if let Some(budget) = timeout_config.login_timeout {
+                    match tokio::time::timeout(budget, login_fut).await {
+                        Ok(inner) => inner,
+                        Err(_) => Err(crate::rest::snowflake::OperationTimeoutSnafu {
+                            operation: "login".to_string(),
+                            budget,
+                        }
+                        .build()),
+                    }
+                } else {
+                    login_fut.await
+                };
 
                 // ---- Diagnostics: post-connect ----------------------------------
                 if let Some(mut runner) = diag_runner.take() {
