@@ -3,6 +3,7 @@ extern crate tracing_subscriber;
 
 pub mod apis;
 pub mod diagnostic;
+pub mod env_vars;
 
 pub mod arrow_utils;
 mod auth;

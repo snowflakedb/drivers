@@ -1,5 +1,6 @@
 use crate::config::rest_parameters::LoginParameters;
 use crate::config::retry::RetryPolicy;
+use crate::env_vars;
 use crate::http::retry::{HttpContext, HttpError};
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
 use crate::sensitive::SensitiveString;
@@ -46,7 +47,7 @@ pub(crate) struct DefaultBrowserOpener;
 
 impl BrowserOpener for DefaultBrowserOpener {
     fn open(&self, url: &str) -> Result<(), String> {
-        if std::env::var("SF_TEST_BROWSER_OPENER").as_deref() == Ok("noop") {
+        if std::env::var(env_vars::SF_TEST_BROWSER_OPENER).as_deref() == Ok("noop") {
             tracing::info!(
                 url,
                 "Browser open suppressed by SF_TEST_BROWSER_OPENER=noop"

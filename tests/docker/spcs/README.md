@@ -37,7 +37,7 @@ The build context is the repository root because the image compiles `sf_core`.
 ## Pushing to a Snowflake image repository
 
 The repository (`testing_setup.public.ud_test_image_repo`) and compute pool
-(`ud_test_spcs_pool`) are created by `ci/account_setup.sql`.
+(`ud_test_spcs_pool`) are created by `ci/ci_account_setup/ci_account_setup.sql`.
 
 ```bash
 snow spcs image-registry login
