@@ -1,8 +1,14 @@
+use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
+use sf_core::config::param_store::ParamStore;
+use sf_core::config::retry::RetryPolicy;
 // Shared zero-backoff Azure test policy, derived from the production
 // `azure_retry_policy` (no drift). Aliased so call sites read `test_policy(..)`.
 use sf_core::file_manager::internal::azure_test_retry_policy as test_policy;
-use sf_core::file_manager::{CloudCredentials, LocationType, StageInfo};
+use sf_core::file_manager::{
+    CloudCredentials, DownloadData, EncryptionMaterial, LocationType, MultipartParams, StageInfo,
+    download_files,
+};
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -340,4 +346,67 @@ async fn azure_download_with_missing_storage_account_fails() {
         err_str.contains("storage_account"),
         "Should report missing storage_account, got: {err_str}"
     );
+}
+
+// ---------------------------------------------------------------
+// Git stage objects: encryptiondata present but sfcdigest absent
+// ---------------------------------------------------------------
+
+#[tokio::test]
+async fn azure_git_stage_download_succeeds_without_sfcdigest() {
+    // Git stage objects on Azure carry CSE key-wrap headers (encryptiondata,
+    // matdesc) but no sfcdigest — the object was uploaded by Snowflake's git
+    // integration. download_files must succeed and write the raw bytes.
+    let server = MockServer::start().await;
+
+    let enc_data = serde_json::json!({
+        "EncryptionMode": "FullBlob",
+        "WrappedContentKey": {
+            "KeyId": "symmKey1",
+            "EncryptedKey": "dGVzdC1rZXk=",
+            "Algorithm": "AES_CBC_256"
+        },
+        "ContentEncryptionIV": "dGVzdC1pdg=="
+    });
+    let mat_desc = serde_json::json!({
+        "queryId": "test-query",
+        "smkId": "1",
+        "keySize": "256"
+    });
+    // No x-ms-meta-sfcdigest header — matches what Snowflake's git integration uploads.
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"raw-git-file-bytes".to_vec())
+                .insert_header("x-ms-meta-encryptiondata", enc_data.to_string().as_str())
+                .insert_header("x-ms-meta-matdesc", mat_desc.to_string().as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local_location = tmp.path().to_string_lossy().to_string();
+
+    let data = DownloadData {
+        src_locations: vec!["file.txt".to_string()],
+        local_location: local_location.clone(),
+        stage_info: azure_stage(&server.uri()),
+        encryption_materials: vec![Some(EncryptionMaterial {
+            query_stage_master_key: SensitiveString::from("dGVzdC1tYXN0ZXIta2V5"),
+            query_id: "test-query".to_string(),
+            smk_id: "1".to_string(),
+        })],
+        presigned_urls: vec![None],
+        flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
+    };
+
+    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
+        .await
+        .expect("git stage download should succeed even without sfcdigest");
+
+    assert_eq!(results.len(), 1);
+    let written = std::fs::read(std::path::Path::new(&local_location).join("file.txt"))
+        .expect("downloaded file should exist");
+    assert_eq!(written, b"raw-git-file-bytes");
 }

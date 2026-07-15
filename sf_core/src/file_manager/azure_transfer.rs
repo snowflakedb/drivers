@@ -615,7 +615,7 @@ pub async fn download_from_azure_streaming(
     let headers = response.headers();
     let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
 
-    let cse_info = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
+    let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
             let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
                 .context(azure_download_error::DeserializationSnafu)?;
@@ -628,23 +628,27 @@ pub async fn download_from_azure_streaming(
             let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
                 .context(azure_download_error::DeserializationSnafu)?;
 
-            // A CSE object always carries its content digest alongside the
-            // encryption headers — require it here so the decrypt path receives
-            // metadata and digest as one inseparable unit.
-            let digest = digest.context(azure_download_error::MissingMetadataSnafu {
-                field: AZURE_META_SFC_DIGEST,
-            })?;
-
-            Some(CseDownloadInfo {
-                metadata: EncryptedFileMetadata {
-                    encrypted_key: enc_data.wrapped_content_key.encrypted_key,
-                    iv: enc_data.content_encryption_iv,
-                    material_desc,
-                },
-                digest,
+            Some(EncryptedFileMetadata {
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
+                material_desc,
             })
         }
         None => None,
+    };
+
+    // Git stage objects on Azure carry CSE key-wrap headers but no sfcdigest
+    // (uploaded by Snowflake's git integration, not by this driver). Fall
+    // through to raw bytes rather than failing, matching the S3 behaviour.
+    let cse_info = match (file_metadata, digest) {
+        (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+        (Some(_), None) => {
+            tracing::debug!(
+                "Azure encryptiondata present but sfcdigest absent; returning raw bytes"
+            );
+            None
+        }
+        (None, _) => None,
     };
 
     Ok(CloudStreamingDownload {
