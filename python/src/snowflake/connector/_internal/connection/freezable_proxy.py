@@ -47,9 +47,8 @@ class SessionParametersProxy(_FreezableProxy):
 
         Legacy ``snowflake-connector-python`` stores ``_session_parameters`` as a
         plain dict, so callers (e.g. Snowpark's ``ServerConnection``) use
-        ``.get(name, default)``. Delegates to ``__getitem__`` to keep the cache
-        and name-normalization behavior; a populated session parameter is always
-        a non-empty string, so a ``None`` result means "unset" here.
+        ``.get(name, default)``. A populated session parameter is always a
+        non-empty string, so a ``None`` result means "unset" here.
         """
         value = self[name]
         return value if value is not None else default
