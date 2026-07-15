@@ -1,0 +1,169 @@
+name: Auth No-MFA CI
+
+# Nightly requires_no_mfa tests using parameters_aws_local.json.
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Nightly at 06:00 UTC on main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  jdbc_auth_no_mfa:
+    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch.
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: JDBC auth no-MFA tests
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc-auth-no-mfa"
+
+      - name: Run JDBC auth no-MFA tests
+        run: ./tests/auth/auth_no_mfa_jdbc.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          SF_TEST_NO_MFA: true
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "jdbc-auth-no-mfa"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  python_auth_no_mfa:
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: Python auth no-MFA tests
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "python-auth-no-mfa"
+
+      - name: Run Python auth no-MFA tests
+        run: ./tests/auth/auth_no_mfa_python.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          SF_TEST_NO_MFA: true
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "python-auth-no-mfa"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  odbc_auth_no_mfa:
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: ODBC auth no-MFA tests
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "odbc-auth-no-mfa"
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Run ODBC auth no-MFA tests
+        run: ./tests/auth/auth_no_mfa_odbc.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          SF_TEST_NO_MFA: true
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "odbc-auth-no-mfa"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  auth_no_mfa_status:
+    needs: [jdbc_auth_no_mfa, python_auth_no_mfa, odbc_auth_no_mfa]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          echo "=== Auth No-MFA CI Status ==="
+
+          JDBC_RESULT="${{ needs.jdbc_auth_no_mfa.result }}"
+          PYTHON_RESULT="${{ needs.python_auth_no_mfa.result }}"
+          ODBC_RESULT="${{ needs.odbc_auth_no_mfa.result }}"
+
+          if [[ "$JDBC_RESULT" =~ ^(failure|cancelled)$ || "$PYTHON_RESULT" =~ ^(failure|cancelled)$ || "$ODBC_RESULT" =~ ^(failure|cancelled)$ ]]; then
+            echo "✗ Auth No-MFA CI FAILED or CANCELLED"
+            echo "  - JDBC: $JDBC_RESULT"
+            echo "  - Python: $PYTHON_RESULT"
+            echo "  - ODBC: $ODBC_RESULT"
+            exit 1
+          fi
+
+          echo "✓ Auth no-MFA jobs PASSED or SKIPPED"
+          exit 0
