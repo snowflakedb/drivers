@@ -14,7 +14,7 @@ odbc_api_version = "03.80"
 # short SHA is appended at packaging time to produce the full release string.
 # Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
 # This is to be removed and the package.version used after moving into the PuPr
-odbc_preview_version = "0.0.5"
+odbc_preview_version = "0.0.6"
 
 [lib]
 name = "sfodbc"
