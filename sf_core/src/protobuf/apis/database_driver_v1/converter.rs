@@ -9,7 +9,7 @@ use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescr
 use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
-    ConfigError, InlineJsonEncodingSnafu, InvalidColumnMetadataSnafu, RestError,
+    ConfigError, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, RestError,
 };
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -17,7 +17,7 @@ use crate::apis::database_driver_v1::{
     ValidationSeverity as CoreValidationSeverity,
 };
 use crate::chunks::{
-    ArrowIpcEncodingSnafu, ChunkError, ChunkFormatKind, ChunkReadingSnafu,
+    ArrowIpcEncodeSnafu, ChunkError, ChunkFormatKind, ChunkReadSnafu,
     convert_string_rowset_to_arrow_reader,
 };
 use crate::protobuf::generated::database_driver_v1::*;
@@ -200,13 +200,13 @@ pub(super) fn json_rowset_to_arrow_ipc_base64(
     let mut buf: Vec<u8> = Vec::new();
     {
         let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
-            .context(ArrowIpcEncodingSnafu)?;
+            .context(ArrowIpcEncodeSnafu)?;
         for batch in reader {
             // Iterator error = JSON rowset read/decode failure, not IPC encoding.
-            let batch = batch.context(ChunkReadingSnafu)?;
-            writer.write(&batch).context(ArrowIpcEncodingSnafu)?;
+            let batch = batch.context(ChunkReadSnafu)?;
+            writer.write(&batch).context(ArrowIpcEncodeSnafu)?;
         }
-        writer.finish().context(ArrowIpcEncodingSnafu)?;
+        writer.finish().context(ArrowIpcEncodeSnafu)?;
     }
     Ok(BASE64.encode(&buf))
 }
@@ -416,7 +416,7 @@ impl TryFrom<ChunkDataWithDescriptor> for ResultSetGetChunksResponse {
                     .to_protobuf()?;
                 Some(
                     json_rowset_to_arrow_ipc_base64(rowset, &row_types)
-                        .context(InlineJsonEncodingSnafu)
+                        .context(InlineJsonEncodeSnafu)
                         .to_protobuf()?,
                 )
             }
@@ -689,7 +689,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 })),
             },
         },
-        ApiError::ConnectionLocking { .. } => DriverError {
+        ApiError::ConnectionLock { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::StatementLocking { .. } => DriverError {
@@ -698,7 +698,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::DatabaseLocking { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::QueryResponseProcessing { .. } => DriverError {
+        ApiError::QueryResponseProcess { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::ConnectionNotInitialized { .. } => DriverError {
@@ -731,13 +731,13 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ChunkFetch { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::ArrowParsing { .. } => DriverError {
+        ApiError::ArrowParse { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::JsonChunkDecoding { .. } => DriverError {
+        ApiError::JsonChunkDecode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::InlineJsonEncoding { .. } => DriverError {
+        ApiError::InlineJsonEncode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::InvalidColumnMetadata { column, .. } => DriverError {
@@ -749,7 +749,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 },
             )),
         },
-        ApiError::Base64Decoding { .. } => DriverError {
+        ApiError::Base64Decode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
@@ -941,10 +941,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             RestError::LoginError { .. } => StatusCode::LoginError,
             _ => StatusCode::AuthenticationError,
         },
-        ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
+        ApiError::ConnectionLock { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
-        ApiError::QueryResponseProcessing {
+        ApiError::QueryResponseProcess {
             source: boxed_error,
             ..
         } => {
@@ -981,11 +981,11 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
         ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
-        ApiError::ArrowParsing { .. } => StatusCode::InternalError,
-        ApiError::JsonChunkDecoding { .. } => StatusCode::InternalError,
-        ApiError::InlineJsonEncoding { .. } => StatusCode::InternalError,
+        ApiError::ArrowParse { .. } => StatusCode::InternalError,
+        ApiError::JsonChunkDecode { .. } => StatusCode::InternalError,
+        ApiError::InlineJsonEncode { .. } => StatusCode::InternalError,
         ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
-        ApiError::Base64Decoding { .. } => StatusCode::InternalError,
+        ApiError::Base64Decode { .. } => StatusCode::InternalError,
         ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,

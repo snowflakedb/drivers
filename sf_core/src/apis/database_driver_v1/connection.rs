@@ -1752,7 +1752,7 @@ fn resolve_session_database(conn: &Connection) -> Result<Option<String>, ApiErro
     let final_names = conn
         .final_session_names
         .read()
-        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+        .map_err(|_| ConnectionLockSnafu {}.build())?;
     Ok(final_names
         .database
         .clone()
@@ -1807,7 +1807,7 @@ impl DatabaseDriverV1 {
                 let final_names = conn
                     .final_session_names
                     .read()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                    .map_err(|_| ConnectionLockSnafu {}.build())?;
                 let role = final_names
                     .role
                     .clone()
@@ -1976,7 +1976,7 @@ impl DatabaseDriverV1 {
                 let version = conn
                     .server_version
                     .read()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?
+                    .map_err(|_| ConnectionLockSnafu {}.build())?
                     .clone();
                 Ok(version)
             }

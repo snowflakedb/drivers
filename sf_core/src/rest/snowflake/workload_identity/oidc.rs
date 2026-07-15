@@ -18,7 +18,7 @@ pub enum OidcAttestationError {
     #[snafu(display(
         "OIDC provider requires a pre-acquired token set via the 'token' connection parameter"
     ))]
-    TokenMissing {
+    MissingToken {
         #[snafu(implicit)]
         location: Location,
     },
@@ -53,7 +53,7 @@ pub(super) fn get_token(
         .oidc_token
         .as_ref()
         .map(|s| s.reveal().to_string())
-        .context(TokenMissingSnafu)?;
+        .context(MissingTokenSnafu)?;
 
     validate_and_log_claims(&token)?;
 

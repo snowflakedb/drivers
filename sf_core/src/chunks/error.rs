@@ -31,19 +31,19 @@ pub enum ChunkError {
         location: Location,
     },
     #[snafu(display("Failed to read chunk data"))]
-    ChunkReading {
+    ChunkRead {
         source: ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to encode chunk as Arrow IPC"))]
-    ArrowIpcEncoding {
+    ArrowIpcEncode {
         source: ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to decode base64 data"))]
-    Base64Decoding {
+    Base64Decode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
@@ -61,7 +61,7 @@ pub enum ChunkError {
         location: Location,
     },
     #[snafu(display("No initial inline data and no remote chunks available to derive schema"))]
-    InitialChunkMissing {
+    MissingInitialChunk {
         #[snafu(implicit)]
         location: Location,
     },

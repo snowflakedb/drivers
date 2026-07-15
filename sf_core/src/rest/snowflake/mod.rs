@@ -2339,7 +2339,7 @@ pub enum RestError {
         location: Location,
     },
     #[snafu(display("Failed to encode telemetry payload: {reason}"))]
-    PayloadEncoding {
+    PayloadEncode {
         reason: String,
         #[snafu(implicit)]
         location: Location,

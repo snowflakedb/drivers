@@ -395,7 +395,7 @@ pub(super) async fn build_reader_from_rowset_data(
             .context(DownloadResultsConversionSnafu),
         _ => read_batches(data, http_client, prefetch_config, nullable_flags)
             .await
-            .context(BatchReadingSnafu),
+            .context(BatchReadSnafu),
     }
 }
 
@@ -408,7 +408,7 @@ pub(super) async fn read_batches(
     tracing::debug!("read_batches called {:?}", data);
     match data {
         RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadingSnafu)
+            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadSnafu)
         }
         RowsetData::ArrowMultiChunk {
             initial_base64_opt,
@@ -421,10 +421,10 @@ pub(super) async fn read_batches(
             nullable_flags,
         )
         .await
-        .context(ChunkReadingSnafu),
+        .context(ChunkReadSnafu),
         RowsetData::SchemaOnly { rowtype } => {
             let row_types = parse_row_types(rowtype)?;
-            schema_only_reader(&row_types).context(ChunkReadingSnafu)
+            schema_only_reader(&row_types).context(ChunkReadSnafu)
         }
         RowsetData::JsonRowset { rowset, rowtype } => {
             let row_types = parse_row_types(rowtype)?;
@@ -437,7 +437,7 @@ pub(super) async fn read_batches(
                 prefetch_config,
             )
             .await
-            .context(ChunkReadingSnafu)
+            .context(ChunkReadSnafu)
         }
         RowsetData::JsonMultiChunk {
             rowset,
@@ -455,7 +455,7 @@ pub(super) async fn read_batches(
                 prefetch_config,
             )
             .await
-            .context(ChunkReadingSnafu)
+            .context(ChunkReadSnafu)
         }
         RowsetData::NoData | RowsetData::Upload(_) | RowsetData::Download(_) => Ok(empty_reader()),
     }
@@ -466,7 +466,7 @@ fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, 
         .iter()
         .map(|rt| rt.try_into())
         .collect::<Result<Vec<_>, _>>()
-        .context(RowTypeParsingSnafu)
+        .context(RowTypeParseSnafu)
 }
 
 fn validate_column_count(
@@ -700,7 +700,7 @@ pub enum QueryResponseProcessingError {
         location: Location,
     },
     #[snafu(display("Failed to read batches from query response"))]
-    BatchReading {
+    BatchRead {
         source: ReadBatchesError,
         #[snafu(implicit)]
         location: Location,
@@ -741,19 +741,19 @@ pub enum ReadBatchesError {
         location: Location,
     },
     #[snafu(display("Failed to parse rowtype"))]
-    RowTypeParsing {
+    RowTypeParse {
         source: QueryResponseError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to decode base64 rowset"))]
-    Base64Decoding {
+    Base64Decode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to read chunks"))]
-    ChunkReading {
+    ChunkRead {
         source: ChunkError,
         #[snafu(implicit)]
         location: Location,

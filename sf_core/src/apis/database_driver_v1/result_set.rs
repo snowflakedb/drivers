@@ -441,7 +441,7 @@ impl DatabaseDriverV1 {
             flags,
         )
         .await
-        .context(QueryResponseProcessingSnafu)?;
+        .context(QueryResponseProcessSnafu)?;
         Ok(reader)
     }
 
@@ -527,9 +527,9 @@ impl DatabaseDriverV1 {
         let schema = batch.schema();
         let mut buf = Vec::new();
         {
-            let mut writer = StreamWriter::try_new(&mut buf, &schema).context(ArrowParsingSnafu)?;
-            writer.write(batch).context(ArrowParsingSnafu)?;
-            writer.finish().context(ArrowParsingSnafu)?;
+            let mut writer = StreamWriter::try_new(&mut buf, &schema).context(ArrowParseSnafu)?;
+            writer.write(batch).context(ArrowParseSnafu)?;
+            writer.finish().context(ArrowParseSnafu)?;
         }
 
         let chunk_base64 = BASE64.encode(&buf);

@@ -44,7 +44,7 @@ pub enum ApiError {
         source: Box<RestError>,
     },
     #[snafu(display("Failed to lock connection"))]
-    ConnectionLocking {
+    ConnectionLock {
         #[snafu(implicit)]
         location: Location,
     },
@@ -76,7 +76,7 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Failed to process query response: {source}"))]
-    QueryResponseProcessing {
+    QueryResponseProcess {
         #[snafu(implicit)]
         location: Location,
         #[snafu(source(from(QueryResponseProcessingError, Box::new)))]
@@ -148,19 +148,19 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Failed to parse Arrow IPC data"))]
-    ArrowParsing {
+    ArrowParse {
         source: arrow::error::ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to decode JSON chunk data"))]
-    JsonChunkDecoding {
+    JsonChunkDecode {
         source: arrow::error::ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to encode inline JSON rowset as Arrow IPC"))]
-    InlineJsonEncoding {
+    InlineJsonEncode {
         #[snafu(implicit)]
         location: Location,
         source: ChunkError,
@@ -173,7 +173,7 @@ pub enum ApiError {
         source: crate::rest::snowflake::query_response::QueryResponseError,
     },
     #[snafu(display("Failed to decode base64 chunk data"))]
-    Base64Decoding {
+    Base64Decode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
