@@ -96,19 +96,12 @@ class SecretDetector(logging.Formatter):
 
     @classmethod
     def mask_secrets(cls, text: str | None) -> MaskedMessageData:
-        """Masks any secrets. This is the method that should be used by outside classes.
-
-        Args:
-            text: A string which may contain a secret.
-
-        Returns:
-            The masked string data in MaskedMessageData.
+        """Return ``text`` with any detected secrets masked (the public entry point).
 
         These maskers are ``classmethod``s (not the legacy ``staticmethod``s) so
         their ``cls.`` self-references resolve even though
-        ``@backward_compatibility`` stashes ``SecretDetector`` out of the
-        module globals; a bare ``SecretDetector.`` reference would raise
-        ``NameError`` under that indirection.
+        ``@backward_compatibility`` stashes ``SecretDetector`` out of the module
+        globals; a bare ``SecretDetector.`` reference would raise ``NameError``.
         """
         if text is None:
             return MaskedMessageData()
