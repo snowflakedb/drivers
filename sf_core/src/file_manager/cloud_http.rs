@@ -306,6 +306,10 @@ pub(super) trait UploadRetryAdapter {
 /// rebuilds the request per attempt (re-opening the source off the runtime
 /// thread via `body_for`) and may fail (e.g. a per-retry file open) — failures
 /// are non-retryable and surface via `adapter.on_build_err`.
+///
+// TODO(SNOW-3780594): this duplicates the budget/backoff/timeout logic in
+// `http::retry::execute_with_retry`; consolidate onto the shared retry loop
+// once it supports the per-attempt request rebuild this path needs.
 pub(super) async fn upload_with_retry<F, M>(
     policy: &RetryPolicy,
     adapter: &M,
@@ -320,15 +324,23 @@ where
     let mut sleep_ms = policy.backoff.base.as_millis() as f64;
 
     for attempt in 1..=max_attempts {
-        let elapsed = start.elapsed();
-        if elapsed >= policy.max_elapsed {
-            return Err(adapter.on_exhausted(format!(
-                "deadline exceeded after {elapsed:?} (budget {:?})",
-                policy.max_elapsed
-            )));
-        }
-        let remaining = policy.max_elapsed - elapsed;
-        let timeout = remaining.min(Duration::from_secs(REQUEST_TIMEOUT_SECS));
+        let remaining = if let Some(budget) = policy.max_elapsed {
+            let elapsed = start.elapsed();
+            if elapsed >= budget {
+                return Err(adapter.on_exhausted(format!(
+                    "deadline exceeded after {elapsed:?} (budget {budget:?})"
+                )));
+            }
+            Some(budget - elapsed)
+        } else {
+            None
+        };
+        let timeout = match (policy.per_request_timeout, remaining) {
+            (Some(prt), Some(rem)) => prt.min(rem),
+            (Some(prt), None) => prt,
+            (None, Some(rem)) => rem.min(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+            (None, None) => Duration::from_secs(REQUEST_TIMEOUT_SECS),
+        };
 
         let req = match build_request().await {
             Ok(r) => r.timeout(timeout),

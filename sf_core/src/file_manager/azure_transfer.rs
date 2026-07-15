@@ -1019,11 +1019,11 @@ mod tests {
         let policy = azure_retry_policy(&base_policy());
         assert_eq!(
             policy.max_elapsed,
-            Duration::from_secs(600),
+            Some(Duration::from_secs(600)),
             "max_elapsed must exceed REQUEST_TIMEOUT_SECS (300s)"
         );
         assert!(
-            policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
+            policy.max_elapsed > Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
             "retry budget must be larger than a single request timeout"
         );
     }

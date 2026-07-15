@@ -19,11 +19,29 @@ pub struct RetryPolicy {
     pub max_attempts: u32,
     /// Configuration for exponential backoff between attempts.
     pub backoff: BackoffConfig,
-    /// Maximum total duration spent on the operation before we stop retrying.
-    pub max_elapsed: Duration,
+    /// Optional total-duration budget enforced within the retry loop itself.
+    ///
+    /// When `None`, the retry loop retries up to `max_attempts` with no
+    /// internal deadline — the caller is expected to enforce a wall-clock
+    /// budget via `tokio::time::timeout` (operation-level timeout).
+    ///
+    /// When `Some`, the retry loop checks the budget at the top of each
+    /// iteration and applies `min(per_request_timeout, remaining_budget)` as
+    /// the per-attempt timeout (backward-compatible path used by PUT/GET cloud
+    /// transfer modules and other call sites that need a self-contained budget).
+    ///
+    /// `Some(Duration::ZERO)` means the budget is already exhausted on the first
+    /// iteration, so the loop returns `DeadlineExceeded` immediately without
+    /// issuing a request. The constructors never produce this: a configured
+    /// timeout of `0` is interpreted as "no timeout" (`None`) when read from the
+    /// [`ParamStore`], so `Some(0)` can only arise from a hand-built policy.
+    pub max_elapsed: Option<Duration>,
     /// Optional per-request socket timeout. If Some, each HTTP request gets
-    /// timeout = min(this, remaining_budget). If None, each request gets the
-    /// remaining budget as its timeout (so max_elapsed is still enforced).
+    /// this timeout (clamped to remaining budget when `max_elapsed` is also
+    /// set). If None and `max_elapsed` is also None, no per-attempt timeout
+    /// is applied — the outer operation timeout is the only guard.
+    /// Note: `cloud_http` enforces a `REQUEST_TIMEOUT_SECS` fallback in the
+    /// `(None, None)` case regardless.
     pub per_request_timeout: Option<Duration>,
     /// Additional HTTP status codes to treat as retryable beyond the built-in set
     /// (408, 429, 307, 308, and 5xx). Cloud-specific policies extend this set
@@ -81,7 +99,7 @@ impl Default for RetryPolicy {
             },
             max_attempts: 6,
             backoff: default_backoff(),
-            max_elapsed: Duration::from_secs(120),
+            max_elapsed: None,
             per_request_timeout: None,
             extra_retryable_statuses: BTreeSet::new(),
         }
@@ -144,11 +162,13 @@ fn backoff_from_params(params: &ParamStore) -> BackoffConfig {
 impl RetryPolicy {
     /// Builds the retry policy for general HTTP calls (login, query, logout, etc.).
     ///
-    /// Reads `retry_max_attempts` from the [`ParamStore`] (falling back to
-    /// [`DEFAULT_RETRY_MAX_ATTEMPTS`]), the shared `retry_backoff_*` curve via
-    /// [`backoff_from_params`], and `retry_extra_status_codes` for any
-    /// user-configured extra retryable statuses; remaining fields stay at their
-    /// defaults.
+    /// `max_elapsed` is `None`: the retry loop does not enforce an internal
+    /// deadline. Callers wrap the operation with `tokio::time::timeout` using
+    /// `login_timeout` / `query_timeout` / `request_timeout` to bound total
+    /// wall-clock time.
+    ///
+    /// Reads `retry_max_attempts`, `retry_backoff_*`, and `retry_extra_status_codes`
+    /// from the [`ParamStore`].
     pub fn http(params: &ParamStore) -> Self {
         let max_attempts = params
             .get_int(param_names::RETRY_MAX_ATTEMPTS)
@@ -159,6 +179,7 @@ impl RetryPolicy {
         Self {
             max_attempts,
             backoff: backoff_from_params(params),
+            max_elapsed: None,
             extra_retryable_statuses: parse_extra_statuses(params),
             ..Self::default()
         }
@@ -185,7 +206,7 @@ impl RetryPolicy {
         Self {
             max_attempts,
             backoff: backoff_from_params(params),
-            max_elapsed: Duration::from_secs(600),
+            max_elapsed: Some(Duration::from_secs(600)),
             extra_retryable_statuses: parse_extra_statuses(params),
             ..Self::default()
         }
@@ -217,6 +238,56 @@ fn parse_extra_statuses(params: &ParamStore) -> BTreeSet<u16> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Resolved operation-level timeout configuration.
+///
+/// Built from the `ParamStore` once and carried through the connection
+/// lifetime so each operation site can apply the right wall-clock budget
+/// via `tokio::time::timeout`.
+#[derive(Clone, Debug)]
+pub struct TimeoutConfig {
+    /// Wall-clock budget for the whole login operation, including every auth
+    /// request and retry. The timer starts when login begins and ends when login
+    /// succeeds or the budget elapses (enforced by an outer `tokio::time::timeout`
+    /// wrapping the login future). `None` means no timeout; a configured value of
+    /// `0` is read as `None`.
+    pub login_timeout: Option<Duration>,
+    /// Wall-clock budget for the whole query execution, spanning the initial
+    /// submit plus the status-poll / token-refresh loop. The timer starts when
+    /// execution begins and ends when the query returns or the budget elapses
+    /// (enforced by `tokio::time::timeout_at` around the poll loop). `None` means
+    /// no timeout; a configured value of `0` is read as `None`. Defaults to no
+    /// timeout, matching the legacy drivers — queries can legitimately run for
+    /// hours, so any finite default risks breaking existing clients.
+    pub query_timeout: Option<Duration>,
+    /// TCP connect timeout for the HTTP client. `None` means the system default.
+    pub connect_timeout: Option<Duration>,
+}
+
+impl TimeoutConfig {
+    /// Resolve the timeout configuration from connection parameters.
+    ///
+    /// Returns [`Self::default`] in this PR; the per-field reads (`login_timeout`,
+    /// `query_timeout`, `connect_timeout`, …) and the call site that stores the
+    /// result on the `Connection` are wired up in the follow-up PRs of this stack.
+    // TODO(SNOW-2872502): populate fields from params and call this at connect.
+    pub fn from_params(_params: &ParamStore) -> Self {
+        Self::default()
+    }
+}
+
+impl Default for TimeoutConfig {
+    /// Defaults used when no `ParamStore` is available — chiefly tests, and the
+    /// pre-connect state of the `Connection` before [`from_params`](Self::from_params)
+    /// resolves the configured values.
+    fn default() -> Self {
+        Self {
+            login_timeout: Some(Duration::from_secs(120)),
+            query_timeout: None,
+            connect_timeout: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -294,8 +365,6 @@ mod tests {
 
     #[test]
     fn http_and_put_get_derive_from_the_common_backoff() {
-        // Empty params: both pipelines share the common default curve and
-        // differ only in their total budget.
         let http = RetryPolicy::http(&ParamStore::new());
         let put_get = RetryPolicy::put_get(&ParamStore::new());
         for b in [&http.backoff, &put_get.backoff] {
@@ -304,8 +373,10 @@ mod tests {
             assert_eq!(b.factor, 2.0);
             assert!(matches!(b.jitter, Jitter::Decorrelated));
         }
-        assert_eq!(http.max_elapsed, Duration::from_secs(120));
-        assert_eq!(put_get.max_elapsed, Duration::from_secs(600));
+        // http() has no internal deadline (caller uses operation timeout).
+        assert_eq!(http.max_elapsed, None);
+        // put_get() keeps a self-contained 600s budget for cloud transfer modules.
+        assert_eq!(put_get.max_elapsed, Some(Duration::from_secs(600)));
 
         // A configured override (single shared param set) reaches both.
         let store = params(&[(
@@ -351,9 +422,7 @@ mod tests {
     fn put_get_reads_extra_status_codes() {
         let policy = RetryPolicy::put_get(&store_with_status_codes("404,425"));
         assert_eq!(policy.extra_retryable_statuses, status_set(&[404, 425]));
-        // put_get keeps its larger total budget; the backoff shape is covered
-        // by `http_and_put_get_derive_from_the_common_backoff`.
-        assert_eq!(policy.max_elapsed, Duration::from_secs(600));
+        assert_eq!(policy.max_elapsed, Some(Duration::from_secs(600)));
     }
 
     #[test]
