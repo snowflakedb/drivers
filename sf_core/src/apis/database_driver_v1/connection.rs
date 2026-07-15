@@ -362,6 +362,7 @@ impl DatabaseDriverV1 {
                 let http_client = crate::tls::create_tls_client_with_proxy(
                     config.tls.clone(),
                     Some(&config.proxy),
+                    self.crl_worker.clone(),
                 )
                 .context(TlsClientCreationSnafu)?;
                 let login_parameters = LoginParameters::from_connection_config(

@@ -7,6 +7,7 @@ use super::connection::{Connection, WrapperIdentity};
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
+use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::LogManager;
@@ -83,6 +84,10 @@ pub struct DriverProviders {
     /// interactive-auth prompts against the same lock entries.  Production code
     /// always uses `..Default::default()` and gets a fresh map.
     pub prompt_locks: Option<Arc<PromptLockMap>>,
+    /// Inject a shared lazy CRL worker so that multiple `DatabaseDriverV1`
+    /// instances reuse the same background thread. Production code always uses
+    /// `..Default::default()` and gets a fresh lazy handle.
+    pub crl_worker: Option<SharedCrlWorker>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -98,6 +103,8 @@ pub struct DatabaseDriverV1 {
     /// Process-global per-`(host, user, token-type)` prompt locks.
     /// Shared across all connections on this driver instance.
     pub(crate) prompt_locks: Arc<PromptLockMap>,
+    /// Lazy CRL worker shared across all connections on this driver instance.
+    pub(crate) crl_worker: SharedCrlWorker,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -125,6 +132,7 @@ impl DatabaseDriverV1 {
             prompt_locks: providers
                 .prompt_locks
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
+            crl_worker: providers.crl_worker.unwrap_or_else(CrlWorker::new_lazy),
         }
     }
 
@@ -238,6 +246,24 @@ mod tests {
         assert!(
             std::ptr::eq(first, second),
             "token_cache() should return the same instance on repeated calls"
+        );
+    }
+
+    #[test]
+    fn crl_worker_lazy_init_succeeds() {
+        let driver = DatabaseDriverV1::new();
+        let worker = driver.crl_worker.clone();
+        assert!(Arc::strong_count(&worker) >= 1);
+    }
+
+    #[test]
+    fn crl_worker_returns_same_instance() {
+        let driver = DatabaseDriverV1::new();
+        let first = driver.crl_worker.clone();
+        let second = driver.crl_worker.clone();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "crl_worker field should return the same Arc on repeated clones"
         );
     }
 

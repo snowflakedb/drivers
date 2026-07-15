@@ -89,17 +89,25 @@ mod integration_tests {
         }
     }
 
+    use crate::apis::database_driver_v1::DatabaseDriverV1;
+
     #[tokio::test]
     async fn test_tls_client_creation_with_different_modes() {
+        let driver = DatabaseDriverV1::new();
+        let crl_worker = driver.crl_worker.clone();
+
         // Test disabled mode
         let config = CrlConfig {
             check_mode: CertRevocationCheckMode::Disabled,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client_with_config(TlsConfig {
-            crl_config: config,
-            ..Default::default()
-        })
+        let client = crate::tls::create_tls_client_with_config(
+            TlsConfig {
+                crl_config: config,
+                ..Default::default()
+            },
+            crl_worker.clone(),
+        )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
 
@@ -108,10 +116,13 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Enabled,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client_with_config(TlsConfig {
-            crl_config: config,
-            ..Default::default()
-        })
+        let client = crate::tls::create_tls_client_with_config(
+            TlsConfig {
+                crl_config: config,
+                ..Default::default()
+            },
+            crl_worker.clone(),
+        )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
 
@@ -120,10 +131,13 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Advisory,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client_with_config(TlsConfig {
-            crl_config: config,
-            ..Default::default()
-        })
+        let client = crate::tls::create_tls_client_with_config(
+            TlsConfig {
+                crl_config: config,
+                ..Default::default()
+            },
+            crl_worker,
+        )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
     }

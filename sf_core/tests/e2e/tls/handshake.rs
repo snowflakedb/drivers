@@ -74,7 +74,9 @@ async fn should_complete_handshake_with_default_roots() {
     let server_url = std::env::var("E2E_TLS_SERVER").unwrap_or("https://example.com".to_string());
 
     // When GET request is sent to the server URL
-    let client = create_tls_client_with_config(TlsConfig::default()).expect("client");
+    let client =
+        create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlWorker::shared_lazy())
+            .expect("client");
     let resp = client.get(server_url).send().await;
 
     // Then the request attempt should be successful
@@ -90,7 +92,8 @@ async fn should_complete_handshake_with_custom_pem_roots() {
             custom_root_store_path: Some(pem_path.into()),
             ..Default::default()
         };
-        let client = create_tls_client_with_config(cfg).expect("client");
+        let client = create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy())
+            .expect("client");
         let server_url =
             std::env::var("E2E_TLS_SERVER").unwrap_or("https://example.com".to_string());
 
@@ -112,7 +115,8 @@ async fn should_trust_custom_root_store_when_crl_disabled() {
         custom_root_store_path: Some(pem_file.path().to_path_buf()),
         ..Default::default()
     };
-    let client = create_tls_client_with_config(cfg).expect("client");
+    let client =
+        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
     let resp = client.get(format!("https://localhost:{port}")).send().await;
 
     // Then the handshake succeeds because the custom root store is applied
@@ -135,7 +139,8 @@ async fn should_skip_hostname_verification_when_disabled() {
         verify_hostname: false,
         ..Default::default()
     };
-    let client = create_tls_client_with_config(cfg).expect("client");
+    let client =
+        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
     let resp = client.get(format!("https://127.0.0.1:{port}")).send().await;
 
     // Then the handshake succeeds despite hostname mismatch
@@ -150,7 +155,9 @@ async fn should_skip_hostname_verification_when_disabled() {
         verify_hostname: true,
         ..Default::default()
     };
-    let client_strict = create_tls_client_with_config(cfg_strict).expect("client");
+    let client_strict =
+        create_tls_client_with_config(cfg_strict, sf_core::crl::CrlWorker::shared_lazy())
+            .expect("client");
     let resp_strict = client_strict
         .get(format!("https://127.0.0.1:{port}"))
         .send()

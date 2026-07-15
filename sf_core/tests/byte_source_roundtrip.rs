@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
@@ -221,6 +224,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
             storage_account: None,
         },
         encryption_material: Some(material),
@@ -362,6 +366,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_regional_url: false,
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
+                crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
                 storage_account: None,
             };
             sf_core::file_manager::internal::download_from_gcs_streaming(
@@ -397,6 +402,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_regional_url: false,
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
+                crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
                 storage_account: Some("mystorageaccount".to_string()),
             };
             sf_core::file_manager::internal::download_from_azure_streaming(
@@ -518,6 +524,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     };
 

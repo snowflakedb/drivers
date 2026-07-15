@@ -32,6 +32,7 @@ use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
+use crate::crl::worker::SharedCrlWorker;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
@@ -708,27 +709,6 @@ pub async fn auth_request_data(
     Ok(data)
 }
 
-#[tracing::instrument(
-    skip(login_parameters, session_parameters),
-    fields(account_name, login_name)
-)]
-pub async fn snowflake_login(
-    login_parameters: &LoginParameters,
-    session_parameters: Option<&HashMap<String, String>>,
-) -> Result<LoginResult, RestError> {
-    let client = build_tls_http_client(&login_parameters.client_info)?;
-    let policy = RetryPolicy::default();
-    snowflake_login_with_client(
-        &client,
-        login_parameters,
-        session_parameters,
-        None,
-        None,
-        &policy,
-    )
-    .await
-}
-
 async fn send_login_request(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -821,6 +801,28 @@ async fn send_login_request(
 struct DPoPSigner {
     key: std::sync::Arc<oauth::dpop::DPoPKey>,
     url: std::sync::Arc<Url>,
+}
+
+#[tracing::instrument(
+    skip(login_parameters, session_parameters, crl_worker),
+    fields(account_name, login_name)
+)]
+pub async fn snowflake_login(
+    login_parameters: &LoginParameters,
+    session_parameters: Option<&HashMap<String, String>>,
+    crl_worker: SharedCrlWorker,
+) -> Result<LoginResult, RestError> {
+    let client = build_tls_http_client(&login_parameters.client_info, crl_worker)?;
+    let policy = RetryPolicy::default();
+    snowflake_login_with_client(
+        &client,
+        login_parameters,
+        session_parameters,
+        None,
+        None,
+        &policy,
+    )
+    .await
 }
 
 #[tracing::instrument(
@@ -1445,14 +1447,18 @@ pub async fn token_request(
     })
 }
 
-#[tracing::instrument(skip(query_parameters, session_token, query_input), fields(sql))]
+#[tracing::instrument(
+    skip(query_parameters, session_token, query_input, crl_worker),
+    fields(sql)
+)]
 pub async fn snowflake_query<'a>(
     query_parameters: QueryParameters,
     session_token: impl AsRef<str>,
     query_input: QueryInput<'a>,
     execution_mode: QueryExecutionMode,
+    crl_worker: SharedCrlWorker,
 ) -> Result<query_response::Response, RestError> {
-    let client = build_tls_http_client(&query_parameters.client_info)?;
+    let client = build_tls_http_client(&query_parameters.client_info, crl_worker)?;
     let policy = RetryPolicy::default();
     snowflake_query_with_client(
         &client,
@@ -2135,10 +2141,14 @@ where
 }
 
 #[track_caller]
-fn build_tls_http_client(client_info: &ClientInfo) -> Result<reqwest::Client, RestError> {
+fn build_tls_http_client(
+    client_info: &ClientInfo,
+    crl_worker: SharedCrlWorker,
+) -> Result<reqwest::Client, RestError> {
     create_tls_client_with_proxy(
         client_info.tls_config.clone(),
         Some(&client_info.proxy_config),
+        crl_worker,
     )
     .context(CrlValidationSnafu)
 }

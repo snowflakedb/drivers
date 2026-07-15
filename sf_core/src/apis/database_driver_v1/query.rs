@@ -85,6 +85,7 @@ pub(super) async fn perform_put_get_transfer(
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
     tls_config: crate::tls::config::TlsConfig,
+    crl_worker: crate::crl::worker::SharedCrlWorker,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -108,6 +109,7 @@ pub(super) async fn perform_put_get_transfer(
                 )
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
+            file_upload_data.stage_info.crl_worker = crl_worker.clone();
             let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
                 .await
                 .context(FileUploadSnafu)?;
@@ -127,6 +129,7 @@ pub(super) async fn perform_put_get_transfer(
                     }
                 })?;
             file_download_data.stage_info.tls_config = tls_config;
+            file_download_data.stage_info.crl_worker = crl_worker;
             let download_results =
                 download_files(file_download_data, retry_policy, refresher_handle)
                     .await

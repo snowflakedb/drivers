@@ -270,6 +270,9 @@ pub struct StageInfo {
     /// the transfer call chain. Set from the connection's `TlsConfig` in
     /// `perform_put_get_transfer`; defaults to `TlsConfig::default()` elsewhere.
     pub tls_config: TlsConfig,
+    /// Driver-owned lazy CRL worker for storage TLS clients. Set alongside
+    /// `tls_config` in `perform_put_get_transfer`.
+    pub crl_worker: crate::crl::worker::SharedCrlWorker,
 }
 
 impl StageInfo {

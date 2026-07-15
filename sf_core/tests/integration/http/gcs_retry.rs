@@ -40,6 +40,7 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     }
 }
@@ -60,6 +61,7 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     }
 }
@@ -770,6 +772,7 @@ fn gcs_stage_presigned_only_no_stage_url() -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     }
 }
