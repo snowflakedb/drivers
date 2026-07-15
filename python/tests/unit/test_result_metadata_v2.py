@@ -5,7 +5,7 @@ from the proto dimension field, _is_nullable is a private attr (Snowpark reads
 it directly), and fields is always None (proto limitation).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -152,16 +152,6 @@ class TestResultMetadataV2Equality:
         a = ResultMetadataV2(name="x", type_code=7, is_nullable=False, vector_dimension=3)
         b = ResultMetadataV2(name="x", type_code=7, is_nullable=False, vector_dimension=4)
         assert a != b
-
-
-@pytest.fixture(autouse=True)
-def _no_native_stream_ops():
-    """Prevent QueryResult from touching real native memory in unit tests."""
-    with (
-        patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
-        patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"),
-    ):
-        yield
 
 
 @pytest.fixture

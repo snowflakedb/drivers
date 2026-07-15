@@ -30,16 +30,6 @@ from snowflake.connector.cursor import QueryResultStats, ResultMetadataV2, Snowf
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
-@pytest.fixture(autouse=True)
-def _no_native_stream_ops():
-    """Prevent QueryResult from touching real native memory in unit tests."""
-    with (
-        patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
-        patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"),
-    ):
-        yield
-
-
 @pytest.fixture
 def mock_core_client():
     """Provide a MagicMock patched into core_driver.client for cursor tests."""
