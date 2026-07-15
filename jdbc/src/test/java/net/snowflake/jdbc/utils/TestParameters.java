@@ -123,7 +123,7 @@ public class TestParameters {
    * Configures key pair (SNOWFLAKE_JWT) auth using SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS. Preferred
    * over password auth on accounts that enforce MFA for password logins.
    */
-  public static Properties withPrivateKeyAuth(Properties props) {
+  private static Properties withPrivateKeyAuth(Properties props) {
     props.setProperty("user", get("SNOWFLAKE_TEST_USER"));
     String pemContent = String.join("\n", getList("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS"));
     props.setProperty(
@@ -138,14 +138,11 @@ public class TestParameters {
   }
 
   /**
-   * Returns props configured with the best available auth: key pair when
-   * SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS is present (avoids MFA errors on strict accounts), password
-   * otherwise.
+   * Returns props configured with key pair (SNOWFLAKE_JWT) auth using
+   * SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS.
    */
   public static Properties withDefaultAuth(Properties props) {
-    return has("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")
-        ? withPrivateKeyAuth(props)
-        : withSnowflakeAuth(props);
+    return withPrivateKeyAuth(props);
   }
 
   public static String buildJdbcUrl() {

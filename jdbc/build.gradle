@@ -246,7 +246,7 @@ def configureCommonTestTask = { t ->
             excludeTags.split(',').each { tag -> it.excludeTags tag.trim() }
         }
         if (!includeTags && !excludeTags) {
-            it.excludeTags 'requires_browser'
+            it.excludeTags 'requires_browser', 'requires_no_mfa'
         }
     }
     t.minHeapSize = '1g'
