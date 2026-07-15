@@ -60,6 +60,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     client_store_temporary_credential: bool | None = False
     """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""
 
+    connect_timeout: int | None = None
+    """TCP connect timeout in seconds for the HTTP client (0 or absent = system default)"""
+
     connection_diag_allowlist_path: str | None = None
     """Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()"""
 

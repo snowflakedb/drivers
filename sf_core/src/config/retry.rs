@@ -240,6 +240,22 @@ fn parse_extra_statuses(params: &ParamStore) -> BTreeSet<u16> {
         .unwrap_or_default()
 }
 
+// ── Timeout configuration helpers ──────────────────────────────────────
+
+/// Read an optional positive-seconds duration from the [`ParamStore`].
+///
+/// Returns `None` when absent, zero, or negative — zero semantically means
+/// "no timeout" throughout the timeout configuration surface.
+fn read_optional_duration_secs(
+    params: &ParamStore,
+    key: super::param_registry::ParamKey,
+) -> Option<Duration> {
+    params
+        .get_int(key)
+        .filter(|v| *v > 0)
+        .map(|v| Duration::from_secs(v as u64))
+}
+
 /// Resolved operation-level timeout configuration.
 ///
 /// Built from the `ParamStore` once and carried through the connection
@@ -268,12 +284,13 @@ pub struct TimeoutConfig {
 impl TimeoutConfig {
     /// Resolve the timeout configuration from connection parameters.
     ///
-    /// Returns [`Self::default`] in this PR; the per-field reads (`login_timeout`,
-    /// `query_timeout`, `connect_timeout`, …) and the call site that stores the
-    /// result on the `Connection` are wired up in the follow-up PRs of this stack.
-    // TODO(SNOW-2872502): populate fields from params and call this at connect.
-    pub fn from_params(_params: &ParamStore) -> Self {
-        Self::default()
+    /// Fields are wired up progressively across this stack; any parameter not
+    /// yet read falls back to [`Self::default`].
+    pub fn from_params(params: &ParamStore) -> Self {
+        Self {
+            connect_timeout: read_optional_duration_secs(params, param_names::CONNECT_TIMEOUT),
+            ..Self::default()
+        }
     }
 }
 

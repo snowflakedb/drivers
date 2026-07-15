@@ -150,6 +150,8 @@ pub mod param_names {
     // `use_s3_regional_url` connection attribute).
     pub const USE_S3_REGIONAL_URL: ParamKey = ParamKey("use_s3_regional_url");
     pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
+    // ── Timeout configuration ──────────────────────────────────────────
+    pub const CONNECT_TIMEOUT: ParamKey = ParamKey("connect_timeout");
     // Proxy configuration
     pub const PROXY_HOST: ParamKey = ParamKey("proxy_host");
     pub const PROXY_PORT: ParamKey = ParamKey("proxy_port");
@@ -1302,6 +1304,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    // ── Timeout configuration ─────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::CONNECT_TIMEOUT.as_str(),
+        aliases: &["CONNECT_TIMEOUT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "TCP connect timeout in seconds for the HTTP client (0 or absent = system default)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
         mutable_after_connect: false,
     },
     ParamDef {
