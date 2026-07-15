@@ -190,7 +190,21 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
     let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
 
     // Mock S3: return the valid ciphertext but with a deliberately wrong digest.
+    // S3 HEADs first (for size + metadata) then GETs the body; the tampered
+    // digest rides on both so the decrypt step sees it.
     let mock_server = MockServer::start().await;
+    let cipher_len = ciphertext.len();
+    Mock::given(method("HEAD"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-length", cipher_len.to_string())
+                .insert_header("x-amz-meta-sfc-digest", "BAADBAADBAADBAAD")
+                .insert_header("x-amz-meta-x-amz-matdesc", mat_desc_json.as_str())
+                .insert_header("x-amz-meta-x-amz-key", enc_meta.encrypted_key.as_str())
+                .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str()),
+        )
+        .mount(&mock_server)
+        .await;
     Mock::given(method("GET"))
         .respond_with(
             ResponseTemplate::new(200)
