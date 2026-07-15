@@ -140,9 +140,13 @@ rules:
 
       **REQUIREMENT**: Each module/domain MUST define its own error enum rather than propagating or reusing error types from unrelated layers. Do not use `RestError` for encryption failures, `ConfigError` for TLS issues, or `ApiError` for internal parsing logic. Create a focused error type for the domain (e.g., `EncryptionError`, `CrlError`) and wrap it via a Snafu variant in the parent error type.
 
-      Error variant naming MUST use past-tense failure descriptions: `Base64DecodeFailed`, `ConfigFileRead`, `CrlDownload` -- NOT gerunds or generic suffixes like `Base64Error`, `ConfigReadError`, `DownloadError`.
+      **VARIANT NAMING**: Name a variant after the operation or condition it represents, as a noun phrase. Never append an `Error` suffix -- the enum is already an error -- and skip the `Failed` suffix; the operation name alone conveys the failure.
 
-      **SCOPE SEPARATION**: Distinguish behavioral violations (wrong error type reused across layers, incorrect error mapping semantics) from naming-only violations (variant suffix like `HttpError` vs `HttpRequestFailed`). Behavioral violations are High priority. Naming-only violations are Low priority style feedback.
+      - **Operation failures**: name after the operation/process. Examples: `CrlDownload`, `ConfigFileRead`, `Base64Decode`, `Communication`, `Decompression`. Prefer the verb-object form (`CrlParse`) over the gerund (`CrlParsing`) so a domain stays consistent.
+      - **Condition/state errors**: use a descriptive noun, usually with an adjective. Examples: `InvalidArgument`, `MissingParameter`, `UnsupportedType`, `TokenExpired`, `PermissionDenied`.
+      - Avoid generic suffixes like `Base64Error`, `ConfigReadError`, `DownloadError`.
+
+      **SCOPE SEPARATION**: Distinguish behavioral violations (wrong error type reused across layers, incorrect error mapping semantics) from naming-only violations (variant suffix like `HttpError` vs `HttpRequest`). Behavioral violations are High priority. Naming-only violations are Low priority style feedback.
 
       **PRE-EXISTING PATTERN CHECK**: Before flagging a naming-only violation, check sibling modules in the same directory and parent module for the same pattern. If the identical naming convention already exists in pre-existing code (not introduced in the current PR), do NOT flag the new code in isolation. Either skip the comment entirely, or note: "This matches the existing pattern in `<sibling-file>.rs`; consider fixing both together in a follow-up."
 
@@ -163,7 +167,7 @@ rules:
       #[derive(Debug, Snafu, error_trace::ErrorTrace)]
       pub enum EncryptionError {
           #[snafu(display("Base64 decode failed: {source}"))]
-          Base64DecodeFailed {
+          Base64Decode {
               source: base64::DecodeError,
               #[snafu(implicit)]
               location: Location,
