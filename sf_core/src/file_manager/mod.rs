@@ -807,12 +807,27 @@ pub async fn download_single_file(
                                 }
                             }
                         }
-                        // Client expects CSE (it has encryption material) but the
-                        // object carried no CSE headers — a server/contract error.
-                        (Some(_), None) => MissingDecryptionMetadataSnafu {
-                            detail: "encryption metadata headers missing from downloaded file",
+                        // enc_material present but no cloud CSE headers — git stage
+                        // objects on GCS carry key-wrap headers but no sfc-digest
+                        // (uploaded by Snowflake's git integration, not this driver).
+                        // Fall through to raw bytes, matching the S3 behaviour.
+                        (Some(_), None) => {
+                            tracing::debug!("encryption_material present but GCS CSE headers absent; writing raw bytes");
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match std::io::copy(&mut { reader }, &mut output_file) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n as i64)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(IoSnafu)
+                                }
+                            }
                         }
-                        .fail(),
                         (None, _) => {
                             let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
                             match std::io::copy(&mut { reader }, &mut output_file) {
@@ -889,12 +904,27 @@ pub async fn download_single_file(
                                 }
                             }
                         }
-                        // Client expects CSE (it has encryption material) but the
-                        // object carried no CSE headers — a server/contract error.
-                        (Some(_), None) => MissingDecryptionMetadataSnafu {
-                            detail: "encryption metadata headers missing from downloaded file",
+                        // enc_material present but no cloud CSE headers — git stage
+                        // objects on Azure carry key-wrap headers but no sfcdigest
+                        // (uploaded by Snowflake's git integration, not this driver).
+                        // Fall through to raw bytes, matching the S3 behaviour.
+                        (Some(_), None) => {
+                            tracing::debug!("encryption_material present but Azure CSE headers absent; writing raw bytes");
+                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            match std::io::copy(&mut { reader }, &mut output_file) {
+                                Ok(n) => {
+                                    drop(output_file);
+                                    finalize_rename(&partial_path2, &output_path2)
+                                        .context(IoSnafu)?;
+                                    Ok(n as i64)
+                                }
+                                Err(e) => {
+                                    drop(output_file);
+                                    warn_remove_partial(&partial_path2);
+                                    Err(e).context(IoSnafu)
+                                }
+                            }
                         }
-                        .fail(),
                         (None, _) => {
                             let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
                             match std::io::copy(&mut { reader }, &mut output_file) {
