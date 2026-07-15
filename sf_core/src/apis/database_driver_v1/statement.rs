@@ -352,26 +352,41 @@ impl DatabaseDriverV1 {
             query_parameters: query_parameter_map,
         };
 
+        // Pair the budget with its deadline in one `Option` so the timeout arm
+        // has the budget without an `unwrap()`.
+        let query_deadline = {
+            let conn = conn_arc.lock().await;
+            conn.timeout_config.query_timeout
+        }
+        .map(|budget| (budget, tokio::time::Instant::now() + budget));
+
         let response = {
             let mut ctx = RefreshContext::from_arc(&conn_arc).await?;
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_query_with_client(
+                let query_call = snowflake_query_with_client(
                     &http_client,
                     query_parameters.clone(),
                     session_token.reveal(),
                     query_input.clone(),
                     &retry_policy,
                     execution_mode,
-                )
-                .await
-                {
-                    Ok(result) => break Ok(result),
+                );
+                let result = if let Some((budget, deadline)) = query_deadline {
+                    match tokio::time::timeout_at(deadline, query_call).await {
+                        Ok(inner) => inner,
+                        Err(_) => return Err(QueryTimeoutSnafu { budget }.build()),
+                    }
+                } else {
+                    query_call.await
+                };
+                match result {
+                    Ok(result) => break result,
                     Err(e) => last_error = Some(e),
                 }
             }
-        }?;
+        };
 
         if response.success {
             let conn = conn_arc.lock().await;

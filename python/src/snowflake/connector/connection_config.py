@@ -246,6 +246,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     put_get_max_attempts: int | None = 6
     """Maximum total attempts for a single PUT/GET file transfer (1 = no retry). Default: 6"""
 
+    query_timeout: int | None = 0
+    """Wall-clock timeout in seconds for query execution including retries (0 = no timeout). Default: 0"""
+
     retry_backoff_base_ms: int | None = 250
     """Initial exponential-backoff delay in milliseconds between retry attempts. Default: 250"""
 

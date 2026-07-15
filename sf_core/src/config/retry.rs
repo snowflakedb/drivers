@@ -1,7 +1,7 @@
 use super::param_registry::{
-    DEFAULT_LOGIN_TIMEOUT_SECS, DEFAULT_PUT_GET_MAX_ATTEMPTS, DEFAULT_RETRY_BACKOFF_BASE_MS,
-    DEFAULT_RETRY_BACKOFF_CAP_MS, DEFAULT_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_MAX_ATTEMPTS,
-    param_names,
+    DEFAULT_LOGIN_TIMEOUT_SECS, DEFAULT_PUT_GET_MAX_ATTEMPTS, DEFAULT_QUERY_TIMEOUT_SECS,
+    DEFAULT_RETRY_BACKOFF_BASE_MS, DEFAULT_RETRY_BACKOFF_CAP_MS, DEFAULT_RETRY_BACKOFF_FACTOR,
+    DEFAULT_RETRY_MAX_ATTEMPTS, param_names,
 };
 use super::param_store::ParamStore;
 use std::collections::BTreeSet;
@@ -285,13 +285,13 @@ pub struct TimeoutConfig {
 impl TimeoutConfig {
     /// Resolve the timeout configuration from connection parameters.
     ///
-    /// Fields are wired up progressively across this stack; any parameter not
-    /// yet read falls back to [`Self::default`].
+    /// Each field interprets a configured `0` (or an absent parameter) as
+    /// "no timeout" (`None`) via [`read_optional_duration_secs`].
     pub fn from_params(params: &ParamStore) -> Self {
         Self {
             login_timeout: read_optional_duration_secs(params, param_names::LOGIN_TIMEOUT),
+            query_timeout: read_optional_duration_secs(params, param_names::QUERY_TIMEOUT),
             connect_timeout: read_optional_duration_secs(params, param_names::CONNECT_TIMEOUT),
-            ..Self::default()
         }
     }
 }
@@ -303,7 +303,11 @@ impl Default for TimeoutConfig {
     fn default() -> Self {
         Self {
             login_timeout: Some(Duration::from_secs(DEFAULT_LOGIN_TIMEOUT_SECS)),
-            query_timeout: None,
+            query_timeout: if DEFAULT_QUERY_TIMEOUT_SECS == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(DEFAULT_QUERY_TIMEOUT_SECS))
+            },
             connect_timeout: None,
         }
     }
@@ -455,5 +459,16 @@ mod tests {
         // Empty tokens, garbage, out-of-range (<100 and >599), and overflow are dropped.
         let policy = RetryPolicy::http(&store_with_status_codes("404,abc,,600,99,700000"));
         assert_eq!(policy.extra_retryable_statuses, status_set(&[404]));
+    }
+
+    #[test]
+    fn timeout_config_zero_means_no_timeout() {
+        let store = params(&[
+            (param_names::LOGIN_TIMEOUT.as_str(), Setting::Int(0)),
+            (param_names::QUERY_TIMEOUT.as_str(), Setting::Int(0)),
+        ]);
+        let tc = TimeoutConfig::from_params(&store);
+        assert_eq!(tc.login_timeout, None);
+        assert_eq!(tc.query_timeout, None);
     }
 }
