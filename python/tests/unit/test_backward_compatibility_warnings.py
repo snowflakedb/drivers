@@ -277,6 +277,36 @@ class TestResultBatchModuleIntegration:
         assert issubclass(JSONResultBatch, ResultBatch)
 
 
+class TestSecretDetectorModuleIntegration:
+    """``secret_detector`` ships ``SecretDetector`` only for Snowpark parity, so
+    resolving it must warn once per process yet stay a usable ``logging.Formatter``."""
+
+    def test_secret_detector_warns_once_on_import(self):
+        import snowflake.connector.secret_detector as secret_detector_module
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            first = secret_detector_module.SecretDetector
+            second = secret_detector_module.SecretDetector  # second access: deduped
+            assert first is second
+
+        bc_warnings = [
+            w for w in caught if issubclass(w.category, DeprecationWarning) and "SecretDetector" in str(w.message)
+        ]
+        assert len(bc_warnings) == 1, [str(w.message) for w in caught]
+
+    def test_masked_message_data_helper_does_not_warn(self):
+        """The undecorated ``MaskedMessageData`` helper stays a plain global."""
+        import snowflake.connector.secret_detector as secret_detector_module
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _ = secret_detector_module.MaskedMessageData
+
+        bc_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert bc_warnings == []
+
+
 class TestCallTimeWarning:
     """``@backward_compatibility`` on a function should warn on first external
     call, stay silent for internal callers, and share the dedup slot with the
