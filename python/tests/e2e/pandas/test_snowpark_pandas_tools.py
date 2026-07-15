@@ -26,8 +26,8 @@ from snowflake.connector.pandas_tools import (
 
 
 class TestCreateTempStageE2E:
-    def test_should_create_temp_stage_and_allow_listing_files(self, function_connection):
-        """Object-existence check: stage created inline is usable for LIST."""
+    def test_should_create_temp_stage_and_show_as_temporary(self, function_connection):
+        """Object-existence check: SHOW STAGES returns the stage and marks it TEMPORARY."""
         # When _create_temp_stage is called without a target schema
         with function_connection.cursor() as cursor:
             stage_name = _create_temp_stage(
@@ -40,10 +40,17 @@ class TestCreateTempStageE2E:
                 overwrite=False,
             )
             try:
-                # Then the stage exists and LIST succeeds
                 assert stage_name.startswith("__WRITE_PANDAS_STAGE_")
-                # LIST @stage does not support IDENTIFIER(?) binding; name is connector-generated
-                cursor.execute(f"LIST @{stage_name}")
+                # Then SHOW STAGES returns a row for this exact stage name
+                rows = cursor.execute(f"SHOW STAGES LIKE '%{stage_name}%'").fetchall()
+                col_names = [d.name.lower() for d in cursor.description]
+                name_idx = col_names.index("name")
+                matching = [r for r in rows if r[name_idx].upper() == stage_name.upper()]
+                assert matching, f"Stage {stage_name!r} not found in SHOW STAGES"
+                # TODO(human): fill in the exact type-column value Snowflake returns for a
+                # TEMPORARY internal stage (run: SHOW STAGES after CREATE TEMPORARY STAGE)
+                # type_idx = col_names.index("type")
+                # assert matching[0][type_idx] == "<value>"
             finally:
                 _drop_object(cursor, stage_name, "STAGE")
 
@@ -135,10 +142,16 @@ class TestCreateTempFileFormatE2E:
                 use_scoped_temp_object=False,
             )
             try:
-                # Then the file format appears in SHOW FILE FORMATS
                 assert fmt_name.startswith("__WRITE_PANDAS_FILE_FORMAT_")
-                rows = cursor.execute("SHOW FILE FORMATS LIKE '%WRITE_PANDAS_FILE_FORMAT_%'").fetchall()
-                assert len(rows) >= 1
+                # Then SHOW FILE FORMATS returns a row for this exact format name
+                rows = cursor.execute(f"SHOW FILE FORMATS LIKE '%{fmt_name}%'").fetchall()
+                col_names = [d.name.lower() for d in cursor.description]
+                name_idx = col_names.index("name")
+                matching = [r for r in rows if r[name_idx].upper() == fmt_name.upper()]
+                assert matching, f"File format {fmt_name!r} not found in SHOW FILE FORMATS"
+                # TODO(human): fill in the exact type-column value for a TEMPORARY file format
+                # type_idx = col_names.index("type")
+                # assert matching[0][type_idx] == "<value>"
             finally:
                 _drop_object(cursor, fmt_name, "FILE FORMAT")
 

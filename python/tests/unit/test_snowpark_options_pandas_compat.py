@@ -111,6 +111,12 @@ class TestFileFormatSql:
         assert not sql.endswith(" ")
         assert "USE_LOGICAL_TYPE" not in sql
 
+    def test_name_is_bound_via_identifier_not_inline(self):
+        sql, params = _file_format_sql("__WRITE_PANDAS_FILE_FORMAT_abc123", "gzip")
+        assert "IDENTIFIER(?)" in sql
+        assert params == ("__WRITE_PANDAS_FILE_FORMAT_abc123",)
+        assert "__WRITE_PANDAS_FILE_FORMAT_abc123" not in sql
+
 
 # ---------------------------------------------------------------------------
 # _create_temp_stage — orchestration (mock cursor)
@@ -121,8 +127,9 @@ class TestCreateTempStage:
     def test_returns_qualified_name_on_success(self):
         cursor = _mock_cursor()
         result = _create_temp_stage(cursor, "db", "sc", False, "gzip", False, False)
-        assert "." in result  # qualified: db.sc.<name>
         assert result.startswith("db.sc.")
+        cursor.execute.assert_called_once()
+        assert cursor.execute.call_args[1]["params"] == (result,)
 
     def test_falls_back_to_bare_name_on_programming_error(self):
         cursor = _mock_cursor(fail_first=True)
@@ -165,6 +172,8 @@ class TestCreateTempFileFormat:
         cursor = _mock_cursor()
         result = _create_temp_file_format(cursor, "db", "sc", False, "gzip", "", False)
         assert result.startswith("db.sc.")
+        cursor.execute.assert_called_once()
+        assert cursor.execute.call_args[1]["params"] == (result,)
 
     def test_falls_back_to_bare_name_on_programming_error(self):
         cursor = _mock_cursor(fail_first=True)
