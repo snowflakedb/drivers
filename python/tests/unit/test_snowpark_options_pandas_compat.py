@@ -4,9 +4,8 @@ Covers:
 - _stage_sql / _file_format_sql: pure SQL builder functions (no cursor)
 - _create_temp_stage / _create_temp_file_format: orchestration with mock cursor
 
-These are the functions Snowpark's analyzer_utils calls directly — they embed the
-object name inline in SQL (not via IDENTIFIER(?)) unlike WritePandasOperation's
-_build_create_stage_sql which uses bound params.
+These are the functions Snowpark's analyzer_utils calls directly.
+Both use IDENTIFIER(?) bindings, matching WritePandasOperation._build_create_stage_sql.
 """
 
 from __future__ import annotations
@@ -48,34 +47,35 @@ def _mock_cursor(*, fail_first: bool = False):
 
 class TestStageSql:
     def test_gzip_maps_to_auto_compression(self):
-        sql = _stage_sql("MY_STAGE", "gzip", False)
+        sql, _ = _stage_sql("MY_STAGE", "gzip", False)
         assert "COMPRESSION=auto" in sql
 
     def test_snappy_maps_to_snappy_compression(self):
-        sql = _stage_sql("MY_STAGE", "snappy", False)
+        sql, _ = _stage_sql("MY_STAGE", "snappy", False)
         assert "COMPRESSION=snappy" in sql
 
     def test_default_is_not_scoped(self):
-        sql = _stage_sql("MY_STAGE", "gzip", False)
+        sql, _ = _stage_sql("MY_STAGE", "gzip", False)
         assert sql.startswith("CREATE TEMPORARY STAGE")
         assert "SCOPED" not in sql
 
     def test_scoped_flag_produces_scoped_temporary(self):
-        sql = _stage_sql("MY_STAGE", "gzip", False, use_scoped=True)
+        sql, _ = _stage_sql("MY_STAGE", "gzip", False, use_scoped=True)
         assert "CREATE SCOPED TEMPORARY STAGE" in sql
 
     def test_binary_as_text_false_when_true(self):
-        sql = _stage_sql("MY_STAGE", "gzip", True)
+        sql, _ = _stage_sql("MY_STAGE", "gzip", True)
         assert "BINARY_AS_TEXT=FALSE" in sql
 
     def test_no_binary_as_text_when_false(self):
-        sql = _stage_sql("MY_STAGE", "gzip", False)
+        sql, _ = _stage_sql("MY_STAGE", "gzip", False)
         assert "BINARY_AS_TEXT" not in sql
 
-    def test_name_is_embedded_inline_not_parameterized(self):
-        sql = _stage_sql("__WRITE_PANDAS_STAGE_abc123", "gzip", False)
-        assert "__WRITE_PANDAS_STAGE_abc123" in sql
-        assert "IDENTIFIER(?)" not in sql
+    def test_name_is_bound_via_identifier_not_inline(self):
+        sql, params = _stage_sql("__WRITE_PANDAS_STAGE_abc123", "gzip", False)
+        assert "IDENTIFIER(?)" in sql
+        assert params == ("__WRITE_PANDAS_STAGE_abc123",)
+        assert "__WRITE_PANDAS_STAGE_abc123" not in sql
 
 
 # ---------------------------------------------------------------------------
@@ -85,29 +85,29 @@ class TestStageSql:
 
 class TestFileFormatSql:
     def test_gzip_maps_to_auto_compression(self):
-        sql = _file_format_sql("MY_FF", "gzip")
+        sql, _ = _file_format_sql("MY_FF", "gzip")
         assert "COMPRESSION=auto" in sql
 
     def test_snappy_maps_to_snappy_compression(self):
-        sql = _file_format_sql("MY_FF", "snappy")
+        sql, _ = _file_format_sql("MY_FF", "snappy")
         assert "COMPRESSION=snappy" in sql
 
     def test_default_is_not_scoped(self):
-        sql = _file_format_sql("MY_FF", "gzip")
+        sql, _ = _file_format_sql("MY_FF", "gzip")
         assert sql.startswith("CREATE TEMPORARY FILE FORMAT")
         assert "SCOPED" not in sql
 
     def test_scoped_flag_produces_scoped_temporary(self):
-        sql = _file_format_sql("MY_FF", "gzip", use_scoped=True)
+        sql, _ = _file_format_sql("MY_FF", "gzip", use_scoped=True)
         assert "CREATE SCOPED TEMPORARY FILE FORMAT" in sql
 
     def test_logical_type_suffix_appended_at_end(self):
         suffix = " USE_LOGICAL_TYPE=TRUE"
-        sql = _file_format_sql("MY_FF", "gzip", use_logical_type_suffix=suffix)
+        sql, _ = _file_format_sql("MY_FF", "gzip", use_logical_type_suffix=suffix)
         assert sql.endswith(suffix)
 
     def test_empty_suffix_no_trailing_content(self):
-        sql = _file_format_sql("MY_FF", "gzip", use_logical_type_suffix="")
+        sql, _ = _file_format_sql("MY_FF", "gzip", use_logical_type_suffix="")
         assert not sql.endswith(" ")
         assert "USE_LOGICAL_TYPE" not in sql
 

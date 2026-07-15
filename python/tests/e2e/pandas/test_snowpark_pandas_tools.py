@@ -7,11 +7,12 @@ These mirror legacy connector patterns:
 
 Unlike the write_pandas e2e tests that assert on ingested data, these tests assert
 directly on the objects created by _create_temp_stage / _create_temp_file_format,
-which follow the Snowpark-specific code path (name inline, not IDENTIFIER(?)).
+which use IDENTIFIER(?) bindings via the same pattern as WritePandasOperation.
 """
 
 from __future__ import annotations
 
+from snowflake.connector._internal.write_pandas_operation import _drop_object
 from snowflake.connector.errors import ProgrammingError
 from snowflake.connector.pandas_tools import (
     _create_temp_file_format,
@@ -41,9 +42,10 @@ class TestCreateTempStageE2E:
             try:
                 # Then the stage exists and LIST succeeds
                 assert stage_name.startswith("__WRITE_PANDAS_STAGE_")
+                # LIST @stage does not support IDENTIFIER(?) binding; name is connector-generated
                 cursor.execute(f"LIST @{stage_name}")
             finally:
-                cursor.execute(f"DROP STAGE IF EXISTS {stage_name}")
+                _drop_object(cursor, stage_name, "STAGE")
 
     def test_should_emit_binary_as_text_false_for_auto_create_table(self, function_connection):
         """SQL-shape: DDL emitted to Snowflake must contain BINARY_AS_TEXT=FALSE."""
@@ -72,7 +74,7 @@ class TestCreateTempStageE2E:
                 assert ddl_calls, "No CREATE STAGE DDL was emitted"
                 assert any("BINARY_AS_TEXT=FALSE" in s for s in ddl_calls)
             finally:
-                cursor.execute(f"DROP STAGE IF EXISTS {stage_name}")
+                _drop_object(cursor, stage_name, "STAGE")
 
     def test_should_fall_back_to_bare_name_when_schema_lacks_privilege(self, function_connection):
         """Fallback: ProgrammingError on qualified DDL → bare-name stage is created and usable."""
@@ -82,13 +84,10 @@ class TestCreateTempStageE2E:
 
             def selective_execute(sql, *args, **kwargs):
                 # Intercept only CREATE STAGE DDL targeting a qualified name.
-                # A qualified name contains a dot between the schema and the bare stage
-                # name (e.g. "some_db.some_schema.__WRITE_PANDAS_STAGE_...").
-                # The bare-name retry and all other SQL (LIST, DROP) pass through.
+                # The name is now bound via IDENTIFIER(?), so check params not SQL text.
                 is_create_stage = "CREATE" in sql.upper() and "STAGE" in sql.upper()
-                # Extract the name token: last space-delimited word before FILE_FORMAT
-                name_token = sql.split("FILE_FORMAT")[0].rstrip().split()[-1]
-                if is_create_stage and "." in name_token:
+                params = kwargs.get("params", ())
+                if is_create_stage and params and "." in str(params[0]):
                     raise ProgrammingError("Insufficient privileges to create stage in target schema")
                 return real_execute(sql, *args, **kwargs)
 
@@ -108,10 +107,11 @@ class TestCreateTempStageE2E:
                 assert "." not in result, "Expected bare name, got qualified"
                 assert result.startswith("__WRITE_PANDAS_STAGE_")
                 cursor.execute = real_execute
+                # LIST @stage does not support IDENTIFIER(?) binding; name is connector-generated
                 cursor.execute(f"LIST @{result}")
             finally:
                 cursor.execute = real_execute
-                cursor.execute(f"DROP STAGE IF EXISTS {result}")
+                _drop_object(cursor, result, "STAGE")
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ class TestCreateTempFileFormatE2E:
                 rows = cursor.execute("SHOW FILE FORMATS LIKE '%WRITE_PANDAS_FILE_FORMAT_%'").fetchall()
                 assert len(rows) >= 1
             finally:
-                cursor.execute(f"DROP FILE FORMAT IF EXISTS {fmt_name}")
+                _drop_object(cursor, fmt_name, "FILE FORMAT")
 
     def test_should_apply_scoped_temporary_when_flag_set(self, function_connection):
         """SQL-shape: SCOPED TEMPORARY FILE FORMAT emitted when use_scoped_temp_object=True."""
@@ -169,4 +169,4 @@ class TestCreateTempFileFormatE2E:
                 assert any("SCOPED TEMPORARY FILE FORMAT" in s for s in ddl_calls)
             finally:
                 cursor.execute = real_execute
-                cursor.execute(f"DROP FILE FORMAT IF EXISTS {fmt_name}")
+                _drop_object(cursor, fmt_name, "FILE FORMAT")

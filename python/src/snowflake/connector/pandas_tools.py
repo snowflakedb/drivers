@@ -25,8 +25,10 @@ from ._internal.write_pandas_operation import (
     _create_temp_object,
     _file_format_sql,
     _stage_sql,
-    generate_temp_name,
     qualify_name,
+)
+from ._internal.write_pandas_operation import (
+    generate_temp_name as _generate_temp_name,
 )
 from .errors import Error, ProgrammingError
 
@@ -168,12 +170,12 @@ def _create_temp_stage(
     overwrite: bool,
     use_scoped_temp_object: bool = False,
 ) -> str:
-    name = generate_temp_name("STAGE")
+    name = _generate_temp_name("STAGE")
     qualified = qualify_name(database, schema, name, quote_identifiers)
     binary_as_text_false = auto_create_table or overwrite
     return _create_temp_object(
         cursor,
-        lambda n: (_stage_sql(n, compression, binary_as_text_false, use_scoped_temp_object), ()),
+        lambda n: _stage_sql(n, compression, binary_as_text_false, use_scoped_temp_object),
         qualified,
         name,
     )
@@ -189,11 +191,11 @@ def _create_temp_file_format(
     sql_use_logical_type: str,
     use_scoped_temp_object: bool = False,
 ) -> str:
-    name = generate_temp_name("FILE_FORMAT")
+    name = _generate_temp_name("FILE_FORMAT")
     qualified = qualify_name(database, schema, name, quote_identifiers)
     return _create_temp_object(
         cursor,
-        lambda n: (_file_format_sql(n, compression, sql_use_logical_type, use_scoped_temp_object), ()),
+        lambda n: _file_format_sql(n, compression, sql_use_logical_type, use_scoped_temp_object),
         qualified,
         name,
     )
