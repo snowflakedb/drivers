@@ -5,7 +5,7 @@ from the proto dimension field, _is_nullable is a private attr (Snowpark reads
 it directly), and fields is always None (proto limitation).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -154,16 +154,6 @@ class TestResultMetadataV2Equality:
         assert a != b
 
 
-@pytest.fixture(autouse=True)
-def _no_native_stream_ops():
-    """Prevent QueryResult from touching real native memory in unit tests."""
-    with (
-        patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
-        patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"),
-    ):
-        yield
-
-
 @pytest.fixture
 def mock_core_client():
     """Patch core_driver.client for tests that drive cursor methods."""
@@ -193,7 +183,7 @@ class TestDescribeInternal:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_connection):
+    def cursor(self, mock_connection, no_native_stream_ops):
         return SnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, mock_core_client, columns=None):

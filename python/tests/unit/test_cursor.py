@@ -30,16 +30,6 @@ from snowflake.connector.cursor import QueryResultStats, ResultMetadataV2, Snowf
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
-@pytest.fixture(autouse=True)
-def _no_native_stream_ops():
-    """Prevent QueryResult from touching real native memory in unit tests."""
-    with (
-        patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
-        patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"),
-    ):
-        yield
-
-
 @pytest.fixture
 def mock_core_client():
     """Provide a MagicMock patched into core_driver.client for cursor tests."""
@@ -1688,7 +1678,7 @@ class TestDescribe:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_connection):
+    def cursor(self, mock_connection, no_native_stream_ops):
         return SnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, mock_core_client, columns=None, query_id="", query="", sql_state=None):
@@ -2692,7 +2682,7 @@ class TestDescribeInternal:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_connection):
+    def cursor(self, mock_connection, no_native_stream_ops):
         return SnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, mock_core_client, columns=None, query_id="", query="", sql_state=None):
@@ -2826,7 +2816,7 @@ class TestAsyncDescribeInternal:
         return conn
 
     @pytest.fixture
-    def cursor(self, mock_async_core_client, mock_connection):
+    def cursor(self, mock_async_core_client, mock_connection, no_native_stream_ops):
         return AsyncSnowflakeCursor(mock_connection)
 
     def _setup_prepare(self, client, columns=None):

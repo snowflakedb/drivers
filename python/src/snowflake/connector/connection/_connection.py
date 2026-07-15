@@ -589,10 +589,7 @@ class Connection(ConnectionMixin):
 
     @snowpark_compat
     def upload_stream(self, *args: Any, **kwargs: Any) -> None:
-        """Noop stub — Snowpark calls this on the connection for streaming PUT.
-
-        File transfer is not yet supported by the Universal Driver.
-        """
+        """Not supported — file transfer is not yet implemented by the Universal Driver."""
         raise NotSupportedError("upload_stream is not yet supported by the Universal Driver.")
 
 

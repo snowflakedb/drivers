@@ -61,9 +61,8 @@ class ResultMetadata(NamedTuple):
 class ResultMetadataV2:
     """New-format column description carrying ``vector_dimension`` and ``fields``.
 
-    Replaces the ``ResultMetadataV2 = ResultMetadata`` alias. Matches the
-    legacy ``snowflake-connector-python`` ``ResultMetadataV2`` interface so
-    Snowpark can read ``.name``, ``.type_code``, ``.is_nullable``,
+    Matches the legacy ``snowflake-connector-python`` ``ResultMetadataV2``
+    interface so Snowpark can read ``.name``, ``.type_code``, ``.is_nullable``,
     ``.vector_dimension``, and ``.fields`` without connector-version guards.
 
     ``fields`` is always ``None`` — the UD proto ``ColumnMetadata`` carries no
