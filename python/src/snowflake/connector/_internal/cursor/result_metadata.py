@@ -61,9 +61,8 @@ class ResultMetadata(NamedTuple):
 class ResultMetadataV2:
     """New-format column description carrying ``vector_dimension`` and ``fields``.
 
-    Replaces the ``ResultMetadataV2 = ResultMetadata`` alias. Matches the
-    legacy ``snowflake-connector-python`` ``ResultMetadataV2`` interface so
-    Snowpark can read ``.name``, ``.type_code``, ``.is_nullable``,
+    Matches the legacy ``snowflake-connector-python`` ``ResultMetadataV2``
+    interface so Snowpark can read ``.name``, ``.type_code``, ``.is_nullable``,
     ``.vector_dimension``, and ``.fields`` without connector-version guards.
 
     ``fields`` is always ``None`` — the UD proto ``ColumnMetadata`` carries no
@@ -159,6 +158,18 @@ class ResultMetadataV2:
             and self._scale == other._scale
             and self._vector_dimension == other._vector_dimension
             and self._fields == other._fields
+        )
+
+    def _to_result_metadata_v1(self) -> ResultMetadata:
+        """Downcast to a PEP 249-compatible ``ResultMetadata`` NamedTuple."""
+        return ResultMetadata(
+            name=self._name,  # type: ignore[arg-type]  # sub-fields carry name=None (legacy parity)
+            type_code=self._type_code,
+            display_size=self._display_size,
+            internal_size=self._internal_size,
+            precision=self._precision,
+            scale=self._scale,
+            is_nullable=self._is_nullable,
         )
 
     def __repr__(self) -> str:
