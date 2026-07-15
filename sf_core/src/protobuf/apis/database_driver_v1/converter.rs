@@ -957,6 +957,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
                         source: CompressionTypeError::UnsupportedCompressionType { .. },
                         ..
                     } => StatusCode::UnsupportedCompression,
+                    // A too-large source file / stage object is an input
+                    // error, not a driver fault — surface it as
+                    // `InvalidArgument` rather than `InternalError`.
+                    s if s.is_file_too_large() => StatusCode::InvalidArgument,
                     _ => StatusCode::InternalError,
                 },
                 QueryResponseProcessingError::RemoteFileNotFound { .. } => {
