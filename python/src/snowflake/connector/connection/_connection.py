@@ -588,6 +588,7 @@ class Connection(ConnectionMixin):
     # ------------------------------------------------------------------
 
     @snowpark_compat
+    @api_telemetry
     def upload_stream(self, *args: Any, **kwargs: Any) -> None:
         """Not supported — file transfer is not yet implemented by the Universal Driver."""
         raise NotSupportedError("upload_stream is not yet supported by the Universal Driver.")
