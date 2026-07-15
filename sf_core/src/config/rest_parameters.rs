@@ -597,6 +597,26 @@ pub(crate) fn get_flexible_bool(settings: &dyn Settings, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Prefix for the default OAuth scope derived from the session role.
+const DEFAULT_SESSION_ROLE_SCOPE_PREFIX: &str = "session:role:";
+
+/// Resolve the OAuth `scope` parameter for token/authorize requests.
+pub(crate) fn resolve_oauth_scope(settings: &dyn Settings) -> Option<String> {
+    if let Some(Setting::String(scope)) = settings.get("oauth_scope") {
+        return if scope.trim().is_empty() {
+            None
+        } else {
+            Some(scope)
+        };
+    }
+
+    let role = settings.get_string("role")?;
+    if role.trim().is_empty() {
+        return None;
+    }
+    Some(format!("{DEFAULT_SESSION_ROLE_SCOPE_PREFIX}{role}"))
+}
+
 /// Build an [`InvalidParameterValue`] error for a parameter whose value
 /// failed URL parsing. Centralizes the message so every URL-shaped
 /// parameter reports failures identically (and a new URL param doesn't
@@ -720,7 +740,7 @@ impl OAuthAuthorizationCodeConfig {
         let authorization_url = parse_optional_url(settings, "oauth_authorization_url")?;
         let token_url = parse_optional_url(settings, "oauth_token_request_url")?;
         let redirect_uri = parse_optional_redirect_uri(settings, "oauth_redirect_uri")?;
-        let scope = non_empty_string(settings, "oauth_scope");
+        let scope = resolve_oauth_scope(settings);
         let enable_single_use_refresh_tokens =
             get_flexible_bool(settings, "oauth_enable_single_use_refresh_tokens");
         let disable_pkce = get_flexible_bool(settings, "oauth_disable_pkce");
@@ -784,7 +804,7 @@ impl OAuthClientCredentialsConfig {
                 parameter: "oauth_client_secret",
             })?;
         let token_url = parse_required_url(settings, "oauth_token_request_url")?;
-        let scope = non_empty_string(settings, "oauth_scope");
+        let scope = resolve_oauth_scope(settings);
         let credentials_in_body = get_flexible_bool(settings, "oauth_credentials_in_body");
         let enable_dpop = get_flexible_bool(settings, "oauth_enable_dpop");
         let authentication_timeout_secs = settings
@@ -1741,6 +1761,108 @@ mod tests {
                     cfg.flow_options.authentication_timeout_secs,
                     DEFAULT_AUTHENTICATION_TIMEOUT_SECS
                 );
+            }
+            other => panic!("Expected OAuthClientCredentials, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_derive_oauth_scope_from_role_when_scope_not_set() {
+        let settings = create_test_settings(vec![("role", Setting::String("ANALYST".to_string()))]);
+        assert_eq!(
+            resolve_oauth_scope(&settings).as_deref(),
+            Some("session:role:ANALYST")
+        );
+    }
+
+    #[test]
+    fn should_use_explicit_oauth_scope_when_provided() {
+        let settings = create_test_settings(vec![
+            ("role", Setting::String("ANALYST".to_string())),
+            (
+                "oauth_scope",
+                Setting::String("some:custom:SCOPE".to_string()),
+            ),
+        ]);
+        assert_eq!(
+            resolve_oauth_scope(&settings).as_deref(),
+            Some("some:custom:SCOPE")
+        );
+    }
+
+    #[test]
+    fn should_omit_oauth_scope_when_explicit_scope_is_empty() {
+        let settings = create_test_settings(vec![
+            ("role", Setting::String("ANALYST".to_string())),
+            ("oauth_scope", Setting::String(String::new())),
+        ]);
+        assert!(resolve_oauth_scope(&settings).is_none());
+    }
+
+    #[test]
+    fn should_omit_oauth_scope_when_explicit_scope_is_blank() {
+        let settings = create_test_settings(vec![
+            ("role", Setting::String("ANALYST".to_string())),
+            ("oauth_scope", Setting::String("   ".to_string())),
+        ]);
+        assert!(resolve_oauth_scope(&settings).is_none());
+    }
+
+    #[test]
+    fn should_omit_oauth_scope_when_scope_and_role_are_absent() {
+        let settings = create_test_settings(vec![]);
+        assert!(resolve_oauth_scope(&settings).is_none());
+    }
+
+    #[test]
+    fn should_omit_oauth_scope_when_role_is_empty() {
+        let settings = create_test_settings(vec![("role", Setting::String(String::new()))]);
+        assert!(resolve_oauth_scope(&settings).is_none());
+    }
+
+    #[test]
+    fn should_omit_oauth_scope_when_role_is_blank() {
+        let settings = create_test_settings(vec![("role", Setting::String("   ".to_string()))]);
+        assert!(resolve_oauth_scope(&settings).is_none());
+    }
+
+    #[test]
+    fn should_derive_oauth_scope_for_authorization_code_config() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            ("role", Setting::String("DEV".to_string())),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAuthorizationCode(cfg) => {
+                assert_eq!(cfg.scope.as_deref(), Some("session:role:DEV"));
+            }
+            other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_derive_oauth_scope_for_client_credentials_config() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("svc-account".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            ("oauth_client_secret", Setting::String("sss".to_string())),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/oauth/token".to_string()),
+            ),
+            ("role", Setting::String("READER".to_string())),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthClientCredentials(cfg) => {
+                assert_eq!(cfg.scope.as_deref(), Some("session:role:READER"));
             }
             other => panic!("Expected OAuthClientCredentials, got {other:?}"),
         }

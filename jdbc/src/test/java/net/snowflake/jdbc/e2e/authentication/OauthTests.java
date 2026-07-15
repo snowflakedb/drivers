@@ -192,7 +192,6 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
     private final String CLIENT_SECRET =
         TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET");
     private final String TOKEN_URL = TestParameters.get("SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL");
-    private final String SCOPE = "session:role:public";
 
     @Test
     void oauthShouldAuthenticateUsingClientCredentialsFlow() throws Exception {
@@ -205,7 +204,6 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       props.setProperty("oauthClientId", CLIENT_ID);
       props.setProperty("oauthClientSecret", CLIENT_SECRET);
       props.setProperty("oauthTokenRequestUrl", TOKEN_URL);
-      props.setProperty("oauthScope", SCOPE);
 
       // When Trying to Connect
       try (Connection conn = connect(props)) {
@@ -224,7 +222,6 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
       props.setProperty("oauthClientId", CLIENT_ID);
       props.setProperty("oauthClientSecret", "invalid_client_secret_12345");
       props.setProperty("oauthTokenRequestUrl", TOKEN_URL);
-      props.setProperty("oauthScope", SCOPE);
 
       // When Trying to Connect
       Executable connect = () -> connect(props);
