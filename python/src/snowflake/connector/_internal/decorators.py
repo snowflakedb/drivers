@@ -254,58 +254,110 @@ def api_telemetry(func: F) -> F:
     explicitly passed are recorded (see :func:`_passed_argument_names`) —
     names only, never values, and parameters left at their default are
     omitted.
+
+    Free functions (first parameter name is neither ``self`` nor ``cls``) are
+    wrapped with a signature-transparent ``(*args, **kwargs)`` wrapper.
+    Telemetry dispatch is skipped for free functions because there is no
+    ``self`` from which to retrieve the telemetry client; ``_TRACKING``
+    suppression still applies so nested decorated calls are not double-counted.
     """
     sig = inspect.signature(func)
+    params = list(sig.parameters)
+    _is_method = bool(params) and params[0] in ("self", "cls")
 
     if inspect.iscoroutinefunction(func):
+        if _is_method:
+
+            @functools.wraps(func)
+            async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+                if _TRACKING.get():
+                    await _send_api_usage_async(self, func, _passed_argument_names(sig, self, args, kwargs))
+                    _TRACKING.set(False)
+                    try:
+                        return await func(self, *args, **kwargs)
+                    finally:
+                        _TRACKING.set(True)
+                return await func(self, *args, **kwargs)
+
+            return cast(F, async_wrapper)
 
         @functools.wraps(func)
-        async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        async def async_free_wrapper(*args: Any, **kwargs: Any) -> Any:
             if _TRACKING.get():
-                await _send_api_usage_async(self, func, _passed_argument_names(sig, self, args, kwargs))
                 _TRACKING.set(False)
                 try:
-                    return await func(self, *args, **kwargs)
+                    return await func(*args, **kwargs)
                 finally:
                     _TRACKING.set(True)
-            return await func(self, *args, **kwargs)
+            return await func(*args, **kwargs)
 
-        return cast(F, async_wrapper)
+        return cast(F, async_free_wrapper)
 
     if inspect.isasyncgenfunction(func):
+        if _is_method:
+
+            @functools.wraps(func)
+            async def async_gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+                if _TRACKING.get():
+                    await _send_api_usage_async(self, func, _passed_argument_names(sig, self, args, kwargs))
+                    async for value in _suppress_tracking_async_generator(func(self, *args, **kwargs)):
+                        yield value
+                else:
+                    async for value in func(self, *args, **kwargs):
+                        yield value
+
+            return cast(F, async_gen_wrapper)
 
         @functools.wraps(func)
-        async def async_gen_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        async def async_gen_free_wrapper(*args: Any, **kwargs: Any) -> Any:
             if _TRACKING.get():
-                await _send_api_usage_async(self, func, _passed_argument_names(sig, self, args, kwargs))
-                async for value in _suppress_tracking_async_generator(func(self, *args, **kwargs)):
+                async for value in _suppress_tracking_async_generator(func(*args, **kwargs)):
                     yield value
             else:
-                async for value in func(self, *args, **kwargs):
+                async for value in func(*args, **kwargs):
                     yield value
 
-        return cast(F, async_gen_wrapper)
+        return cast(F, async_gen_free_wrapper)
 
-    @functools.wraps(func)
-    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if _TRACKING.get():
-            if func.__name__ == "__init__":
-                # Compute argument names before calling (kwargs are not consumed by
-                # the call), but send telemetry post-call so _telemetry_client is ready.
-                passed_args = _passed_argument_names(sig, self, args, kwargs)
+    if _is_method:
+
+        @functools.wraps(func)
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            if _TRACKING.get():
+                if func.__name__ == "__init__":
+                    # Compute argument names before calling (kwargs are not consumed by
+                    # the call), but send telemetry post-call so _telemetry_client is ready.
+                    passed_args = _passed_argument_names(sig, self, args, kwargs)
+                    _TRACKING.set(False)
+                    try:
+                        result = func(self, *args, **kwargs)
+                    finally:
+                        _TRACKING.set(True)
+                    _send_api_usage(self, func, passed_args)
+                    return result
+
+                _send_api_usage(self, func, _passed_argument_names(sig, self, args, kwargs))
+
                 _TRACKING.set(False)
                 try:
                     result = func(self, *args, **kwargs)
                 finally:
                     _TRACKING.set(True)
-                _send_api_usage(self, func, passed_args)
+
+                if isinstance(result, types.GeneratorType):
+                    return _suppress_tracking_generator(result)
+
                 return result
+            return func(self, *args, **kwargs)
 
-            _send_api_usage(self, func, _passed_argument_names(sig, self, args, kwargs))
+        return cast(F, wrapper)
 
+    @functools.wraps(func)
+    def free_wrapper(*args: Any, **kwargs: Any) -> Any:
+        if _TRACKING.get():
             _TRACKING.set(False)
             try:
-                result = func(self, *args, **kwargs)
+                result = func(*args, **kwargs)
             finally:
                 _TRACKING.set(True)
 
@@ -313,9 +365,9 @@ def api_telemetry(func: F) -> F:
                 return _suppress_tracking_generator(result)
 
             return result
-        return func(self, *args, **kwargs)
+        return func(*args, **kwargs)
 
-    return cast(F, wrapper)
+    return cast(F, free_wrapper)
 
 
 def _suppress_tracking_generator(
