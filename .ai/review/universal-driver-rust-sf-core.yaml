@@ -85,9 +85,38 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent panics in production code by prohibiting `.unwrap()` and `.expect()` on fallible operations.
 
-      **REQUIREMENT**: Never use `.unwrap()` or `.expect()` on `Result` or `Option` in non-test code. Always propagate errors with `?`, use `.context(MySnafu)?` for `Result`, or use `ensure!()` / `XxxSnafu.fail()` for explicit error construction. The only exception is when the invariant is mathematically provable from the surrounding code (e.g., a regex literal), and even then a comment explaining why it cannot fail is required.
+      **REQUIREMENT**: Never use `.unwrap()` or `.expect()` on `Result` or `Option` in non-test code. Always propagate errors with `?`, use `.context(MySnafu)?` for `Result`, or use `ensure!()` / `XxxSnafu.fail()` for explicit error construction.
 
       Mutex lock poisoning must also be handled with `.map_err()` or `.context()` instead of `.unwrap()` on `.lock()` calls.
+
+      **PREFER ELIMINATION OVER JUSTIFICATION**: When an `.unwrap()`/`.expect()` is "provably safe" because an earlier check guarantees it, the correct fix is almost always to **restructure so the `.unwrap()` disappears**, NOT to keep it with a `// SAFETY:` comment. Recommend the refactor first; only fall back to suggesting a commented exception when the value genuinely cannot be obtained fallibly (see EXCEPTION below).
+
+      **CHECK-THEN-UNWRAP SMELL (flag this)**: A guard such as `if x.is_empty() { return ... }` / `ensure!(!x.is_empty(), ...)` followed later by `x.into_iter().next().unwrap()`, `x.first().unwrap()`, `x[0]`, or `x.get(i).unwrap()` splits one idea into two lines whose agreement is enforced only by a human. This is fragile: a future edit to the code between the guard and the `.unwrap()` can silently turn it into a live panic, and the comment can go stale because the compiler never checks it. Collapse the guard and the access into a single fallible operation so the compiler enforces the invariant:
+
+      ```rust
+      // ❌ BAD: guard at line 202, unwrap at line 232 — 30 lines apart, enforced only by a comment
+      if src_locations.is_empty() {
+          return NoSrcLocationsSnafu.fail();
+      }
+      // ...
+      let first = src_locations.into_iter().next().unwrap(); // SAFETY: non-empty checked above
+
+      // ✅ GOOD: one fallible step, no unwrap, no comment, compiler-enforced
+      let first = src_locations
+          .into_iter()
+          .next()
+          .context(NoSrcLocationsSnafu)?;
+      ```
+
+      Other common eliminations: prefer `if let Some(v) = opt { ... }` / `let Some(v) = opt else { ... }`, `match`, `.ok_or_else(...)?`, or slice patterns (`let [first, ..] = xs else { ... }`) over check-then-`.unwrap()`.
+
+      **EXCEPTION (rare)**: Keeping the panic is acceptable ONLY when the value cannot be obtained through a fallible API and the invariant is local and mathematically provable at the call site — e.g. a compile-time-constant regex literal, or `.next()` on an iterator constructed one line above with known-nonzero length. In that case prefer **`.expect("stated invariant")` over `.unwrap()` + a separate `// SAFETY:` comment**: `.expect()` puts the justification in the panic message itself, so a violated invariant surfaces in the crash output instead of relying on a neighboring comment the compiler never checks. The invariant MUST hold within a few lines of the call. If the guaranteeing check is far away or in a different function, treat it as the check-then-unwrap smell above and require the refactor instead.
+
+      ```rust
+      // ✅ GOOD (rare exception): value can't be obtained fallibly, invariant is local + provable
+      // str::split always yields at least one element, so next() is never None here.
+      let locator = account.split('.').next().expect("split always yields at least one element");
+      ```
 
       ❌ **BAD:**
       ```rust
