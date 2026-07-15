@@ -63,6 +63,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
@@ -707,7 +708,20 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public String[] getChildQueryIds(String queryID) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    QueryStatus status = getQueryStatus(queryID);
+    if (status.isStillRunning()) {
+      throw new SQLException(
+          "Status of query associated with resultSet is "
+              + status.getDescription()
+              + ". Results not generated.");
+    }
+    ExecuteQueryResponse result = coreDriverApi.connectionGetQueryResult(connectionHandle, queryID);
+    // A single-statement query has no children; return the query ID itself.
+    if (result.hasMulti() && result.getMulti().getQueryIdsCount() > 0) {
+      return result.getMulti().getQueryIdsList().toArray(new String[0]);
+    }
+    return new String[] {queryID};
   }
 
   @Override

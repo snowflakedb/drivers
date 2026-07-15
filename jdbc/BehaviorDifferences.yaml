@@ -347,3 +347,23 @@ behavior_differences:
       unconditionally and throws NullPointerException when properties is null. The JDBC contract
       treats a null argument as an empty property set, so the universal driver returns normally on an
       open connection. Closed connections still throw SQLClientInfoException with CONNECTION_CLOSED.
+  24:
+    name: "Statement.getQueryID() after a synchronous multistatement returns the parent query ID; legacy returns the first child's query ID"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      After a synchronous multistatement execute, legacy snowflake-jdbc's getQueryID() returns the
+      FIRST CHILD's ID: SFStatement.execute auto-advances to the first child (via getMoreResults())
+      and never updates queryID afterward, leaving the parent (SYSTEM$MULTISTMT) ID unreachable. The
+      universal driver returns the PARENT ID (applyMultiStatementResult sets it from
+      MultiStatementState.getParentQueryId()), stable across iteration. Both drivers return the
+      parent in the async flow. Returning the parent is intentional and consistent with the Python
+      wrapper the state model was ported from. Introduced in SNOW-2881690 (#819).
+
+      Consequence for the test suite: shouldReturnChildQueryIdsForMultistatementQuery calls
+      getChildQueryIds(getQueryID()), so it consumes this difference — the parent ID expands to 3
+      children on the universal driver, the first child's ID to length 1 on legacy — and is therefore
+      @SkipOldDriver("BD#24"). getChildQueryIds itself has parity given the same query ID.
