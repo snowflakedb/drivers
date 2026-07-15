@@ -645,3 +645,30 @@ behavior_differences:
     description: |
       TODO: implement OOB telemetry in the Universal Driver and wire up
       `TelemetryService` to the real implementation.
+
+  43:
+    name: "ResultMetadataV2 display_size and internal_size map proto fields differently from legacy"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `ResultMetadataV2.from_column` (JSON source) sets `display_size = None` for all
+      column types and `internal_size = col["length"]` (the JSON `length` field, which
+      carries the maximum character length for VARCHAR/TEXT columns).
+    new_driver_behavior: |
+      `ResultMetadataV2.from_column` (proto source) sets `display_size = col.length`
+      for TEXT/VARCHAR/CHAR/STRING column types (and `None` otherwise) and
+      `internal_size = col.byte_length` (maximum byte length) when the proto field is
+      present. For a `VARCHAR(100)` column: legacy returns `display_size=None,
+      internal_size=100`; UD returns `display_size=100, internal_size=400` (UTF-8
+      4 bytes/char). Snowpark reads `name`, `type_code`, `is_nullable`,
+      `vector_dimension`, and `fields` from V2 objects — not `display_size` or
+      `internal_size` — so this difference has no observed runtime impact on Snowpark.
+    description: |
+      The difference arises from the JSON-to-proto field renaming: JSON `length` is the
+      char count and maps to proto `length`; JSON `byteLength` is the byte count and maps
+      to proto `byte_length`. The legacy connector used `length` for `internal_size` with
+      no proto distinction; the UD splits them across two slots more precisely.
+      CONFIRMED from source (both connectors).
