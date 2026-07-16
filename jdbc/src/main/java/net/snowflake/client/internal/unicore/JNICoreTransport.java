@@ -13,7 +13,7 @@ public class JNICoreTransport implements CoreTransport {
   @Override
   public TransportResponse handleMessage(String serviceName, String methodName, byte[] requestBytes)
       throws TransportException {
-    logger.trace(
+    logger.debug(
         "JNI transport request: service={}, method={}, requestBytes={}",
         serviceName,
         methodName,
@@ -25,7 +25,7 @@ public class JNICoreTransport implements CoreTransport {
       throw new TransportException("Empty transport response");
     }
     byte[] responseBytes = response.getResponseBytes();
-    logger.trace(
+    logger.debug(
         "JNI transport response: service={}, method={}, code={}, responseBytes={}",
         serviceName,
         methodName,

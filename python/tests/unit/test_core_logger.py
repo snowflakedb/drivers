@@ -193,13 +193,13 @@ class TestLoggerCallbackDispatch:
         assert len(matching) == 1
         assert matching[0].name == "snowflake.connector._core"
 
-    def test_level_finer_than_debug_is_dropped(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Core levels finer than DEBUG (e.g. TRACE=4) have no Python equivalent
-        and are dropped rather than downgraded.
-        """
+    def test_level_finer_than_debug_is_delivered_as_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Core wire levels 3+ (including legacy TRACE=4) map to stdlib DEBUG."""
         from snowflake.connector._internal.api_client.c_api._init import logger_callback
 
         with caplog.at_level(logging.DEBUG, logger="snowflake.connector._core"):
             result = logger_callback(4, b"trace level event", b"detail.rs", 1, b"trace_fn", b"")
         assert result == 0
-        assert not any(r.message == "trace level event" for r in caplog.records)
+        matching = [r for r in caplog.records if r.message == "trace level event"]
+        assert len(matching) == 1
+        assert matching[0].levelno == logging.DEBUG

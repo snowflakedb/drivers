@@ -6,14 +6,20 @@ import org.junit.jupiter.api.Test;
 
 public class SFLoggerFactoryTest {
   @Test
-  public void testGetLoggerByNameDefault() {
+  public void shouldReturnCoreLoggerFromGetLoggerByName() {
     SFLogger sflogger = SFLoggerFactory.getLogger("SFLoggerFactoryTest");
-    assertInstanceOf(SLF4JLogger.class, sflogger);
+    assertInstanceOf(CoreLogger.class, sflogger);
   }
 
   @Test
-  public void testGetLoggerByClassDefault() {
+  public void shouldReturnCoreLoggerFromGetLoggerByClass() {
     SFLogger sflogger = SFLoggerFactory.getLogger(SFLoggerFactoryTest.class);
+    assertInstanceOf(CoreLogger.class, sflogger);
+  }
+
+  @Test
+  public void shouldReturnPlainSlf4jLoggerFromGetDeliveryLogger() {
+    SFLogger sflogger = SFLoggerFactory.getDeliveryLogger("SFLoggerFactoryTest");
     assertInstanceOf(SLF4JLogger.class, sflogger);
   }
 }

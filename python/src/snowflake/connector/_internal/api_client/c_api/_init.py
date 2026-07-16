@@ -67,14 +67,26 @@ def sf_core_log_event(
     )
 
 
-level_map = {
-    # sf_core level -> python logging level. DEBUG is the finest level Python
-    # supports; core levels finer than DEBUG (e.g. TRACE) are dropped here.
-    0: logging.ERROR,
-    1: logging.WARNING,
-    2: logging.INFO,
-    3: logging.DEBUG,
-}
+def _sf_core_level_to_python(level: int) -> int | None:
+    """Map sf_core wire level to stdlib logging level.
+
+    DEBUG is the finest level Python supports. Core's ``normalize_event`` collapses
+    finer levels (Rust ``tracing::trace!``, legacy TRACE) to wire level 3 before
+    the callback, so level 4 should not normally reach this path. The ``>= 3``
+    branch is defensive: any wire level 3 or higher is delivered as DEBUG rather
+    than dropped.
+    """
+    if level >= 3:
+        return logging.DEBUG
+    match level:
+        case 0:
+            return logging.ERROR
+        case 1:
+            return logging.WARNING
+        case 2:
+            return logging.INFO
+        case _:
+            return None
 
 
 def logger_callback(
@@ -85,7 +97,7 @@ def logger_callback(
     function: bytes,
     logger_name: bytes,
 ) -> int:
-    py_level = level_map.get(level)
+    py_level = _sf_core_level_to_python(level)
     if py_level is None:
         return 0
 

@@ -10,7 +10,7 @@ does. For the author-facing rules, see [logging-guidelines.md](logging-guideline
 
 > [TODO(SNOW-3744959)]: Document text vs structured logging - the core emits structured `tracing` events, but the wrapper bridge (FFI/JNI) forwards flattened text today.
 
-> [TODO(SNOW-3725848)]: All wrapper logs should round-trip through core. Python does this today (see "Wrapper logs round-tripping through core" below); JDBC and ODBC still log directly.
+> [TODO(SNOW-3725848)]: All wrapper logs should round-trip through core. Python and JDBC do this today (see "Wrapper logs round-tripping through core" below); ODBC still logs directly.
 
 ---
 
@@ -42,16 +42,30 @@ so core and wrapper logs share one pipeline that the host application controls.
   Each event crosses FFI with its level, message, file, line, and function, and the Python side rebuilds a native
   `logging` record on the `snowflake.connector._core` logger.
   *This is the reference pattern for wrapper integration.*
-- **JDBC** - a JNI `SFLoggerLayer` forwards events to SLF4J (`com.snowflake.jdbc.CoreLogger`).
+- **JDBC** - a JNI `SFLoggerLayer` forwards events to SLF4J. Core-originated events land on
+  `net.snowflake.client.CoreLogger`; wrapper round-trip events carry their originating logger name and
+  are delivered onto it (see below).
 - **ODBC** - no wrapper sink. The core writes to a file when a log path is configured.
 
 ---
 
-## Wrapper logs round-tripping through core (Python)
+## Wrapper logs round-tripping through core
 
-Python wrapper modules do not log to the stdlib directly. They use a
-`CoreLogger` (`get_logger(__name__)`) so their own logs share the single core
-pipeline instead of bypassing it.
+Wrapper code does not log to its native logging framework directly. It uses a
+`CoreLogger` so its own logs share the single core pipeline instead of bypassing
+it. The mechanism is the same on every wrapper — gate locally, cross the
+FFI/JNI boundary carrying `logger_name`, re-emit on the `sf_wrapper` target, and
+hand the record back to the originating logger — only the boundary differs.
+
+**Levels.** DEBUG is the finest level every wrapper supports. Outbound, each
+`CoreLogger` clamps to DEBUG. Inbound, core wire levels **3 and higher** (DEBUG,
+legacy TRACE=4, and Rust `tracing::trace!`) are delivered as DEBUG rather than
+dropped, so fine-grained core logs are not lost when the host logger has no
+finer level.
+
+### Python
+
+Python wrapper modules use `get_logger(__name__)` (a `CoreLogger`).
 
 The flow for one wrapper log call:
 
@@ -77,9 +91,38 @@ Python-side flag - is the single source of truth: on any non-zero result
 `CoreLogger` emits the record straight onto the stdlib logger, so early-import
 records are never lost.
 
-**Levels.** DEBUG is the finest level Python supports. Outbound, `CoreLogger`
-clamps to DEBUG; inbound, core levels finer than DEBUG (e.g. TRACE) are dropped
-rather than downgraded.
+### JDBC
+
+JDBC funnels every logger through `SFLoggerFactory.getLogger(...)`, which returns
+a `CoreLogger` (Java), so all wrapper modules round-trip without touching each
+call site.
+
+The flow mirrors Python across JNI instead of the C FFI:
+
+1. `CoreLogger` gates on its SLF4J logger (`isInfoEnabled`, …) and formats +
+   masks the message before crossing JNI.
+2. It calls `CoreLoggingBridge.logEvent` (JNI), carrying `level`, the formatted
+   `message`, and `logger_name` (the originating Java logger, e.g.
+   `net.snowflake.client.api.driver.SnowflakeDriver`). The first call loads
+   `jdbc_bridge` via `NativeLibraryLoader`.
+3. `jdbc_bridge` re-emits it on the shared `sf_wrapper` target (the same
+   `wrapper_event!` macro the C FFI uses), so every core layer sees it.
+4. The JNI `SFLoggerLayer` hands it back. Wrapper round-trip events carry a
+   `logger_name`, so it delivers through `SFLoggerFactory.getDeliveryLogger` —
+   which returns a *plain* SLF4J logger, never a `CoreLogger`, so a delivered
+   record cannot re-enter the round-trip and loop. Core-originated events leave
+   `logger_name` empty and land on `net.snowflake.client.CoreLogger`.
+
+**Initialization / fallback.** `logEvent` returns `0` when accepted and
+non-zero when the pipeline is not live yet (before `JNI_OnLoad`); on any non-zero
+result — or if the native call throws because the lib is genuinely unavailable —
+`CoreLogger` emits straight onto its SLF4J logger, so records are never lost. A
+throw latches the fallback per logger, since a failed native load never recovers
+in-process.
+
+**Source location.** Java 8 has no cheap single-frame access (StackWalker is
+9+), so JDBC omits `file`/`line`/`function` rather than pay a full stack capture
+per log; the record still lands on its originating logger.
 
 **Python configuration.** Standard `logging` APIs - no special treatment.
 `CoreLogger` and the inbound FFI callback both gate on the underlying stdlib
