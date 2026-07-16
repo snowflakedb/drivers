@@ -581,8 +581,8 @@ fn safe_download_file_name(src_location: &str) -> Result<&str, FileManagerError>
 
 /// GET path guard layer 2 (mirrors JDBC `assertWithinDirectory`): join the
 /// safe basename onto the canonicalized `local_location` and confirm the result
-/// stays inside it before any file is created. Canonicalizing also asserts the
-/// dir exists — behavior-preserving, since `File::create` never made parents.
+/// stays inside it before any file is created. The caller creates
+/// `local_location` first (SNOW-3704966), so `canonicalize` here also confirms it.
 /// The containment check is defense-in-depth against future layer-1 changes and
 /// catches a leaf that already exists as a symlink escaping `base_dir`.
 fn resolve_validated_output_path(
@@ -605,6 +605,25 @@ fn resolve_validated_output_path(
         .fail();
     }
     Ok(output_path)
+}
+
+/// Prepares the on-disk destination for one downloaded file: create
+/// `local_location` recursively if missing (SNOW-3704966; matches Python
+/// `os.makedirs` and JDBC), run the GET path guard, and derive the sibling
+/// `<output>.part` temp path (downloads write there and `rename` on success, so
+/// observers never see partial plaintext). Blocking; call inside `spawn_blocking`.
+fn prepare_download_output_paths(
+    local_location: &str,
+    src_location: &str,
+) -> Result<(PathBuf, PathBuf), FileManagerError> {
+    std::fs::create_dir_all(local_location).context(IoSnafu)?;
+    let output_path = resolve_validated_output_path(local_location, src_location)?;
+    let partial_path = {
+        let mut s = output_path.as_os_str().to_owned();
+        s.push(".part");
+        PathBuf::from(s)
+    };
+    Ok((output_path, partial_path))
 }
 
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
@@ -631,27 +650,12 @@ pub async fn download_single_file(
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
-    // `resolve_validated_output_path` runs blocking `canonicalize` syscalls;
-    // keep them off the async executor like every other blocking FS op below.
+    // Blocking FS syscalls (create_dir_all/canonicalize); keep off the async executor.
     let (output_path, partial_path) = {
         let local_location = data.local_location.clone();
         let src_location = data.src_location.clone();
-        tokio::task::spawn_blocking(move || -> Result<(PathBuf, PathBuf), FileManagerError> {
-            let output_path = resolve_validated_output_path(&local_location, &src_location)?;
-            // Atomic write via a sibling `.part` temp file: plaintext is decrypted (or
-            // copied, on the SSE branch) into the temp path, the digest is verified at
-            // finalize time, and only on success do we `rename` to `output_path`. On
-            // failure we `remove_file` the temp; the destination is never created, so
-            // concurrent FS observers (file watchers, antivirus, scripts) see no
-            // partial plaintext at the user-visible path. This restores parity with
-            // the pre-streaming behaviour where digest verification preceded any
-            // write to disk.
-            let partial_path = {
-                let mut s = output_path.as_os_str().to_owned();
-                s.push(".part");
-                PathBuf::from(s)
-            };
-            Ok((output_path, partial_path))
+        tokio::task::spawn_blocking(move || {
+            prepare_download_output_paths(&local_location, &src_location)
         })
         .await
         .context(BlockingTaskSnafu)??
@@ -1602,13 +1606,49 @@ mod tests {
 
     #[test]
     fn resolve_validated_output_path_missing_dir_is_io_error() {
-        // Nonexistent dir → `Io`, matching the pre-fix `File::create` failure.
+        // The guard still requires an existing dir (the GET flow creates it
+        // upstream, SNOW-3704966); this pins the guard's standalone contract.
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
         assert!(matches!(
             resolve_validated_output_path(missing.to_str().unwrap(), "data.csv"),
             Err(FileManagerError::Io { .. })
         ));
+    }
+
+    // SNOW-3704966: a missing destination dir is created recursively before write.
+    #[test]
+    fn prepare_download_output_paths_creates_missing_dir_recursively() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("nested").join("missing");
+        assert!(
+            !missing.exists(),
+            "precondition: destination must not exist"
+        );
+
+        let (output_path, partial_path) =
+            prepare_download_output_paths(missing.to_str().unwrap(), "data.csv")
+                .expect("missing destination dir must be created, not rejected");
+
+        assert!(
+            missing.is_dir(),
+            "GET must create the destination directory tree"
+        );
+        let base = std::fs::canonicalize(&missing).unwrap();
+        assert_eq!(output_path, base.join("data.csv"));
+        let mut expected_partial = output_path.clone().into_os_string();
+        expected_partial.push(".part");
+        assert_eq!(partial_path, PathBuf::from(expected_partial));
+    }
+
+    #[test]
+    fn prepare_download_output_paths_existing_dir_is_ok() {
+        // create_dir_all is a no-op when the directory already exists.
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let (output_path, _partial) =
+            prepare_download_output_paths(dir.path().to_str().unwrap(), "f.bin").unwrap();
+        assert_eq!(output_path, base.join("f.bin"));
     }
 
     // Mirrors JDBC `symlinkEscapeIsRejected`: a leaf that already exists as a

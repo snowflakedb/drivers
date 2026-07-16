@@ -1571,6 +1571,33 @@ behavior_differences:
       split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
       legacy empty result set).
   92:
+    name: "GET auto-creates a missing local destination directory"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      Aligns the universal driver with the Python connector (`os.makedirs`) and JDBC, both of which
+      create the GET destination directory when it is missing. The legacy ODBC driver
+      (libsnowflakeclient) requires the directory to already exist, so adding recursive creation only
+      enables previously-failing commands to succeed; no caller that targeted an existing directory is
+      affected.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy ODBC driver expects the local download directory to already exist. A GET into a
+      non-existent directory fails when the driver tries to create the output file, because nothing
+      creates the parent directory first.
+    new_driver_behavior: |
+      The universal driver creates the local destination directory recursively (`create_dir_all` in
+      `sf_core` `download_single_file`) before writing each downloaded file, so a GET into a
+      non-existent directory succeeds and the directory tree is created. This matches Python's
+      `os.makedirs` and JDBC's GET behavior.
+    description: |
+      SNOW-3704966. Reference: Python `file_transfer_agent.py` (`os.makedirs`) and JDBC
+      `FileUploaderLatestIT.testDownloadedFilePermissions` (auto-created GET destination). Applications
+      that relied on the legacy ODBC behavior of failing on a missing directory will now have the
+      directory created instead.
+  93:
     name: "Failed GET download no longer leaves a partial or corrupt file at the destination"
     status: allowed
     type: bugfix
