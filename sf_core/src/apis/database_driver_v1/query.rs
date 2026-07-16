@@ -10,8 +10,8 @@ use crate::chunks::{
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::{
-    DownloadResult, StageInfoCache, StageInfoRefreshError, StageInfoSnapshot, UploadResult,
-    download_files, upload_files,
+    ByteSource, DownloadResult, SingleUploadData, StageInfoCache, StageInfoRefreshError,
+    StageInfoSnapshot, UploadResult, download_files, upload_files, upload_in_memory_file,
 };
 use crate::query_types::RowType;
 use crate::rest;
@@ -141,6 +141,88 @@ pub(super) async fn perform_put_get_transfer(
         }
         .fail(),
     }
+}
+
+/// Uploads `bytes` (already drained from the caller's stream) to the stage
+/// described by a GS PUT response, returning a single-row `RowsetData::Upload`.
+/// Mirrors the UPLOAD arm of [`perform_put_get_transfer`] but sources the data
+/// from memory instead of expanding a local glob — backs
+/// `connection_upload_stream` (JDBC `uploadStream`, Python `file_stream`).
+///
+/// The destination filename is the basename of the PUT command's `file://`
+/// token (echoed back by GS as `src_location_pattern`); auto-compress,
+/// overwrite, and encryption all follow the GS response, exactly as a normal
+/// file-path PUT.
+pub(super) async fn perform_stream_upload(
+    data: &query_response::Data,
+    wrapper_presets: &WrapperPresets,
+    stage_info_refresh_context: Option<StageInfoRefreshContext>,
+    use_s3_regional_url_session_param: bool,
+    put_get_policy: &RetryPolicy,
+    bytes: Vec<u8>,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    let upload_data = data
+        .to_file_upload_data(
+            wrapper_presets.put_get_resultset_flavor.clone(),
+            wrapper_presets.legacy_odbc_compression_autodetect,
+            // In-memory stream PUT never skips on content match: the API has no
+            // cursor kwarg to opt into it and always uploads the supplied bytes.
+            false,
+            use_s3_regional_url_session_param,
+        )
+        .context(FileTransferPreparationSnafu)?;
+
+    let filename = std::path::Path::new(&upload_data.src_location_pattern)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&upload_data.src_location_pattern)
+        .to_string();
+
+    // Seed the refresher with the initial snapshot so a mid-upload cred/URL
+    // expiry can re-issue the PUT SQL — identical machinery to the file path.
+    let initial_snapshot = data
+        .stage_info_snapshot()
+        .context(FileTransferPreparationSnafu)?;
+    let mut refresher = stage_info_refresh_context
+        .zip(initial_snapshot)
+        .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
+    let mut refresher_handle = refresher
+        .as_mut()
+        .map(|r| r as &mut dyn file_manager::StageInfoRefresher);
+
+    let single = SingleUploadData {
+        // `upload_in_memory_file` overrides `source` with `bytes` below; this
+        // placeholder only satisfies the struct (the result's `source` column
+        // is derived from `filename` for in-memory uploads).
+        source: ByteSource::Bytes(bytes::Bytes::new()),
+        filename,
+        stage_info: upload_data.stage_info,
+        encryption_material: upload_data.encryption_material,
+        auto_compress: upload_data.auto_compress,
+        source_compression: upload_data.source_compression,
+        overwrite: upload_data.overwrite,
+        flavor: upload_data.flavor,
+        legacy_odbc_compression_autodetect: upload_data.legacy_odbc_compression_autodetect,
+        skip_upload_on_content_match: upload_data.skip_upload_on_content_match,
+        multipart: upload_data.multipart,
+    };
+
+    let result = upload_in_memory_file(bytes, single, put_get_policy, &mut refresher_handle)
+        .await
+        .context(FileUploadSnafu)?;
+
+    Ok(RowsetData::Upload(vec![result]))
+}
+
+/// Builds the stage-info refresher used by `connection_download_stream`.
+/// Exposed so `stream_transfer.rs` can drive a streaming GET with the same
+/// cred/URL-refresh machinery as the file-path path, without re-exposing the
+/// private `SnowflakeStageInfoRefresher` type.
+pub(super) fn stream_stage_info_refresher(
+    ctx: StageInfoRefreshContext,
+    initial: StageInfoSnapshot,
+) -> impl file_manager::StageInfoRefresher {
+    SnowflakeStageInfoRefresher::new(ctx, initial)
 }
 
 /// Window during which repeated `refresh()` calls return without hitting GS.

@@ -139,6 +139,7 @@ arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"
 brotli = "8.0.2"
 zstd = "0.13.3"
+flate2 = "1.1.2"
 test-case = "3.3.1"
 # Dev/test reqwest: also rustls-only so test builds don't re-introduce
 # native-tls (feature unification would otherwise pull `default-tls` back in).

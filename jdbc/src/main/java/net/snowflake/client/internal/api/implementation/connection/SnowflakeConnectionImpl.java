@@ -643,14 +643,67 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public void uploadStream(String stageName, String destFileName, InputStream inputStream)
       throws SQLException {
-    throw new NotImplementedException();
+    uploadStream(stageName, destFileName, inputStream, UploadStreamConfig.builder().build());
   }
 
   @Override
   public void uploadStream(
       String stageName, String destFileName, InputStream inputStream, UploadStreamConfig config)
       throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    logger.info("uploadStream: entry");
+    try {
+      byte[] data;
+      try {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = inputStream.read(buf)) != -1) {
+          baos.write(buf, 0, n);
+        }
+        data = baos.toByteArray();
+      } catch (java.io.IOException e) {
+        throw new net.snowflake.client.api.exception.SnowflakeSQLException(
+            "Failed to read input stream: " + e.getMessage(), e);
+      }
+      String destPrefix = config != null ? config.getDestPrefix() : null;
+      boolean compressData = config == null || config.isCompressData();
+      String sql = buildPutSql(stageName, destFileName, destPrefix, compressData);
+      coreDriverApi.connectionUploadStream(connectionHandle, sql, data);
+    } finally {
+      logger.info("uploadStream: exit");
+    }
+  }
+
+  /**
+   * Synthesize a PUT SQL from the structured uploadStream parameters. The stage path is the user's
+   * stage reference with {@code destPrefix} appended (so the file lands at {@code
+   * <stage>/<prefix>/<destFile>}). The local file URI carries only the destination filename — its
+   * basename is what GS uses to identify the stage object. {@code OVERWRITE = TRUE} mirrors the
+   * reference JDBC contract that uploadStream always overwrites.
+   *
+   * <p>{@code compressData} maps to the server-side {@code AUTO_COMPRESS} clause rather than JDBC's
+   * historical client-side gzip: when true (default) the clause is omitted so GS auto-compresses
+   * and the object lands with a {@code .gz} suffix — functionally the same end state as the legacy
+   * driver.
+   */
+  static String buildPutSql(
+      String stageName, String destFileName, String destPrefix, boolean compressData) {
+    String stagePath = stageName;
+    if (destPrefix != null && !destPrefix.isEmpty()) {
+      String trimmed = stagePath.endsWith("/") ? stagePath : stagePath + "/";
+      stagePath = trimmed + destPrefix;
+    }
+    StringBuilder sql = new StringBuilder();
+    // PUT syntax does not support IDENTIFIER(?) or ? bindings for stage paths or file
+    // URIs; destFileName and stageName are caller-controlled values passed directly by
+    // the JDBC user.
+    sql.append("PUT 'file:///").append(destFileName).append("' ").append(stagePath);
+    if (!compressData) {
+      sql.append(" AUTO_COMPRESS = FALSE");
+    }
+    sql.append(" OVERWRITE = TRUE");
+    return sql.toString();
   }
 
   @Override
@@ -661,7 +714,19 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public InputStream downloadStream(
       String stageName, String sourceFileName, DownloadStreamConfig config) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    logger.info("downloadStream: entry");
+    try {
+      boolean decompress = config != null && config.isDecompress();
+      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1
+              .ConnectionDownloadStreamResponse
+          response =
+              coreDriverApi.connectionDownloadStream(
+                  connectionHandle, stageName, sourceFileName, decompress);
+      return new java.io.ByteArrayInputStream(response.getData().toByteArray());
+    } finally {
+      logger.info("downloadStream: exit");
+    }
   }
 
   @Override

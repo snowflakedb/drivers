@@ -591,6 +591,45 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_upload_stream", skip(self, input))]
+    async fn connection_upload_stream(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> Result<ConnectionUploadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let rs_info = self
+            .driver
+            .connection_upload_stream(conn_handle.into(), input.sql, input.data)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamResponse {
+            result_set_handle: Some(rs_info.handle.into()),
+            result_descriptor: Some(rs_info.descriptor.into()),
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream",
+        skip(self, input)
+    )]
+    async fn connection_download_stream(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> Result<ConnectionDownloadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let data = self
+            .driver
+            .connection_download_stream(
+                conn_handle.into(),
+                &input.stage_name,
+                &input.source_filename,
+                input.decompress,
+            )
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamResponse { data })
+    }
+
     #[instrument(
         name = "DatabaseDriverV1::connection_get_query_status",
         skip(self, input)
@@ -1213,6 +1252,14 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
+    fn connection_upload_stream_blocking(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamResponse>;
+    fn connection_download_stream_blocking(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1390,5 +1437,19 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
         block_on_client_call(self.connection_get_query_result(input))
+    }
+
+    fn connection_upload_stream_blocking(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamResponse> {
+        block_on_client_call(self.connection_upload_stream(input))
+    }
+
+    fn connection_download_stream_blocking(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamResponse> {
+        block_on_client_call(self.connection_download_stream(input))
     }
 }

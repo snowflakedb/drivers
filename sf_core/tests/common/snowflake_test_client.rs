@@ -401,6 +401,41 @@ impl SnowflakeTestClient {
             .unwrap()
     }
 
+    /// Streaming PUT: upload `data` using `sql` (JDBC `uploadStream` / Python
+    /// `file_stream` path). Returns the PUT-shaped result set handle + descriptor.
+    pub fn connection_upload_stream(
+        &self,
+        sql: &str,
+        data: Vec<u8>,
+    ) -> Result<ConnectionUploadStreamResponse, String> {
+        self.client
+            .connection_upload_stream_blocking(ConnectionUploadStreamRequest {
+                conn_handle: Some(self.conn_handle),
+                sql: sql.to_string(),
+                data,
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    /// Streaming GET: download `source_filename` from `stage_name` (JDBC
+    /// `downloadStream` path), optionally gunzipping. Returns the raw bytes.
+    pub fn connection_download_stream(
+        &self,
+        stage_name: &str,
+        source_filename: &str,
+        decompress: bool,
+    ) -> Result<Vec<u8>, String> {
+        self.client
+            .connection_download_stream_blocking(ConnectionDownloadStreamRequest {
+                conn_handle: Some(self.conn_handle),
+                stage_name: stage_name.to_string(),
+                source_filename: source_filename.to_string(),
+                decompress,
+            })
+            .map(|resp| resp.data)
+            .map_err(|e| format!("{e:?}"))
+    }
+
     pub fn result_set_get_stream(&self, rs_handle: &ResultSetHandle) -> ResultSetGetStreamResponse {
         self.client
             .result_set_get_stream_blocking(ResultSetGetStreamRequest {

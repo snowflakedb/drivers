@@ -20,6 +20,7 @@ mod query;
 pub(crate) mod result_set;
 pub mod spcs_token;
 pub(crate) mod statement;
+mod stream_transfer;
 pub(crate) mod validation;
 
 pub use crate::config::settings::Setting;

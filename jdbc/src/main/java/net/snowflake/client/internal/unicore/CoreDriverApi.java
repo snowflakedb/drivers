@@ -6,6 +6,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Confi
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
@@ -23,6 +24,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
@@ -160,4 +162,23 @@ public interface CoreDriverApi {
 
   TelemetrySendResponse telemetrySendWrapperError(
       ConnectionHandle connHandle, String exceptionType, String errorSource) throws SQLException;
+
+  // Stream-based file transfer (gap 4)
+
+  /**
+   * Execute a PUT SQL using caller-supplied in-memory bytes as the upload source. The wrapper
+   * synthesizes the PUT SQL (including AUTO_COMPRESS / OVERWRITE clauses); core executes it against
+   * GS, then substitutes {@code data} for the file that would normally be read from disk.
+   */
+  ConnectionUploadStreamResponse connectionUploadStream(
+      ConnectionHandle connHandle, String sql, byte[] data) throws SQLException;
+
+  /**
+   * Download a single file from a stage and return its bytes (optionally gunzipped). Core
+   * synthesizes the GET SQL internally because the GET protocol requires a local destination path
+   * that is meaningless across the JNI boundary.
+   */
+  ConnectionDownloadStreamResponse connectionDownloadStream(
+      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
+      throws SQLException;
 }
