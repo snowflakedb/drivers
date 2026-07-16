@@ -122,7 +122,7 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Logout failed: {message}"))]
-    LogoutFailed {
+    Logout {
         message: String,
         #[snafu(implicit)]
         location: Location,
@@ -185,7 +185,7 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Stage binding failed: {source}"))]
-    StageBindingFailed {
+    StageBinding {
         #[snafu(source(from(crate::stage_binding::StageBindingError, Box::new)))]
         source: Box<crate::stage_binding::StageBindingError>,
         #[snafu(implicit)]

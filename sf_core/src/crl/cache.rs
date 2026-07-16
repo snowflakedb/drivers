@@ -1,8 +1,8 @@
 use crate::config::retry::RetryPolicy;
 use crate::crl::config::CrlConfig;
 use crate::crl::error::{
-    CrlDistributionPointFailedSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
-    MutexPoisonedSnafu, VerificationTaskFailedSnafu,
+    CrlDistributionPointSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
+    MutexPoisonedSnafu, VerificationTaskSnafu,
 };
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry};
 use chrono::{DateTime, Utc};
@@ -580,8 +580,8 @@ impl CrlCache {
         let mut min_expires: Option<DateTime<Utc>> = None;
         // Remember the last URL whose CRL failed verification alongside its error.
         // We propagate BOTH so callers receive an error that identifies which
-        // distribution point failed (via CrlDistributionPointFailed), not just the
-        // underlying cause. See CrlError::CrlDistributionPointFailed in error.rs.
+        // distribution point failed (via CrlDistributionPoint), not just the
+        // underlying cause. See CrlError::CrlDistributionPoint in error.rs.
         let mut last_verify_error: Option<(String, CrlError)> = None;
         for url in crl_urls.iter() {
             let bytes = self
@@ -641,7 +641,7 @@ impl CrlCache {
             // callers can identify which endpoint failed without parsing logs.
             if let Some((failed_url, err)) = last_verify_error {
                 return Err(Box::new(err))
-                    .context(CrlDistributionPointFailedSnafu { url: failed_url })
+                    .context(CrlDistributionPointSnafu { url: failed_url })
                     .context(crate::tls::revocation::CrlOperationSnafu);
             }
             return Ok(RevocationOutcome::NotDetermined);
@@ -745,7 +745,7 @@ impl CrlCache {
             // it propagates exactly as it would have on the runtime thread before
             // this work was moved onto the blocking pool.
             Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
-            Err(e) => Err(e).context(VerificationTaskFailedSnafu),
+            Err(e) => Err(e).context(VerificationTaskSnafu),
         }
     }
 

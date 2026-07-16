@@ -18,7 +18,7 @@ use crate::config::rest_parameters::{
 use crate::config::settings::{Setting, Settings};
 use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
-    ValidationFailedSnafu,
+    ValidationSnafu,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig, TlsVersion};
@@ -527,7 +527,7 @@ impl ConnectionConfig {
     ///
     /// The input should come from `resolver::resolve` or `resolver::resolve_with_paths`.
     /// Runs `validate_settings` first and returns all validation errors
-    /// collected (not just the first) via `ConfigError::ValidationFailed`.
+    /// collected (not just the first) via `ConfigError::Validation`.
     /// Runtime errors that go beyond static validation (e.g. base64
     /// decoding failures, file I/O) are still returned individually.
     pub fn build(settings: &ParamStore) -> Result<Self, ConfigError> {
@@ -537,7 +537,7 @@ impl ConnectionConfig {
             .filter(|i| i.severity == ValidationSeverity::Error)
             .collect();
         if !errors.is_empty() {
-            return ValidationFailedSnafu { issues: errors }.fail();
+            return ValidationSnafu { issues: errors }.fail();
         }
 
         let account = settings
@@ -1272,7 +1272,7 @@ mod tests {
         ]);
         let err = ConnectionConfig::build(&settings).unwrap_err();
         match err {
-            ConfigError::ValidationFailed { ref issues, .. } => {
+            ConfigError::Validation { ref issues, .. } => {
                 assert!(
                     issues
                         .iter()
@@ -1281,7 +1281,7 @@ mod tests {
                     "Expected MissingRequired for 'account', got: {issues:?}"
                 );
             }
-            other => panic!("Expected ValidationFailed, got: {other}"),
+            other => panic!("Expected Validation, got: {other}"),
         }
     }
 
@@ -1349,7 +1349,7 @@ mod tests {
         ]);
         let err = ConnectionConfig::build(&settings).unwrap_err();
         match err {
-            ConfigError::ValidationFailed { ref issues, .. } => {
+            ConfigError::Validation { ref issues, .. } => {
                 assert!(
                     issues
                         .iter()
@@ -1358,7 +1358,7 @@ mod tests {
                     "Expected ConflictingParameters for ssl + protocol, got: {issues:?}"
                 );
             }
-            other => panic!("Expected ValidationFailed, got: {other}"),
+            other => panic!("Expected Validation, got: {other}"),
         }
     }
 
@@ -1970,7 +1970,7 @@ mod tests {
         ]);
         let err = ConnectionConfig::build(&settings).unwrap_err();
         match err {
-            ConfigError::ValidationFailed { ref issues, .. } => {
+            ConfigError::Validation { ref issues, .. } => {
                 assert!(
                     issues
                         .iter()
@@ -1978,7 +1978,7 @@ mod tests {
                     "Expected ConflictingParameters issue, got: {issues:?}"
                 );
             }
-            other => panic!("Expected ValidationFailed, got: {other}"),
+            other => panic!("Expected Validation, got: {other}"),
         }
     }
 

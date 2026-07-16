@@ -235,9 +235,9 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
         })
         .await;
 
-    // Remap ApiError::Query (from RefreshContext) to ApiError::LogoutFailed
+    // Remap ApiError::Query (from RefreshContext) to ApiError::Logout
     result.map_err(|e| match e {
-        ApiError::Query { source, .. } => LogoutFailedSnafu {
+        ApiError::Query { source, .. } => LogoutSnafu {
             message: format!("{source}"),
         }
         .build(),

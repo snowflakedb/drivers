@@ -32,34 +32,30 @@ pub struct Attestation {
 /// Each variant wraps the provider-specific error type so the underlying
 /// failure (and its captured call-site location) is preserved in the
 /// [`error_trace::ErrorTrace`] chain.
-// The shared `…AttestationFailed` postfix is intentional: each variant is a
-// per-provider wrapper around that provider's domain error, named in the
-// past-tense failure style the project convention asks for. The common suffix
-// is meaningful, so opt out of the enum-variant-name lint.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum AttestationError {
     #[snafu(display("AWS attestation failed"))]
-    AwsAttestationFailed {
+    AwsAttestation {
         source: aws::AwsAttestationError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Azure attestation failed"))]
-    AzureAttestationFailed {
+    AzureAttestation {
         source: azure::AzureAttestationError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("GCP attestation failed"))]
-    GcpAttestationFailed {
+    GcpAttestation {
         source: gcp::GcpAttestationError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("OIDC attestation failed"))]
-    OidcAttestationFailed {
+    OidcAttestation {
         source: oidc::OidcAttestationError,
         #[snafu(implicit)]
         location: Location,
@@ -78,7 +74,7 @@ pub async fn create_attestation(
         WifProvider::Aws => {
             let token = aws::get_attestation_token(client, config)
                 .await
-                .context(AwsAttestationFailedSnafu)?;
+                .context(AwsAttestationSnafu)?;
             Ok(Attestation {
                 provider: WifProvider::Aws.as_wire_str(),
                 token: SensitiveString::from(token),
@@ -87,7 +83,7 @@ pub async fn create_attestation(
         WifProvider::Azure => {
             let token = azure::get_managed_identity_token(client, config)
                 .await
-                .context(AzureAttestationFailedSnafu)?;
+                .context(AzureAttestationSnafu)?;
             Ok(Attestation {
                 provider: WifProvider::Azure.as_wire_str(),
                 token: SensitiveString::from(token),
@@ -96,14 +92,14 @@ pub async fn create_attestation(
         WifProvider::Gcp => {
             let token = gcp::get_identity_token(client, config)
                 .await
-                .context(GcpAttestationFailedSnafu)?;
+                .context(GcpAttestationSnafu)?;
             Ok(Attestation {
                 provider: WifProvider::Gcp.as_wire_str(),
                 token: SensitiveString::from(token),
             })
         }
         WifProvider::Oidc => {
-            let token = oidc::get_token(config).context(OidcAttestationFailedSnafu)?;
+            let token = oidc::get_token(config).context(OidcAttestationSnafu)?;
             Ok(Attestation {
                 provider: WifProvider::Oidc.as_wire_str(),
                 token,

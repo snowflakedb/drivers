@@ -137,7 +137,7 @@ pub(super) async fn upload_to_s3_or_skip(
     run_s3_with_sts_refresh(
         refresher,
         &stage_info.creds,
-        |e| upload_file_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| upload_file_error::StageInfoRefreshSnafu.into_error(e),
         // Refresher declined to rotate (or there was none). Surface the
         // original AWS error as a normal upload failure — same shape as
         // any other S3 PUT error.
@@ -888,7 +888,7 @@ pub(super) async fn download_from_s3(
     run_s3_with_sts_refresh(
         refresher,
         &stage_info.creds,
-        |e| download_file_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
         |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
         attempt,
     )
@@ -1548,7 +1548,7 @@ pub enum UploadFileError {
         location: Location,
     },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
-    StageInfoRefreshFailed {
+    StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
@@ -1605,7 +1605,7 @@ pub enum DownloadFileError {
         location: Location,
     },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
-    StageInfoRefreshFailed {
+    StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]

@@ -313,7 +313,7 @@ pub async fn get_chunk_data(
     // body doesn't stall this runtime worker.
     tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes))
         .await
-        .context(SpawnBlockingFailedSnafu)?
+        .context(SpawnBlockingSnafu)?
 }
 
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];

@@ -296,7 +296,7 @@ impl DatabaseDriverV1 {
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
             .await
-            .context(StageBindingFailedSnafu)
+            .context(StageBindingSnafu)
     }
 
     async fn execute_query_internal<'a>(
