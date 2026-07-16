@@ -1570,3 +1570,35 @@ behavior_differences:
       identifier mode will now get matches for differently-cased identifiers. The odbc-api tests
       split the assertion (NEW_DRIVER_ONLY expects the matched row, OLD_DRIVER_ONLY expects the
       legacy empty result set).
+  92:
+    name: "Failed GET download no longer leaves a partial or corrupt file at the destination"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      The legacy driver wrote GET output directly to the destination (decrypting in place) with
+      no staging file and no cleanup, so a failed or interrupted transfer left a truncated/corrupt
+      file at the destination. The universal driver's atomic `.part`-then-rename prevents any
+      partial file from ever appearing at the destination. The improvement is accepted.
+    old_driver_behavior: |
+      The legacy ODBC driver (libsnowflakeclient) opens the final destination file directly and
+      streams downloaded bytes into it — through an in-place decrypt wrapper (`Crypto::CipherIOStream`)
+      for encrypted files — with no `.part` staging file or rename (`FileTransferAgent::downloadSingleFile`).
+      On a mid-transfer failure the download returns FAILED and the partial file is left at the
+      destination with no cleanup, and GET performs no post-download digest verification. A retry
+      re-opens the destination with truncation and overwrites, but once retries are exhausted the
+      last partial write remains on disk.
+    new_driver_behavior: |
+      GET downloads assemble into a sibling `<dst>.part` staging file and rename it to the final
+      destination only after the transfer completes successfully (and, for client-side-encrypted
+      files, only after the SHA-256 content digest verifies). The user-visible destination path is
+      therefore only ever a complete file; a failed or interrupted download never publishes partial
+      or corrupt data there. On failure the driver drains any in-flight chunk writes and then
+      removes the `.part` staging file, so a failed download leaves the filesystem clean. (A
+      client-side-encrypted download stages ciphertext in a separate temporary file that is likewise
+      removed on failure and unlinked once decrypted.) The only residue possible is after a hard
+      process kill (SIGKILL / power loss), where at most a single `<dst>.part` can remain —
+      self-documenting, and overwritten by the next download of the same file rather than
+      accumulating. The contract is cloud-generic (S3, Azure, and GCS).

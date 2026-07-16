@@ -367,3 +367,36 @@ behavior_differences:
       getChildQueryIds(getQueryID()), so it consumes this difference — the parent ID expands to 3
       children on the universal driver, the first child's ID to length 1 on legacy — and is therefore
       @SkipOldDriver("BD#24"). getChildQueryIds itself has parity given the same query ID.
+  25:
+    name: "Failed GET download no longer leaves a partial or corrupt file at the destination"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      The legacy driver wrote GET output directly to the destination (decrypting in place) with
+      no staging file and no cleanup, so a failed or interrupted transfer left a truncated/corrupt
+      file at the destination. The universal driver's atomic `.part`-then-rename prevents any
+      partial file from ever appearing at the destination. The improvement is accepted.
+    old_driver_behavior: |
+      The legacy snowflake-jdbc driver writes downloaded bytes straight to the final destination
+      path — there is no `.part`/staging file and no rename-on-success (SnowflakeS3Client /
+      SnowflakeAzureClient / SnowflakeGCSClient `download(...)`). Encrypted files are decrypted in
+      place on that same destination file (`EncryptionProvider.decrypt`). On a mid-transfer failure
+      (network error, decryption failure) nothing deletes the partial file, and GET performs no
+      post-download digest verification — so a truncated or corrupt file is left at the destination
+      path, where a subsequent read sees inconsistent data. The caller must detect the failure,
+      delete the file, and retry manually.
+    new_driver_behavior: |
+      GET downloads assemble into a sibling `<dst>.part` staging file and rename it to the final
+      destination only after the transfer completes successfully (and, for client-side-encrypted
+      files, only after the SHA-256 content digest verifies). The user-visible destination path is
+      therefore only ever a complete file; a failed or interrupted download never publishes partial
+      or corrupt data there. On failure the driver drains any in-flight chunk writes and then
+      removes the `.part` staging file, so a failed download leaves the filesystem clean. (A
+      client-side-encrypted download stages ciphertext in a separate temporary file that is likewise
+      removed on failure and unlinked once decrypted.) The only residue possible is after a hard
+      process kill (SIGKILL / power loss), where at most a single `<dst>.part` can remain —
+      self-documenting, and overwritten by the next download of the same file rather than
+      accumulating. The contract is cloud-generic (S3, Azure, and GCS).
