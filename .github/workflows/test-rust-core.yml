@@ -300,6 +300,22 @@ jobs:
           cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored flaky_
 
+      # Long-running tests: real-cloud tests that are too slow for every PR but
+      # must pass on nightly. Tests opt in by being #[ignore]d AND prefixed with
+      # `large_` (parallel to the `flaky_` convention above, but blocking —
+      # a failure here turns the nightly red). Scoped to schedule + aws for now;
+      # expand cloud_provider condition when Azure/GCS large tests land.
+      # Step-level timeout caps blast radius against the job's 35-min budget.
+      - name: Run long-running tests (nightly, aws only)
+        if: github.event_name == 'schedule' && matrix.cloud_provider == 'aws'
+        timeout-minutes: 25
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo llvm-cov --no-report --package sf_core ${{ matrix.cargo_flags }} \
+            -- --ignored large_
+
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
       # contains no *.profraw files; running `cargo llvm-cov report` then fails with
