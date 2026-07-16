@@ -633,7 +633,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             )),
         },
         ApiError::Configuration {
-            source: ConfigError::ValidationFailed { issues, .. },
+            source: ConfigError::Validation { issues, .. },
             ..
         } => {
             let summary = issues
@@ -755,9 +755,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::StageBindingFailed { .. } => DriverError {
+        ApiError::StageBinding { .. } => DriverError {
             // Surface as `GenericError` for now: the wrapper-side fallback
-            // (catch `ApiError::StageBindingFailed`, re-issue with inline JSON
+            // (catch `ApiError::StageBinding`, re-issue with inline JSON
             // bindings) lives in a separate PR. A dedicated proto variant
             // for stage-binding failures can land alongside that work —
             // the underlying snafu source-chain (logged via the
@@ -817,7 +817,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ConnectionClosed { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
-        ApiError::LogoutFailed { .. } => DriverError {
+        ApiError::Logout { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
         ApiError::QueryTimeout { .. } => DriverError {
@@ -924,7 +924,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             ..
         } => StatusCode::MissingParameter,
         ApiError::Configuration {
-            source: ConfigError::ValidationFailed { issues, .. },
+            source: ConfigError::Validation { issues, .. },
             ..
         } if issues
             .iter()
@@ -933,7 +933,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             StatusCode::MissingParameter
         }
         ApiError::Configuration {
-            source: ConfigError::ValidationFailed { .. },
+            source: ConfigError::Validation { .. },
             ..
         } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
@@ -990,13 +990,13 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
         ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
-        ApiError::LogoutFailed { .. } => StatusCode::InternalError,
+        ApiError::Logout { .. } => StatusCode::InternalError,
         // Stage-binding failures are surfaced as a transport-layer
         // generic error for now (no dedicated proto status code yet);
         // the wrapper-side fallback work will add a dedicated variant and
         // map to it. Until then, `GenericError` is the right bucket — the
         // error trace carries enough detail for diagnostics.
-        ApiError::StageBindingFailed { .. } => StatusCode::GenericError,
+        ApiError::StageBinding { .. } => StatusCode::GenericError,
         // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
         // language wrappers can surface HYT00 / OperationalError correctly.
         ApiError::QueryTimeout { .. } => StatusCode::GenericError,

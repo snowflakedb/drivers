@@ -617,7 +617,7 @@ pub async fn auth_request_data(
         LoginMethod::WorkloadIdentity(cfg) => {
             let attestation = workload_identity::create_attestation(client, cfg)
                 .await
-                .context(WorkloadIdentityAttestationFailedSnafu)?;
+                .context(WorkloadIdentityAttestationSnafu)?;
             data.authenticator = Some(authenticator::WORKLOAD_IDENTITY.to_string());
             data.provider = Some(attestation.provider.to_string());
             data.token = Some(attestation.token);
@@ -2213,7 +2213,7 @@ pub enum RestError {
         location: Location,
     },
     #[snafu(display("Workload Identity Federation attestation failed: {source}"))]
-    WorkloadIdentityAttestationFailed {
+    WorkloadIdentityAttestation {
         source: workload_identity::AttestationError,
         #[snafu(implicit)]
         location: Location,
@@ -2327,7 +2327,7 @@ pub enum RestError {
         location: Location,
     },
     #[snafu(display("Logout failed: {message} (code: {code})"))]
-    LogoutFailed {
+    Logout {
         message: String,
         code: i32,
         #[snafu(implicit)]

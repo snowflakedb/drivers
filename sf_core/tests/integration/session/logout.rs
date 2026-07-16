@@ -1753,13 +1753,10 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     );
 
     //And Timeout is logged as WARN
-    let api_result =
-        result.map_err(
-            |e| sf_core::apis::database_driver_v1::ApiError::LogoutFailed {
-                message: format!("{e}"),
-                location: snafu::Location::default(),
-            },
-        );
+    let api_result = result.map_err(|e| sf_core::apis::database_driver_v1::ApiError::Logout {
+        message: format!("{e}"),
+        location: snafu::Location::default(),
+    });
     let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
     //Then Close succeeds

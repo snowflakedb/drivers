@@ -95,7 +95,7 @@ pub enum CrlError {
         location: Location,
     },
     #[snafu(display("CRL verification task did not complete"))]
-    VerificationTaskFailed {
+    VerificationTask {
         source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
@@ -129,7 +129,7 @@ pub enum CrlError {
     /// CrlCache::check_revocation so callers can identify which URL failed without
     /// parsing log output. The inner error is boxed to keep the enum size small.
     #[snafu(display("CRL verification failed for distribution point {url_safe}: {source}", url_safe = url_for_log(url)))]
-    CrlDistributionPointFailed {
+    CrlDistributionPoint {
         url: String,
         source: Box<CrlError>,
         #[snafu(implicit)]

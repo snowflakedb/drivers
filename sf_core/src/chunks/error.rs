@@ -55,7 +55,7 @@ pub enum ChunkError {
         location: Location,
     },
     #[snafu(display("Background chunk-decompression task failed to join"))]
-    SpawnBlockingFailed {
+    SpawnBlocking {
         source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,

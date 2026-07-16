@@ -129,7 +129,7 @@ pub async fn upload_to_gcs_or_skip(
     let first = run_gcs_with_token_refresh(
         refresher.as_deref_mut(),
         stage_info,
-        |e| gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
     )
     .await;
@@ -166,7 +166,7 @@ pub async fn upload_to_gcs_or_skip(
                 );
                 return gcs_upload_error::PresignedUrlExpiredSnafu.fail();
             }
-            Err(e) => return Err(gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e)),
+            Err(e) => return Err(gcs_upload_error::StageInfoRefreshSnafu.into_error(e)),
         }
         stage_info.with_snapshot(r.cache().snapshot())
     };
@@ -174,7 +174,7 @@ pub async fn upload_to_gcs_or_skip(
     let second = run_gcs_with_token_refresh(
         refresher.as_deref_mut(),
         &refreshed_stage_info,
-        |e| gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(&refreshed_stage_info),
     )
     .await;
@@ -300,7 +300,7 @@ async fn gcs_get_with_refresh(
     let first = run_gcs_with_token_refresh(
         refresher.as_deref_mut(),
         stage_info,
-        |e| gcs_download_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info, initial_per_file_url.clone()),
     )
     .await;
@@ -334,7 +334,7 @@ async fn gcs_get_with_refresh(
             };
             r.refresh_url()
                 .await
-                .context(gcs_download_error::StageInfoRefreshFailedSnafu)?;
+                .context(gcs_download_error::StageInfoRefreshSnafu)?;
             let snap = r.cache().snapshot();
             let new_url = snap
                 .presigned_urls
@@ -356,7 +356,7 @@ async fn gcs_get_with_refresh(
         let second = run_gcs_with_token_refresh(
             refresher.as_deref_mut(),
             &refreshed_stage_info,
-            |e| gcs_download_error::StageInfoRefreshFailedSnafu.into_error(e),
+            |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
             make_attempt(&refreshed_stage_info, refreshed_per_file_url),
         )
         .await;
@@ -1320,7 +1320,7 @@ pub enum GcsUploadError {
         location: Location,
     },
     #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
-    StageInfoRefreshFailed {
+    StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
@@ -1392,7 +1392,7 @@ pub enum GcsDownloadError {
         location: Location,
     },
     #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
-    StageInfoRefreshFailed {
+    StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]

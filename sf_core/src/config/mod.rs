@@ -102,7 +102,7 @@ pub enum ConfigError {
             .map(|i| format!("{}: {}", i.parameter, i.message))
             .unwrap_or_default()
     ))]
-    ValidationFailed {
+    Validation {
         issues: Vec<crate::config::connection_config::ValidationIssue>,
         #[snafu(implicit)]
         location: Location,

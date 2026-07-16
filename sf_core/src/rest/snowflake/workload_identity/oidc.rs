@@ -28,7 +28,7 @@ pub enum OidcAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to base64-decode JWT payload"))]
-    PayloadDecodeFailed {
+    PayloadDecode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
@@ -73,7 +73,7 @@ fn validate_and_log_claims(token: &str) -> Result<(), OidcAttestationError> {
 
     let payload_bytes = URL_SAFE_NO_PAD
         .decode(payload_b64)
-        .context(PayloadDecodeFailedSnafu)?;
+        .context(PayloadDecodeSnafu)?;
 
     let payload: serde_json::Value =
         serde_json::from_slice(&payload_bytes).context(PayloadNotJsonSnafu)?;
