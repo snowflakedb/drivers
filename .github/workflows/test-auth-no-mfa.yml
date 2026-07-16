@@ -125,6 +125,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev
+          python3 -m pip install 'cmake>=4.0.3'
 
       - name: Run ODBC auth no-MFA tests
         run: ./tests/auth/auth_no_mfa_odbc.sh
