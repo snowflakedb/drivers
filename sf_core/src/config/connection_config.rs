@@ -803,19 +803,26 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
 
+    // Session token auth is detected by the presence of `session_token` rather than
+    // an authenticator string (build_auth_config checks SESSION_TOKEN first). Skip all
+    // user/password requirements when both tokens are present.
+    let has_session_token = non_empty_string(settings, SESSION_TOKEN).is_some();
+
     // --- MissingRequired: user ---
     // SNOW-3647715: token-based authenticators waive the `user`
     // requirement — the principal is encoded in the IdP-issued token
     // (or PAT) and resolved by GS at login time. WIF also waives the
     // user requirement since the cloud identity is resolved server-side.
-    let user_optional = matches!(
-        auth_upper.as_str(),
-        "OAUTH"
-            | "OAUTH_AUTHORIZATION_CODE"
-            | "OAUTH_CLIENT_CREDENTIALS"
-            | "PROGRAMMATIC_ACCESS_TOKEN"
-            | "WORKLOAD_IDENTITY"
-    );
+    // Session token auth likewise carries no user identity requirement.
+    let user_optional = has_session_token
+        || matches!(
+            auth_upper.as_str(),
+            "OAUTH"
+                | "OAUTH_AUTHORIZATION_CODE"
+                | "OAUTH_CLIENT_CREDENTIALS"
+                | "PROGRAMMATIC_ACCESS_TOKEN"
+                | "WORKLOAD_IDENTITY"
+        );
     if !user_optional && non_empty_string(settings, USER).is_none() {
         issues.push(ValidationIssue {
             severity: ValidationSeverity::Error,
@@ -825,6 +832,9 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         });
     }
     match auth_upper.as_str() {
+        _ if has_session_token => {
+            // Session token auth: user/password not required; build_auth_config handles it.
+        }
         "" if has_private_key_params(settings) => {
             // Empty authenticator + private key params → auto-JWT, no password needed
         }
@@ -1667,6 +1677,50 @@ mod tests {
             }
             _ => panic!("Expected Pat auth"),
         }
+    }
+
+    #[test]
+    fn build_session_token_auth_without_user_succeeds() {
+        // session_token + master_token bypass the user/password requirement;
+        // no --user flag is needed (mirrors snowflake-cli's --session-token usage).
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("session_token", Setting::String("sess_tok".into())),
+            ("master_token", Setting::String("mstr_tok".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::SessionToken {
+                session_token,
+                master_token,
+                ..
+            } => {
+                assert_eq!(session_token.reveal(), "sess_tok");
+                assert_eq!(master_token.reveal(), "mstr_tok");
+            }
+            _ => panic!("Expected SessionToken auth"),
+        }
+    }
+
+    #[test]
+    fn build_session_token_auth_with_user_succeeds() {
+        // user is accepted but not required for session token auth.
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("user", Setting::String("alice".into())),
+            ("session_token", Setting::String("sess_tok".into())),
+            ("master_token", Setting::String("mstr_tok".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(matches!(config.auth, AuthConfig::SessionToken { .. }));
     }
 
     #[test]
