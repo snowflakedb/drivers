@@ -326,12 +326,14 @@ jobs:
 
       # `put_get` is the module name under tests/e2e and tests/integration in
       # sf_core, so the test-name filter selects only those suites.
+      # --include-ignored also runs the #[ignore]d multipart round-trip test
+      # (put_get::put_get_multipart_roundtrip — ~210 MiB real-cloud PUT/GET).
       - name: Run sf_core put/get tests
         env:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo test --package sf_core --all-features --test e2e_tests put_get -- --nocapture
+          cargo test --package sf_core --all-features --test e2e_tests put_get -- --nocapture --include-ignored
           cargo test --package sf_core --all-features --test integration_tests put_get -- --nocapture
 
       - name: Save Rust cache
