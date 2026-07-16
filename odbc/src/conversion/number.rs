@@ -1,5 +1,6 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
+use snafu::OptionExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -209,28 +210,28 @@ const POW10_U128: [u128; (MAX_DECIMAL_SCALE + 1) as usize] = {
 /// is 38 and `0 ≤ scale ≤ precision`), so the error branch is not expected
 /// on well-formed server output.
 fn pow10_i128(scale: u32) -> Result<i128, WriteOdbcError> {
-    POW10_I128.get(scale as usize).copied().ok_or_else(|| {
-        NumericValueOutOfRangeSnafu {
+    POW10_I128
+        .get(scale as usize)
+        .copied()
+        .with_context(|| NumericValueOutOfRangeSnafu {
             reason: format!(
                 "DECIMAL scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}"
             ),
-        }
-        .build()
-    })
+        })
 }
 
 /// `u128` counterpart to [`pow10_i128`], used for re-scaling in the
 /// `SQL_C_NUMERIC` arm where the scale difference comes from the
 /// application-supplied ARD and is not otherwise validated.
 fn pow10_u128(scale: u32) -> Result<u128, WriteOdbcError> {
-    POW10_U128.get(scale as usize).copied().ok_or_else(|| {
-        NumericValueOutOfRangeSnafu {
+    POW10_U128
+        .get(scale as usize)
+        .copied()
+        .with_context(|| NumericValueOutOfRangeSnafu {
             reason: format!(
                 "scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE} for SQL_C_NUMERIC"
             ),
-        }
-        .build()
-    })
+        })
 }
 
 impl SnowflakeNumber {
@@ -459,7 +460,7 @@ impl WriteODBCType for SnowflakeNumber {
                 let scale_diff = target_scale as i32 - self.scale as i32;
                 let (unscaled, truncated): (u128, bool) = if scale_diff >= 0 {
                     let multiplier = pow10_u128(scale_diff as u32)?;
-                    let unscaled = abs_value.checked_mul(multiplier).ok_or_else(|| {
+                    let unscaled = abs_value.checked_mul(multiplier).with_context(|| {
                         NumericValueOutOfRangeSnafu {
                             reason: format!(
                                 "Re-scaling numeric from scale {} to {target_scale} overflows u128 \
@@ -467,7 +468,6 @@ impl WriteODBCType for SnowflakeNumber {
                                 self.scale
                             ),
                         }
-                        .build()
                     })?;
                     (unscaled, false)
                 } else {
@@ -579,11 +579,10 @@ impl ReadODBC for SnowflakeNumber {
             CDataType::Numeric => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 if scale > 0 {
-                    let divisor = 10i128.checked_pow(scale as u32).ok_or_else(|| {
+                    let divisor = 10i128.checked_pow(scale as u32).with_context(|| {
                         NumericMagnitudeOverflowSnafu {
                             reason: format!("10^{scale} overflows i128 (positive scale too large)"),
                         }
-                        .build()
                     })?;
                     mantissa / divisor
                 } else if scale < 0 {
@@ -592,19 +591,17 @@ impl ReadODBC for SnowflakeNumber {
                     } else {
                         (-scale) as u32
                     };
-                    let multiplier = 10i128.checked_pow(abs_scale).ok_or_else(|| {
+                    let multiplier = 10i128.checked_pow(abs_scale).with_context(|| {
                         NumericMagnitudeOverflowSnafu {
                             reason: format!(
                                 "10^{abs_scale} overflows i128 (negative scale too large)"
                             ),
                         }
-                        .build()
                     })?;
-                    mantissa.checked_mul(multiplier).ok_or_else(|| {
+                    mantissa.checked_mul(multiplier).with_context(|| {
                         NumericMagnitudeOverflowSnafu {
                             reason: format!("mantissa * 10^{abs_scale} overflows i128"),
                         }
-                        .build()
                     })?
                 } else {
                     mantissa

@@ -45,7 +45,7 @@ use crate::api::{
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use std::collections::HashMap;
 use tracing;
 
@@ -997,23 +997,21 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     let mut connection = dbc.connection.lock();
     match attr {
         ConnectionAttribute::AccessMode => {
-            let mode = AccessMode::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+            let mode = AccessMode::from_raw(value_ptr as sql::UInteger).with_context(|| {
                 InvalidAttributeValueSnafu {
                     attribute: attr.as_raw(),
                     value: value_ptr as i64,
                 }
-                .build()
             })?;
             connection.access_mode = mode;
             Ok(())
         }
         ConnectionAttribute::Autocommit => {
-            let val = AutocommitValue::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+            let val = AutocommitValue::from_raw(value_ptr as sql::UInteger).with_context(|| {
                 InvalidAttributeValueSnafu {
                     attribute: attr.as_raw(),
                     value: value_ptr as i64,
                 }
-                .build()
             })?;
             // NOTE: Per ODBC spec, HY011 must be returned if a transaction is currently open.
             // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.

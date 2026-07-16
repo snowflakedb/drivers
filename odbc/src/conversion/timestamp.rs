@@ -3,6 +3,7 @@ use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
+use snafu::OptionExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -280,21 +281,15 @@ fn read_struct_timestamp(
         .column(0)
         .as_any()
         .downcast_ref::<PrimitiveArray<Int64Type>>()
-        .ok_or_else(|| {
-            InvalidArrowValueSnafu {
-                reason: "timestamp struct column 0 is not Int64".to_string(),
-            }
-            .build()
+        .with_context(|| InvalidArrowValueSnafu {
+            reason: "timestamp struct column 0 is not Int64".to_string(),
         })?;
     let fraction_array = array
         .column(1)
         .as_any()
         .downcast_ref::<PrimitiveArray<Int32Type>>()
-        .ok_or_else(|| {
-            InvalidArrowValueSnafu {
-                reason: "timestamp struct column 1 is not Int32".to_string(),
-            }
-            .build()
+        .with_context(|| InvalidArrowValueSnafu {
+            reason: "timestamp struct column 1 is not Int32".to_string(),
         })?;
 
     let epoch_seconds = epoch_array.value(row_idx);
@@ -311,13 +306,10 @@ fn read_struct_timestamp(
 
     DateTime::from_timestamp(epoch_seconds, fraction_nanos as u32)
         .map(|dt| dt.naive_utc())
-        .ok_or_else(|| {
-            InvalidArrowValueSnafu {
-                reason: format!(
-                    "epoch_seconds={epoch_seconds}, fraction_nanos={fraction_nanos} is out of range"
-                ),
-            }
-            .build()
+        .with_context(|| InvalidArrowValueSnafu {
+            reason: format!(
+                "epoch_seconds={epoch_seconds}, fraction_nanos={fraction_nanos} is out of range"
+            ),
         })
 }
 
@@ -339,13 +331,10 @@ fn read_scaled_timestamp(
 
     DateTime::from_timestamp(epoch_seconds, nanos)
         .map(|dt| dt.naive_utc())
-        .ok_or_else(|| {
-            InvalidArrowValueSnafu {
-                reason: format!(
-                    "scaled epoch raw={raw}, scale={scale} produced out-of-range timestamp"
-                ),
-            }
-            .build()
+        .with_context(|| InvalidArrowValueSnafu {
+            reason: format!(
+                "scaled epoch raw={raw}, scale={scale} produced out-of-range timestamp"
+            ),
         })
 }
 
@@ -382,11 +371,8 @@ fn read_struct_timestamp_tz(
             .column(0)
             .as_any()
             .downcast_ref::<PrimitiveArray<Int64Type>>()
-            .ok_or_else(|| {
-                InvalidArrowValueSnafu {
-                    reason: "TIMESTAMP_TZ struct column 0 is not Int64".to_string(),
-                }
-                .build()
+            .with_context(|| InvalidArrowValueSnafu {
+                reason: "TIMESTAMP_TZ struct column 0 is not Int64".to_string(),
             })?;
 
         let raw = epoch_array.value(row_idx);
@@ -394,13 +380,10 @@ fn read_struct_timestamp_tz(
 
         DateTime::from_timestamp(epoch_seconds, nanos)
             .map(|dt| dt.naive_utc())
-            .ok_or_else(|| {
-                InvalidArrowValueSnafu {
-                    reason: format!(
-                        "TZ scaled epoch raw={raw}, scale={scale} produced out-of-range timestamp"
-                    ),
-                }
-                .build()
+            .with_context(|| InvalidArrowValueSnafu {
+                reason: format!(
+                    "TZ scaled epoch raw={raw}, scale={scale} produced out-of-range timestamp"
+                ),
             })?
     } else {
         return InvalidArrowValueSnafu {
@@ -417,13 +400,10 @@ fn read_struct_timestamp_tz(
         .column(offset_col_idx)
         .as_any()
         .downcast_ref::<PrimitiveArray<Int32Type>>()
-        .ok_or_else(|| {
-            InvalidArrowValueSnafu {
-                reason: format!(
-                    "TIMESTAMP_TZ struct column {offset_col_idx} is not Int32 (expected tz_offset_min)"
-                ),
-            }
-            .build()
+        .with_context(|| InvalidArrowValueSnafu {
+            reason: format!(
+                "TIMESTAMP_TZ struct column {offset_col_idx} is not Int32 (expected tz_offset_min)"
+            ),
         })?;
     let offset_minutes = offset_array.value(row_idx) - TZ_OFFSET_BIAS_MINUTES;
 
@@ -677,15 +657,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
         CDataType::TimeStamp | CDataType::TypeTimestamp => {
             let ts = read_unaligned::<sql::Timestamp>(binding);
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
-                .ok_or_else(|| {
-                    InvalidDatetimeValueSnafu {
-                        reason: format!(
-                            "invalid date in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
+                .with_context(|| InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid date in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
                              year={}, month={}, day={}",
-                            ts.year, ts.month, ts.day
-                        ),
-                    }
-                    .build()
+                        ts.year, ts.month, ts.day
+                    ),
                 })?;
             let time = NaiveTime::from_hms_nano_opt(
                 ts.hour as u32,
@@ -693,15 +670,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
                 ts.second as u32,
                 ts.fraction,
             )
-            .ok_or_else(|| {
-                InvalidDatetimeValueSnafu {
-                    reason: format!(
-                        "invalid time in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
+            .with_context(|| InvalidDatetimeValueSnafu {
+                reason: format!(
+                    "invalid time in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
                          hour={}, minute={}, second={}, fraction={}",
-                        ts.hour, ts.minute, ts.second, ts.fraction
-                    ),
-                }
-                .build()
+                    ts.hour, ts.minute, ts.second, ts.fraction
+                ),
             })?;
             Ok(NaiveDateTime::new(date, time))
         }
@@ -718,15 +692,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
         CDataType::Date | CDataType::TypeDate => {
             let d = read_unaligned::<sql::Date>(binding);
             let date = NaiveDate::from_ymd_opt(d.year as i32, d.month as u32, d.day as u32)
-                .ok_or_else(|| {
-                    InvalidDatetimeValueSnafu {
-                        reason: format!(
-                            "invalid date in SQL_C_TYPE_DATE for TIMESTAMP target: \
+                .with_context(|| InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid date in SQL_C_TYPE_DATE for TIMESTAMP target: \
                              year={}, month={}, day={}",
-                            d.year, d.month, d.day
-                        ),
-                    }
-                    .build()
+                        d.year, d.month, d.day
+                    ),
                 })?;
             Ok(NaiveDateTime::new(date, NaiveTime::MIN))
         }
@@ -739,29 +710,23 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
         CDataType::Time | CDataType::TypeTime => {
             let t = read_unaligned::<sql::Time>(binding);
             let time = NaiveTime::from_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
-                .ok_or_else(|| {
-                    InvalidDatetimeValueSnafu {
-                        reason: format!(
-                            "invalid time in SQL_C_TYPE_TIME for TIMESTAMP target: \
+                .with_context(|| InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid time in SQL_C_TYPE_TIME for TIMESTAMP target: \
                              hour={}, minute={}, second={}",
-                            t.hour, t.minute, t.second
-                        ),
-                    }
-                    .build()
+                        t.hour, t.minute, t.second
+                    ),
                 })?;
             Ok(NaiveDateTime::new(chrono::Local::now().date_naive(), time))
         }
         CDataType::Binary => {
             let ts = read_binary_struct::<sql::Timestamp>(binding, "SQL_TIMESTAMP_STRUCT")?;
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
-                .ok_or_else(|| {
-                    BindingNumericOutOfRangeSnafu {
-                        reason: format!(
-                            "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
-                            ts.year, ts.month, ts.day
-                        ),
-                    }
-                    .build()
+                .with_context(|| BindingNumericOutOfRangeSnafu {
+                    reason: format!(
+                        "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
+                        ts.year, ts.month, ts.day
+                    ),
                 })?;
             let time = NaiveTime::from_hms_nano_opt(
                 ts.hour as u32,
@@ -769,14 +734,11 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
                 ts.second as u32,
                 ts.fraction,
             )
-            .ok_or_else(|| {
-                BindingNumericOutOfRangeSnafu {
-                    reason: format!(
-                        "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}, fraction={}",
-                        ts.hour, ts.minute, ts.second, ts.fraction
-                    ),
-                }
-                .build()
+            .with_context(|| BindingNumericOutOfRangeSnafu {
+                reason: format!(
+                    "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}, fraction={}",
+                    ts.hour, ts.minute, ts.second, ts.fraction
+                ),
             })?;
             Ok(NaiveDateTime::new(date, time))
         }
@@ -796,12 +758,13 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
 /// **wrong** for TIMESTAMP_LTZ — see `write_timestamp_wire_wallclock` below
 /// for the LTZ path.
 fn write_timestamp_wire_epoch_nanos(value: NaiveDateTime) -> Result<String, BindingError> {
-    let epoch_nanos = value.and_utc().timestamp_nanos_opt().ok_or_else(|| {
-        UnsupportedCDataTypeSnafu {
-            c_type: CDataType::TypeTimestamp,
-        }
-        .build()
-    })?;
+    let epoch_nanos =
+        value
+            .and_utc()
+            .timestamp_nanos_opt()
+            .with_context(|| UnsupportedCDataTypeSnafu {
+                c_type: CDataType::TypeTimestamp,
+            })?;
     Ok(epoch_nanos.to_string())
 }
 
@@ -936,14 +899,13 @@ fn write_timestamp_tz_wire(value: TzInstant) -> Result<String, BindingError> {
     // ODBC Appendix D, so reusing the existing variant is more spec-correct
     // than the previous `UnsupportedCDataType` catch-all (which would have
     // surfaced as 07006 "Restricted data type attribute violation").
-    let epoch_nanos = value.utc.and_utc().timestamp_nanos_opt().ok_or_else(|| {
+    let epoch_nanos = value.utc.and_utc().timestamp_nanos_opt().with_context(|| {
         DatetimeFieldOverflowSnafu {
             reason: format!(
                 "TIMESTAMP_TZ UTC instant {} exceeds the i64 nanosecond epoch range supported by the wire format",
                 value.utc
             ),
         }
-        .build()
     })?;
     let biased_offset = value.offset_minutes + TZ_OFFSET_BIAS_MINUTES;
     Ok(format!("{epoch_nanos} {biased_offset}"))

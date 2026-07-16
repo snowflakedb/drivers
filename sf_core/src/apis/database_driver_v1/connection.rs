@@ -1866,12 +1866,12 @@ impl DatabaseDriverV1 {
             .fail();
         }
 
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let conn_ptr =
+            self.connections
+                .get_obj(conn_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
 
         let (http_client, server_url, client_info, retry_policy) = {
             let conn = conn_ptr.lock().await;

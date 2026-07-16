@@ -419,12 +419,12 @@ impl DatabaseDriverV1 {
         &self,
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
-        let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
+        let rs_ptr = self
+            .results
+            .get_obj(result_handle)
+            .with_context(|| InvalidArgumentSnafu {
                 argument: "result_handle: ResultSet handle not found".to_string(),
-            }
-            .build()
-        })?;
+            })?;
         let (data, http_client, prefetch_config, columns) = snapshot_reader_inputs(&rs_ptr).await;
 
         let nullable_flags: Vec<bool> = columns.iter().map(|c| c.nullable).collect();
@@ -452,12 +452,12 @@ impl DatabaseDriverV1 {
         &self,
         result_handle: Handle,
     ) -> Result<ChunkDataWithDescriptor, ApiError> {
-        let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
+        let rs_ptr = self
+            .results
+            .get_obj(result_handle)
+            .with_context(|| InvalidArgumentSnafu {
                 argument: "ResultSet handle not found".to_string(),
-            }
-            .build()
-        })?;
+            })?;
         let result_set = rs_ptr.lock().await;
 
         let chunk_data = (&result_set.data).into();
@@ -566,12 +566,12 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ResultSetInfo, ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let conn_ptr =
+            self.connections
+                .get_obj(conn_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
 
         let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
