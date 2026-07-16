@@ -555,9 +555,14 @@ fn api_error_sql_state(err: &ApiError) -> Option<&str> {
 fn map_execute_show_error(
     err: ApiError,
     sql: &str,
+    log_query_text: bool,
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
     if is_show_not_found_sql_state(api_error_sql_state(&err)) {
-        tracing::debug!("SHOW query not found (returning empty): {sql}: {err}");
+        if log_query_text {
+            tracing::info!("SHOW query not found (returning empty): {sql}: {err}");
+        } else {
+            tracing::debug!("SHOW query not found (returning empty): {err}");
+        }
         Ok(Vec::new())
     } else {
         Err(err)
@@ -614,7 +619,9 @@ async fn execute_show(
 
     let response = match response {
         Ok(resp) => resp,
-        Err(err) => return map_execute_show_error(err, &sql_owned),
+        Err(err) => {
+            return map_execute_show_error(err, &sql_owned, query_parameters.log_query_text);
+        }
     };
 
     // Reuse the canonical reader, which downloads and concatenates external
@@ -641,7 +648,11 @@ async fn execute_show(
             }
             .build()
         })??;
-    tracing::debug!("SHOW query parsed {} rows: {sql_owned}", parsed.len());
+    if query_parameters.log_query_text {
+        tracing::info!("SHOW query parsed {} rows: {sql_owned}", parsed.len());
+    } else {
+        tracing::debug!("SHOW query parsed {} rows", parsed.len());
+    }
     Ok(parsed)
 }
 
@@ -1511,7 +1522,7 @@ mod tests {
             query_id: None,
             location: snafu::Location::new("test", 1, 1),
         });
-        assert!(map_execute_show_error(err, "SHOW TABLES").is_err());
+        assert!(map_execute_show_error(err, "SHOW TABLES", false).is_err());
     }
 
     #[test]
@@ -1525,7 +1536,7 @@ mod tests {
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(
-            map_execute_show_error(err, "SHOW TABLES")
+            map_execute_show_error(err, "SHOW TABLES", false)
                 .unwrap()
                 .is_empty()
         );

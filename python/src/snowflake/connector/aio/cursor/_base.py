@@ -218,8 +218,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
-        if logger.is_enabled_for(logging.DEBUG):
-            logger.debug("query: [%s]", self._format_query_for_log(operation))
+        if logger.is_enabled_for(logging.INFO) and self._connection.config.log_query_text:
+            logger.info("query: [%s]", self._format_query_for_log(operation))
 
         query, binding_params = self._prepare_query(operation, parameters)
 
