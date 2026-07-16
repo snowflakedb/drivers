@@ -252,8 +252,8 @@ fn should_handle_empty_result_set_for_arrow_and_json() {
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, select_query);
@@ -336,8 +336,8 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, &select_query);
