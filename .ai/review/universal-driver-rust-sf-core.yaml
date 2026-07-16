@@ -463,3 +463,77 @@ rules:
           },
       }
       ```
+
+  - id: ud-rs-sql-parameterization
+    rule: |
+      **OBJECTIVE**: Never interpolate raw user-supplied strings into SQL via `format!()` or
+      string concatenation. Every user-controlled value must be escaped or constructed through
+      a type-safe builder before it reaches the query text.
+
+      **REQUIREMENT**: Any `format!()`, `+`, or `push_str` that produces a SQL string and
+      includes a non-constant runtime value is a finding unless one of the safe patterns below
+      applies.
+
+      **Identifiers** (database, schema, table, column, stage, file format names):
+      Wrap in double quotes AND apply `escape_sql_identifier()` (preferred) or `escape_dq()`.
+      Both functions escape embedded double quotes so the result is safe inside `"…"`.
+
+      **LIKE / pattern values** (filter strings passed to `SHOW … LIKE`):
+      Apply `escape_show_like()` before interpolation.
+
+      **Scope / clause values built by typed helpers** (e.g. `build_show_in_scope()`):
+      The helper validates and constructs the clause from typed inputs; its return value may be
+      interpolated directly. Do not bypass the helper to concatenate raw strings.
+
+      **When binding is not possible** (syntax does not support it — e.g. `PUT` stage paths,
+      `@stage` references):
+      Leave the interpolation in place but add an inline comment explaining why binding cannot
+      be used and noting the mitigating factor (e.g. internally-generated name, type-safe
+      value). Do not silently interpolate without justification.
+
+      **Exemptions** — raw interpolation is acceptable without a comment when:
+      - The value is a `const` or `static` defined in the same crate.
+      - The value's type structurally cannot produce SQL metacharacters — e.g. `Uuid` (only
+        hex and dashes), `u64` / `i64` / `bool` (numeric / keyword literals). The type system
+        is the guarantee, not a runtime assertion.
+      - The value is a hard-coded string literal with no variable parts.
+
+      ❌ **BAD:**
+      ```rust
+      // Raw identifier — double-quote escaping missing
+      format!("USE DATABASE {db}")
+      format!("SHOW TABLES IN SCHEMA {schema}")
+
+      // Skipping the typed scope builder in favour of raw concat
+      let scope = format!("TABLE \"{}\".\"{}\"", catalog, table);  // no escape_dq
+      format!("SHOW PRIMARY KEYS IN {scope}")
+
+      // LIKE value without escape_show_like
+      format!("SHOW TABLES LIKE '{pattern}'")
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      // Identifier: escape_sql_identifier + double-quote wrap (connection.rs pattern)
+      let escaped = escape_sql_identifier(db);
+      format!("USE DATABASE \"{escaped}\"")
+
+      // Identifier: escape_dq + double-quote wrap (get_objects.rs pattern)
+      format!("SHOW SCHEMAS IN DATABASE \"{}\"", escape_dq(&literal))
+
+      // Scope from typed builder — safe to interpolate directly
+      let scope = build_show_in_scope(catalog_raw.as_deref(), schema_raw.as_deref(), table_raw.as_deref());
+      format!("SHOW PRIMARY KEYS IN {scope}")
+
+      // LIKE pattern
+      format!("LIKE '{}'", escape_show_like(&pattern))
+
+      // Const + UUID — exempt: no SQL metacharacters possible
+      format!("@{BIND_STAGE_NAME}/{request_id}")
+      // BIND_STAGE_NAME is a compile-time const; request_id: Uuid formats to hex+dashes only.
+
+      // PUT: binding not supported — comment required
+      format!("PUT 'file:///tmp/placeholder/0' '@{BIND_STAGE_NAME}/{request_id}' overwrite=true")
+      // PUT syntax does not support parameterized stage paths.
+      // BIND_STAGE_NAME is a compile-time const; request_id is Uuid (hex+dashes, no metacharacters).
+      ```

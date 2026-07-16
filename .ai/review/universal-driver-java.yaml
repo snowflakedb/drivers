@@ -602,3 +602,84 @@ rules:
       **PRIORITY**: High when N >= 3 (systematic gap); Medium when N is 1-2.
 
       Do not emit per-line comments for the same file in the same PR.
+
+  - id: ud-java-sql-parameterization
+    rule: |
+      **OBJECTIVE**: Never interpolate variable values into SQL strings via `+` concatenation or
+      `String.format()`. Every variable value must reach the server as a binding, not as part of
+      the query text.
+
+      **REQUIREMENT**: Any `Statement.execute()`, `Statement.executeQuery()`,
+      `Statement.executeUpdate()`, `Connection.prepareStatement()`, or similar JDBC call that
+      includes a non-constant variable value in the SQL string is a finding. The correction
+      depends on position:
+
+      **Identifiers** (table, schema, stage, view, column name) in production code (`src/main/java`):
+      Use `IDENTIFIER(?)` with `PreparedStatement.setString(n, name)`.
+
+      **Data values** (WHERE clause values, INSERT data, option arguments):
+      Use `PreparedStatement` with `?` placeholders and `setString()` / `setInt()` / etc.
+
+      **Mixed case** — `PreparedStatement` already used for data `?` but a table/schema name is
+      still concatenated:
+      Flag the identifier concatenation; the data binding is correct but the fix is incomplete.
+
+      **When binding is not possible** (syntax does not support it — e.g. `PUT`/`GET` stage-path
+      arguments, `@stage` references in `COPY INTO FROM`):
+      Leave the interpolation in place but add an inline comment explaining why binding cannot
+      be used and noting the mitigating factor (e.g. internally-generated name, escaping
+      applied). Do not silently interpolate without justification.
+
+      **Exemptions** — raw interpolation is acceptable without a comment when:
+      - The interpolated token is a hard-coded string literal constant defined in the same file.
+      - A SQL structural keyword assembled purely from hard-coded string fragments with no
+        variable interpolation (e.g. `IF NOT EXISTS`, `CREATE TEMPORARY`).
+      - **Test code only** (`src/test/java`): an identifier produced by a test-harness helper
+        such as `generateUniqueName()` or `uniqueStageName()`. These are internally controlled
+        names with no user-supplied input; SQL injection is not the threat model for test
+        fixtures.
+
+      ❌ **BAD:**
+      ```java
+      // Identifier concatenated directly
+      stmt.executeQuery("SELECT COUNT(*), SUM(v) FROM " + tableName);
+      stmt.executeQuery("SELECT n, s FROM " + tableName + " ORDER BY n");
+      ddl.execute("CREATE TEMP TABLE " + table + " (col VECTOR(INT, 3))");
+
+      // Mixed: data values bound correctly, but identifier is still concatenated
+      conn.prepareStatement("INSERT INTO " + tableName + " (n, s) VALUES (?, ?)");
+
+      // String.format with variable
+      stmt.executeQuery(String.format("SELECT * FROM %s WHERE id = %d", tableName, userId));
+
+      // Session parameter name from a variable — flag unless the variable is a hard-coded constant
+      alter.execute("ALTER SESSION SET " + formatParam + " = '" + formatValue + "'");
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      // Identifier via IDENTIFIER(?)
+      try (PreparedStatement ps = conn.prepareStatement(
+              "SELECT COUNT(*), SUM(v) FROM IDENTIFIER(?)")) {
+          ps.setString(1, tableName);
+          try (ResultSet rs = ps.executeQuery()) { ... }
+      }
+
+      // Mixed fix: bind the identifier too
+      try (PreparedStatement ps = conn.prepareStatement(
+              "INSERT INTO IDENTIFIER(?) (n, s) VALUES (?, ?)")) {
+          ps.setString(1, tableName);
+          ps.setInt(2, n);
+          ps.setString(3, s);
+          ps.executeBatch();
+      }
+
+      // DDL with hard-coded parameter name — exempt, no variable interpolation
+      stmt.execute("ALTER SESSION SET ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE = TRUE");
+
+      // PUT: binding not supported — comment required
+      stmt.execute("PUT 'file://" + escapedUri + "' @" + stageName + " PARALLEL=4 ...");
+      // PUT syntax does not support IDENTIFIER(?) or ? bindings for stage paths or file URIs.
+      // stageName is a connector-internal name produced by generateUniqueName();
+      // escapedUri is produced by escapePathForSql() which escapes backslashes and quotes.
+      ```
