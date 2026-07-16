@@ -47,7 +47,7 @@ use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_proxy;
 use crate::tls::error::TlsError;
-use crate::token_cache::{TokenCache, TokenType};
+use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
 use reqwest::{self, Method, StatusCode, header};
 use serde_json;
 use serde_json::value::RawValue;
@@ -375,22 +375,22 @@ fn set_duo_authn_fields(
     }
 }
 
-fn extract_host_from_url(server_url: &str) -> Option<String> {
-    Url::parse(server_url)
-        .ok()?
-        .host_str()
-        .map(|h| h.to_string())
-}
-
 fn try_get_cached_token(
     server_url: &str,
     username: &str,
+    role: &str,
     token_type: TokenType,
     token_cache: Option<&dyn TokenCache>,
 ) -> Option<SensitiveString> {
-    let host = extract_host_from_url(server_url)?;
     let cache = token_cache?;
-    match cache.get_token(&host, username, token_type) {
+    let key = CacheKey {
+        token_type,
+        idp: normalize_url(server_url),
+        snowflake: normalize_url(server_url),
+        username: normalize_identifier(username),
+        role: normalize_identifier(role),
+    };
+    match cache.get_token(&key) {
         Ok(Some(token)) if !token.is_empty() => {
             tracing::info!(%token_type, "Found cached token");
             Some(token.into())
@@ -406,19 +406,23 @@ fn try_get_cached_token(
 fn store_token_in_cache(
     server_url: &str,
     username: &str,
+    role: &str,
     token_type: TokenType,
     token_value: &str,
     token_cache: Option<&dyn TokenCache>,
 ) {
-    let Some(host) = extract_host_from_url(server_url) else {
-        tracing::warn!(%token_type, "Cannot cache token: unable to extract host from server URL");
-        return;
-    };
     let Some(cache) = token_cache else {
         tracing::debug!(%token_type, "No token cache available");
         return;
     };
-    if let Err(e) = cache.add_token(&host, username, token_type, token_value) {
+    let key = CacheKey {
+        token_type,
+        idp: normalize_url(server_url),
+        snowflake: normalize_url(server_url),
+        username: normalize_identifier(username),
+        role: normalize_identifier(role),
+    };
+    if let Err(e) = cache.add_token(&key, token_value) {
         tracing::warn!(%token_type, error = %e, "Failed to cache token");
     } else {
         tracing::info!(%token_type, "Cached token for future use");
@@ -428,17 +432,21 @@ fn store_token_in_cache(
 fn remove_token_from_cache(
     server_url: &str,
     username: &str,
+    role: &str,
     token_type: TokenType,
     token_cache: Option<&dyn TokenCache>,
 ) {
-    let Some(host) = extract_host_from_url(server_url) else {
-        tracing::warn!(%token_type, "Cannot remove cached token: unable to extract host");
-        return;
-    };
     let Some(cache) = token_cache else {
         return;
     };
-    if let Err(e) = cache.remove_token(&host, username, token_type) {
+    let key = CacheKey {
+        token_type,
+        idp: normalize_url(server_url),
+        snowflake: normalize_url(server_url),
+        username: normalize_identifier(username),
+        role: normalize_identifier(role),
+    };
+    if let Err(e) = cache.remove_token(&key) {
         tracing::warn!(%token_type, error = %e, "Failed to remove cached token");
     } else {
         tracing::info!(%token_type, "Removed cached token");
@@ -451,32 +459,41 @@ fn remove_token_from_cache(
 /// after eviction the next call to `auth_request_data` will run the
 /// refresh-token leg or, if that also fails, the full interactive flow.
 ///
-/// The cache key host follows the cross-driver convention
-/// (JDBC/Python/.NET/Node): prefer the IdP token URL host, otherwise
-/// fall back to the Snowflake server host. The synthetic `https://{host}`
-/// URL string
-/// passed to the eviction helpers parses cleanly into the same host the
-/// AC flow used when storing the token.
+/// The `idp_url` is derived through [`oauth::derive_idp_url`] — the same helper
+/// the storing path uses — so `normalize_url` sees identical input on both
+/// sides and produces byte-exact cache keys even for URLs with explicit default
+/// ports (e.g. `:443`), and neither path can drift from the other
+/// (SNOW-3780375). The `snowflake_url` is always the Snowflake server URL.
 fn evict_oauth_access_token_for_authorization_code(
     cfg: &crate::config::rest_parameters::OAuthAuthorizationCodeConfig,
     server_url: &str,
+    role: &str,
     token_cache: Option<&dyn TokenCache>,
 ) {
-    let token_url_str = cfg
-        .token_url
-        .as_ref()
-        .map(|u| u.as_str().to_string())
-        .unwrap_or_default();
-    let Some(host) = oauth::host_from_token_url(&token_url_str, server_url) else {
-        tracing::warn!(
-            "Cannot evict cached OAuth access token: unable to derive IdP host from token_url or server_url"
-        );
-        return;
+    let parsed_server_url = match Url::parse(server_url) {
+        Ok(url) => url,
+        Err(_) => {
+            tracing::warn!("Cannot evict cached OAuth access token: server_url is not a valid URL");
+            return;
+        }
     };
-    let synthetic_host_url = format!("https://{host}");
-    tracing::debug!(host = %host, "Evicting cached OAuth access token for IdP host");
-    oauth::remove_oauth_access_token(&synthetic_host_url, &cfg.username, token_cache);
-    oauth::remove_oauth_dpop_bundled(&synthetic_host_url, &cfg.username, token_cache);
+    let idp_url = match oauth::derive_idp_url(cfg, &parsed_server_url) {
+        Ok(idp_url) => idp_url,
+        Err(_) => {
+            tracing::warn!(
+                "Cannot evict cached OAuth access token: unable to derive IdP token URL from server_url"
+            );
+            return;
+        }
+    };
+    tracing::debug!(
+        idp_host_path = %url::Url::parse(&idp_url)
+            .map(|u| format!("{}{}", u.host_str().unwrap_or(""), u.path()))
+            .unwrap_or_default(),
+        "Evicting cached OAuth access token"
+    );
+    oauth::remove_oauth_access_token(&idp_url, server_url, &cfg.username, role, token_cache);
+    oauth::remove_oauth_dpop_bundled(&idp_url, server_url, &cfg.username, role, token_cache);
 }
 
 pub async fn auth_request_data(
@@ -530,6 +547,7 @@ pub async fn auth_request_data(
                 try_get_cached_token(
                     &login_parameters.server_url,
                     username,
+                    login_parameters.role.as_deref().unwrap_or(""),
                     TokenType::IdToken,
                     token_cache,
                 )
@@ -567,15 +585,11 @@ pub async fn auth_request_data(
         // OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so GS knows which flow
         // produced the token. LOGIN_NAME is always set.
         LoginMethod::OAuthAuthorizationCode(cfg) => {
-            let server_url = url::Url::parse(&login_parameters.server_url)
-                .context(oauth::EndpointUrlParseSnafu {
-                    url: login_parameters.server_url.clone(),
-                })
-                .context(OAuthFlowSnafu)?;
             let acquired = oauth::run_oauth_authorization_code(
                 client,
-                &server_url,
+                &login_parameters.server_url,
                 cfg,
+                login_parameters.role.as_deref().unwrap_or(""),
                 token_cache,
                 login_parameters.disable_parallel_user_prompt,
                 prompt_locks,
@@ -674,6 +688,7 @@ pub async fn auth_request_data(
                     try_get_cached_token(
                         &login_parameters.server_url,
                         &username,
+                        "",
                         TokenType::MfaToken,
                         token_cache,
                     )
@@ -916,9 +931,15 @@ pub async fn snowflake_login_with_client(
                 username,
             ) =>
             {
-                let host = extract_host_from_url(&login_parameters.server_url).unwrap_or_default();
-                tracing::debug!(%host, %username, "Acquiring external-browser prompt lock");
-                Some(prompt_lock::acquire(locks, &host, username, TokenType::IdToken).await)
+                tracing::debug!(%username, "Acquiring external-browser prompt lock");
+                let lock_key = CacheKey {
+                    token_type: TokenType::IdToken,
+                    idp: normalize_url(&login_parameters.server_url),
+                    snowflake: normalize_url(&login_parameters.server_url),
+                    username: normalize_identifier(username),
+                    role: normalize_identifier(login_parameters.role.as_deref().unwrap_or("")),
+                };
+                Some(prompt_lock::acquire(locks, &lock_key).await)
             }
             LoginMethod::UserPasswordMfa {
                 username,
@@ -930,9 +951,15 @@ pub async fn snowflake_login_with_client(
                 username,
             ) =>
             {
-                let host = extract_host_from_url(&login_parameters.server_url).unwrap_or_default();
-                tracing::debug!(%host, %username, "Acquiring MFA prompt lock");
-                Some(prompt_lock::acquire(locks, &host, username, TokenType::MfaToken).await)
+                tracing::debug!(%username, "Acquiring MFA prompt lock");
+                let lock_key = CacheKey {
+                    token_type: TokenType::MfaToken,
+                    idp: normalize_url(&login_parameters.server_url),
+                    snowflake: normalize_url(&login_parameters.server_url),
+                    username: normalize_identifier(username),
+                    role: String::new(),
+                };
+                Some(prompt_lock::acquire(locks, &lock_key).await)
             }
             _ => None,
         }
@@ -978,12 +1005,14 @@ pub async fn snowflake_login_with_client(
         // Cached token (ID token or MFA) rejected with an EXT_AUTHN error:
         // evict it and retry via the normal interactive flow.
         if login_request.data.token_from_cache_used && EXT_AUTHN_ERROR_CODES.contains(&code) {
-            if let Some((username, token_type)) = match &login_parameters.login_method {
-                LoginMethod::ExternalBrowser { username, .. } => {
-                    Some((username.as_str(), TokenType::IdToken))
-                }
+            if let Some((username, role, token_type)) = match &login_parameters.login_method {
+                LoginMethod::ExternalBrowser { username, .. } => Some((
+                    username.as_str(),
+                    login_parameters.role.as_deref().unwrap_or(""),
+                    TokenType::IdToken,
+                )),
                 LoginMethod::UserPasswordMfa { username, .. } => {
-                    Some((username.as_str(), TokenType::MfaToken))
+                    Some((username.as_str(), "", TokenType::MfaToken))
                 }
                 _ => None,
             } {
@@ -995,6 +1024,7 @@ pub async fn snowflake_login_with_client(
                 remove_token_from_cache(
                     &login_parameters.server_url,
                     username,
+                    role,
                     token_type,
                     token_cache,
                 );
@@ -1034,6 +1064,7 @@ pub async fn snowflake_login_with_client(
                     evict_oauth_access_token_for_authorization_code(
                         cfg,
                         &login_parameters.server_url,
+                        login_parameters.role.as_deref().unwrap_or(""),
                         token_cache,
                     );
                     should_retry = true;
@@ -1083,18 +1114,21 @@ pub async fn snowflake_login_with_client(
         if EXT_AUTHN_ERROR_CODES.contains(&code) {
             let evictable = match &login_parameters.login_method {
                 LoginMethod::UserPasswordMfa { username, .. } => {
-                    Some((username.as_str(), TokenType::MfaToken))
+                    Some((username.as_str(), "", TokenType::MfaToken))
                 }
-                LoginMethod::ExternalBrowser { username, .. } => {
-                    Some((username.as_str(), TokenType::IdToken))
-                }
+                LoginMethod::ExternalBrowser { username, .. } => Some((
+                    username.as_str(),
+                    login_parameters.role.as_deref().unwrap_or(""),
+                    TokenType::IdToken,
+                )),
                 _ => None,
             };
-            if let Some((username, token_type)) = evictable {
+            if let Some((username, role, token_type)) = evictable {
                 tracing::warn!(code, %token_type, "Evicting cached token after terminal login failure");
                 remove_token_from_cache(
                     &login_parameters.server_url,
                     username,
+                    role,
                     token_type,
                     token_cache,
                 );
@@ -1107,7 +1141,7 @@ pub async fn snowflake_login_with_client(
 
     // If success - cache response tokens (MFA or ID token) when caching is enabled.
     // Also, for IdToken, respect IdP consent: skip caching when explicitly denied.
-    let cacheable_token: Option<(&str, TokenType, &SensitiveString)> =
+    let cacheable_token: Option<(&str, &str, TokenType, &SensitiveString)> =
         match &login_parameters.login_method {
             LoginMethod::UserPasswordMfa {
                 username,
@@ -1117,22 +1151,28 @@ pub async fn snowflake_login_with_client(
                 .data
                 .mfa_token
                 .as_ref()
-                .map(|t| (username.as_str(), TokenType::MfaToken, t)),
+                .map(|t| (username.as_str(), "", TokenType::MfaToken, t)),
             LoginMethod::ExternalBrowser {
                 username,
                 client_store_temporary_credential: true,
                 ..
-            } if login_request.data.consent_cache_id_token != Some(false) => auth_response
-                .data
-                .id_token
-                .as_ref()
-                .map(|t| (username.as_str(), TokenType::IdToken, t)),
+            } if login_request.data.consent_cache_id_token != Some(false) => {
+                auth_response.data.id_token.as_ref().map(|t| {
+                    (
+                        username.as_str(),
+                        login_parameters.role.as_deref().unwrap_or(""),
+                        TokenType::IdToken,
+                        t,
+                    )
+                })
+            }
             _ => None,
         };
-    if let Some((username, token_type, token)) = cacheable_token {
+    if let Some((username, role, token_type, token)) = cacheable_token {
         store_token_in_cache(
             &login_parameters.server_url,
             username,
+            role,
             token_type,
             token.reveal(),
             token_cache,
@@ -2382,7 +2422,10 @@ pub enum SnowflakeResponseError {
 mod tests {
     use super::*;
     use crate::config::rest_parameters::test_fixtures::test_client_info;
-    use crate::token_cache::{TokenCache, TokenCacheError, TokenType};
+    use crate::token_cache::{
+        CacheKey, TokenCache, TokenCacheError, TokenType, build_cache_key, normalize_identifier,
+        normalize_url,
+    };
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -2397,59 +2440,66 @@ mod tests {
             }
         }
 
-        fn with_token(host: &str, username: &str, token_type: TokenType, value: &str) -> Self {
+        /// Inserts a token keyed by the same `CacheKey` that `try_get_cached_token` and
+        /// friends derive from `(server_url, username, role, token_type)`. `server_url`
+        /// is a full URL (e.g. `"https://host.example.com"`) that is passed directly into
+        /// `normalize_url`, matching how production helpers pass the full server URL.
+        fn with_token(
+            server_url: &str,
+            username: &str,
+            role: &str,
+            token_type: TokenType,
+            value: &str,
+        ) -> Self {
             let cache = Self::new();
+            let key = CacheKey {
+                token_type,
+                idp: normalize_url(server_url),
+                snowflake: normalize_url(server_url),
+                username: normalize_identifier(username),
+                role: normalize_identifier(role),
+            };
             cache
-                .add_token(host, username, token_type, value)
+                .add_token(&key, value)
                 .expect("test: add_token should succeed");
             cache
-        }
-
-        fn key(host: &str, username: &str, token_type: TokenType) -> String {
-            format!("{host};{username};{}", token_type.as_str())
         }
     }
 
     impl TokenCache for StubTokenCache {
-        fn add_token(
-            &self,
-            host: &str,
-            username: &str,
-            token_type: TokenType,
-            token_value: &str,
-        ) -> Result<(), TokenCacheError> {
-            self.store.lock().expect("test: lock poisoned").insert(
-                Self::key(host, username, token_type),
-                token_value.to_string(),
-            );
-            Ok(())
-        }
-
-        fn remove_token(
-            &self,
-            host: &str,
-            username: &str,
-            token_type: TokenType,
-        ) -> Result<(), TokenCacheError> {
+        fn add_token(&self, key: &CacheKey, token_value: &str) -> Result<(), TokenCacheError> {
             self.store
                 .lock()
                 .expect("test: lock poisoned")
-                .remove(&Self::key(host, username, token_type));
+                .insert(build_cache_key(key), token_value.to_string());
             Ok(())
         }
 
-        fn get_token(
-            &self,
-            host: &str,
-            username: &str,
-            token_type: TokenType,
-        ) -> Result<Option<String>, TokenCacheError> {
+        fn remove_token(&self, key: &CacheKey) -> Result<(), TokenCacheError> {
+            self.store
+                .lock()
+                .expect("test: lock poisoned")
+                .remove(&build_cache_key(key));
+            Ok(())
+        }
+
+        fn get_token(&self, key: &CacheKey) -> Result<Option<String>, TokenCacheError> {
             Ok(self
                 .store
                 .lock()
                 .expect("test: lock poisoned")
-                .get(&Self::key(host, username, token_type))
+                .get(&build_cache_key(key))
                 .cloned())
+        }
+    }
+
+    fn key_for(server_url: &str, username: &str, role: &str, token_type: TokenType) -> CacheKey {
+        CacheKey {
+            token_type,
+            idp: normalize_url(server_url),
+            snowflake: normalize_url(server_url),
+            username: normalize_identifier(username),
+            role: normalize_identifier(role),
         }
     }
 
@@ -2478,99 +2528,70 @@ mod tests {
         use super::*;
 
         fn assert_get_store_remove_for(token_type: TokenType) {
+            const SERVER: &str = "https://host.example.com";
+
             // try_get: returns cached token on hit
-            let cache =
-                StubTokenCache::with_token("host.example.com", "alice", token_type, "tok_val");
-            let result = try_get_cached_token(
-                "https://host.example.com",
-                "alice",
-                token_type,
-                Some(&cache),
-            );
+            let cache = StubTokenCache::with_token(SERVER, "alice", "", token_type, "tok_val");
+            let result = try_get_cached_token(SERVER, "alice", "", token_type, Some(&cache));
             assert_eq!(result.unwrap().reveal(), "tok_val");
 
             // try_get: returns None on cache miss
             let empty = StubTokenCache::new();
-            assert!(
-                try_get_cached_token(
-                    "https://host.example.com",
-                    "alice",
-                    token_type,
-                    Some(&empty),
-                )
-                .is_none()
-            );
+            assert!(try_get_cached_token(SERVER, "alice", "", token_type, Some(&empty)).is_none());
 
             // try_get: returns None when no cache provided
-            assert!(
-                try_get_cached_token("https://host.example.com", "alice", token_type, None)
-                    .is_none()
-            );
+            assert!(try_get_cached_token(SERVER, "alice", "", token_type, None).is_none());
 
             // try_get: returns None for invalid URL
-            assert!(try_get_cached_token("not-a-url", "alice", token_type, Some(&empty)).is_none());
+            assert!(
+                try_get_cached_token("not-a-url", "alice", "", token_type, Some(&empty)).is_none()
+            );
 
             // try_get: returns None for empty cached value
-            let empty_val = StubTokenCache::with_token("host.example.com", "alice", token_type, "");
+            let empty_val = StubTokenCache::with_token(SERVER, "alice", "", token_type, "");
             assert!(
-                try_get_cached_token(
-                    "https://host.example.com",
-                    "alice",
-                    token_type,
-                    Some(&empty_val),
-                )
-                .is_none()
+                try_get_cached_token(SERVER, "alice", "", token_type, Some(&empty_val)).is_none()
             );
 
             // store + get round-trip
             let cache = StubTokenCache::new();
-            store_token_in_cache(
-                "https://host.example.com",
-                "alice",
-                token_type,
-                "new_tok",
-                Some(&cache),
-            );
+            store_token_in_cache(SERVER, "alice", "", token_type, "new_tok", Some(&cache));
             let stored = cache
-                .get_token("host.example.com", "alice", token_type)
+                .get_token(&key_for(SERVER, "alice", "", token_type))
                 .unwrap();
             assert_eq!(stored.as_deref(), Some("new_tok"));
 
             // store: no panic when no cache
-            store_token_in_cache("https://host.example.com", "alice", token_type, "tok", None);
+            store_token_in_cache(SERVER, "alice", "", token_type, "tok", None);
 
             // store: no panic for invalid URL
             store_token_in_cache(
                 "not-a-url",
                 "alice",
+                "",
                 token_type,
                 "tok",
                 Some(&StubTokenCache::new()),
             );
 
             // remove evicts token
-            let cache =
-                StubTokenCache::with_token("host.example.com", "alice", token_type, "to_remove");
-            remove_token_from_cache(
-                "https://host.example.com",
-                "alice",
-                token_type,
-                Some(&cache),
-            );
+            let cache = StubTokenCache::with_token(SERVER, "alice", "", token_type, "to_remove");
+            remove_token_from_cache(SERVER, "alice", "", token_type, Some(&cache));
             assert!(
                 cache
-                    .get_token("host.example.com", "alice", token_type)
+                    .get_token(&key_for(SERVER, "alice", "", token_type))
                     .unwrap()
                     .is_none()
             );
 
             // remove: no panic when no cache
-            remove_token_from_cache("https://host.example.com", "alice", token_type, None);
+            remove_token_from_cache(SERVER, "alice", "", token_type, None);
 
             // remove: no panic for invalid URL
             remove_token_from_cache(
                 "not-a-url",
                 "alice",
+                "",
                 token_type,
                 Some(&StubTokenCache::new()),
             );

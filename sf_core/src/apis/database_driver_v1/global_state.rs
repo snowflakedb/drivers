@@ -100,7 +100,8 @@ pub struct DatabaseDriverV1 {
     platforms: tokio::sync::OnceCell<Vec<String>>,
     log_manager: Option<LogManager>,
     pub(super) wrapper_presets: WrapperPresets,
-    /// Process-global per-`(host, user, token-type)` prompt locks.
+    /// Process-global per-[`crate::token_cache::CacheKey`] prompt locks
+    /// (scoped by idp, snowflake, username, role, and token_type).
     /// Shared across all connections on this driver instance.
     pub(crate) prompt_locks: Arc<PromptLockMap>,
     /// Lazy CRL worker shared across all connections on this driver instance.

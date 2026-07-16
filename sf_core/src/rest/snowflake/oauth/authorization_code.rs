@@ -45,7 +45,7 @@ use super::loopback_server::{self, RedirectResult};
 use super::token;
 use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
 use crate::sensitive::SensitiveString;
-use crate::token_cache::TokenCache;
+use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
 
 /// Drift B.3: shared deadline for the AC flow. Tracks the start instant
 /// and the configured `authentication_timeout` budget so that the
@@ -183,12 +183,21 @@ pub(crate) async fn run_oauth_authorization_code(
     // TODO(SNOW-XXX): build a no-redirect sibling reqwest client for OAuth
     // token calls (see https://docs.rs/oauth2/5.0.0/oauth2/#security-warning).
     client: &reqwest::Client,
-    server_url: &Url,
+    // Raw verbatim server URL string from connection config — not a parsed
+    // `Url`, so `:443` and other explicitly-stated default ports are preserved
+    // for cache-key construction (see `normalize_url`).
+    server_url: &str,
     config: &OAuthAuthorizationCodeConfig,
+    // Normalized Snowflake role used to scope the cache key; empty for flows
+    // where no role is configured.
+    role: &str,
     token_cache: Option<&dyn TokenCache>,
     disable_parallel_user_prompt: bool,
     prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
+    let server_url_parsed = Url::parse(server_url).context(EndpointUrlParseSnafu {
+        url: server_url.to_string(),
+    })?;
     // The launcher rides on the config (Arc'd factory ⇒ each call mints
     // a fresh `FnOnce` so the retry-on-failure path can rebuild one).
     // Production builds default to `None` ⇒ open the system browser;
@@ -201,8 +210,10 @@ pub(crate) async fn run_oauth_authorization_code(
         .unwrap_or_else(default_browser_launch);
     run_authorization_code_flow(
         client,
+        &server_url_parsed,
         server_url,
         config,
+        role,
         token_cache,
         launch_browser,
         disable_parallel_user_prompt,
@@ -211,11 +222,24 @@ pub(crate) async fn run_oauth_authorization_code(
     .await
 }
 
+// Every argument is a distinct, non-collapsible input: `launch_browser` is
+// the browser dependency-injection seam that tests override with a loopback
+// stub (design rule #1), and `disable_parallel_user_prompt` + `prompt_locks`
+// are the orthogonal prompt-lock plumbing. None is derivable from another, so
+// grouping would only hide the real fan-in.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(client, config, token_cache, launch_browser), fields(username = %config.username))]
 async fn run_authorization_code_flow(
     client: &reqwest::Client,
     server_url: &Url,
+    // Verbatim raw URL string kept parallel to `server_url` for cache-key
+    // construction. Must not be derived from `server_url.as_str()` — the
+    // `url` crate strips default ports (e.g. `:443`) from its serialization,
+    // which would diverge from the eviction path that uses the raw config
+    // string, causing cache misses on port-explicit connection URLs.
+    server_url_raw: &str,
     config: &OAuthAuthorizationCodeConfig,
+    role: &str,
     token_cache: Option<&dyn TokenCache>,
     launch_browser: BrowserLaunchFn,
     disable_parallel_user_prompt: bool,
@@ -224,32 +248,38 @@ async fn run_authorization_code_flow(
     tracing::info!("Starting OAuth authorization code flow");
 
     let token_url = resolve_token_url(server_url, config.token_url.as_ref())?;
-    let cache_host_url = token_url.as_str();
+    // `idp_url` is the IdP token endpoint; `snowflake_url` is the Snowflake
+    // server URL. Both are passed to cache helpers to build a properly
+    // dimensioned CacheKey (idp ≠ snowflake for external-IdP OAuth flows).
+    // `derive_idp_url` is the single source of truth shared with the eviction
+    // path so store and evict produce byte-identical keys (SNOW-3780375).
+    let idp_url = derive_idp_url(config, server_url)?;
+    let idp_url = idp_url.as_str();
+    let snowflake_url = server_url_raw;
     // Drift B.3: single end-to-end deadline shared by the loopback
     // wait, the IdP token exchange and any refresh exchange.
     let deadline = FlowDeadline::new(config.flow_options.authentication_timeout_secs);
 
-    // Acquire the per-<user, idp-host> prompt-lock when serializing concurrent
-    // interactive auth flows.  The lock is held across the cache re-check and
-    // the entire interactive flow + persist so that waiters find the token in
-    // the cache once the lock is released (double-checked locking).
-    // Lock key uses the IdP token-URL host.
+    // Acquire the per-<user, idp, snowflake, role> prompt-lock when serializing
+    // concurrent interactive auth flows.  The lock is held across the cache
+    // re-check and the entire interactive flow + persist so that waiters find
+    // the token in the cache once the lock is released (double-checked locking).
+    // The lock key uses the same CacheKey as the cache helpers to guarantee
+    // identical granularity.
     let _prompt_guard = if let Some(locks) = prompt_locks {
         if super::super::prompt_lock::is_eligible(
             config.client_store_temporary_credential,
             disable_parallel_user_prompt,
             &config.username,
         ) {
-            let host = token_url.host_str().unwrap_or_default();
-            Some(
-                super::super::prompt_lock::acquire(
-                    locks,
-                    host,
-                    &config.username,
-                    crate::token_cache::TokenType::OAuthAccessToken,
-                )
-                .await,
-            )
+            let lock_key = CacheKey {
+                token_type: TokenType::OAuthAccessToken,
+                idp: normalize_url(idp_url),
+                snowflake: normalize_url(snowflake_url),
+                username: normalize_identifier(&config.username),
+                role: normalize_identifier(role),
+            };
+            Some(super::super::prompt_lock::acquire(locks, &lock_key).await)
         } else {
             None
         }
@@ -263,7 +293,9 @@ async fn run_authorization_code_flow(
     if let Some(cached) = try_cache_short_circuit(
         client,
         &token_url,
-        cache_host_url,
+        idp_url,
+        snowflake_url,
+        role,
         config,
         token_cache,
         deadline,
@@ -284,17 +316,26 @@ async fn run_authorization_code_flow(
     )
     .await?;
 
-    persist_access_token(config, cache_host_url, token_cache, &result);
-    persist_refresh_token(config, cache_host_url, token_cache, &result);
+    persist_access_token(config, idp_url, snowflake_url, role, token_cache, &result);
+    persist_refresh_token(config, idp_url, snowflake_url, role, token_cache, &result);
     tracing::info!("OAuth authorization code flow completed");
     Ok(result)
 }
 
+// `idp_url` and `snowflake_url` are independent cache-key dimensions
+// (idp ≠ snowflake for external-IdP OAuth), not redundant views of one URL —
+// they must stay separate, explicit inputs so tests can vary them
+// independently to exercise multi-account collision isolation. `token_url`
+// (the transport endpoint) is a distinct concern from `idp_url` (the cache
+// identity), even where they coincide today.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(client, token_url, config, token_cache), fields(username = %config.username))]
 async fn try_cache_short_circuit(
     client: &reqwest::Client,
     token_url: &Url,
-    cache_host_url: &str,
+    idp_url: &str,
+    snowflake_url: &str,
+    role: &str,
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
     deadline: FlowDeadline,
@@ -313,8 +354,13 @@ async fn try_cache_short_circuit(
     // so the same DPoP key can sign the Snowflake login leg without
     // re-running the interactive flow.
     if config.flow_options.enable_dpop
-        && let Some((cached_at, jwk_json)) =
-            token::try_get_cached_oauth_dpop_bundled(cache_host_url, &config.username, token_cache)
+        && let Some((cached_at, jwk_json)) = token::try_get_cached_oauth_dpop_bundled(
+            idp_url,
+            snowflake_url,
+            &config.username,
+            role,
+            token_cache,
+        )
     {
         // Validate the cached JWK before handing the bundle back to
         // the caller. A corrupt JWK would only surface later when
@@ -335,14 +381,24 @@ async fn try_cache_short_circuit(
                     error = %e,
                     "Cached DPoP-bundled access token has unparseable JWK; evicting"
                 );
-                token::remove_oauth_dpop_bundled(cache_host_url, &config.username, token_cache);
+                token::remove_oauth_dpop_bundled(
+                    idp_url,
+                    snowflake_url,
+                    &config.username,
+                    role,
+                    token_cache,
+                );
             }
         }
     }
 
-    if let Some(cached) =
-        token::try_get_cached_oauth_access_token(cache_host_url, &config.username, token_cache)
-    {
+    if let Some(cached) = token::try_get_cached_oauth_access_token(
+        idp_url,
+        snowflake_url,
+        &config.username,
+        role,
+        token_cache,
+    ) {
         tracing::debug!("OAuth access token served from cache");
         return Some(AcquiredOAuthToken {
             access_token: cached,
@@ -352,9 +408,13 @@ async fn try_cache_short_circuit(
         });
     }
 
-    if let Some(refresh) =
-        token::try_get_cached_oauth_refresh_token(cache_host_url, &config.username, token_cache)
-    {
+    if let Some(refresh) = token::try_get_cached_oauth_refresh_token(
+        idp_url,
+        snowflake_url,
+        &config.username,
+        role,
+        token_cache,
+    ) {
         tracing::debug!("Cache short-circuit hit on OAuth refresh token; attempting exchange");
         // Drift B.12: when DPoP was negotiated for this connection, we
         // must reuse the same key on the refresh leg so the IdP can
@@ -384,23 +444,38 @@ async fn try_cache_short_circuit(
         {
             Ok(refreshed) => {
                 tracing::info!("Refreshed OAuth access token");
-                persist_access_token(config, cache_host_url, token_cache, &refreshed);
+                persist_access_token(
+                    config,
+                    idp_url,
+                    snowflake_url,
+                    role,
+                    token_cache,
+                    &refreshed,
+                );
                 if refreshed.refresh_token.is_some() {
-                    persist_refresh_token(config, cache_host_url, token_cache, &refreshed);
+                    persist_refresh_token(
+                        config,
+                        idp_url,
+                        snowflake_url,
+                        role,
+                        token_cache,
+                        &refreshed,
+                    );
                 } else {
                     // Cross-driver convention (.NET / Node): when the
-                    // IdP omits a new refresh
-                    // token, evict the cached one. It has either been
-                    // single-use-rotated server-side (Snowflake-IdP with
-                    // `enable_single_use_refresh_tokens=true`) or
-                    // otherwise invalidated, and re-presenting it on the
+                    // IdP omits a new refresh token, evict the cached one.
+                    // It has either been single-use-rotated server-side
+                    // (Snowflake-IdP with `enable_single_use_refresh_tokens=true`)
+                    // or otherwise invalidated, and re-presenting it on the
                     // next refresh would fail.
                     tracing::debug!(
                         "Refresh response omitted refresh_token; evicting cached refresh token"
                     );
                     token::remove_oauth_refresh_token(
-                        cache_host_url,
+                        idp_url,
+                        snowflake_url,
                         &config.username,
+                        role,
                         token_cache,
                     );
                 }
@@ -411,7 +486,13 @@ async fn try_cache_short_circuit(
                     error = %e,
                     "Cached OAuth refresh token failed to exchange; evicting and falling back to full flow"
                 );
-                token::remove_oauth_refresh_token(cache_host_url, &config.username, token_cache);
+                token::remove_oauth_refresh_token(
+                    idp_url,
+                    snowflake_url,
+                    &config.username,
+                    role,
+                    token_cache,
+                );
             }
         }
     } else {
@@ -743,7 +824,9 @@ fn error_type_as_str(err: &BasicErrorResponseType) -> String {
 
 fn persist_access_token(
     config: &OAuthAuthorizationCodeConfig,
-    cache_host_url: &str,
+    idp_url: &str,
+    snowflake_url: &str,
+    role: &str,
     token_cache: Option<&dyn TokenCache>,
     acquired: &AcquiredOAuthToken,
 ) {
@@ -758,16 +841,20 @@ fn persist_access_token(
 
     if let Some(jwk_json) = acquired.dpop_jwk_json.as_deref() {
         token::store_oauth_dpop_bundled(
-            cache_host_url,
+            idp_url,
+            snowflake_url,
             &config.username,
+            role,
             acquired.access_token.reveal(),
             jwk_json,
             token_cache,
         );
     } else {
         token::store_oauth_access_token(
-            cache_host_url,
+            idp_url,
+            snowflake_url,
             &config.username,
+            role,
             acquired.access_token.reveal(),
             token_cache,
         );
@@ -776,7 +863,9 @@ fn persist_access_token(
 
 fn persist_refresh_token(
     config: &OAuthAuthorizationCodeConfig,
-    cache_host_url: &str,
+    idp_url: &str,
+    snowflake_url: &str,
+    role: &str,
     token_cache: Option<&dyn TokenCache>,
     acquired: &AcquiredOAuthToken,
 ) {
@@ -791,8 +880,10 @@ fn persist_refresh_token(
 
     if let Some(refresh) = acquired.refresh_token.as_ref() {
         token::store_oauth_refresh_token(
-            cache_host_url,
+            idp_url,
+            snowflake_url,
             &config.username,
+            role,
             refresh.reveal(),
             token_cache,
         );
@@ -815,6 +906,33 @@ fn resolve_token_url(server_url: &Url, override_url: Option<&Url>) -> Result<Url
     let host = server_url.host_str().unwrap_or("");
     let default = format!("https://{host}/oauth/token-request");
     Url::parse(&default).context(EndpointUrlParseSnafu { url: default })
+}
+
+/// Derives the IdP token-endpoint URL used as the `idp` dimension of the
+/// Authorization Code token cache key.
+///
+/// Returns the verbatim configured raw URL (`token_url_raw`) when the user set
+/// `oauth_token_request_url`, so `normalize_url` sees the original string
+/// (preserving explicit default ports like `:443` that `Url::as_str()` strips).
+/// Otherwise it returns the default endpoint resolved from the Snowflake server
+/// URL via [`resolve_token_url`].
+///
+/// SNOW-3780375: the store path ([`run_authorization_code_flow`]) and the
+/// eviction path (`evict_oauth_access_token_for_authorization_code` in the
+/// parent `snowflake` module) MUST both derive the IdP URL through this single
+/// function so their cache keys stay byte-identical. Duplicating the default
+/// formula in either place risks the two paths silently drifting, which would
+/// make eviction target the wrong key and leave stale tokens cached.
+pub(crate) fn derive_idp_url(
+    config: &OAuthAuthorizationCodeConfig,
+    server_url: &Url,
+) -> Result<String, OAuthError> {
+    if let Some(raw) = config.token_url_raw.as_deref() {
+        return Ok(raw.to_string());
+    }
+    Ok(resolve_token_url(server_url, config.token_url.as_ref())?
+        .as_str()
+        .to_string())
 }
 
 // Silence the unused-type warning emitted by the lint rather than
@@ -904,47 +1022,35 @@ mod tests {
                 store: Mutex::new(HashMap::new()),
             }
         }
-        fn key(host: &str, username: &str, token_type: crate::token_cache::TokenType) -> String {
-            format!("{host};{username};{}", token_type.as_str())
-        }
     }
     impl crate::token_cache::TokenCache for StubTokenCache {
         fn add_token(
             &self,
-            host: &str,
-            username: &str,
-            token_type: crate::token_cache::TokenType,
+            key: &crate::token_cache::CacheKey,
             token_value: &str,
         ) -> Result<(), TokenCacheError> {
             self.store.lock().unwrap().insert(
-                Self::key(host, username, token_type),
+                crate::token_cache::build_cache_key(key),
                 token_value.to_string(),
             );
             Ok(())
         }
-        fn remove_token(
-            &self,
-            host: &str,
-            username: &str,
-            token_type: crate::token_cache::TokenType,
-        ) -> Result<(), TokenCacheError> {
+        fn remove_token(&self, key: &crate::token_cache::CacheKey) -> Result<(), TokenCacheError> {
             self.store
                 .lock()
                 .unwrap()
-                .remove(&Self::key(host, username, token_type));
+                .remove(&crate::token_cache::build_cache_key(key));
             Ok(())
         }
         fn get_token(
             &self,
-            host: &str,
-            username: &str,
-            token_type: crate::token_cache::TokenType,
+            key: &crate::token_cache::CacheKey,
         ) -> Result<Option<String>, TokenCacheError> {
             Ok(self
                 .store
                 .lock()
                 .unwrap()
-                .get(&Self::key(host, username, token_type))
+                .get(&crate::token_cache::build_cache_key(key))
                 .cloned())
         }
     }
@@ -955,6 +1061,7 @@ mod tests {
             client_id: "cid".to_string(),
             client_secret: "shh".into(),
             authorization_url: None,
+            token_url_raw: Some(token_url.as_str().to_string()),
             token_url: Some(token_url),
             redirect_uri: None,
             scope: None,
@@ -1028,14 +1135,22 @@ mod tests {
     async fn cached_access_token_short_circuits_full_flow() {
         let cache = StubTokenCache::new();
         let token_url = Url::parse("https://idp.example.com/oauth/token").unwrap();
-        token::store_oauth_access_token(token_url.as_str(), "alice", "CACHED-AT", Some(&cache));
+        token::store_oauth_access_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "CACHED-AT",
+            Some(&cache),
+        );
 
         let config = cfg_with_token_url(token_url);
         let client = reqwest::Client::new();
         let acquired = run_oauth_authorization_code(
             &client,
-            &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             Some(&cache),
             false,
             None,
@@ -1065,14 +1180,22 @@ mod tests {
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
         let cache = StubTokenCache::new();
-        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-OLD",
+            Some(&cache),
+        );
         let config = cfg_with_token_url(token_url.clone());
 
         let client = reqwest::Client::new();
         let acquired = run_oauth_authorization_code(
             &client,
-            &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             Some(&cache),
             false,
             None,
@@ -1087,9 +1210,14 @@ mod tests {
         );
         assert_eq!(acquired.expires_in, Some(Duration::from_secs(3600)));
 
-        let stored_at =
-            token::try_get_cached_oauth_access_token(token_url.as_str(), "alice", Some(&cache))
-                .map(|s| s.reveal().to_string());
+        let stored_at = token::try_get_cached_oauth_access_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(&cache),
+        )
+        .map(|s| s.reveal().to_string());
         assert_eq!(stored_at.as_deref(), Some("AT-NEW"));
     }
 
@@ -1107,7 +1235,14 @@ mod tests {
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
         let cache = StubTokenCache::new();
-        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-OLD",
+            Some(&cache),
+        );
 
         let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async {}));
         let mut config_short =
@@ -1117,7 +1252,9 @@ mod tests {
         let result = run_authorization_code_flow(
             &client,
             &server_url(),
+            server_url().as_str(),
             &config_short,
+            "",
             Some(&cache),
             launch,
             false,
@@ -1125,8 +1262,13 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        let stored_rt =
-            token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache));
+        let stored_rt = token::try_get_cached_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(&cache),
+        );
         assert!(
             stored_rt.is_none(),
             "expired refresh token must be evicted from the cache"
@@ -1179,10 +1321,19 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let acquired =
-            run_authorization_code_flow(&client, &server_url(), &config, None, launch, false, None)
-                .await
-                .expect("interactive flow succeeds");
+        let acquired = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+        .expect("interactive flow succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-FRESH");
         assert_eq!(
             acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
@@ -1219,10 +1370,19 @@ mod tests {
             })
         });
         let client = reqwest::Client::new();
-        let err =
-            run_authorization_code_flow(&client, &server_url(), &config, None, launch, false, None)
-                .await
-                .expect_err("must fail with IdpError");
+        let err = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+        .expect_err("must fail with IdpError");
         assert!(matches!(err, OAuthError::IdpError { .. }), "got {err:?}");
     }
 
@@ -1255,10 +1415,19 @@ mod tests {
             })
         });
         let client = reqwest::Client::new();
-        let err =
-            run_authorization_code_flow(&client, &server_url(), &config, None, launch, false, None)
-                .await
-                .expect_err("must fail with state mismatch");
+        let err = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+        .expect_err("must fail with state mismatch");
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
     }
     // ─── Step 2.4 coverage additions ─────────────────────────────────────
@@ -1276,9 +1445,7 @@ mod tests {
     impl crate::token_cache::TokenCache for FaultingTokenCache {
         fn add_token(
             &self,
-            _host: &str,
-            _username: &str,
-            _token_type: crate::token_cache::TokenType,
+            _key: &crate::token_cache::CacheKey,
             _token_value: &str,
         ) -> Result<(), TokenCacheError> {
             Err(TokenCacheError::TokenStorage {
@@ -1286,12 +1453,7 @@ mod tests {
                 location: snafu::Location::new(file!(), line!(), column!()),
             })
         }
-        fn remove_token(
-            &self,
-            _host: &str,
-            _username: &str,
-            _token_type: crate::token_cache::TokenType,
-        ) -> Result<(), TokenCacheError> {
+        fn remove_token(&self, _key: &crate::token_cache::CacheKey) -> Result<(), TokenCacheError> {
             Err(TokenCacheError::TokenRemoval {
                 source: "synthetic remove_token failure".into(),
                 location: snafu::Location::new(file!(), line!(), column!()),
@@ -1299,9 +1461,7 @@ mod tests {
         }
         fn get_token(
             &self,
-            _host: &str,
-            _username: &str,
-            _token_type: crate::token_cache::TokenType,
+            _key: &crate::token_cache::CacheKey,
         ) -> Result<Option<String>, TokenCacheError> {
             // Pretend the cache is empty so the flow runs the full
             // interactive path; we want add_token failures to dominate.
@@ -1385,7 +1545,9 @@ mod tests {
         let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             None,
             loopback_redirect_with("THE-CODE"),
             false,
@@ -1459,7 +1621,9 @@ mod tests {
             let acquired = run_authorization_code_flow(
                 &client,
                 &server_url(),
+                server_url().as_str(),
                 &config,
+                "",
                 None,
                 loopback_redirect_with("CODE-OK"),
                 false,
@@ -1501,13 +1665,21 @@ mod tests {
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
         let cache = StubTokenCache::new();
-        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-OLD",
+            Some(&cache),
+        );
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
         let _ = run_oauth_authorization_code(
             &client,
-            &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             Some(&cache),
             false,
             None,
@@ -1515,9 +1687,14 @@ mod tests {
         .await
         .expect("refresh succeeds");
 
-        let stored_rt =
-            token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache))
-                .map(|s| s.reveal().to_string());
+        let stored_rt = token::try_get_cached_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(&cache),
+        )
+        .map(|s| s.reveal().to_string());
         assert_eq!(
             stored_rt.as_deref(),
             Some("RT-NEW"),
@@ -1545,13 +1722,21 @@ mod tests {
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
         let cache = StubTokenCache::new();
-        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-STALE", Some(&cache));
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-STALE",
+            Some(&cache),
+        );
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
         let acquired = run_oauth_authorization_code(
             &client,
-            &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             Some(&cache),
             false,
             None,
@@ -1561,8 +1746,13 @@ mod tests {
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
         assert!(acquired.refresh_token.is_none());
 
-        let stored_rt =
-            token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache));
+        let stored_rt = token::try_get_cached_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(&cache),
+        );
         assert!(
             stored_rt.is_none(),
             "stale refresh token must be evicted when the response omits a new one"
@@ -1595,7 +1785,9 @@ mod tests {
         let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             Some(&cache),
             loopback_redirect_with("CODE"),
             false,
@@ -1636,7 +1828,9 @@ mod tests {
         let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             None,
             loopback_redirect_with("CODE"),
             false,
@@ -1666,14 +1860,22 @@ mod tests {
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
         let cache = StubTokenCache::new();
-        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-OLD",
+            Some(&cache),
+        );
         let config = cfg_with_token_url(token_url);
         assert!(config.scope.is_none());
         let client = reqwest::Client::new();
         let acquired = run_oauth_authorization_code(
             &client,
-            &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             Some(&cache),
             false,
             None,
@@ -1721,7 +1923,9 @@ mod tests {
         let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
+            server_url().as_str(),
             &config,
+            "",
             None,
             loopback_redirect_with(AUTH_CODE),
             false,

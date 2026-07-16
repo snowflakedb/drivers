@@ -647,28 +647,11 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             username: user.clone(),
             token: token.clone(),
         },
-        AuthConfig::OAuthAuthorizationCode(cfg) => {
-            LoginMethod::OAuthAuthorizationCode(Box::new(OAuthAuthorizationCodeConfig {
-                username: cfg.username.clone(),
-                client_id: cfg.client_id.clone(),
-                client_secret: cfg.client_secret.clone(),
-                authorization_url: cfg.authorization_url.clone(),
-                token_url: cfg.token_url.clone(),
-                redirect_uri: cfg.redirect_uri.clone(),
-                scope: cfg.scope.clone(),
-                enable_single_use_refresh_tokens: cfg.enable_single_use_refresh_tokens,
-                disable_pkce: cfg.disable_pkce,
-                client_store_temporary_credential: cfg.client_store_temporary_credential,
-                flow_options: OAuthFlowOptions {
-                    enable_dpop: cfg.flow_options.enable_dpop,
-                    authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
-                },
-                // Cheap Arc clone — the launcher factory rides with the
-                // config through the LoginMethod projection (test builds
-                // carry a no-op factory; production carries `None`).
-                browser_launcher: cfg.browser_launcher.clone(),
-            }))
-        }
+        // Clone the whole config in one shot: the source and target are the
+        // same `OAuthAuthorizationCodeConfig` type, so a field-by-field copy
+        // would only add change-amplification risk (silently dropping any
+        // future field). The launcher factory is a cheap `Arc` clone.
+        AuthConfig::OAuthAuthorizationCode(cfg) => LoginMethod::OAuthAuthorizationCode(cfg.clone()),
         AuthConfig::OAuthClientCredentials(cfg) => {
             LoginMethod::OAuthClientCredentials(OAuthClientCredentialsConfig {
                 username: cfg.username.clone(),

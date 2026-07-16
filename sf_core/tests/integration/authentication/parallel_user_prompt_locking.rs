@@ -2,8 +2,9 @@
 //!
 //! These tests verify that when `clientStoreTemporaryCredential=true` and
 //! `DISABLE_PARALLEL_USER_PROMPT=true` (the default), concurrent connections
-//! for the same `<user, host>` pair produce only one interactive authentication
-//! request while all connections ultimately succeed.
+//! sharing the same [`sf_core::token_cache::CacheKey`] (idp, snowflake, username,
+//! role, and token_type) produce only one interactive authentication request while
+//! all connections ultimately succeed.
 //!
 //! Feature: parallel_user_prompt_locking.feature
 
@@ -18,7 +19,9 @@ use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DriverProviders, database_driver_client_with,
 };
 use sf_core::rest::snowflake::prompt_lock::PromptLockMap;
-use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
+use sf_core::token_cache::{
+    CacheKey, KeyringTokenCache, TokenCache, TokenType, normalize_identifier, normalize_url,
+};
 
 // =============================================================================
 // Helpers
@@ -137,13 +140,17 @@ fn should_show_only_one_external_browser_prompt_when_multiple_connections_authen
     let user = "eb_lock_concurrent";
     let mock = MockServerWithTls::start();
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&mock.http_url())
-        .unwrap()
-        .host_str()
-        .unwrap()
-        .to_string();
+    // The default test parameters supply role="test_role"; the production code
+    // embeds normalize_identifier(login_parameters.role) in the ID-token cache key.
+    let eb_id_token_key = CacheKey {
+        token_type: TokenType::IdToken,
+        idp: normalize_url(&mock.http_url()),
+        snowflake: normalize_url(&mock.http_url()),
+        username: normalize_identifier(user),
+        role: normalize_identifier("test_role"),
+    };
     // Ensure no leftover token from a previous run
-    let _ = cache.remove_token(&host, user, TokenType::IdToken);
+    let _ = cache.remove_token(&eb_id_token_key);
 
     // And Wiremock returns valid ssoUrl and proofKey for authenticator-request
     mock.mount(external_browser::authenticator_request(
@@ -205,7 +212,7 @@ fn should_show_only_one_external_browser_prompt_when_multiple_connections_authen
     );
 
     // Cleanup before asserting so the cache is restored even if an assert panics.
-    let _ = cache.remove_token(&host, user, TokenType::IdToken);
+    let _ = cache.remove_token(&eb_id_token_key);
 
     // And All connections succeed
     assert!(
@@ -229,13 +236,15 @@ fn should_show_only_one_mfa_prompt_when_multiple_connections_authenticate_concur
     let user = "mfa_lock_concurrent";
     let mock = MockServerWithTls::start();
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&mock.http_url())
-        .unwrap()
-        .host_str()
-        .unwrap()
-        .to_string();
+    let mfa_token_key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: normalize_url(&mock.http_url()),
+        snowflake: normalize_url(&mock.http_url()),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
     // Ensure no leftover token from a previous run
-    let _ = cache.remove_token(&host, user, TokenType::MfaToken);
+    let _ = cache.remove_token(&mfa_token_key);
 
     // Connection 1 does the interactive MFA push; the response includes mfaToken which the driver caches.
     // Connection 2 (after the lock) finds the cached MFA token and logs in with TOKEN set.
@@ -305,7 +314,7 @@ fn should_show_only_one_mfa_prompt_when_multiple_connections_authenticate_concur
     );
 
     // Cleanup before asserting so the cache is restored even if an assert panics.
-    let _ = cache.remove_token(&host, user, TokenType::MfaToken);
+    let _ = cache.remove_token(&mfa_token_key);
 
     // And All connections succeed using the cached MFA token
     assert!(
@@ -514,22 +523,26 @@ fn should_show_only_one_oauth_authorization_code_idp_exchange_when_multiple_conn
     let user = "oauth_ac_lock_concurrent";
     let mock = MockServerWithTls::start();
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&mock.http_url())
-        .unwrap()
-        .host_str()
-        .unwrap()
-        .to_string();
-    let _ = cache.remove_token(&host, user, TokenType::OAuthAccessToken);
-    let _ = cache.remove_token(&host, user, TokenType::OAuthRefreshToken);
+    let oauth_token_url = format!("{}/oauth/token-request", mock.http_url());
+    // The default test parameters supply role="test_role"; the production code
+    // passes login_parameters.role to run_oauth_authorization_code, which uses it
+    // in the CacheKey so all cache reads/writes are role-scoped.
+    let make_oauth_key = |token_type: TokenType| CacheKey {
+        token_type,
+        idp: normalize_url(&oauth_token_url),
+        snowflake: normalize_url(&mock.http_url()),
+        username: normalize_identifier(user),
+        role: normalize_identifier("test_role"),
+    };
+    let _ = cache.remove_token(&make_oauth_key(TokenType::OAuthAccessToken));
+    let _ = cache.remove_token(&make_oauth_key(TokenType::OAuthRefreshToken));
 
     // Note: the AC interactive leg requires a real browser redirect callback; the refresh-token
     // path is used here to keep the test self-contained while still exercising the lock code.
     // And A refresh token is seeded in the cache to bypass the interactive browser leg
     cache
         .add_token(
-            &host,
-            user,
-            TokenType::OAuthRefreshToken,
+            &make_oauth_key(TokenType::OAuthRefreshToken),
             "rt-for-lock-test",
         )
         .expect("seed refresh token");
@@ -593,8 +606,8 @@ fn should_show_only_one_oauth_authorization_code_idp_exchange_when_multiple_conn
     );
 
     // Cleanup before asserting so the cache is restored even if an assert panics.
-    let _ = cache.remove_token(&host, user, TokenType::OAuthAccessToken);
-    let _ = cache.remove_token(&host, user, TokenType::OAuthRefreshToken);
+    let _ = cache.remove_token(&make_oauth_key(TokenType::OAuthAccessToken));
+    let _ = cache.remove_token(&make_oauth_key(TokenType::OAuthRefreshToken));
 
     // And All connections succeed using the cached access token
     assert!(
@@ -614,12 +627,14 @@ fn should_release_the_lock_when_the_first_connection_login_fails_so_the_waiting_
     let user = "eb_lock_fail_first";
     let mock = MockServerWithTls::start();
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&mock.http_url())
-        .unwrap()
-        .host_str()
-        .unwrap()
-        .to_string();
-    let _ = cache.remove_token(&host, user, TokenType::IdToken);
+    let fail_first_id_key = CacheKey {
+        token_type: TokenType::IdToken,
+        idp: normalize_url(&mock.http_url()),
+        snowflake: normalize_url(&mock.http_url()),
+        username: normalize_identifier(user),
+        role: normalize_identifier("test_role"),
+    };
+    let _ = cache.remove_token(&fail_first_id_key);
 
     // Both connections need their own authenticator-request: the lock serialises them but
     // each must do a full interactive flow since no token is cached after the failure.
@@ -696,7 +711,7 @@ fn should_release_the_lock_when_the_first_connection_login_fails_so_the_waiting_
     });
 
     // Cleanup before asserting so the cache is restored even if an assert panics.
-    let _ = cache.remove_token(&host, user, TokenType::IdToken);
+    let _ = cache.remove_token(&fail_first_id_key);
 
     // The connection that acquired the lock first gets the fail token → auth error.
     // The connection that acquired it second gets the success token → succeeds.
@@ -747,12 +762,14 @@ fn should_release_the_lock_when_the_browser_callback_times_out_so_the_waiting_co
     let user = "eb_lock_timeout_first";
     let mock = MockServerWithTls::start();
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&mock.http_url())
-        .unwrap()
-        .host_str()
-        .unwrap()
-        .to_string();
-    let _ = cache.remove_token(&host, user, TokenType::IdToken);
+    let timeout_id_key = CacheKey {
+        token_type: TokenType::IdToken,
+        idp: normalize_url(&mock.http_url()),
+        snowflake: normalize_url(&mock.http_url()),
+        username: normalize_identifier(user),
+        role: normalize_identifier("test_role"),
+    };
+    let _ = cache.remove_token(&timeout_id_key);
 
     // 5 seconds is long enough to be reliable but short enough that the test
     // does not run for too long.
@@ -826,7 +843,7 @@ fn should_release_the_lock_when_the_browser_callback_times_out_so_the_waiting_co
     });
 
     // Cleanup before asserting so the cache is restored even if an assert panics.
-    let _ = cache.remove_token(&host, user, TokenType::IdToken);
+    let _ = cache.remove_token(&timeout_id_key);
 
     // The connection that acquired the lock first receives no callback → times out → fails.
     // The connection that acquired the lock second receives the callback → succeeds.

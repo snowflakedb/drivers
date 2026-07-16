@@ -29,18 +29,16 @@ mod token;
 /// `crate::config::rest_parameters` can name the field type without
 /// reaching into `oauth::authorization_code` directly.
 pub(crate) use authorization_code::BrowserLaunchFn;
+pub(crate) use authorization_code::derive_idp_url;
 pub(crate) use authorization_code::run_oauth_authorization_code;
 pub(crate) use client_credentials::acquire_client_credentials;
-pub(crate) use error::EndpointUrlParseSnafu;
 pub use error::OAuthError;
 pub(crate) use token::{remove_oauth_access_token, remove_oauth_dpop_bundled};
 
-#[cfg(not(any(test, feature = "test-utils")))]
-pub(crate) use token::host_from_token_url;
 /// Re-exported as `pub` under `cfg(any(test, feature = "test-utils"))` so
-/// integration / e2e tests can derive the OAuth token-cache key host
-/// from the same helper used by the production flow, instead of
-/// duplicating the Python-style `urlparse(token_request_url).hostname`
-/// fallback chain (see `analysis_feature_oauth.md` §7.3).
+/// integration / e2e tests can still derive a cache-key host from a token
+/// URL without re-implementing the Python-style
+/// `urlparse(token_request_url).hostname` fallback chain. Production flows
+/// build [`CacheKey`] directly via the token helpers and no longer need this.
 #[cfg(any(test, feature = "test-utils"))]
 pub use token::host_from_token_url;

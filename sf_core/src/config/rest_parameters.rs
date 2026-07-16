@@ -277,6 +277,11 @@ pub struct NativeOktaConfig {
 /// Snowflake-as-IdP defaults at flow time: `https://{host}/oauth/authorize`,
 /// `https://{host}/oauth/token-request`, and an ephemeral
 /// `http://127.0.0.1:<random>` loopback redirect URI.
+///
+/// `Debug` is hand-written (see below) because `browser_launcher` is not
+/// `Debug`; `Clone` is derived so `From`/projection conversions can copy the
+/// whole struct without a field-by-field copy that silently drops new fields.
+#[derive(Clone)]
 pub struct OAuthAuthorizationCodeConfig {
     /// Snowflake user name. Sent unchanged in the login-request body
     /// (`LOGIN_NAME` is always set; .NET's `loginName=""` quirk is not replicated).
@@ -290,9 +295,16 @@ pub struct OAuthAuthorizationCodeConfig {
     /// `None` ⇒ default `https://{host}/oauth/authorize`.
     pub authorization_url: Option<Url>,
     /// Optional override for the IdP token endpoint.
-    /// `None` ⇒ default `https://{host}/oauth/token-request`. Also used to
-    /// derive the OAuth cache-key host.
+    /// `None` ⇒ default `https://{host}/oauth/token-request`.
+    /// Used for HTTP transport (`.join()`, host extraction, scheme validation).
     pub token_url: Option<Url>,
+    /// Verbatim raw string from `oauth_token_request_url`, preserved alongside
+    /// `token_url` so that `normalize_url` sees the original user-configured
+    /// value for cache-key construction. The `url` crate strips default ports
+    /// (e.g. `:443`) from `Url::as_str()`, which would break cross-driver
+    /// byte-exact key parity; using the raw string avoids that.
+    /// `None` when no token URL was configured (key derived from server URL).
+    pub token_url_raw: Option<String>,
     /// Optional override for the loopback redirect URI advertised to the IdP.
     /// `None` ⇒ ephemeral `http://127.0.0.1:<random>` (bind to `127.0.0.1`,
     /// never `0.0.0.0`).
@@ -343,6 +355,7 @@ impl fmt::Debug for OAuthAuthorizationCodeConfig {
             .field("client_secret", &self.client_secret)
             .field("authorization_url", &self.authorization_url)
             .field("token_url", &self.token_url)
+            .field("token_url_raw", &self.token_url_raw)
             .field("redirect_uri", &self.redirect_uri)
             .field("scope", &self.scope)
             .field(
@@ -369,7 +382,7 @@ impl fmt::Debug for OAuthAuthorizationCodeConfig {
 /// proof generation, timeout budget). They are **not** transmitted to
 /// Snowflake in the login-request JSON — they are consumed entirely
 /// within the OAuth flow engine in `sf_core::rest::snowflake::oauth`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OAuthFlowOptions {
     /// Enable RFC 9449 DPoP proof-of-possession on token + login requests.
     /// Currently only JDBC has DPoP parity; defaults to `false`.
@@ -736,6 +749,7 @@ impl OAuthAuthorizationCodeConfig {
         let client_id = non_empty_string(settings, "oauth_client_id").unwrap_or_default();
         let client_secret = non_empty_string(settings, "oauth_client_secret").unwrap_or_default();
         let authorization_url = parse_optional_url(settings, "oauth_authorization_url")?;
+        let token_url_raw = non_empty_string(settings, "oauth_token_request_url");
         let token_url = parse_optional_url(settings, "oauth_token_request_url")?;
         let redirect_uri = parse_optional_redirect_uri(settings, "oauth_redirect_uri")?;
         let scope = resolve_oauth_scope(settings);
@@ -770,6 +784,7 @@ impl OAuthAuthorizationCodeConfig {
             client_secret: client_secret.into(),
             authorization_url,
             token_url,
+            token_url_raw,
             redirect_uri,
             scope,
             enable_single_use_refresh_tokens,
