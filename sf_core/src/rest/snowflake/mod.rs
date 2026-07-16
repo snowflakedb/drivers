@@ -33,7 +33,7 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::crl::worker::SharedCrlWorker;
-use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
+use crate::http::retry::{HttpContext, HttpError, TransportSnafu, execute_with_retry};
 use crate::logging::url_for_log;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
@@ -71,10 +71,7 @@ async fn request_text_with_retry(
 ) -> Result<(StatusCode, String), HttpError> {
     execute_with_retry(build, ctx, policy, |resp| async move {
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| HttpError::Transport {
-            source: e,
-            location: Location::new(file!(), line!(), column!()),
-        })?;
+        let text = resp.text().await.context(TransportSnafu)?;
         Ok((status, text))
     })
     .await
@@ -1313,7 +1310,9 @@ pub async fn refresh_session(
         // MasterTokenExpired variant so callers can mark the connection expired,
         // mirroring the query-response path in read_response_json.
         if code == MASTER_TOKEN_EXPIRED {
-            return Err(MasterTokenExpiredSnafu.build()).context(InvalidSnowflakeResponseSnafu);
+            return MasterTokenExpiredSnafu
+                .fail()
+                .context(InvalidSnowflakeResponseSnafu);
         }
         return SessionRefreshFailedSnafu { message, code }.fail();
     }

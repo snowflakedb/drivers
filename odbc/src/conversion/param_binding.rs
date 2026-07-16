@@ -116,13 +116,12 @@ impl ReadODBC for SnowflakeDecimal {
                     let (value, scale) = read_numeric_struct(binding)?;
                     format_numeric_value(value, scale)
                 } else {
-                    return Err(BindingNumericOutOfRangeSnafu {
+                    return BindingNumericOutOfRangeSnafu {
                         reason: format!(
                             "SQL_C_BINARY buffer length {len} does not match SQL_NUMERIC_STRUCT size ({})",
                             std::mem::size_of::<sql::Numeric>()
                         ),
-                    }
-                    .build());
+                    }.fail();
                 }
             }
             // Single-field SQL_C_INTERVAL_* sources resolve to the integer
@@ -144,10 +143,10 @@ impl ReadODBC for SnowflakeDecimal {
             | CDataType::IntervalMinute
             | CDataType::IntervalSecond => read_single_field_interval_i128(binding).to_string(),
             _ => {
-                return Err(UnsupportedParameterTypeSnafu {
+                return UnsupportedParameterTypeSnafu {
                     sql_type: sql::SqlDataType::DECIMAL,
                 }
-                .build());
+                .fail();
             }
         };
         Ok(s)
