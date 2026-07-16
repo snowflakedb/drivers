@@ -421,10 +421,15 @@ def list_pr_reviews(repo: str, pr_number: int) -> list[dict]:
 
 
 def first_review_request_time(repo: str, pr_number: int) -> datetime | None:
-    """Earliest ``review_requested`` event timestamp on a PR, or ``None``.
+    """Earliest actionable ``review_requested`` event timestamp, or ``None``.
 
-    Removals (``review_request_removed``) are intentionally ignored so the
-    timestamp reflects the very first time anyone was put on the hook.
+    If the PR was converted to draft after a review was requested, the
+    clock resets — reviewers are not expected to act on draft PRs. Only
+    ``review_requested`` events after the most recent ``convert_to_draft``
+    are considered. When no ``review_requested`` follows the last draft
+    conversion but a ``ready_for_review`` does, that timestamp is returned
+    (pending requests from before the draft became active again at that
+    point).
     """
     events = (
         gh_api_json(
@@ -433,9 +438,14 @@ def first_review_request_time(repo: str, pr_number: int) -> datetime | None:
         )
         or []
     )
+    events.sort(key=lambda ev: ev.get("created_at") or "", reverse=True)
+
     earliest: datetime | None = None
+    ready_after_draft: datetime | None = None
+
     for ev in events:
-        if ev.get("event") != "review_requested":
+        event_type = ev.get("event")
+        if event_type not in ("convert_to_draft", "ready_for_review", "review_requested"):
             continue
         created = ev.get("created_at")
         if not created:
@@ -446,9 +456,15 @@ def first_review_request_time(repo: str, pr_number: int) -> datetime | None:
             )
         except ValueError:
             continue
-        if earliest is None or ts < earliest:
+
+        if event_type == "convert_to_draft":
+            break
+        elif event_type == "ready_for_review":
+            ready_after_draft = ts
+        elif event_type == "review_requested":
             earliest = ts
-    return earliest
+
+    return earliest or ready_after_draft
 
 
 def _is_bot_user(user: dict | None) -> bool:
