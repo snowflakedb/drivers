@@ -220,7 +220,7 @@ impl LogManager {
         let error_trace_enabled = config.error_trace_enabled;
         let (dispatch, flusher) =
             Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?;
-        Ok(Self {
+        let lm = Self {
             dispatch,
             telemetry_sessions: sessions,
             session_flusher: flusher,
@@ -229,7 +229,8 @@ impl LogManager {
             log_query_text,
             log_query_parameters,
             error_trace_enabled,
-        })
+        };
+        Ok(lm)
     }
 
     /// Initialise logging with an application-provided sink (e.g.
@@ -247,7 +248,7 @@ impl LogManager {
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
         let (dispatch, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
-        Ok(Self {
+        let lm = Self {
             dispatch,
             telemetry_sessions: registry,
             session_flusher: flusher,
@@ -256,7 +257,8 @@ impl LogManager {
             log_query_text,
             log_query_parameters,
             error_trace_enabled,
-        })
+        };
+        Ok(lm)
     }
 
     /// Factory: derive a [`LoggingConfig`] from the process-wide INI

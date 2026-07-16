@@ -359,6 +359,8 @@ impl DatabaseDriverV1 {
                     )
                 };
 
+                warn_query_logging_risk(&resolved_snapshot);
+
                 let timeout_config = {
                     let conn = conn_ptr.lock().await;
                     crate::config::retry::TimeoutConfig::from_params(&conn.connection_seed)
@@ -899,6 +901,21 @@ impl DatabaseDriverV1 {
 /// `Setting::String`, the value is trimmed first and skipped when empty;
 /// other variants are inserted as-is. Used both for wrapper-identity seeding
 /// and for process-wide defaults parsed from `sf.odbc.ini` / `[log]` TOML.
+fn warn_query_logging_risk(settings: &ParamStore) {
+    if resolve_log_query_text(settings) {
+        tracing::warn!(
+            "log_query_text is enabled: SQL query text will appear in logs - \
+             ensure logs are protected as confidential data"
+        );
+    }
+    if resolve_log_query_parameters(settings) {
+        tracing::warn!(
+            "log_query_parameters is enabled: bind parameter values will appear in logs - \
+             ensure logs are protected as confidential data"
+        );
+    }
+}
+
 fn inject_if_absent(seed: &mut ParamStore, key: &str, value: Setting) {
     let value = match value {
         Setting::String(s) => {

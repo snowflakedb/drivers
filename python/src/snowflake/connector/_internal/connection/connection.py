@@ -279,7 +279,7 @@ class ConnectionMixin(ErrorHandlerMixin):
         )
 
     def _format_query_for_log(self, query: str) -> str:
-        """Collapse whitespace and truncate a query string for safe debug logging."""
+        """Collapse whitespace and truncate a query string for gated INFO query logging."""
         ret = " ".join(line.strip() for line in query.split("\n"))
         if len(ret) < self.log_max_query_length:
             return ret
