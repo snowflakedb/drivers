@@ -481,7 +481,7 @@ impl DatabaseDriverV1 {
     }
 
     /// Creates a ResultSet and registers it in the handle manager.
-    fn create_result_set(
+    pub(super) fn create_result_set(
         &self,
         descriptor: ResultSetDescriptor,
         data: RowsetData,

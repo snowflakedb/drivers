@@ -660,7 +660,7 @@ impl DatabaseDriverV1 {
 /// needed to issue a query.
 ///
 /// Also rejects query execution if close() has already been called on the connection.
-async fn query_context(
+pub(super) async fn query_context(
     conn: &Arc<Mutex<Connection>>,
 ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
     let conn = conn.lock().await;
@@ -808,7 +808,7 @@ fn is_file_transfer(sql: &str) -> bool {
 }
 
 /// Strips leading whitespace, line comments (--), and block comments (/* */)
-fn skip_leading_whitespace_and_comments(s: &str) -> &str {
+pub(super) fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     let mut s = s;
     loop {
         s = s.trim_start();
