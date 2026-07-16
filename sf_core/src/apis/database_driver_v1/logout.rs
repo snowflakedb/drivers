@@ -138,12 +138,11 @@ fn validate_config(config: &LogoutConfig) -> Result<(), ApiError> {
     if let Some(timeout) = config.logout_request_timeout
         && timeout.is_zero()
     {
-        return Err(InvalidArgumentSnafu {
+        return InvalidArgumentSnafu {
             argument:
                 "logout_request_timeout: 0s. Zero timeout means immediate failure. Must be positive."
                     .to_string(),
-        }
-        .build());
+        }.fail();
     }
     Ok(())
 }

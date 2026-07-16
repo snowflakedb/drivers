@@ -213,10 +213,10 @@ impl DatabaseDriverV1 {
 
             // Multi-statement query prepare is not supported.
             let ExecuteQueryResult::Single(rs_info) = result else {
-                return Err(InvalidArgumentSnafu {
+                return InvalidArgumentSnafu {
                     argument: "Multi-statement queries cannot be prepared".to_string(),
                 }
-                .build());
+                .fail();
             };
             let stream = self.result_set_get_stream(rs_info.handle).await?;
             self.result_set_release(rs_info.handle)?;
@@ -666,7 +666,7 @@ async fn query_context(
     let conn = conn.lock().await;
     // Reject query execution if close() has been called
     if conn.is_closed.load(Ordering::SeqCst) {
-        return Err(ConnectionClosedSnafu {}.build());
+        return ConnectionClosedSnafu {}.fail();
     }
     Ok((
         conn.query_transport_parameters()?,

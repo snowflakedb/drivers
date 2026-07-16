@@ -3048,7 +3048,7 @@ where
         let join_handle = g.spawn(async move {
             tokio::select! {
                 biased;
-                _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
+                _ = token_clone.cancelled() => OperationCanceledSnafu.fail(),
                 result = future => result,
             }
         });
@@ -3061,7 +3061,7 @@ where
     let result = g.block_on(async move |_c| {
         tokio::select! {
             biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            _ = token.cancelled() => OperationCanceledSnafu.fail(),
             result = future => result,
         }
     })?;
@@ -3207,7 +3207,7 @@ fn execute_dae(
     let response = globals.block_on(async |c| {
         tokio::select! {
             biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            _ = token.cancelled() => OperationCanceledSnafu.fail(),
             result = async {
                 if let Some(query) = deferred_query {
                     c.statement_set_sql_query(StatementSetSqlQueryRequest {

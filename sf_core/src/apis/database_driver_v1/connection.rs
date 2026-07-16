@@ -1313,7 +1313,7 @@ impl RefreshContext {
     pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().await;
         if guard.is_closed.load(Ordering::SeqCst) {
-            return Err(ConnectionClosedSnafu {}.build());
+            return ConnectionClosedSnafu {}.fail();
         }
         Self::new(&guard)
     }
@@ -1503,10 +1503,9 @@ impl RefreshContext {
         F: Fn(SensitiveString) -> Fut,
         Fut: Future<Output = Result<T, RestError>>,
     {
-        use snafu::IntoError;
         crate::refresh::execute_with_refresh(self, |token| {
             let fut = f(token);
-            async move { fut.await.map_err(|e| QuerySnafu.into_error(e)) }
+            async move { fut.await.context(QuerySnafu) }
         })
         .await
     }

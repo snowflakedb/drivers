@@ -326,10 +326,7 @@ fn maybe_decompress_gzip(data: Vec<u8>) -> Result<Vec<u8>, ChunkError> {
         let mut decompressed = Vec::new();
         decoder
             .read_to_end(&mut decompressed)
-            .map_err(|e| ChunkError::ChunkDecompression {
-                source: e,
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+            .context(ChunkDecompressionSnafu)?;
         Ok(decompressed)
     } else {
         Ok(data)

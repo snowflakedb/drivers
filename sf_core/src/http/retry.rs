@@ -43,6 +43,7 @@ impl HttpContext {
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum HttpError {
     #[snafu(display("transport error"))]
+    #[snafu(visibility(pub(crate)))]
     Transport {
         source: reqwest::Error,
         #[snafu(implicit)]

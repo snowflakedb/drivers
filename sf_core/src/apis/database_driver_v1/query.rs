@@ -362,12 +362,12 @@ async fn fetch_fresh_stage_info_with_sql(
         .context(QueryFailedSnafu)?;
 
     if !response.success {
-        return Err(ServerRejectedSnafu {
+        return ServerRejectedSnafu {
             message: response
                 .message
                 .unwrap_or_else(|| "Unknown error".to_string()),
         }
-        .build());
+        .fail();
     }
 
     // The re-issued PUT/GET carries the fresh stageInfo on the response.

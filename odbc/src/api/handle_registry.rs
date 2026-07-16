@@ -89,7 +89,7 @@ impl<T> HandleManager<T> {
         };
         let guard = slot.read_arc();
         if guard.is_none() {
-            return Err(InvalidHandleSnafu.build());
+            return InvalidHandleSnafu.fail();
         }
         Ok(HandleGuard { guard })
     }
@@ -105,7 +105,7 @@ impl<T> HandleManager<T> {
         };
         let guard = slot.write_arc();
         if guard.is_none() {
-            return Err(InvalidHandleSnafu.build());
+            return InvalidHandleSnafu.fail();
         }
         Ok(DeleteGuard {
             guard,

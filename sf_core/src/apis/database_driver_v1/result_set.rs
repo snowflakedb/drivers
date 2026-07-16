@@ -470,10 +470,10 @@ impl DatabaseDriverV1 {
 
     pub fn result_set_release(&self, result_handle: Handle) -> Result<(), ApiError> {
         if !self.results.delete_handle(result_handle) {
-            return Err(InvalidArgumentSnafu {
+            return InvalidArgumentSnafu {
                 argument: "ResultSet handle not found".to_string(),
             }
-            .build());
+            .fail();
         }
         Ok(())
     }
