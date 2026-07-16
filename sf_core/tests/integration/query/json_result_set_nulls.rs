@@ -19,8 +19,8 @@ fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultH
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, query);

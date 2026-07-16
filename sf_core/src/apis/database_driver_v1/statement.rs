@@ -1549,6 +1549,10 @@ mod tests {
         serde_json::from_str(json).expect("test JSON must be valid query response Data")
     }
 
+    fn rows_affected_of(data: &Data) -> Option<i64> {
+        result_set::calculate_rows_affected(data, data.statement_type_id)
+    }
+
     #[test]
     fn calculate_rows_affected_sums_dml_columns() {
         let data = deserialize_query_response(
@@ -1561,7 +1565,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(13));
+        assert_eq!(rows_affected_of(&data), Some(13));
     }
 
     #[test]
@@ -1576,7 +1580,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(5));
+        assert_eq!(rows_affected_of(&data), Some(5));
     }
 
     #[test]
@@ -1590,17 +1594,65 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(0));
+        assert_eq!(rows_affected_of(&data), Some(0));
     }
 
     #[test]
     fn calculate_rows_affected_select_uses_total() {
         let data = deserialize_query_response(
             r#"{
+                "statementTypeId": 4096,
                 "total": 42
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(42));
+        assert_eq!(rows_affected_of(&data), Some(42));
+    }
+
+    #[test]
+    fn calculate_rows_affected_ddl_is_none_not_total() {
+        // DDL (0x6000) is a no-result statement. Snowflake returns total: 1 as a
+        // generic success marker; we must report None rather than a misleading 1.
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 24576,
+                "total": 1
+            }"#,
+        );
+        assert_eq!(rows_affected_of(&data), None);
+    }
+
+    #[test]
+    fn calculate_rows_affected_unknown_type_is_none() {
+        // No statementTypeId -> unknown -> no-result -> None (not data.total).
+        let data = deserialize_query_response(
+            r#"{
+                "total": 1
+            }"#,
+        );
+        assert_eq!(rows_affected_of(&data), None);
+    }
+
+    #[test]
+    fn calculate_rows_affected_file_transfer_fallback_uses_total() {
+        use super::super::global_state::WrapperPresets;
+        use crate::query_types::statement_type::QueryType;
+
+        // PUT/GET responses can omit statementTypeId. Exercise the full wiring:
+        // response_to_descriptor must derive the effective type from
+        // command=UPLOAD via effective_statement_type_id, then rows_affected must
+        // use that same type (Cursor -> total), not fall back to None.
+        let upload = deserialize_query_response(
+            r#"{
+                "command": "UPLOAD",
+                "total": 3
+            }"#,
+        );
+        let descriptor = result_set::response_to_descriptor(&upload, &WrapperPresets::default());
+        assert_eq!(
+            descriptor.statement_type_id,
+            Some(QueryType::PUT_FILES.raw())
+        );
+        assert_eq!(descriptor.rows_affected, Some(3));
     }
 
     #[test]

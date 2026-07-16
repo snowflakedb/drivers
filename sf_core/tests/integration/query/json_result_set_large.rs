@@ -106,8 +106,8 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, &select_query);
