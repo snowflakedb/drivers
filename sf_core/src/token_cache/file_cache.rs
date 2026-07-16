@@ -11,7 +11,6 @@ use rand::Rng;
 
 use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersistence};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
 
 use crate::env_vars;
@@ -99,11 +98,6 @@ fn resolve_cache_file_name() -> String {
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| DEFAULT_CACHE_FILE_NAME.to_string())
-}
-
-fn hash_cache_key(key: &str) -> String {
-    let hash = Sha256::digest(key.as_bytes());
-    hex::encode(hash)
 }
 
 /// RAII file lock guard using OS-level file locking (`flock` on Unix,
@@ -319,12 +313,16 @@ struct CacheFileHandle {
 
 /// A file-based credential store for environments where the OS keyring is unavailable.
 ///
-/// Secrets are stored as plain text values in a JSON file keyed by the SHA-256
-/// hash of the credential key. The file is protected with mode 0o600 on Unix.
+/// Secrets are stored in a JSON file keyed verbatim by the credential name
+/// passed to each operation. Callers are responsible for supplying an already-
+/// normalized key (e.g., the output of [`build_cache_key`]); no additional
+/// hashing is applied here. The file is protected with mode 0o600 on Unix.
 ///
 /// This struct provides low-level file operations (`set_secret`, `get_secret`,
 /// `delete_credential`) that mirror the keyring `CredentialApi` verbs, and is
 /// used as the backing store for [`FileTokenCacheEntry`] credentials.
+///
+/// [`build_cache_key`]: super::build_cache_key
 #[derive(Clone, Debug)]
 pub(super) struct FileTokenCache {
     cache_file_path: PathBuf,
@@ -459,8 +457,7 @@ impl FileTokenCache {
         }
     }
 
-    /// Stores a secret under the given key. The key is SHA-256 hashed before
-    /// storage. The secret bytes must be valid UTF-8.
+    /// Stores a secret under the given key verbatim. The secret bytes must be valid UTF-8.
     pub fn set_secret(&self, key: &str, secret: &[u8]) -> Result<(), TokenCacheError> {
         let value = String::from_utf8(secret.to_vec())
             .boxed()
@@ -472,21 +469,20 @@ impl FileTokenCache {
         };
         cache
             .tokens
-            .insert(hash_cache_key(key), SensitiveString::from(value));
+            .insert(key.to_string(), SensitiveString::from(value));
         self.write_cache(&mut handle, &cache)
     }
 
     /// Retrieves a secret by key. Returns `None` if the key does not exist.
     pub fn get_secret(&self, key: &str) -> Result<Option<Vec<u8>>, TokenCacheError> {
         let _lock = self.acquire_lock()?;
-        let hashed_key = hash_cache_key(key);
         let cache = match self.read_cache()? {
             Some(c) => c,
             None => return Ok(None),
         };
         Ok(cache
             .tokens
-            .get(&hashed_key)
+            .get(key)
             .map(|v| v.reveal().as_bytes().to_vec()))
     }
 
@@ -497,7 +493,7 @@ impl FileTokenCache {
             Some(hc) => hc,
             None => return Ok(false),
         };
-        let existed = cache.tokens.remove(&hash_cache_key(key)).is_some();
+        let existed = cache.tokens.remove(key).is_some();
         if existed {
             self.write_cache(&mut handle, &cache)?;
         }
@@ -542,8 +538,8 @@ fn wrap_error(e: TokenCacheError) -> keyring::Error {
 /// A keyring credential backed by the file-based credential store.
 ///
 /// Implements [`keyring::credential::CredentialApi`] by delegating storage
-/// operations to a cloned [`FileTokenCache`], preserving all file locking,
-/// SHA-256 key hashing, and permission enforcement logic.
+/// operations to a cloned [`FileTokenCache`], preserving all file locking
+/// and permission enforcement logic.
 struct FileTokenCacheEntry {
     user: String,
     cache: FileTokenCache,
@@ -621,19 +617,77 @@ mod tests {
         }
 
         #[test]
-        fn keys_are_sha256_hashed_in_file() {
+        fn keys_are_stored_verbatim_in_file() {
             let (_dir, cache) = create_temp_cache();
+            let raw_key = "SnowflakeTokenCache.v2.abc123";
             cache
-                .set_secret("my_raw_key", b"val")
+                .set_secret(raw_key, b"val")
                 .expect("Failed to set secret");
 
             let content = fs::read_to_string(&cache.cache_file_path).expect("Failed to read file");
             let parsed: CacheFileContent =
                 serde_json::from_str(&content).expect("Invalid JSON in cache file");
 
-            let expected_key = hash_cache_key("my_raw_key");
-            assert!(parsed.tokens.contains_key(&expected_key));
-            assert_eq!(parsed.tokens.get(&expected_key).unwrap().reveal(), "val");
+            assert!(parsed.tokens.contains_key(raw_key));
+            assert_eq!(parsed.tokens.get(raw_key).unwrap().reveal(), "val");
+        }
+
+        #[test]
+        fn stored_key_matches_build_cache_key_output() {
+            use crate::token_cache::{
+                CacheKey, TokenType, build_cache_key, normalize_identifier, normalize_url,
+            };
+
+            let (_dir, cache) = create_temp_cache();
+
+            // Build the key exactly as production code would: normalize inputs then hash.
+            let key = CacheKey {
+                token_type: TokenType::OAuthAccessToken,
+                idp: normalize_url("https://idp.example.com/oauth/token"),
+                snowflake: normalize_url("https://acct.snowflakecomputing.com"),
+                username: normalize_identifier("alice@example.com"),
+                role: normalize_identifier("analyst"),
+            };
+            let built_key = build_cache_key(&key);
+
+            // Store via the built key (single-hashing point lives in build_cache_key).
+            cache
+                .set_secret(&built_key, b"secret-value")
+                .expect("set_secret must succeed");
+
+            // The file must contain the built key verbatim — not a hash-of-hash.
+            let content = fs::read_to_string(&cache.cache_file_path).expect("read cache file");
+            let parsed: CacheFileContent =
+                serde_json::from_str(&content).expect("cache file must be valid JSON");
+
+            assert!(
+                parsed.tokens.contains_key(&built_key),
+                "file must contain the build_cache_key output verbatim; \
+                 expected key: {built_key}"
+            );
+            assert_eq!(
+                parsed.tokens.get(&built_key).unwrap().reveal(),
+                "secret-value"
+            );
+
+            // Round-trip: get_secret returns the value under the same key.
+            let retrieved = cache
+                .get_secret(&built_key)
+                .expect("get_secret must not error");
+            assert_eq!(
+                retrieved,
+                Some(b"secret-value".to_vec()),
+                "round-trip value must match"
+            );
+
+            // delete_credential removes it.
+            cache
+                .delete_credential(&built_key)
+                .expect("delete_credential must not error");
+            let after_delete = cache
+                .get_secret(&built_key)
+                .expect("get_secret after delete must not error");
+            assert_eq!(after_delete, None, "key must be gone after delete");
         }
 
         #[cfg(unix)]
@@ -802,14 +856,11 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let cache = create_cache(&dir);
 
-            let cred_write = cache
-                .build(None, "svc", "host.example.com;user1;ID_TOKEN")
-                .unwrap();
+            let key = "SnowflakeTokenCache.v2.abc123def456";
+            let cred_write = cache.build(None, "svc", key).unwrap();
             cred_write.set_password("shared_val").unwrap();
 
-            let cred_read = cache
-                .build(None, "svc", "host.example.com;user1;ID_TOKEN")
-                .unwrap();
+            let cred_read = cache.build(None, "svc", key).unwrap();
             assert_eq!(cred_read.get_password().unwrap(), "shared_val");
         }
     }
