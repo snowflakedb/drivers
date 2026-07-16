@@ -479,13 +479,12 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .context(MissingParameterSnafu {
                     parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
                 })?;
-            let provider = WifProvider::parse_str(&provider_str).ok_or_else(|| {
+            let provider = WifProvider::parse_str(&provider_str).with_context(|| {
                 InvalidParameterValueSnafu {
                     parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
                     value: provider_str.clone(),
                     explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
                 }
-                .build()
             })?;
             let entra_resource = settings
                 .get_string(WORKLOAD_IDENTITY_ENTRA_RESOURCE)

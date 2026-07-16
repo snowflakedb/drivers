@@ -31,7 +31,7 @@ use oauth2::{
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope,
     StandardErrorResponse, TokenResponse, TokenUrl,
 };
-use snafu::{IntoError, ResultExt};
+use snafu::{IntoError, OptionExt, ResultExt};
 use url::Url;
 
 use super::dpop::{self, DPoPKey};
@@ -486,12 +486,11 @@ async fn run_interactive_flow(
     // budget, not the full `authentication_timeout` — otherwise a
     // delayed click leaves no time for the token exchange below.
     let listener = binding;
-    let loopback_budget = deadline.remaining().ok_or_else(|| {
-        AuthenticationTimeoutSnafu {
+    let loopback_budget = deadline
+        .remaining()
+        .with_context(|| AuthenticationTimeoutSnafu {
             elapsed_secs: deadline.elapsed_secs(),
-        }
-        .build()
-    })?;
+        })?;
 
     let (redirect_result, _) = tokio::join!(
         listener.wait_for_redirect(loopback_budget),

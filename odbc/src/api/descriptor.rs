@@ -12,6 +12,7 @@ use crate::api::{DescField, OdbcResult, desc_from_handle};
 use crate::conversion::warning::Warnings;
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
+use snafu::OptionExt;
 use tracing;
 
 /// Get a descriptor field value.
@@ -1539,11 +1540,10 @@ pub fn set_desc_rec(
     // correctly), mirroring the CONCISE_TYPE handling in `set_desc_field`.
     const SQL_DATETIME: sql::SmallInt = 9;
     let type_ = if type_ == SQL_DATETIME {
-        concise_datetime_type(sub_type).ok_or_else(|| {
+        concise_datetime_type(sub_type).with_context(|| {
             crate::api::error::InconsistentDescriptorInfoSnafu {
                 reason: format!("invalid datetime SubType {sub_type} for SQL_DATETIME"),
             }
-            .build()
         })?
     } else {
         type_

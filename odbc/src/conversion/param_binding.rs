@@ -7,7 +7,7 @@ use std::{
 use std::mem;
 
 use serde_json::{Map, Value};
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
@@ -371,19 +371,19 @@ pub fn odbc_bindings_to_json(
     let mut json_bindings = Map::new();
 
     for param_num in 1..=max_params {
-        let apd_rec = apd.records.get(&param_num).ok_or_else(|| {
+        let apd_rec = apd.records.get(&param_num).with_context(|| {
             tracing::error!(
                 "odbc_bindings_to_json: APD record #{param_num} not found. \
                  Parameter bindings must be contiguous and start at 1.",
             );
-            InvalidParameterIndicesSnafu.build()
+            InvalidParameterIndicesSnafu
         })?;
-        let ipd_rec = ipd.records.get(&param_num).ok_or_else(|| {
+        let ipd_rec = ipd.records.get(&param_num).with_context(|| {
             tracing::error!(
                 "odbc_bindings_to_json: IPD record #{param_num} not found. \
                  Parameter bindings must be contiguous and start at 1.",
             );
-            InvalidParameterIndicesSnafu.build()
+            InvalidParameterIndicesSnafu
         })?;
 
         let mut snowflake_type = SnowflakeLogicalType::Any;
@@ -455,19 +455,19 @@ pub fn odbc_bindings_to_csv(
             continue;
         }
         for param_num in 1..=max_params {
-            let apd_rec = apd.records.get(&param_num).ok_or_else(|| {
+            let apd_rec = apd.records.get(&param_num).with_context(|| {
                 tracing::error!(
                     "odbc_bindings_to_csv: APD record #{param_num} not found. \
                      Parameter bindings must be contiguous and start at 1.",
                 );
-                InvalidParameterIndicesSnafu.build()
+                InvalidParameterIndicesSnafu
             })?;
-            let ipd_rec = ipd.records.get(&param_num).ok_or_else(|| {
+            let ipd_rec = ipd.records.get(&param_num).with_context(|| {
                 tracing::error!(
                     "odbc_bindings_to_csv: IPD record #{param_num} not found. \
                      Parameter bindings must be contiguous and start at 1.",
                 );
-                InvalidParameterIndicesSnafu.build()
+                InvalidParameterIndicesSnafu
             })?;
 
             if param_num > 1 {

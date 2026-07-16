@@ -221,12 +221,12 @@ impl DatabaseDriverV1 {
             let stream = self.result_set_get_stream(rs_info.handle).await?;
             self.result_set_release(rs_info.handle)?;
 
-            let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-                InvalidArgumentSnafu {
-                    argument: "Statement handle not found".to_string(),
-                }
-                .build()
-            })?;
+            let stmt_ptr =
+                self.statements
+                    .get_obj(stmt_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Statement handle not found".to_string(),
+                    })?;
             // TODO: re-lock the statement to just copy the query
             //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
             let stmt = stmt_ptr.lock().await;
@@ -306,12 +306,12 @@ impl DatabaseDriverV1 {
         describe_only: Option<bool>,
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let stmt_ptr =
+            self.statements
+                .get_obj(stmt_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                })?;
 
         let stmt = stmt_ptr.lock().await;
 
@@ -487,12 +487,12 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<AsyncExecuteResult, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let stmt_ptr =
+            self.statements
+                .get_obj(stmt_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                })?;
 
         let mut stmt = stmt_ptr.lock().await;
 
@@ -556,11 +556,8 @@ impl DatabaseDriverV1 {
             }
         }?;
 
-        let query_id = result.query_id.ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "No query_id returned from async submission".to_string(),
-            }
-            .build()
+        let query_id = result.query_id.with_context(|| InvalidArgumentSnafu {
+            argument: "No query_id returned from async submission".to_string(),
         })?;
 
         stmt.state = StatementState::Executed;
@@ -575,11 +572,10 @@ impl DatabaseDriverV1 {
     ) -> Result<ExecuteQueryResult, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
-            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            let conn_ptr = self.connections.get_obj(conn_handle).with_context(|| {
                 InvalidArgumentSnafu {
                     argument: "Connection handle not found".to_string(),
                 }
-                .build()
             })?;
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
@@ -632,12 +628,12 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
-            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-                InvalidArgumentSnafu {
-                    argument: "Connection handle not found".to_string(),
-                }
-                .build()
-            })?;
+            let conn_ptr =
+                self.connections
+                    .get_obj(conn_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Connection handle not found".to_string(),
+                    })?;
 
             let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
 
@@ -683,11 +679,8 @@ async fn query_context(
 
 /// Return the SQL text attached to a statement, or an error if none has been set.
 fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
-    stmt.query.clone().ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Query not found".to_string(),
-        }
-        .build()
+    stmt.query.clone().with_context(|| InvalidArgumentSnafu {
+        argument: "Query not found".to_string(),
     })
 }
 

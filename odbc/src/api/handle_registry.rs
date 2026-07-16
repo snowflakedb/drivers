@@ -1,3 +1,4 @@
+use snafu::OptionExt;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -84,7 +85,7 @@ impl<T> HandleManager<T> {
             slots
                 .get(idx)
                 .cloned()
-                .ok_or_else(|| InvalidHandleSnafu.build())?
+                .with_context(|| InvalidHandleSnafu)?
         };
         let guard = slot.read_arc();
         if guard.is_none() {
@@ -100,7 +101,7 @@ impl<T> HandleManager<T> {
             slots
                 .get(idx)
                 .cloned()
-                .ok_or_else(|| InvalidHandleSnafu.build())?
+                .with_context(|| InvalidHandleSnafu)?
         };
         let guard = slot.write_arc();
         if guard.is_none() {

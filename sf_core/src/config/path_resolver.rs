@@ -1,5 +1,6 @@
 use super::{ConfigDirNotFoundSnafu, ConfigError};
 use crate::env_vars;
+use snafu::OptionExt;
 use std::env;
 use std::path::PathBuf;
 
@@ -102,7 +103,7 @@ fn platform_config_dir() -> Result<PathBuf, ConfigError> {
     let base = dirs::config_dir();
 
     base.map(|d| d.join("snowflake"))
-        .ok_or_else(|| ConfigDirNotFoundSnafu.build())
+        .with_context(|| ConfigDirNotFoundSnafu)
 }
 
 #[cfg(test)]

@@ -488,14 +488,12 @@ impl WorkloadIdentityConfig {
             .context(MissingParameterSnafu {
                 parameter: "workload_identity_provider",
             })?;
-        let provider = WifProvider::parse_str(&provider_str).ok_or_else(|| {
-            InvalidParameterValueSnafu {
+        let provider =
+            WifProvider::parse_str(&provider_str).with_context(|| InvalidParameterValueSnafu {
                 parameter: "workload_identity_provider",
                 value: provider_str.clone(),
                 explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
-            }
-            .build()
-        })?;
+            })?;
         let entra_resource = settings
             .get_string("workload_identity_entra_resource")
             .filter(|s| !s.is_empty());

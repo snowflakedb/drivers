@@ -1372,11 +1372,8 @@ fn apply_parameter_bindings(
     mode: BindingMode,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     let effective_count: u16 = if prepared {
-        prepared_param_count.ok_or_else(|| {
-            crate::api::error::CountFieldIncorrectSnafu {
-                reason: "prepared statement is missing prepared_param_count".to_string(),
-            }
-            .build()
+        prepared_param_count.with_context(|| crate::api::error::CountFieldIncorrectSnafu {
+            reason: "prepared statement is missing prepared_param_count".to_string(),
         })?
     } else {
         apd.desc_count().max(ipd.desc_count())
@@ -1807,12 +1804,12 @@ pub fn describe_param(
     if !allowed {
         return StatementNotExecutedSnafu.fail();
     }
-    let ipd_rec = inner.ipd.records.get(&parameter_number).ok_or_else(|| {
+    let ipd_rec = inner.ipd.records.get(&parameter_number).with_context(|| {
         tracing::error!(
             "describe_param: parameter #{} not found in IPD",
             parameter_number
         );
-        InvalidParameterNumberSnafu.build()
+        InvalidParameterNumberSnafu
     })?;
 
     if !data_type_ptr.is_null() {
@@ -1931,7 +1928,7 @@ fn lookup_explicit_desc(
                 .iter()
                 .find(|(id, _)| *id == desc_id)
                 .map(|(_, a)| a.clone())
-                .ok_or_else(|| InvalidHandleSnafu.build())
+                .with_context(|| InvalidHandleSnafu)
         }
         _ => InvalidAttributeValueSnafu {
             attribute,
@@ -2893,11 +2890,10 @@ fn accumulate_put_data(
     str_len_or_ind: sql::Len,
     c_type: CDataType,
 ) -> OdbcResult<()> {
-    let entry = ctx.pushed_data.get_mut(&param_num).ok_or_else(|| {
+    let entry = ctx.pushed_data.get_mut(&param_num).with_context(|| {
         crate::api::error::CountFieldIncorrectSnafu {
             reason: format!("DAE param {param_num} not found in pushed_data"),
         }
-        .build()
     })?;
 
     // HY020: cannot mix SQL_NULL_DATA with previously sent data chunks
