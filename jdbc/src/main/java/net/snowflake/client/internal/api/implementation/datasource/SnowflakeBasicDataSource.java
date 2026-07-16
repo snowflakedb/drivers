@@ -88,7 +88,7 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
     try {
       Properties properties = getProperties(username, password);
       Connection con = openConnection(resolvedUrl, properties);
-      logger.trace(
+      logger.debug(
           "Created a connection for {} at {}",
           effectiveUser,
           (Supplier<String>) () -> sanitize(getUrl()));

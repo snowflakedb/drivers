@@ -29,7 +29,9 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  */
 final class NativeLibraryLoader {
 
-  private static final SFLogger logger = SFLoggerFactory.getLogger(NativeLibraryLoader.class);
+  // Bootstrap log must not round-trip through core (native lib is still loading).
+  private static final SFLogger logger =
+      SFLoggerFactory.getDeliveryLogger(NativeLibraryLoader.class.getName());
 
   /**
    * Resource directory inside the JAR where {@code copyNativeLib} (build.gradle) places the lib.

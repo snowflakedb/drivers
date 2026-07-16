@@ -7,8 +7,6 @@ public interface SFLogger {
 
   boolean isInfoEnabled();
 
-  boolean isTraceEnabled();
-
   boolean isWarnEnabled();
 
   void debug(String msg, boolean isMasked);
@@ -28,12 +26,6 @@ public interface SFLogger {
   void info(String msg, Object... arguments);
 
   void info(String msg, Throwable t);
-
-  void trace(String msg, boolean isMasked);
-
-  void trace(String msg, Object... arguments);
-
-  void trace(String msg, Throwable t);
 
   void warn(String msg, boolean isMasked);
 

@@ -7,7 +7,7 @@ public class SFLoggerFactory {
    * @return An SFLogger instance given the name of the class
    */
   public static SFLogger getLogger(Class<?> clazz) {
-    return new SLF4JLogger(clazz);
+    return new CoreLogger(clazz);
   }
 
   /**
@@ -15,6 +15,11 @@ public class SFLoggerFactory {
    * @return An SFLogger instance given the name
    */
   public static SFLogger getLogger(String name) {
+    return new CoreLogger(name);
+  }
+
+  /** Plain SLF4J logger for core delivery; must not round-trip or we loop. */
+  public static SFLogger getDeliveryLogger(String name) {
     return new SLF4JLogger(name);
   }
 }

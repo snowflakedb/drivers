@@ -1,12 +1,8 @@
 package net.snowflake.client.internal.log;
 
-import java.util.function.Supplier;
 import net.snowflake.client.internal.util.MaskedException;
-import net.snowflake.client.internal.util.SecretDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.helpers.FormattingTuple;
-import org.slf4j.helpers.MessageFormatter;
 import org.slf4j.spi.LocationAwareLogger;
 
 public class SLF4JLogger implements SFLogger {
@@ -41,11 +37,6 @@ public class SLF4JLogger implements SFLogger {
   @Override
   public boolean isInfoEnabled() {
     return this.slf4jLogger.isInfoEnabled();
-  }
-
-  @Override
-  public boolean isTraceEnabled() {
-    return this.slf4jLogger.isTraceEnabled();
   }
 
   @Override
@@ -99,21 +90,6 @@ public class SLF4JLogger implements SFLogger {
   }
 
   @Override
-  public void trace(String msg, boolean isMasked) {
-    logMessage(LogLevel.TRACE, msg, isMasked);
-  }
-
-  @Override
-  public void trace(String msg, Object... arguments) {
-    logFormat(LogLevel.TRACE, msg, arguments);
-  }
-
-  @Override
-  public void trace(String msg, Throwable t) {
-    logThrowable(LogLevel.TRACE, msg, t);
-  }
-
-  @Override
   public void warn(String msg, boolean isMasked) {
     logMessage(LogLevel.WARN, msg, isMasked);
   }
@@ -133,7 +109,7 @@ public class SLF4JLogger implements SFLogger {
       if (!isLevelEnabled(level)) {
         return;
       }
-      String message = isMasked ? SecretDetector.maskSecrets(msg) : msg;
+      String message = isMasked ? LogFormatter.mask(msg) : msg;
       logToSlf4j(level, message, null);
     } catch (Throwable ignored) {
       // Logging must never throw.
@@ -145,10 +121,8 @@ public class SLF4JLogger implements SFLogger {
       if (!isLevelEnabled(level)) {
         return;
       }
-      FormattingTuple ft = MessageFormatter.arrayFormat(msg, evaluateLambdaArgs(arguments));
-      String message = SecretDetector.maskSecrets(ft.getMessage());
-      Throwable masked = ft.getThrowable() == null ? null : new MaskedException(ft.getThrowable());
-      logToSlf4j(level, message, masked);
+      LogFormatter.Formatted formatted = LogFormatter.format(msg, arguments);
+      logToSlf4j(level, formatted.getMessage(), formatted.getThrowable());
     } catch (Throwable ignored) {
       // Logging must never throw.
     }
@@ -159,7 +133,7 @@ public class SLF4JLogger implements SFLogger {
       if (!isLevelEnabled(level)) {
         return;
       }
-      String message = SecretDetector.maskSecrets(msg);
+      String message = LogFormatter.mask(msg);
       Throwable masked = t == null ? null : new MaskedException(t);
       logToSlf4j(level, message, masked);
     } catch (Throwable ignored) {
@@ -180,8 +154,6 @@ public class SLF4JLogger implements SFLogger {
         return slf4jLogger.isInfoEnabled();
       case DEBUG:
         return slf4jLogger.isDebugEnabled();
-      case TRACE:
-        return slf4jLogger.isTraceEnabled();
       case OFF:
       default:
         return false;
@@ -227,13 +199,6 @@ public class SLF4JLogger implements SFLogger {
           slf4jLogger.debug(message, throwable);
         }
         break;
-      case TRACE:
-        if (throwable == null) {
-          slf4jLogger.trace(message);
-        } else {
-          slf4jLogger.trace(message, throwable);
-        }
-        break;
       case OFF:
         return;
       default:
@@ -254,24 +219,11 @@ public class SLF4JLogger implements SFLogger {
         return LocationAwareLogger.INFO_INT;
       case DEBUG:
         return LocationAwareLogger.DEBUG_INT;
-      case TRACE:
-        return LocationAwareLogger.TRACE_INT;
       case OFF:
         throw new IllegalArgumentException("OFF level must not be emitted");
       default:
         throw new IllegalArgumentException("Unsupported log level: " + level);
     }
-  }
-
-  private static Object[] evaluateLambdaArgs(Object... args) {
-    if (args == null || args.length == 0) {
-      return new Object[0];
-    }
-    final Object[] result = new Object[args.length];
-    for (int i = 0; i < args.length; i++) {
-      result[i] = args[i] instanceof Supplier ? ((Supplier<?>) args[i]).get() : args[i];
-    }
-    return result;
   }
 
   private static Class<?> requireLoggerClass(Class<?> clazz) {
@@ -293,7 +245,6 @@ public class SLF4JLogger implements SFLogger {
     ERROR,
     WARN,
     INFO,
-    DEBUG,
-    TRACE
+    DEBUG
   }
 }

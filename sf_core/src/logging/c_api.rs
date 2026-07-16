@@ -1,8 +1,7 @@
 use crate::apis::database_driver_v1::WrapperPresets;
-use crate::logging;
-use crate::logging::callback_layer::WRAPPER_TARGET;
 use crate::logging::{LogManager, LoggingConfig};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
+use crate::{logging, wrapper_event};
 use std::ffi::{CStr, c_char};
 use std::sync::OnceLock;
 
@@ -14,18 +13,6 @@ fn cstr_or_empty<'a>(ptr: *const c_char) -> &'a str {
     }
     // SAFETY: caller must provide a valid NUL-terminated C string when non-null.
     unsafe { CStr::from_ptr(ptr).to_str().unwrap_or("") }
-}
-
-/// `tracing::event!` requires a compile-time level; dispatch at runtime via match.
-macro_rules! wrapper_event {
-    ($level:expr, $($fields:tt)*) => {
-        match $level {
-            0 => tracing::event!(target: WRAPPER_TARGET, tracing::Level::ERROR, $($fields)*),
-            1 => tracing::event!(target: WRAPPER_TARGET, tracing::Level::WARN, $($fields)*),
-            2 => tracing::event!(target: WRAPPER_TARGET, tracing::Level::INFO, $($fields)*),
-            _ => tracing::event!(target: WRAPPER_TARGET, tracing::Level::DEBUG, $($fields)*),
-        }
-    };
 }
 
 /// Initialise the core state: logging, tokio runtime, and transport.

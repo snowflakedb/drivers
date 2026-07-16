@@ -285,7 +285,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void clearParameters() throws SQLException {
     checkClosed();
-    logger.trace("Clearing prepared parameters: binds={}", parameterValues.size());
+    logger.debug("Clearing prepared parameters: binds={}", parameterValues.size());
     parameterValues.clear();
   }
 
