@@ -87,6 +87,19 @@ class ConnectionConfigMixin:
     with snowflake-connector-python; never forwarded to the Rust core.  When
     ``None`` the wrapper treats it as ``True`` (legacy default)."""
 
+    crl_validity_time: int | None = None
+    """Maximum age of a cached CRL before it is re-fetched, in **days**.
+
+    When unset (``None``) the Rust core's own default applies (24h); the value
+    is not forwarded. When set, it is interpreted as days and converted to
+    seconds in :meth:`to_options` before being forwarded, because the core
+    param ``crl_validity_time`` is seconds-based.
+
+    Kept in days for backward compatibility with the Python connector's public
+    API. Hand-written here — and excluded from the generated dataclass via
+    ``PYTHON_HANDWRITTEN_FIELDS`` in ``param_defs_export.rs`` — so the
+    seconds-based core param does not shadow this days-based field."""
+
     _extra: dict[str, Any] = field(default_factory=dict, repr=False)
     """Unknown kwargs forwarded to the Rust core for validation.
 
@@ -419,6 +432,13 @@ class ConnectionConfigMixin:
             options[rust_name] = value
 
         options.update(self._extra)
+
+        # crl_validity_time is exposed in days for backward compatibility, but
+        # the Rust core expects seconds. Convert here so the public API keeps
+        # its historical unit. (The generic loop above emitted the raw days
+        # value under the same key; overwrite it with the seconds value.)
+        if self.crl_validity_time is not None:
+            options["crl_validity_time"] = self.crl_validity_time * 86400
 
         if options_modifiers:
             for modifier in options_modifiers:

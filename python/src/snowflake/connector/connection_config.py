@@ -90,11 +90,14 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_enable_memory_caching: bool | None = True
     """Enable in-memory caching for CRL responses. Default: True"""
 
-    crl_http_timeout: int | None = 30
-    """HTTP timeout in seconds for CRL endpoint requests. Default: 30"""
+    crl_http_timeout: int | None = 10
+    """HTTP timeout in seconds for CRL endpoint requests. Default: 10"""
 
-    crl_validity_time: int | None = 10
-    """CRL cache validity time in days. Default: 10"""
+    crl_max_download_size: int | None = 20
+    """Maximum CRL download size in MB before the download is aborted. Default: 20"""
+
+    crl_on_disk_cache_removal_delay: int | None = 25200
+    """Delay in seconds after a CRL's nextUpdate before it is purged from the on-disk cache. Default: 25200"""
 
     custom_root_store_path: str | None = None
     """Path to custom root certificate store"""

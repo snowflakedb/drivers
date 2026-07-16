@@ -87,6 +87,14 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("CRL download from {url} exceeded max size: {size} bytes > {max_size} bytes"))]
+    DownloadSizeExceeded {
+        url: String,
+        size: u64,
+        max_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Mutex poisoned: {message}"))]
     MutexPoisoned {
         message: String,

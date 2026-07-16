@@ -21,6 +21,17 @@
 use sf_core::config::param_registry::{ParamDef, ParamScope, Required, ValueType, registry};
 use sf_core::config::settings::Setting;
 
+/// Canonical param names whose Python surface is hand-written in
+/// `connection_config_mixin.py` instead of generated, because the wrapper
+/// exposes a different unit than the core param for backward compatibility.
+///
+/// `crl_validity_time`: the core param is in **seconds**, but the Python
+/// connector has always accepted it in **days**. The mixin keeps the
+/// days-based field (defaulting to `None`, so the core's own default applies
+/// when unset) and converts days to seconds in `to_options`, so generating a
+/// seconds-based field here would clash with it and change the public API.
+const PYTHON_HANDWRITTEN_FIELDS: &[&str] = &["crl_validity_time"];
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -232,6 +243,10 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
         if p.scope == ParamScope::Statement {
             continue;
         }
+        // Skip params whose Python surface is hand-written in the mixin.
+        if PYTHON_HANDWRITTEN_FIELDS.contains(&p.canonical_name) {
+            continue;
+        }
 
         let py_field = to_python_field(p.canonical_name);
 
@@ -278,6 +293,10 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     for p in sorted_params.iter().copied() {
         // Skip statement-scoped params; they belong on the cursor, not the connection.
         if p.scope == ParamScope::Statement {
+            continue;
+        }
+        // Skip params whose Python surface is hand-written in the mixin.
+        if PYTHON_HANDWRITTEN_FIELDS.contains(&p.canonical_name) {
             continue;
         }
 

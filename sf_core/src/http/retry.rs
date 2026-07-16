@@ -69,6 +69,13 @@ pub enum HttpError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("response body of {size} bytes exceeds max {max_size} bytes"))]
+    ResponseTooLarge {
+        size: u64,
+        max_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 /// Calculate effective timeout for a request attempt.
@@ -277,6 +284,51 @@ where
         }
         Err(e) => Err(TransportSnafu.into_error(e)),
     }
+}
+
+/// Like [`execute_bytes_with_retry`] but streams the response body and aborts
+/// with [`HttpError::ResponseTooLarge`] the moment the advertised
+/// `Content-Length` or the accumulated body size exceeds `max_size`. The size
+/// rejection is a property of the payload (not a transient failure), so it is
+/// surfaced without further retries. Transport/status failures still flow
+/// through the normal retry path.
+pub async fn execute_bytes_with_retry_capped<B>(
+    build: B,
+    ctx: &HttpContext,
+    policy: &RetryPolicy,
+    max_size: usize,
+) -> Result<Vec<u8>, HttpError>
+where
+    B: Fn() -> reqwest::RequestBuilder,
+{
+    use futures::StreamExt;
+    execute_with_retry(build, ctx, policy, |resp| async move {
+        let resp = resp.error_for_status().context(TransportSnafu)?;
+        if let Some(len) = resp.content_length()
+            && len > max_size as u64
+        {
+            return ResponseTooLargeSnafu {
+                size: len,
+                max_size,
+            }
+            .fail();
+        }
+        let mut stream = resp.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context(TransportSnafu)?;
+            if buf.len() + chunk.len() > max_size {
+                return ResponseTooLargeSnafu {
+                    size: (buf.len() + chunk.len()) as u64,
+                    max_size,
+                }
+                .fail();
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
+    })
+    .await
 }
 
 #[cfg(test)]

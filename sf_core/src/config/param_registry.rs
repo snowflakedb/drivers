@@ -78,9 +78,12 @@ pub mod param_names {
     pub const CRL_ENABLE_DISK_CACHING: ParamKey = ParamKey("crl_enable_disk_caching");
     pub const CRL_ENABLE_MEMORY_CACHING: ParamKey = ParamKey("crl_enable_memory_caching");
     pub const CRL_CACHE_DIR: ParamKey = ParamKey("crl_cache_dir");
-    pub const CRL_VALIDITY_TIME: ParamKey = ParamKey("crl_validity_time");
     pub const CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL: ParamKey =
         ParamKey("crl_allow_certificates_without_crl_url");
+    pub const CRL_MAX_DOWNLOAD_SIZE: ParamKey = ParamKey("crl_max_download_size");
+    pub const CRL_VALIDITY_TIME: ParamKey = ParamKey("crl_validity_time");
+    pub const CRL_ON_DISK_CACHE_REMOVAL_DELAY: ParamKey =
+        ParamKey("crl_on_disk_cache_removal_delay");
     pub const CRL_HTTP_TIMEOUT: ParamKey = ParamKey("crl_http_timeout");
     pub const CRL_CONNECTION_TIMEOUT: ParamKey = ParamKey("crl_connection_timeout");
     pub const ASYNC_EXECUTION: ParamKey = ParamKey("async_execution");
@@ -1014,14 +1017,42 @@ static PARAM_DEFS: &[ParamDef] = &[
         mutable_after_connect: false,
     },
     ParamDef {
+        canonical_name: param_names::CRL_MAX_DOWNLOAD_SIZE.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(20)),
+        sensitive: false,
+        description: "Maximum CRL download size in MB before the download is aborted",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
         canonical_name: param_names::CRL_VALIDITY_TIME.as_str(),
         aliases: &[],
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::Int(10)),
+        default: Some(|| Setting::Int(86400)),
         sensitive: false,
-        description: "CRL cache validity time in days",
+        description: "Maximum age in seconds of a cached CRL before it is re-fetched",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CRL_ON_DISK_CACHE_REMOVAL_DELAY.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(25200)),
+        sensitive: false,
+        description: "Delay in seconds after a CRL's nextUpdate before it is purged from the on-disk cache",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -1047,7 +1078,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::Int(30)),
+        default: Some(|| Setting::Int(10)),
         sensitive: false,
         description: "HTTP timeout in seconds for CRL endpoint requests",
         deprecated_by: None,
