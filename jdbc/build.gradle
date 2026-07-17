@@ -47,6 +47,10 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:4.11.0'
     testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.4.4'
     testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
+    testImplementation 'com.zaxxer:HikariCP:4.0.3'
+    testImplementation 'com.mchange:c3p0:0.9.5.4'
+    testImplementation 'commons-dbcp:commons-dbcp:1.4'
+    testImplementation 'commons-pool:commons-pool:1.6'
     testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
     testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
     testRuntimeOnly "org.slf4j:slf4j-simple:${slf4jVersion}"

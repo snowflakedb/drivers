@@ -73,6 +73,8 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
   private String url;
   private String user;
   private String password;
+  private String serverName;
+  private int portNumber;
 
   // DataSource methods ----------------------------------------------------------------------------
 
@@ -208,6 +210,26 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
   }
 
   @Override
+  public void setDatabaseName(String databaseName) {
+    setDatabase(databaseName);
+  }
+
+  @Override
+  public void setPortNumber(int portNumber) {
+    this.portNumber = portNumber;
+  }
+
+  @Override
+  public void setServerName(String serverName) {
+    this.serverName = serverName;
+  }
+
+  @Override
+  public void setSsl(boolean ssl) {
+    this.properties.setProperty("ssl", String.valueOf(ssl));
+  }
+
+  @Override
   public void setAuthenticator(String authenticator) {
     this.properties.setProperty(SessionProperty.AUTHENTICATOR.getKey(), authenticator);
   }
@@ -307,7 +329,18 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource, Delegating
 
   @Override
   public String getUrl() {
-    return url;
+    if (url != null) {
+      return url;
+    }
+    if (serverName == null) {
+      return null;
+    }
+    StringBuilder sb = new StringBuilder("jdbc:snowflake://");
+    sb.append(serverName);
+    if (portNumber != 0) {
+      sb.append(":").append(portNumber);
+    }
+    return sb.toString();
   }
 
   @Override
