@@ -20,10 +20,16 @@ def oldJdbcVersion = '4.3.1'
 def slf4jVersion = '2.0.9'
 def lombokVersion = '1.18.42'
 
-group = 'com.snowflake'
+group = 'net.snowflake'
 version = '4.0.0'
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
+
+def artifactBaseName = 'snowflake-jdbc-v2-standalone'
+
+base {
+    archivesName = artifactBaseName
+}
 
 // ====================
 // Dependency resolution
@@ -359,10 +365,12 @@ publishing {
             artifact tasks.named('sourcesJar')
             artifact tasks.named('javadocJar')
 
+            artifactId = artifactBaseName
+
             pom {
                 name = 'Snowflake JDBC Driver'
                 description = 'JDBC driver for Snowflake database'
-                url = 'https://github.com/snowflake/universal-driver'
+                url = 'https://github.com/snowflakedb/universal-driver/tree/main/jdbc'
 
                 licenses {
                     license {
@@ -373,10 +381,19 @@ publishing {
 
                 developers {
                     developer {
-                        id = 'snowflake'
-                        name = 'Snowflake Inc.'
-                        email = 'support@snowflake.com'
+                        name = 'Snowflake Support Team'
+                        email = 'snowflake-java@snowflake.net'
+                        organization = 'Snowflake Computing'
+                        organizationUrl = 'https://www.snowflake.net'
                     }
+                }
+
+                // SCM points at the repository root; the driver sources live in jdbc/,
+                // which the project url points to.
+                scm {
+                    connection = 'scm:git:https://github.com/snowflakedb/universal-driver.git'
+                    developerConnection = 'scm:git:git@github.com:snowflakedb/universal-driver.git'
+                    url = 'https://github.com/snowflakedb/universal-driver'
                 }
 
                 // Deps inlined — strip from POM (else consumers pull dupes).
