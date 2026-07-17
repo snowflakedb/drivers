@@ -25,11 +25,9 @@ version = '4.0.0'
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
 
+// Publication artifactId for the fat jar (see publishing block); archive file
+// names are set per-task below — no global base.archivesName.
 def artifactBaseName = 'snowflake-jdbc-v2-standalone'
-
-base {
-    archivesName = artifactBaseName
-}
 
 // ====================
 // Dependency resolution
@@ -195,6 +193,15 @@ tasks.withType(Javadoc).configureEach {
     failOnError = false
 }
 
+// Per-task archive base names — each jar is named for its published coordinate:
+//   plain jar → snowflake-jdbc-v2            (thin, unshaded, native-free)
+//   shadowJar → snowflake-jdbc-v2-standalone (fat, shaded + natives)
+// sources/javadoc reuse the fat name; Maven renames by artifactId at publish time.
+tasks.named('jar')        { archiveBaseName = 'snowflake-jdbc-v2' }
+tasks.named('shadowJar')  { archiveBaseName = 'snowflake-jdbc-v2-standalone' }
+tasks.named('sourcesJar') { archiveBaseName = 'snowflake-jdbc-v2-standalone' }
+tasks.named('javadocJar') { archiveBaseName = 'snowflake-jdbc-v2-standalone' }
+
 // ====================
 // Self-contained fat jar (shadow)
 // ====================
@@ -315,13 +322,13 @@ def verifyShadowJar = tasks.register('verifyShadowJar') {
 tasks.named('shadowJar') { finalizedBy verifyShadowJar }
 
 
-// Stage the cargo-built native lib(s) into JAR resources under
-// net/snowflake/client/internal/unicore/native/<os>-<arch>/<libname> so NativeLibraryLoader
-// can extract the right one at runtime. Release/CI passes -PnativeLibsDir (a staged
-// multi-arch tree); dev builds copy just the host lib from ../target/{release,debug}.
+// Bundle the cargo-built native lib(s) into the fat jar under
+// .../unicore/native/<os>-<arch>/<lib> for NativeLibraryLoader to extract at runtime. Only the
+// fat jar carries natives; the plain jar is native-free (thin resolves it from a separate
+// artifact). Release/CI passes -PnativeLibsDir (staged multi-arch tree); dev bundles the host
+// lib from ../target/{release,debug}. Tests use CORE_PATH, not these resources.
 //
-// SYNC CONTRACT: hostOsToken/hostArchToken must match NativeLibraryLoader.osToken()/
-// archToken(), or a locally built jar can't find its native lib at runtime.
+// SYNC CONTRACT: hostOsToken/hostArchToken must match NativeLibraryLoader.osToken()/archToken().
 def hostOsToken = {
     def os = System.getProperty('os.name', '').toLowerCase()
     if (os.contains('mac') || os.contains('darwin')) return 'darwin'
@@ -334,26 +341,23 @@ def hostArchToken = {
     if (arch == 'amd64' || arch == 'x86_64') return 'x86_64'
     return arch
 }()
-def nativeResourceDir = 'build/resources/main/net/snowflake/client/internal/unicore/native'
+def nativeResourcePath = 'net/snowflake/client/internal/unicore/native'
 
-def copyNativeLib = tasks.register('copyNativeLib', Copy) {
-    into nativeResourceDir
+tasks.named('shadowJar') {
     if (project.hasProperty('nativeLibsDir')) {
-        // Release/CI: copy the staged <os>-<arch>/<lib> tree verbatim.
-        from project.property('nativeLibsDir')
-        include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+        // Release/CI: bundle the staged <os>-<arch>/<lib> tree verbatim.
+        from(project.property('nativeLibsDir')) {
+            include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+            into nativeResourcePath
+        }
     } else {
-        // Local/dev: copy only the host lib into its <os>-<arch> subdir.
+        // Local/dev: bundle only the host lib into its <os>-<arch> subdir.
         def hostLibDir = file('../target/release').exists() ? '../target/release' : '../target/debug'
         from(hostLibDir) {
             include 'libjdbc_bridge.so', 'libjdbc_bridge.dylib', 'jdbc_bridge.dll'
-            into "${hostOsToken}-${hostArchToken}"
+            into "${nativeResourcePath}/${hostOsToken}-${hostArchToken}"
         }
     }
-}
-
-tasks.named('processResources') {
-    dependsOn(copyNativeLib)
 }
 
 publishing {
