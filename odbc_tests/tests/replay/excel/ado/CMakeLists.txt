@@ -9,3 +9,4 @@ cmake_minimum_required(VERSION 4.0)
 # for the per-scenario driver-axis mapping.
 add_odbc_test(replay_excel_ado_sqlbindcol sqlbindcol/test.cpp)
 add_odbc_test(replay_excel_ado_prepared_exec prepared_exec/test.cpp)
+add_odbc_test(replay_excel_ado_row_array_fetch row_array_fetch/test.cpp)
