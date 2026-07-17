@@ -246,6 +246,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
         presigned_url: None,
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let result = sf_core::file_manager::download_single_file(

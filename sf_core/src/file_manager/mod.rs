@@ -546,6 +546,7 @@ pub async fn download_files(
             presigned_url,
             flavor: data.flavor.clone(),
             multipart: data.multipart,
+            unsafe_file_write: data.unsafe_file_write,
         };
 
         let result =
@@ -673,9 +674,11 @@ pub async fn download_single_file(
     // differs. Every branch writes to `partial_path` and renames on success — the
     // user-visible destination only ever appears as a complete artefact, even if
     // a concurrent FS observer is racing.
-    // Extract enc_material before the match so all three arms can move it into
-    // their spawn_blocking closure without cloning EncryptionMaterial's strings.
+    // Extract enc_material and unsafe_file_write before the match so all three
+    // arms can move them into their spawn_blocking closures
+    // (EncryptionMaterial is not Clone).
     let enc_material = data.encryption_material.take();
+    let unsafe_file_write = data.unsafe_file_write;
     let (cloud_byte_count, output_byte_len) = match data.stage_info.location_type {
         LocationType::S3 => {
             // Spill parallel ranged downloads next to the destination (not the
@@ -732,7 +735,9 @@ pub async fn download_single_file(
                         // verifying the SHA-256 digest at finalize time.
                         (Some(enc_material), Some(enc_metadata), Some(d)) => {
                             let reader = body.into_reader().context(IoSnafu)?;
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             let result = decrypt_ciphertext_to_writer(
                                 reader,
                                 &enc_metadata,
@@ -776,7 +781,8 @@ pub async fn download_single_file(
                                 // bytes out (unavoidable and cheap).
                                 S3DownloadBody::InMemory(bytes) => {
                                     let mut output_file =
-                                        File::create(&partial_path2).context(IoSnafu)?;
+                                        create_output_file(&partial_path2, unsafe_file_write)
+                                            .context(IoSnafu)?;
                                     let result = std::io::copy(&mut &bytes[..], &mut output_file)
                                         .map(|n| n as i64)
                                         .context(IoSnafu);
@@ -866,7 +872,9 @@ pub async fn download_single_file(
                 tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
                     match (enc_material.as_ref(), cse_info) {
                         (Some(enc_material), Some(cse)) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             match decrypt_ciphertext_to_writer(
                                 reader,
                                 &cse.metadata,
@@ -895,7 +903,9 @@ pub async fn download_single_file(
                                 "encryption_material present but GCS CSE headers absent; \
                                  writing raw bytes"
                             );
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             match std::io::copy(&mut { reader }, &mut output_file) {
                                 Ok(n) => {
                                     drop(output_file);
@@ -911,7 +921,9 @@ pub async fn download_single_file(
                             }
                         }
                         (None, _) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             match std::io::copy(&mut { reader }, &mut output_file) {
                                 Ok(n) => {
                                     drop(output_file);
@@ -965,7 +977,9 @@ pub async fn download_single_file(
                 tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
                     match (enc_material.as_ref(), cse_info) {
                         (Some(enc_material), Some(cse)) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             match decrypt_ciphertext_to_writer(
                                 reader,
                                 &cse.metadata,
@@ -994,7 +1008,9 @@ pub async fn download_single_file(
                                 "encryption_material present but Azure CSE headers absent; \
                                  writing raw bytes"
                             );
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             match std::io::copy(&mut { reader }, &mut output_file) {
                                 Ok(n) => {
                                     drop(output_file);
@@ -1010,7 +1026,9 @@ pub async fn download_single_file(
                             }
                         }
                         (None, _) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
                             match std::io::copy(&mut { reader }, &mut output_file) {
                                 Ok(n) => {
                                     drop(output_file);
@@ -1053,6 +1071,30 @@ pub async fn download_single_file(
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
     })
+}
+
+/// Creates the `.part` output file for a GET download, applying owner-only
+/// permissions (`0o600`) on Unix when `unsafe_file_write` is `false`.
+///
+/// On Unix with `unsafe_file_write = false`, forces mode `0o600`; otherwise uses the process umask.
+fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
+    #[cfg(unix)]
+    if !unsafe_file_write {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        // O_CREAT only sets the mode on newly-created files; if a stale .part
+        // file exists its permissions are left untouched by truncate.  fchmod
+        // (via set_permissions on the fd) covers that case.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        return Ok(file);
+    }
+    let _ = unsafe_file_write;
+    File::create(path)
 }
 
 /// Best-effort cleanup of the `<output_path>.part` temp file when an
@@ -1240,6 +1282,64 @@ impl FileManagerError {
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_owner_only_mode_when_unsafe_file_write_is_false() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp); // remove so create_output_file creates it fresh
+
+        create_output_file(&path, false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_owner_only_mode_on_stale_part_file() {
+        use std::os::unix::fs::PermissionsExt;
+        // Pre-create a .part file with loose permissions to simulate a stale
+        // leftover from a previous failed download.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp);
+        let stale = File::create(&path).unwrap();
+        stale
+            .set_permissions(std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        drop(stale);
+
+        create_output_file(&path, false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_umask_mode_when_unsafe_file_write_is_true() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Baseline: mode produced by standard File::create (umask-dependent).
+        let tmp_base = tempfile::NamedTempFile::new().unwrap();
+        let base_path = tmp_base.path().to_owned();
+        drop(tmp_base);
+        File::create(&base_path).unwrap();
+        let baseline_mode = std::fs::metadata(&base_path).unwrap().permissions().mode() & 0o777;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp);
+        create_output_file(&path, true).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+
+        // unsafe_file_write=true must use the same permissions as File::create,
+        // not the forced 0o600 of the secure path.
+        assert_eq!(mode, baseline_mode);
+    }
 
     #[test]
     fn upload_result_message_odbc_skipped_uses_legacy_literal() {

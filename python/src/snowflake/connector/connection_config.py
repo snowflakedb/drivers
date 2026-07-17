@@ -318,6 +318,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
 
+    unsafe_file_write: bool | None = False
+    """When true, GET downloads use the process umask permissions instead of owner-only (0600). Unix-only; ignored on
+    Windows.
+
+    Default: False
+    """
+
     unsafe_skip_config_file_permissions_check: bool | None = False
     """When true, skip file permission checks on config.toml and connections.toml during connection setup. Use in
     environments where permissions cannot be controlled (CI runners, containers). Unix-only; ignored on Windows.
