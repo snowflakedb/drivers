@@ -578,18 +578,33 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent accidental commit of secrets in JDBC test fixtures (spirit of `universal-driver-security.yaml`, adapted for Java tests).
 
-      **REQUIREMENT**: Test code MUST NOT contain hardcoded passwords, PATs, private keys, or session tokens. Load credentials from environment variables, CI-injected secrets, or existing test parameter files (`parameters.json` via test harness). Literal placeholder values (`"dummy"`, `"invalid"`) are fine when testing rejection paths.
+      **REQUIREMENT**: Test code MUST NOT contain hardcoded passwords, PATs, private keys, or session tokens that look like *real* secrets (high-entropy strings, PEM blocks, JWTs, base64 tokens). Load real credentials from environment variables, CI-injected secrets, or existing test parameter files (`parameters.json` via test harness).
 
-      ❌ **BAD:**
+      **PLACEHOLDER ALLOWLIST — do NOT flag these**: obvious throwaway test values are fine when the credential is never expected to authenticate. Treat as allowed any string that is (case-insensitively) or contains a recognizable test-placeholder token: `dummy`, `invalid`, `test`, `test_password`, `password`, `fake`, `mock`, `example`, `changeme`, `xxx`, `redacted`, or the empty string. A short, low-entropy, human-readable literal like `"test_password"` is a placeholder, not a leaked secret.
+
+      **MOCK-CONTEXT SUPPRESSION — do NOT flag when auth is not real**: suppress the finding entirely when the surrounding test never sends the credential to a live server, e.g.:
+      - the test class name contains `Mock`, `Wiremock`, `Stub`, or `Fake`, or the file lives under a `wiremock`/`mock` test package;
+      - the method wires up mocked authentication (WireMock stubs, mocked `HttpClient`/session, injected fake token endpoint) so the literal is only ever matched against a stub;
+      - the value is a `private static final` constant with a placeholder-style name (`INVALID_TOKEN`, `TEST_PASSWORD`, `FAKE_PAT`).
+
+      Only raise a finding when a plausibly-real secret is set on a connection/session that reaches a real Snowflake endpoint. When unsure whether a value is a real secret, weigh entropy and format — flag PEM/JWT/base64/high-entropy strings; stay silent on short dictionary-word placeholders.
+
+      ❌ **BAD (real-looking secret on a live connection):**
       ```java
       props.setProperty("password", "MySecretP@ssw0rd");
       props.setProperty("token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...");
       ```
 
-      ✅ **GOOD:**
+      ✅ **GOOD (real credential injected):**
       ```java
       props.setProperty("password", System.getenv("SNOWFLAKE_TEST_PASSWORD"));
       props.setProperty("token", INVALID_TOKEN_PLACEHOLDER);  // exercises auth rejection
+      ```
+
+      ✅ **ALSO FINE — do NOT flag (placeholder in a fully-mocked test):**
+      ```java
+      // class WiremockLoginTest — auth is stubbed, value never reaches a server
+      props.setProperty("password", "test_password");
       ```
 
   - id: ud-java-nullable-getter-file-audit
