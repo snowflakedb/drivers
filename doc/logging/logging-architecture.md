@@ -10,8 +10,6 @@ does. For the author-facing rules, see [logging-guidelines.md](logging-guideline
 
 > [TODO(SNOW-3744959)]: Document text vs structured logging - the core emits structured `tracing` events, but the wrapper bridge (FFI/JNI) forwards flattened text today.
 
-> [TODO(SNOW-3725848)]: All wrapper logs should round-trip through core. Python and JDBC do this today (see "Wrapper logs round-tripping through core" below); ODBC still logs directly.
-
 ---
 
 ## A single, process-wide pipeline
@@ -51,11 +49,11 @@ so core and wrapper logs share one pipeline that the host application controls.
 
 ## Wrapper logs round-tripping through core
 
-Wrapper code does not log to its native logging framework directly. It uses a
-`CoreLogger` so its own logs share the single core pipeline instead of bypassing
-it. The mechanism is the same on every wrapper — gate locally, cross the
-FFI/JNI boundary carrying `logger_name`, re-emit on the `sf_wrapper` target, and
-hand the record back to the originating logger — only the boundary differs.
+Wrapper logs share the single core pipeline instead of bypassing it. Python and
+JDBC use a `CoreLogger` that gates locally, crosses an FFI/JNI boundary carrying
+`logger_name`, re-emits on the `sf_wrapper` target, and hands the record back to
+the host logging framework. ODBC is Rust-native and emits `tracing` events
+directly on the core `LogManager` dispatch.
 
 **Levels.** DEBUG is the finest level every wrapper supports. Outbound, each
 `CoreLogger` clamps to DEBUG. Inbound, core wire levels **3 and higher** (DEBUG,
@@ -91,6 +89,14 @@ Python-side flag - is the single source of truth: on any non-zero result
 `CoreLogger` emits the record straight onto the stdlib logger, so early-import
 records are never lost.
 
+**Python configuration.** Standard `logging` APIs - no special treatment.
+`CoreLogger` and the inbound FFI callback both gate on the underlying stdlib
+logger's level and handlers. By default `snowflake.connector` and
+`snowflake.connector._core` use a `NullHandler` with `propagate=True`, so
+`basicConfig`, root handlers, `dictConfig`, and `pytest caplog` work without
+extra setup. Configure levels and handlers on those loggers (or any
+`snowflake.connector.*` child) as usual.
+
 ### JDBC
 
 JDBC funnels every logger through `SFLoggerFactory.getLogger(...)`, which returns
@@ -124,13 +130,19 @@ in-process.
 9+), so JDBC omits `file`/`line`/`function` rather than pay a full stack capture
 per log; the record still lands on its originating logger.
 
-**Python configuration.** Standard `logging` APIs - no special treatment.
-`CoreLogger` and the inbound FFI callback both gate on the underlying stdlib
-logger's level and handlers. By default `snowflake.connector` and
-`snowflake.connector._core` use a `NullHandler` with `propagate=True`, so
-`basicConfig`, root handlers, `dictConfig`, and `pytest caplog` work without
-extra setup. Configure levels and handlers on those loggers (or any
-`snowflake.connector.*` child) as usual.
+### ODBC
+
+ODBC emits `tracing` events directly on the shared core pipeline:
+
+1. The first `SQLAllocHandle(SQL_HANDLE_ENV)` loads `sf.odbc.ini`, calls
+   `LogManager::for_odbc()`, and stores the resulting dispatch on `OdbcGlobals`.
+2. Every ODBC C API entry point installs that dispatch as the thread-local
+   default for the duration of the call (`set_dispatch!` in `c_api.rs`), so
+   wrapper `tracing::` output reaches the same layered subscriber as core events.
+3. `OdbcGlobals::block_on` and `spawn` also set the dispatch on the thread or
+   tokio task handling async work (worker threads do not inherit the caller's dispatch).
+4. With `LogPath` configured in `sf.odbc.ini`, the file layer is the sink;
+   there is no app sink. Core and wrapper events share one format and filtering policy.
 
 ---
 
