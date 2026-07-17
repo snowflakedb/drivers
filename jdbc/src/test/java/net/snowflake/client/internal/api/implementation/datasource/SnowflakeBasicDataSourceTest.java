@@ -281,6 +281,49 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
+  public void shouldBuildUrlFromServerNameWhenUrlNotSet() {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    ds.setServerName("account.snowflakecomputing.com");
+
+    assertEquals("jdbc:snowflake://account.snowflakecomputing.com", ds.getUrl());
+  }
+
+  @Test
+  public void shouldBuildUrlFromServerNameAndPortWhenUrlNotSet() {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    ds.setServerName("account.snowflakecomputing.com");
+    ds.setPortNumber(443);
+
+    assertEquals("jdbc:snowflake://account.snowflakecomputing.com:443", ds.getUrl());
+  }
+
+  @Test
+  public void shouldPreferExplicitUrlOverServerName() {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    ds.setServerName("ignored.snowflakecomputing.com");
+    ds.setPortNumber(443);
+    ds.setUrl("jdbc:snowflake://explicit.snowflakecomputing.com");
+
+    assertEquals("jdbc:snowflake://explicit.snowflakecomputing.com", ds.getUrl());
+  }
+
+  @Test
+  public void shouldReturnNullUrlWhenOnlyPortConfigured() {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    ds.setPortNumber(443);
+
+    assertNull(ds.getUrl());
+  }
+
+  @Test
+  public void shouldSetSslProperty() {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    ds.setSsl(false);
+
+    assertEquals("false", ds.getProperties().getProperty("ssl"));
+  }
+
+  @Test
   public void shouldThrowSQLFeatureNotSupportedExceptionFromGetLogWriter() {
     assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getLogWriter());
   }
