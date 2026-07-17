@@ -75,8 +75,14 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_allow_certificates_without_crl_url: bool | None = False
     """Allow certificates that do not include a CRL distribution URL. Default: False"""
 
+    crl_cache_cleanup_interval: int | None = 3600
+    """Interval in seconds between background CRL cache cleanup passes. Default: 3600"""
+
     crl_cache_dir: str | None = None
     """Directory for CRL cache files"""
+
+    crl_cache_start_cleanup: bool | None = False
+    """Run the background CRL cache cleanup task. Default: False"""
 
     crl_check_mode: str | None = "DISABLED"
     """Certificate revocation check mode (DISABLED, ENABLED, ADVISORY). Default: 'DISABLED'"""
@@ -90,11 +96,20 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_enable_memory_caching: bool | None = True
     """Enable in-memory caching for CRL responses. Default: True"""
 
-    crl_http_timeout: int | None = 30
-    """HTTP timeout in seconds for CRL endpoint requests. Default: 30"""
+    crl_http_timeout: int | None = 10
+    """HTTP timeout in seconds for CRL endpoint requests. Default: 10"""
 
-    crl_validity_time: int | None = 10
-    """CRL cache validity time in days. Default: 10"""
+    crl_max_download_size: int | None = 20971520
+    """Maximum CRL download size in bytes before the download is aborted. Default: 20971520"""
+
+    crl_on_disk_cache_removal_delay: int | None = 604800
+    """Delay in seconds after a CRL's nextUpdate before it is purged from the on-disk cache. Default: 604800"""
+
+    crl_unsafe_skip_file_permissions_check: bool | None = False
+    """Skip verification that on-disk CRL cache files and directory are owner-only (0600/0700). Default: False"""
+
+    crl_validity_time: int | None = 86400
+    """Maximum age in seconds of a cached CRL before it is re-fetched. Default: 86400"""
 
     custom_root_store_path: str | None = None
     """Path to custom root certificate store"""

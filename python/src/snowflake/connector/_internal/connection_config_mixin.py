@@ -139,8 +139,34 @@ class ConnectionConfigMixin:
     the wrapper itself assigns them through ``ConnectionConfig`` attribute
     access in ``from_connection_args``."""
 
-    _LEGACY_REWRITES: ClassVar[dict[str, str]] = {}
-    """Legacy parameter names -> canonical replacements (silent)."""
+    _LEGACY_REWRITES: ClassVar[dict[str, str | tuple[str, Callable[[Any], Any]]]] = {
+        # Old snowflake-connector-python CRL kwargs -> universal-driver core
+        # params. Silent aliases (no DeprecationWarning). A bare string is a
+        # rename; a ``(new_name, converter)`` tuple also converts the value
+        # (e.g. old unit -> core unit).
+        "cert_revocation_check_mode": "crl_check_mode",
+        "allow_certificates_without_crl_url": "crl_allow_certificates_without_crl_url",
+        "enable_crl_memory_cache": "crl_enable_memory_caching",
+        "enable_crl_file_cache": "crl_enable_disk_caching",
+        "crl_download_max_size": "crl_max_download_size",  # both in bytes
+        "crl_connection_timeout_ms": ("crl_connection_timeout", lambda ms: round(ms / 1000)),
+        "crl_read_timeout_ms": ("crl_http_timeout", lambda ms: round(ms / 1000)),
+        "crl_cache_validity_hours": ("crl_validity_time", lambda h: round(h * 3600)),
+        "crl_cache_removal_delay_days": (
+            "crl_on_disk_cache_removal_delay",
+            lambda d: int(d) * 86400,
+        ),
+        "crl_cache_cleanup_interval_hours": (
+            "crl_cache_cleanup_interval",
+            lambda h: round(h * 3600),
+        ),
+    }
+    """Legacy parameter names -> canonical replacements (silent).
+
+    Values are either a canonical name (pure rename) or a
+    ``(canonical_name, converter)`` tuple where ``converter`` maps the old
+    value/unit to the core param's unit. Applied silently in
+    :meth:`from_kwargs` (no ``DeprecationWarning``)."""
 
     _DEPRECATED_REWRITES: ClassVar[dict[str, str]] = {
         "client_fetch_threads": "client_prefetch_threads",
@@ -170,6 +196,10 @@ class ConnectionConfigMixin:
         "oauth_enable_refresh_tokens": (
             "not supported; the universal driver always uses the refresh token "
             "returned by the IdP. Use client_store_temporary_credential to gate caching"
+        ),
+        "enable_crl_cache": (
+            "not supported; the universal driver has independent cache toggles. "
+            "Use enable_crl_memory_cache and enable_crl_file_cache instead"
         ),
     }
     """Legacy kwargs that are accepted for source compatibility but have no effect."""
@@ -214,12 +244,34 @@ class ConnectionConfigMixin:
         These identify the driver family on the wire and are wrapper-owned;
         end users must use ``application`` to label their app instead.
         """
-        # Apply legacy rewrites first (silent — canonical replacements).
-        for old_name, new_name in cls._LEGACY_REWRITES.items():
+        # Apply legacy rewrites first (silent — canonical replacements). A value
+        # may be a bare canonical name (rename) or a ``(name, converter)`` tuple
+        # that also maps the value to the core param's unit.
+        for old_name, spec in cls._LEGACY_REWRITES.items():
             if old_name in kwargs:
                 value = kwargs.pop(old_name)
+                if isinstance(spec, tuple):
+                    new_name, converter = spec
+                    if value is not None:
+                        value = converter(value)
+                else:
+                    new_name = spec
                 if new_name not in kwargs:
                     kwargs[new_name] = value
+
+        # The old snowflake-connector-python exposed a single
+        # ``unsafe_skip_file_permissions_check`` that governed BOTH the
+        # config-file and the CRL-cache permission checks. The universal driver
+        # splits these into two params, so fan the legacy flag out onto both
+        # (silently), unless the caller set a specific one explicitly.
+        if "unsafe_skip_file_permissions_check" in kwargs:
+            legacy_skip = kwargs.pop("unsafe_skip_file_permissions_check")
+            for target in (
+                "unsafe_skip_config_file_permissions_check",
+                "crl_unsafe_skip_file_permissions_check",
+            ):
+                if target not in kwargs:
+                    kwargs[target] = legacy_skip
 
         # Apply deprecated rewrites with a ``DeprecationWarning`` so callers
         # migrating from snowflake-connector-python see a pointer to the new

@@ -4,7 +4,7 @@ use crate::crl::error::{
     CrlDistributionPointSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
     MutexPoisonedSnafu, VerificationTaskSnafu,
 };
-use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry};
+use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry_capped};
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use once_cell::sync::OnceCell;
@@ -127,6 +127,37 @@ pub(crate) fn write_crl_atomic(dir: &Path, file_name: &str, data: &[u8]) -> std:
 
 fn is_orphan_temp_name(name: &str) -> bool {
     name.starts_with(TEMP_PREFIX) && name.ends_with(TEMP_SUFFIX)
+}
+
+/// On Unix, `true` iff `meta` grants no group/other access (`mode & 0o077 == 0`),
+/// matching the old Python driver's `_check_permissions`. Always `true` on
+/// non-Unix, where file permissions work differently and are not checked.
+fn permissions_owner_only(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o077 == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+/// Create the on-disk cache directory. On Unix newly-created components get
+/// `0700` (owner-only), matching the old Python driver's `mkdir(mode=0o700)`.
+/// An existing directory is not re-chmod-ed here; its permissions are verified
+/// on read instead.
+fn create_cache_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
 }
 
 /// Remove orphaned temp files left behind when a writer crashes between
@@ -420,6 +451,19 @@ impl CrlCache {
                     let mut keys: HashMap<String, tokio_util::time::delay_queue::Key> =
                         HashMap::new();
 
+                    // Periodic cache cleanup. The first tick fires immediately,
+                    // so stale entries left over from a previous process are
+                    // pruned shortly after startup. The interval is configurable
+                    // and the whole pass is gated on `cache_start_cleanup`.
+                    let cleanup_secs = this
+                        .config
+                        .cache_cleanup_interval
+                        .num_seconds()
+                        .max(1) as u64;
+                    let start_cleanup = this.config.cache_start_cleanup;
+                    let mut cleanup_interval =
+                        tokio::time::interval(std::time::Duration::from_secs(cleanup_secs));
+
                     // Seed existing entries
                     if let Some(memory) = &this.memory_cache
                         && let Ok(cache) = memory.lock()
@@ -434,6 +478,12 @@ impl CrlCache {
 
                     loop {
                         tokio::select! {
+                            // Periodic cleanup of expired in-memory and on-disk
+                            // entries, only when enabled via cache_start_cleanup.
+                            _ = cleanup_interval.tick(), if start_cleanup => {
+                                this.cleanup_in_memory_cache();
+                                this.cleanup_on_disk_cache().await;
+                            }
                             // Next scheduled refresh
                             maybe_item = dq.next(), if !dq.is_empty() => {
                                 if let Some(expired) = maybe_item { // a url is due
@@ -891,10 +941,13 @@ impl CrlCache {
         if let Some(memory) = &self.memory_cache
             && let Ok(mut cache) = memory.lock()
         {
-            if let Some(entry) = cache.get(url)
-                && Utc::now() <= entry.expires_at
-            {
-                return Ok(Some(entry.clone()));
+            if let Some(entry) = cache.get(url) {
+                // Fresh only if both the CRL's own nextUpdate is in the future
+                // AND the entry hasn't exceeded the configured max cache age.
+                let age = Utc::now() - entry.download_time;
+                if Utc::now() <= entry.expires_at && age <= self.config.validity_time {
+                    return Ok(Some(entry.clone()));
+                }
             }
             cache.remove(url);
         }
@@ -905,17 +958,52 @@ impl CrlCache {
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
         {
+            let verify_perms = !self.config.unsafe_skip_file_permissions_check;
+            // Reject a group/other-accessible cache directory (Unix) — a loose
+            // dir lets another user swap cache files even when the files are
+            // 0600. Matches the old Python driver's directory check.
+            if verify_perms
+                && let Ok(dir_meta) = tokio::fs::metadata(&dir).await
+                && !permissions_owner_only(&dir_meta)
+            {
+                tracing::warn!(
+                    target: "sf_core::crl",
+                    dir = %dir.display(),
+                    "CRL cache directory has insecure permissions; ignoring disk cache (set crl_unsafe_skip_file_permissions_check to override)"
+                );
+                return Ok(None);
+            }
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
             if let Ok(bytes) = tokio::fs::read(&path).await {
+                let meta = tokio::fs::metadata(&path).await.ok();
+                // Reject a group/other-accessible cache file (Unix): it may have
+                // been tampered with, so don't trust its contents — treat as a
+                // miss and re-fetch (the re-fetch rewrites it 0600, self-healing).
+                if verify_perms && meta.as_ref().is_some_and(|m| !permissions_owner_only(m)) {
+                    tracing::warn!(
+                        target: "sf_core::crl",
+                        path = %path.display(),
+                        "CRL cache file has insecure permissions; ignoring it (set crl_unsafe_skip_file_permissions_check to override)"
+                    );
+                    return Ok(None);
+                }
+                // Use the file's mtime as the download time (same approach as
+                // gosnowflake, which relies on `stat.ModTime()`), so the max
+                // cache-age check reflects the real age rather than "now".
+                let download_time = meta
+                    .and_then(|m| m.modified().ok())
+                    .map(DateTime::<Utc>::from)
+                    .unwrap_or_else(Utc::now);
                 let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
                     Ok(Some(dt)) => dt,
-                    _ => Utc::now() + self.config.validity_time,
+                    _ => download_time + self.config.validity_time,
                 };
-                if Utc::now() <= expires_at {
+                let age = Utc::now() - download_time;
+                if Utc::now() <= expires_at && age <= self.config.validity_time {
                     let _ = self.put(CachedCrl {
                         crl: bytes.clone(),
-                        download_time: Utc::now(),
+                        download_time,
                         url: url.to_string(),
                         expires_at,
                         crl_number: crate::tls::x509_utils::extract_crl_number(&bytes)
@@ -935,7 +1023,7 @@ impl CrlCache {
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
         {
-            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            if let Err(e) = create_cache_dir(&dir) {
                 let error_type = std::any::type_name_of_val(&e);
                 tracing::warn!(
                     target: "sf_core::crl",
@@ -1071,15 +1159,30 @@ impl CrlCache {
         self.maybe_sleep_backoff(url).await?;
 
         let ctx = HttpContext::new(Method::GET, url.to_string());
-
         let req_builder = || self.http_client.get(url);
-        let bytes = match execute_bytes_with_retry(req_builder, &ctx, &RetryPolicy::default()).await
+        // Stream the body with a hard size cap so an oversized (or unbounded)
+        // CRL cannot exhaust memory.
+        let bytes = match execute_bytes_with_retry_capped(
+            req_builder,
+            &ctx,
+            &RetryPolicy::default(),
+            self.config.max_download_size,
+        )
+        .await
         {
             Ok(b) => b,
             Err(e) => {
                 self.metrics.fetch_error_total.add(1, &[]);
                 self.record_backoff_failure(url);
                 return match e {
+                    HttpError::ResponseTooLarge { size, max_size, .. } => {
+                        crate::crl::error::DownloadSizeExceededSnafu {
+                            url: url.to_string(),
+                            size,
+                            max_size,
+                        }
+                        .fail()
+                    }
                     HttpError::Transport { source, .. } => Err(source).context(CrlDownloadSnafu {
                         url: url.to_string(),
                     }),
@@ -1147,6 +1250,96 @@ impl CrlCache {
             .or_insert((0, std::time::Instant::now()));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = std::time::Instant::now();
+    }
+
+    /// Evict in-memory CRLs that are past their `nextUpdate` or older than the
+    /// configured cache validity time.
+    fn cleanup_in_memory_cache(&self) {
+        let now = Utc::now();
+        let validity = self.config.validity_time;
+        if let Some(memory) = &self.memory_cache
+            && let Ok(mut cache) = memory.lock()
+        {
+            cache.retain(|url, entry| {
+                let expired = now > entry.expires_at;
+                let evicted = (now - entry.download_time) > validity;
+                if expired || evicted {
+                    tracing::debug!(
+                        target: "sf_core::crl",
+                        "evicting in-memory CRL for {url} (expired={expired}, evicted={evicted})"
+                    );
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
+    /// Remove on-disk CRL files whose `nextUpdate` is older than
+    /// `on_disk_cache_removal_delay` ago. Expired files are kept for that delay
+    /// to aid debugging. Failures are logged, never fatal.
+    async fn cleanup_on_disk_cache(&self) {
+        if !self.config.enable_disk_caching {
+            return;
+        }
+        let Some(dir) = self.config.get_cache_dir() else {
+            return;
+        };
+        let removal_delay = self.config.on_disk_cache_removal_delay;
+        let now = Utc::now();
+
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!(
+                    target: "sf_core::crl",
+                    dir = %dir.display(),
+                    error = %e,
+                    "failed to read CRL cache dir for cleanup"
+                );
+                return;
+            }
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            match entry.metadata().await {
+                Ok(m) if m.is_file() => {}
+                _ => continue,
+            }
+            let Ok(bytes) = tokio::fs::read(&path).await else {
+                continue;
+            };
+            // Only remove files we can parse and that are past nextUpdate +
+            // removal_delay; unparseable files are left untouched (they may be
+            // partially written or belong to another tool).
+            if let Ok(Some(next_update)) = crate::tls::x509_utils::extract_crl_next_update(&bytes)
+                && now > next_update + removal_delay
+            {
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    let error_type = std::any::type_name_of_val(&e);
+                    tracing::warn!(
+                        target: "sf_core::crl",
+                        path = %path.display(),
+                        error_type,
+                        "failed to remove expired CRL file"
+                    );
+                    tracing::debug!(
+                        target: "sf_core::crl",
+                        path = %path.display(),
+                        error = %e,
+                        "failed to remove expired CRL file"
+                    );
+                } else {
+                    tracing::debug!(
+                        target: "sf_core::crl",
+                        path = %path.display(),
+                        "removed expired CRL file"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1439,5 +1632,55 @@ mod tests {
                 other => panic!("unexpected msg: {:?}", other),
             }
         });
+    }
+
+    /// Disk cleanup must never delete files it cannot parse as a CRL — those may
+    /// be partially written, or belong to another tool sharing the cache dir —
+    /// and must be a safe no-op when disk caching is disabled or the directory
+    /// is absent.
+    #[tokio::test]
+    async fn cleanup_on_disk_cache_is_safe() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let garbage = dir
+            .path()
+            .join(CrlCache::url_digest("http://example/foo.crl"));
+        tokio::fs::write(&garbage, b"not a crl").await.unwrap();
+        let foreign = dir.path().join("some-other-file.txt");
+        tokio::fs::write(&foreign, b"hello").await.unwrap();
+
+        let cfg = CrlConfig {
+            enable_disk_caching: true,
+            enable_memory_caching: false,
+            cache_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let cache = CrlCache::new(cfg).unwrap();
+        cache.cleanup_on_disk_cache().await;
+
+        // Unparseable and foreign files are preserved.
+        assert!(garbage.exists(), "unparseable CRL file must not be removed");
+        assert!(foreign.exists(), "foreign file must not be removed");
+
+        // Disabled disk caching → no-op even if a dir is configured.
+        let disabled = CrlCache::new(CrlConfig {
+            enable_disk_caching: false,
+            enable_memory_caching: false,
+            cache_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        })
+        .unwrap();
+        disabled.cleanup_on_disk_cache().await;
+        assert!(garbage.exists());
+
+        // Missing directory → no panic.
+        let missing = CrlCache::new(CrlConfig {
+            enable_disk_caching: true,
+            enable_memory_caching: false,
+            cache_dir: Some(dir.path().join("does-not-exist")),
+            ..Default::default()
+        })
+        .unwrap();
+        missing.cleanup_on_disk_cache().await;
     }
 }

@@ -148,5 +148,11 @@ pub(crate) fn map_http_error(err: HttpError) -> SfError {
             remaining,
             location,
         },
+        // Not produced by the Snowflake REST path (only the size-capped CRL
+        // fetch emits it), but the match must stay exhaustive.
+        HttpError::ResponseTooLarge { .. } => SfError::HttpStatus {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            location,
+        },
     }
 }
