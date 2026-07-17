@@ -14,6 +14,7 @@ use crate::config::ParamStore;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::query_types::RowType;
+use crate::tls;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -63,23 +64,33 @@ impl DatabaseDriverV1 {
 
     pub async fn database_fetch_chunk(
         &self,
-        db_handle: Handle,
+        conn_handle: Option<Handle>,
         input: FetchChunkInput,
         format: ChunkFormatKind,
         row_types: Vec<RowType>,
     ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
-        if self.databases.get_obj(db_handle).is_none() {
-            return InvalidArgumentSnafu {
-                argument: "Database handle not found".to_string(),
-            }
-            .fail();
-        }
-
         let bytes = match input {
             FetchChunkInput::Inline(data) => BASE64.decode(&data).context(Base64DecodeSnafu)?,
             FetchChunkInput::Remote(chunk) => {
-                // TODO: Configure the client properly here
-                let client = reqwest::Client::new();
+                let client = match conn_handle {
+                    Some(conn_handle) => {
+                        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+                            InvalidArgumentSnafu {
+                                argument: "Connection handle not found".to_string(),
+                            }
+                            .build()
+                        })?;
+                        let conn = conn_ptr.lock().await;
+                        conn.http_client
+                            .clone()
+                            .ok_or_else(|| ConnectionNotInitializedSnafu.build())?
+                    }
+                    None => tls::create_tls_client_with_config(
+                        tls::TlsConfig::default(),
+                        self.crl_worker.clone(),
+                    )
+                    .context(TlsClientCreationSnafu)?,
+                };
                 get_chunk_data(client, chunk)
                     .await
                     .context(ChunkFetchSnafu)?

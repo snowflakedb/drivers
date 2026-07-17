@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..._internal.api_client.client_api import async_core_driver
+from ..._internal.arrow_context import ArrowConverterContext
 from ..._internal.arrow_stream_async import (
     AsyncArrowStreamIterator,
     collect_arrow_table_async,
@@ -501,7 +502,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         return AsyncArrowStreamIterator(
             create_row_iterator(
                 stream_ptr=stream_ptr,
-                connection=self._connection,
+                context=ArrowConverterContext.create(self._connection),
                 use_dict_result=self._use_dict_result,
                 use_numpy=bool(self._connection.config.numpy),
             )
@@ -681,7 +682,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         iterator = AsyncArrowStreamIterator(
             create_table_iterator(
                 stream_ptr=stream_ptr,
-                connection=self._connection,
+                context=ArrowConverterContext.create(self._connection),
                 number_to_decimal=self._connection.arrow_number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
             )
@@ -702,7 +703,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         stream_ptr = await self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
-            connection=self._connection,
+            context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )

@@ -1069,6 +1069,7 @@ class TestCreateRowIteratorNumpyFlag:
 
     def test_passes_numpy_true_from_connection(self, mock_connection):
         mock_connection.config.numpy = True
+        mock_connection._session_parameters = {"TIMEZONE": "UTC"}
         cursor = SnowflakeCursor(mock_connection)
         cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
 
@@ -1078,13 +1079,14 @@ class TestCreateRowIteratorNumpyFlag:
 
         mock_create.assert_called_once_with(
             stream_ptr=42,
-            connection=mock_connection,
+            context=ANY,
             use_dict_result=False,
             use_numpy=True,
         )
 
     def test_passes_numpy_false_from_connection(self, mock_connection):
         mock_connection.config.numpy = False
+        mock_connection._session_parameters = {"TIMEZONE": "UTC"}
         cursor = SnowflakeCursor(mock_connection)
         cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
 
@@ -1094,7 +1096,7 @@ class TestCreateRowIteratorNumpyFlag:
 
         mock_create.assert_called_once_with(
             stream_ptr=42,
-            connection=mock_connection,
+            context=ANY,
             use_dict_result=False,
             use_numpy=False,
         )
@@ -1222,7 +1224,7 @@ class TestFetchArrowBatches:
             list(cursor.fetch_arrow_batches(force_microsecond_precision=True))
 
         mock_get.assert_called_once_with(
-            stream_ptr=42, connection=mock_connection, force_microsecond_precision=True, number_to_decimal=ANY
+            stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
         )
 
 
@@ -1304,7 +1306,7 @@ class TestFetchArrowAll:
             cursor.fetch_arrow_all(force_microsecond_precision=True)
 
         mock_get.assert_called_once_with(
-            stream_ptr=42, connection=mock_connection, force_microsecond_precision=True, number_to_decimal=ANY
+            stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
         )
 
 

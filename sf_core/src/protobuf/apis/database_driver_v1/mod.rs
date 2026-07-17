@@ -122,7 +122,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         &self,
         input: DatabaseFetchChunkRequest,
     ) -> Result<DatabaseFetchChunkResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
+        let conn_handle = input.conn_handle.map(|h| h.into());
         let chunk = required(input.chunk, "Chunk is required")?;
         let chunk_format: ChunkFormatKind = required(
             proto_chunk_format_to_kind(chunk.format),
@@ -143,7 +143,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let stream = self
             .driver
-            .database_fetch_chunk(db_handle.into(), fetch_input, chunk_format, row_types)
+            .database_fetch_chunk(conn_handle, fetch_input, chunk_format, row_types)
             .await
             .to_protobuf()?;
 
