@@ -729,7 +729,7 @@ message ResultChunk {
 
 
 message DatabaseFetchChunkRequest {
-  DatabaseHandle db_handle = 1;
+  ConnectionHandle conn_handle = 1;
   ResultChunk chunk = 2;
   // Required when chunk.format == CHUNK_FORMAT_JSON (forward from ResultSetGetChunksResponse.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
   repeated ColumnMetadata columns = 3;

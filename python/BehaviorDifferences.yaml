@@ -165,9 +165,7 @@ behavior_differences:
       `ResultBatch` does not have `session_manager` or `http_config` properties.
       Chunk fetching is handled internally by the Rust core, so there is no Python-level HTTP
       session management to configure on individual batches. After deserializing a `ResultBatch`
-      (e.g. via pickle), a live `Connection` must be provided to any data-fetching method
-      (`create_iter`, `to_arrow`, `to_pandas`, `populate_data`) or set via the `connection`
-      property, because the connection is not serialized.
+      (e.g. via pickle), a live `Connection` may be provided but is not required for a chunk download.
 
   21:
     name: "Closed cursor raises InterfaceError on all operations"
