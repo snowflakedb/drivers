@@ -348,6 +348,13 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
+  # Build the multi-arch fat JAR, gated on jdbc_tests: runs only after it succeeds, and
+  # is skipped (no runners spent) when jdbc_tests is skipped. See _build-jdbc-fatjar.yml.
+  build_fatjar:
+    needs: [detect-changes, jdbc_tests]
+    if: needs.jdbc_tests.result == 'success'
+    uses: ./.github/workflows/_build-jdbc-fatjar.yml
+
   jdbc-status:
     needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference, jdbc_parity_tests]
     if: always()
