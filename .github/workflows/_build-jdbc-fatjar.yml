@@ -1,8 +1,10 @@
-name: Build JDBC Fat JAR
+name: Build JDBC JARs
 
-# Builds jdbc_bridge per platform, then assembles one fat JAR bundling them under
-# net/snowflake/client/internal/unicore/native/<os>-<arch>/. Output is unsigned. Gated on
-# jdbc_tests via the caller in test-jdbc.yml.
+# Builds the release JARs (unsigned; gated on jdbc_tests via the caller in test-jdbc.yml):
+#   - fat / standalone: jdbc_bridge built per platform, then assembled into one JAR bundling
+#     them under net/snowflake/client/internal/unicore/native/<os>-<arch>/ (assemble job).
+#   - thin (net.snowflake:snowflake-jdbc-v2): unshaded plain jar + real Maven deps, no native
+#     (assemble_thin job); independent of the native builds.
 #
 # windows-aarch64 omitted: arrow-c-data 17.0.0 ships no arrow_cdata_jni for it.
 
@@ -184,9 +186,6 @@ jobs:
       - name: Show staged native tree
         run: find jdbc/build/native-staging -type f | sort
 
-      - name: Make gradlew executable
-        run: chmod +x jdbc/gradlew
-
       # generateProtobuf runs cargo, so cache like the native builds.
       - name: Restore Rust cache
         id: rust-cache
@@ -221,5 +220,55 @@ jobs:
         with:
           mode: save
           shared-key: jdbc-assemble-proto
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  assemble_thin:
+    # Thin jar carries no native, so it does not depend on build_native.
+    runs-on: ubuntu-latest
+    name: assemble thin jar
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        # shadow requires JDK 11+; bytecode stays Java 8 via targetCompatibility in build.gradle.
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # generateProtobuf runs cargo; cache with its own key (avoid save races with fat assemble).
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-assemble-thin-proto
+
+      # publishThinPublicationToStagingRepository triggers jar (finalized by verifyThinJar),
+      # sources/javadoc/POM, and stages a bundle named for the thin coordinate.
+      - name: Build + stage thin JAR bundle (unsigned)
+        working-directory: jdbc
+        run: ./gradlew --no-daemon publishThinPublicationToStagingRepository
+
+      - name: Upload thin JAR bundle (unsigned, ready for signing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-thin
+          # Staged Maven-repo layout: jar + sources + javadoc + pom (+ checksums/module metadata).
+          path: jdbc/build/staging-deploy/**
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: jdbc-assemble-thin-proto
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

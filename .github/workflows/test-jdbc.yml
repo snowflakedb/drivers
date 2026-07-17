@@ -98,9 +98,6 @@ jobs:
         # the JDBC tests via CORE_PATH below.
         run: cargo build --package jdbc_bridge
 
-      - name: Make gradlew executable
-        run: chmod +x jdbc/gradlew
-
       - name: Run JDBC tests
         run: |
           ls -l target/debug/
@@ -219,9 +216,6 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Make gradlew executable
-        run: chmod +x jdbc/gradlew
-
       - name: Run JDBC reference tests
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
@@ -319,9 +313,6 @@ jobs:
       - name: Build Rust components
         run: cargo build --package jdbc_bridge
 
-      - name: Make gradlew executable
-        run: chmod +x jdbc/gradlew
-
       - name: Run JDBC parity tests
         run: |
           cd jdbc
@@ -348,8 +339,9 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
-  # Build the multi-arch fat JAR, gated on jdbc_tests: runs only after it succeeds, and
-  # is skipped (no runners spent) when jdbc_tests is skipped. See _build-jdbc-fatjar.yml.
+  # Build the release JARs (multi-arch fat + thin), gated on jdbc_tests: runs only after it
+  # succeeds, and is skipped (no runners spent) when jdbc_tests is skipped. See
+  # _build-jdbc-fatjar.yml.
   build_fatjar:
     needs: [detect-changes, jdbc_tests]
     if: needs.jdbc_tests.result == 'success'

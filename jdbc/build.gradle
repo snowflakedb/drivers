@@ -64,7 +64,8 @@ dependencies {
     implementation 'org.json:json:20251224'
     // API facade only — never ship a backend, or consumers get forced/conflicting bindings.
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
-    implementation 'javax.annotation:javax.annotation-api:1.3.2'
+    // Compile-time-only annotations; kept out of the published deps.
+    compileOnly 'javax.annotation:javax.annotation-api:1.3.2'
     implementation 'org.apache.arrow:arrow-vector:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-core:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
@@ -360,11 +361,61 @@ tasks.named('shadowJar') {
     }
 }
 
+// Shared POM metadata for every published coordinate. Takes the MavenPom delegate so each
+// publication adds only what differs (e.g. dep stripping).
+def configureCommonPom = { pom ->
+    pom.name = 'Snowflake JDBC Driver'
+    pom.description = 'JDBC driver for Snowflake database'
+    pom.url = 'https://github.com/snowflakedb/universal-driver/tree/main/jdbc'
+    pom.licenses {
+        license {
+            name = 'The Apache License, Version 2.0'
+            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+        }
+    }
+    pom.developers {
+        developer {
+            name = 'Snowflake Support Team'
+            email = 'snowflake-java@snowflake.net'
+            organization = 'Snowflake Computing'
+            organizationUrl = 'https://www.snowflake.net'
+        }
+    }
+    // SCM points at the repo root; driver sources live in jdbc/ (the project url).
+    pom.scm {
+        connection = 'scm:git:https://github.com/snowflakedb/universal-driver.git'
+        developerConnection = 'scm:git:git@github.com:snowflakedb/universal-driver.git'
+        url = 'https://github.com/snowflakedb/universal-driver'
+    }
+}
+
+// Shadow adds shadowJar to the `java` component (shadowRuntimeElements). Skip it so the thin
+// publication's `from components.java` emits only the plain jar; the fat publication attaches
+// shadowJar explicitly.
+components.java.withVariantsFromConfiguration(configurations.shadowRuntimeElements) {
+    skip()
+}
+
 publishing {
+    repositories {
+        // Stage each publication into a local Maven repo so CI uploads a bundle named by
+        // artifactId (build/libs is named for the fat coordinate only). Sign + deploy downstream.
+        maven {
+            name = 'staging'
+            url = layout.buildDirectory.dir('staging-deploy')
+        }
+    }
     publications {
+        // Thin: canonical v2 coordinate — unshaded plain jar with real Maven deps.
+        // `from components.java` declares the real deps + sources/javadoc jars.
+        // End-user-runnable with the matching -native artifact.
+        thin(MavenPublication) {
+            from components.java
+            artifactId = 'snowflake-jdbc-v2'
+            pom { configureCommonPom(delegate) }
+        }
+        // Standalone (fat): shaded jar with natives bundled; deps inlined, so stripped from POM.
         maven(MavenPublication) {
-            // Publish the shaded jar, not `from components.java` (which would publish the
-            // thin jar and declare the now-inlined deps).
             artifact tasks.named('shadowJar')
             artifact tasks.named('sourcesJar')
             artifact tasks.named('javadocJar')
@@ -372,33 +423,7 @@ publishing {
             artifactId = artifactBaseName
 
             pom {
-                name = 'Snowflake JDBC Driver'
-                description = 'JDBC driver for Snowflake database'
-                url = 'https://github.com/snowflakedb/universal-driver/tree/main/jdbc'
-
-                licenses {
-                    license {
-                        name = 'The Apache License, Version 2.0'
-                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
-                    }
-                }
-
-                developers {
-                    developer {
-                        name = 'Snowflake Support Team'
-                        email = 'snowflake-java@snowflake.net'
-                        organization = 'Snowflake Computing'
-                        organizationUrl = 'https://www.snowflake.net'
-                    }
-                }
-
-                // SCM points at the repository root; the driver sources live in jdbc/,
-                // which the project url points to.
-                scm {
-                    connection = 'scm:git:https://github.com/snowflakedb/universal-driver.git'
-                    developerConnection = 'scm:git:git@github.com:snowflakedb/universal-driver.git'
-                    url = 'https://github.com/snowflakedb/universal-driver'
-                }
+                configureCommonPom(delegate)
 
                 // Deps inlined — strip from POM (else consumers pull dupes).
                 withXml {
@@ -409,6 +434,51 @@ publishing {
         }
     }
 }
+
+// Self-verify the thin jar (`jar` finalizer, inverse of verifyShadowJar): stays unshaded,
+// native-free, carries the real driver, and its POM declares the real deps.
+def verifyThinJar = tasks.register('verifyThinJar') {
+    dependsOn 'jar', 'generatePomFileForThinPublication'
+    def jarProvider = tasks.named('jar').flatMap { it.archiveFile }
+    def pomProvider = layout.buildDirectory.file('publications/thin/pom-default.xml')
+    doLast {
+        def entries = new java.util.zip.ZipFile(jarProvider.get().asFile).withCloseable { zf ->
+            zf.entries().collect { it.name }
+        }
+        def problems = []
+        def present = { String p -> if (!entries.contains(p)) problems << "expected present but missing: ${p}" }
+        def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
+
+        // Not shaded (relocation namespace only exists post-shadowJar).
+        absent 'net/snowflake/client/jdbc/internal/'
+        // No bundled deps — resolved from Maven at consume time.
+        ['org/apache/arrow/', 'com/google/protobuf/', 'com/google/flatbuffers/',
+         'io/netty/', 'org/json/', 'org/slf4j/'].each { absent it }
+        // No bundled native — that ships in the separate -native artifact.
+        absent 'net/snowflake/client/internal/unicore/native/'
+        // Real driver + JDBC auto-registration service must be present.
+        present 'net/snowflake/client/api/driver/SnowflakeDriver.class'
+        present 'META-INF/services/java.sql.Driver'
+
+        // POM invariant: real deps declared (inverse of the fat POM's dep-strip).
+        def deps = new XmlSlurper().parse(pomProvider.get().asFile)
+            .dependencies.dependency.collect { "${it.groupId}:${it.artifactId}".toString() }
+        ['org.apache.arrow:arrow-vector', 'com.google.protobuf:protobuf-java',
+         'org.json:json', 'org.slf4j:slf4j-api'].each { want ->
+            if (!deps.contains(want)) problems << "thin POM missing dependency: ${want}"
+        }
+        // Logging backend stays the consumer's choice (parity with the fat jar).
+        if (deps.contains('org.slf4j:slf4j-simple')) {
+            problems << "thin POM must not declare slf4j-simple (binding is the consumer's choice)"
+        }
+
+        if (!problems.isEmpty()) {
+            throw new GradleException("Thin jar verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("verifyThinJar: OK — unshaded, native-free, real driver present, ${deps.size()} deps declared.")
+    }
+}
+tasks.named('jar') { finalizedBy verifyThinJar }
 
 // ====================
 // Test tasks
