@@ -13,7 +13,8 @@ mod integration_tests {
         assert_eq!(crl_config.check_mode, CertRevocationCheckMode::Disabled);
         assert!(crl_config.enable_disk_caching);
         assert!(crl_config.enable_memory_caching);
-        assert_eq!(crl_config.validity_time.num_days(), 10);
+        assert_eq!(crl_config.max_download_size, 20 * 1024 * 1024);
+        assert_eq!(crl_config.http_timeout.num_seconds(), 10);
     }
 
     #[test]
@@ -21,13 +22,13 @@ mod integration_tests {
         let crl_config = CrlConfig {
             check_mode: CertRevocationCheckMode::Enabled,
             enable_disk_caching: true,
-            validity_time: chrono::Duration::days(7),
+            max_download_size: 5 * 1024 * 1024,
             ..Default::default()
         };
 
         assert_eq!(crl_config.check_mode, CertRevocationCheckMode::Enabled);
         assert!(crl_config.enable_disk_caching);
-        assert_eq!(crl_config.validity_time.num_days(), 7);
+        assert_eq!(crl_config.max_download_size, 5 * 1024 * 1024);
     }
 
     #[test]

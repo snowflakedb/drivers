@@ -296,6 +296,10 @@ pub async fn get_chunk_data(
                     status: last_status,
                 }
                 .fail(),
+                HttpError::ResponseTooLarge { .. } => UnsuccessfulHttpStatusCodeSnafu {
+                    status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+                }
+                .fail(),
             };
         }
     };
