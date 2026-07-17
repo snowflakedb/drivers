@@ -1082,6 +1082,14 @@ impl Connection {
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
     }
 
+    /// Reads `unsafe_file_write` from the connection seed. Default `false`
+    /// (owner-only 0o600 permissions on GET downloads on Unix).
+    pub(crate) fn unsafe_file_write(&self) -> bool {
+        self.connection_seed
+            .get_bool(param_names::UNSAFE_FILE_WRITE)
+            .unwrap_or(false)
+    }
+
     /// The resolved TLS config for this connection, read from the established
     /// [`ClientInfo`]. Falls back to the default `TlsConfig` before login
     /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP

@@ -399,6 +399,7 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         presigned_urls: vec![None],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)

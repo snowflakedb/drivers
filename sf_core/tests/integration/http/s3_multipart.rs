@@ -241,6 +241,7 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         presigned_url: None,
         flavor: PutGetResultsetFlavor::Python,
         multipart,
+        unsafe_file_write: false,
     };
     download_single_file(
         download,

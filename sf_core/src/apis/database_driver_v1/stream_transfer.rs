@@ -192,16 +192,18 @@ impl DatabaseDriverV1 {
             }
 
             let gs_data = response.data;
-            let use_s3_regional_url = conn_ptr
-                .lock()
-                .await
-                .use_s3_regional_url_session_param()
-                .await;
+            let (use_s3_regional_url, unsafe_file_write) = {
+                let conn = conn_ptr.lock().await;
+                let unsafe_file_write = conn.unsafe_file_write();
+                let use_s3_regional_url = conn.use_s3_regional_url_session_param().await;
+                (use_s3_regional_url, unsafe_file_write)
+            };
 
             let download_data = gs_data
                 .to_file_download_data(
                     &self.wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url,
+                    unsafe_file_write,
                 )
                 .map_err(|e| {
                     InvalidArgumentSnafu {
@@ -258,6 +260,7 @@ impl DatabaseDriverV1 {
                 presigned_url: download_data.presigned_urls.into_iter().next().flatten(),
                 flavor: download_data.flavor,
                 multipart: download_data.multipart,
+                unsafe_file_write: download_data.unsafe_file_write,
             };
 
             let mut refresher_dyn: Option<&mut dyn file_manager::StageInfoRefresher> =

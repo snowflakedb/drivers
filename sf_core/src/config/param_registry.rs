@@ -144,6 +144,7 @@ pub mod param_names {
     /// `false`. Unix-only; ignored on Windows.
     pub const UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK: ParamKey =
         ParamKey("unsafe_skip_config_file_permissions_check");
+    pub const UNSAFE_FILE_WRITE: ParamKey = ParamKey("unsafe_file_write");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
     pub const CLIENT_APP_VERSION: ParamKey = ParamKey("client_app_version");
@@ -1482,6 +1483,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         scope: ParamScope::Connection,
         used_at_connect: true,
         mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::UNSAFE_FILE_WRITE.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "When true, GET downloads use the process umask permissions instead of owner-only \
+                      (0600). Unix-only; ignored on Windows",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::CLIENT_APP_ID.as_str(),
