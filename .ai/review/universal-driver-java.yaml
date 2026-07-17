@@ -392,6 +392,8 @@ rules:
     rule: |
       **OBJECTIVE**: Use expressive JUnit assertions that produce actionable failure messages.
 
+      **SELF-CHECK BEFORE COMMENTING (mandatory)**: This rule is ONLY about the *phrasing* of an assertion, never about the values inside it. Before emitting a finding, confirm your suggested fix is one of the exact transformations listed below and that it rewrites `assertTrue`/`assertFalse`/`assertEquals` into a more expressive assertion form. If your comment is really about replacing a magic number/string with a named constant, deduplicating constants, or removing a vacuous check, it is NOT this rule — stay silent here (see OUT OF SCOPE). A finding whose subject is a literal like `200041` is a misfire and must not be posted under `ud-java-no-weak-null-assertions`.
+
       **SCOPE**: This rule covers ONLY assertion-style anti-patterns — the way a condition is asserted, not what it asserts about. Flag exactly these transformations:
       - `assertTrue(x != null)` / `assertTrue(null != x)` → `assertNotNull(x)`
       - `assertTrue(x == null)` / `assertTrue(null == x)` → `assertNull(x)`
@@ -401,7 +403,7 @@ rules:
       - Compound conditions buried in a single `assertTrue`/`assertFalse` (e.g. `assertTrue(msg != null && !msg.isEmpty())`) → split into separate typed assertions so a failure identifies which condition failed.
 
       **OUT OF SCOPE** — do NOT raise these under this rule:
-      - Magic numeric/string literals or constant duplication in assertions. This is a distinct concern (named-constant hygiene); if a dedicated rule for it exists, defer to that rule, otherwise stay silent here. Replacing `200041` with `ErrorCode.X.getMessageCode()` is NOT a weak-assertion finding.
+      - Magic numeric/string literals or constant duplication in assertions. This is a distinct concern (named-constant hygiene); if a dedicated rule for it exists, defer to that rule, otherwise stay silent here. Replacing `200041` with `ErrorCode.X.getMessageCode()` is NOT a weak-assertion finding — even when the literal appears inside an `assertEquals(...)`, the *phrasing* is already correct and only the value is in question, so this rule does not apply. This has been a recurring misfire; when tempted to comment on a literal, re-read the SELF-CHECK above and stay silent.
       - Redundant or vacuous assertions (e.g. `assertNotNull` on a value that cannot be null). See `ud-java-no-redundant-assertions`.
 
       **SEVERITY NOTE**: `assertTrue(x != null)`, `assertTrue(!cond)`, `assertTrue(a.equals(b))`, and compound-condition assertions are Medium — they materially degrade CI failure messages. `assertEquals(true/false, x)` is a Low-priority style suggestion: prefix the comment with "Style suggestion:" and never raise it above Low.
