@@ -516,6 +516,8 @@ rules:
       - C++: RAII wrappers (see `cleanup-safety` rule); never rely on test body reaching its end.
       - Node.js: open resources in `beforeEach` and close them in `afterEach`; or use `try/finally` within the test body. Call `connection.end()` / `cursor.close()` unconditionally.
 
+      **CODEBASE-CONSISTENCY AWARENESS — prefer context over a per-file finding**: raw-handle patterns (e.g. ODBC `SQLHENV`/`SQLHDBC` allocated with bare `SQLAllocHandle` and freed manually) are sometimes the established convention across an entire directory of replay/integration tests. When the same acquire/free pattern already appears in more than ~3 other files in the same directory, a lone per-file comment adds little — the file is consistent with its neighbors and singling it out is low-value noise. In that case, either stay silent or post at most one directory-level note framed as a refactor suggestion, e.g. "This matches the existing raw-handle pattern used across this directory; consider migrating all replay tests to a RAII/scope-guard helper in a single follow-up rather than file-by-file." Reserve a standard per-file finding for a genuinely *new* leak the surrounding files do not already exhibit (a resource this file acquires and fails to release, out of step with the local convention).
+
       **JDBC/Java patterns to flag**:
       - `Connection`, `Statement`, or `ResultSet` acquired outside `try-with-resources` with no `@AfterEach` close.
       - Multistatement tests that call `getMoreResults()` but leave intermediate `ResultSet`s open — can block the shared connection for subsequent tests.
