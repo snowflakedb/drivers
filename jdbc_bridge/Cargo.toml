@@ -7,6 +7,10 @@ edition = "2024"
 name = "jdbc_bridge"
 crate-type = ["cdylib"]
 
+[features]
+# Static OpenSSL for the release fat-jar libs (dev/test builds link system OpenSSL).
+vendored-openssl = ["sf_core/vendored-openssl"]
+
 [dependencies]
 sf_core = { path = "../sf_core" }
 proto_utils = { path = "../proto_utils" }

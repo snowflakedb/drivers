@@ -9,6 +9,8 @@ plugins {
     id 'com.diffplug.spotless' version '6.13.0' // latest version supporting Java 8
     id 'com.adarshr.test-logger' version '4.0.0'
     id 'org.gradle.test-retry' version '1.6.2'
+    // Fat jar (shadowJar). Needs JDK 11+, so CI assembles on JDK 21 (bytecode stays 1.8).
+    id 'com.gradleup.shadow' version '8.3.6'
 }
 
 // ====================
@@ -165,28 +167,183 @@ tasks.named('compileJava') {
 // ====================
 // Packaging and publishing
 // ====================
-jar {
+// Maven Central requires -sources/-javadoc jars for a release.
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+// sources/javadoc consume generated sources — run after the generators.
+tasks.named('sourcesJar') {
+    dependsOn('generateProtobuf', 'generateDriverVersion')
+}
+tasks.named('javadoc') {
+    dependsOn('generateProtobuf', 'generateDriverVersion')
+}
+
+// Don't fail the release on javadoc lint (generated sources, missing doc comments).
+tasks.withType(Javadoc).configureEach {
+    exclude '**/protobuf_gen/**'
+    exclude '**/DriverVersion.java'
+    options.addStringOption('Xdoclint:none', '-quiet')
+    failOnError = false
+}
+
+// ====================
+// Self-contained fat jar (shadow)
+// ====================
+// Bundle every runtime dep and relocate third-party packages under
+// net.snowflake.client.jdbc.internal.** (legacy parity) to avoid classpath clashes.
+//
+// org.apache.arrow.c.** is NOT relocated: arrow_cdata_jni resolves those classes by
+// hardcoded name, so relocating breaks native FindClass (references still get rewritten).
+shadowJar {
+    // Replace the thin jar as the main artifact (no "-all" classifier).
+    archiveClassifier = ''
+
     manifest {
         attributes(
             'Implementation-Title': 'Snowflake JDBC Driver',
             'Implementation-Version': project.version,
             'Implementation-Vendor': 'Snowflake Inc.',
-            'Main-Class': 'com.snowflake.jdbc.SnowflakeDriver'
+            // Jackson's META-INF/versions/* classes are only honored on a multi-release jar.
+            'Multi-Release': 'true'
+            // No Main-Class/Add-Opens: library jar; consumers pass Arrow --add-opens themselves.
         )
     }
+
+    // Exclude compile-only annotations + the slf4j binding (consumer's choice).
+    dependencies {
+        exclude(dependency('org.slf4j:slf4j-simple:.*'))
+        exclude(dependency('com.google.code.findbugs:jsr305:.*'))
+        exclude(dependency('javax.annotation:javax.annotation-api:.*'))
+    }
+
+    def internal = 'net.snowflake.client.jdbc.internal'
+    relocate('org.apache.arrow', "${internal}.apache.arrow") {
+        exclude 'org.apache.arrow.c.**'
+    }
+    relocate 'com.google.protobuf', "${internal}.com.google.protobuf"
+    relocate 'com.google.flatbuffers', "${internal}.com.google.flatbuffers"
+    relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
+    relocate 'io.netty', "${internal}.io.netty"
+    relocate 'org.json', "${internal}.org.json"
+    relocate 'org.apache.commons.codec', "${internal}.org.apache.commons.codec"
+    // slf4j NOT relocated: ship slf4j-api, consumer binds a backend.
+
+    mergeServiceFiles()
+
+    // Drop stale signatures + module descriptors.
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude '**/module-info.class'
 }
 
-// Copy the cargo-built native lib into the JAR's resources so JNICoreTransport
-// can extract it at runtime (no CORE_PATH env var required for end users).
-// Path inside the JAR: net/snowflake/client/internal/unicore/native/.
-// The actual filenames produced by `cargo build --package jdbc_bridge`:
-//   - linux:   libjdbc_bridge.so
-//   - macos:   libjdbc_bridge.dylib
-//   - windows: jdbc_bridge.dll
+// Self-verify the shaded jar (shadowJar finalizer). The leak check iterates shadowJar's own
+// relocators so it can't drift from the config above; the rest are invariants not derivable
+// from relocate(): Arrow C Data carve-out, un-relocated slf4j-api, the java.sql.Driver
+// service file, and (with -PnativeLibsDir) all five platform libs.
+def verifyShadowJar = tasks.register('verifyShadowJar') {
+    dependsOn 'shadowJar'
+    def shadowJarTask = tasks.named('shadowJar')
+    def jarProvider = shadowJarTask.flatMap { it.archiveFile }
+    def hasNativeLibsDir = project.hasProperty('nativeLibsDir')
+    doLast {
+        def jarFile = jarProvider.get().asFile
+        def entries = new java.util.zip.ZipFile(jarFile).withCloseable { zf ->
+            zf.entries().collect { it.name }
+        }
+        def problems = []
+        def want = { String p -> if (!entries.any { it.startsWith(p) }) problems << "expected present but missing: ${p}" }
+        def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
+
+        // Leak check: nothing a relocator moves may survive at its original root (dir entries
+        // ignored — a carve-out leaves its parent dir behind, not a leak).
+        def relocators = shadowJarTask.get().relocators.findAll { it.metaClass.respondsTo(it, 'getPathPattern') }
+        relocators.each { r ->
+            def leaked = entries.findAll {
+                !it.endsWith('/') && it.startsWith("${r.pathPattern}/") && r.canRelocatePath(it)
+            }
+            if (!leaked.isEmpty()) {
+                problems << "un-relocated ${r.pathPattern}/** leaked (expected under ${r.shadedPathPattern}/): ${leaked.take(3)}"
+            }
+        }
+        // Sanity: relocation actually ran (guards a mis-wired thin-producing shadowJar).
+        if (!entries.any { it.startsWith('net/snowflake/client/jdbc/internal/') }) {
+            problems << "no relocated classes under net/snowflake/client/jdbc/internal/ — relocation did not run"
+        }
+
+        // Non-derivable invariants.
+        // Arrow C Data + its JNI resource stay at the original path.
+        want 'org/apache/arrow/c/Data.class'
+        want 'org/apache/arrow/c/jni/JniWrapper.class'
+        want 'arrow_cdata_jni/'
+        // slf4j API deliberately un-relocated; slf4j-simple binding not bundled.
+        want 'org/slf4j/Logger.class'
+        absent 'org/slf4j/simple/'
+        // JDBC auto-registration service must survive shading.
+        want 'META-INF/services/java.sql.Driver'
+
+        if (hasNativeLibsDir) {
+            def nativeRoot = 'net/snowflake/client/internal/unicore/native'
+            [
+                'linux-x86_64/libjdbc_bridge.so',
+                'linux-aarch64/libjdbc_bridge.so',
+                'darwin-x86_64/libjdbc_bridge.dylib',
+                'darwin-aarch64/libjdbc_bridge.dylib',
+                'windows-x86_64/jdbc_bridge.dll',
+            ].each { lib ->
+                // .toString(): List<String>.contains(GString) is always false, so coerce
+                // the "${..}" or every lib reads as missing.
+                if (!entries.contains("${nativeRoot}/${lib}".toString())) problems << "missing native lib in fat jar: ${lib}"
+            }
+        }
+
+        if (!problems.isEmpty()) {
+            throw new GradleException("Fat jar verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("verifyShadowJar: OK — ${relocators.size()} relocations clean, carve-outs intact${hasNativeLibsDir ? ', all 5 platform libs present' : ' (platform check skipped: no -PnativeLibsDir)'}.")
+    }
+}
+tasks.named('shadowJar') { finalizedBy verifyShadowJar }
+
+
+// Stage the cargo-built native lib(s) into JAR resources under
+// net/snowflake/client/internal/unicore/native/<os>-<arch>/<libname> so NativeLibraryLoader
+// can extract the right one at runtime. Release/CI passes -PnativeLibsDir (a staged
+// multi-arch tree); dev builds copy just the host lib from ../target/{release,debug}.
+//
+// SYNC CONTRACT: hostOsToken/hostArchToken must match NativeLibraryLoader.osToken()/
+// archToken(), or a locally built jar can't find its native lib at runtime.
+def hostOsToken = {
+    def os = System.getProperty('os.name', '').toLowerCase()
+    if (os.contains('mac') || os.contains('darwin')) return 'darwin'
+    if (os.contains('windows')) return 'windows'
+    return 'linux'
+}()
+def hostArchToken = {
+    def arch = System.getProperty('os.arch', '').toLowerCase()
+    if (arch == 'aarch64' || arch == 'arm64') return 'aarch64'
+    if (arch == 'amd64' || arch == 'x86_64') return 'x86_64'
+    return arch
+}()
+def nativeResourceDir = 'build/resources/main/net/snowflake/client/internal/unicore/native'
+
 def copyNativeLib = tasks.register('copyNativeLib', Copy) {
-    from '../target/release'
-    include 'libjdbc_bridge.*', 'jdbc_bridge.dll'
-    into 'build/resources/main/net/snowflake/client/internal/unicore/native'
+    into nativeResourceDir
+    if (project.hasProperty('nativeLibsDir')) {
+        // Release/CI: copy the staged <os>-<arch>/<lib> tree verbatim.
+        from project.property('nativeLibsDir')
+        include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+    } else {
+        // Local/dev: copy only the host lib into its <os>-<arch> subdir.
+        def hostLibDir = file('../target/release').exists() ? '../target/release' : '../target/debug'
+        from(hostLibDir) {
+            include 'libjdbc_bridge.so', 'libjdbc_bridge.dylib', 'jdbc_bridge.dll'
+            into "${hostOsToken}-${hostArchToken}"
+        }
+    }
 }
 
 tasks.named('processResources') {
@@ -196,7 +353,11 @@ tasks.named('processResources') {
 publishing {
     publications {
         maven(MavenPublication) {
-            from components.java
+            // Publish the shaded jar, not `from components.java` (which would publish the
+            // thin jar and declare the now-inlined deps).
+            artifact tasks.named('shadowJar')
+            artifact tasks.named('sourcesJar')
+            artifact tasks.named('javadocJar')
 
             pom {
                 name = 'Snowflake JDBC Driver'
@@ -216,6 +377,12 @@ publishing {
                         name = 'Snowflake Inc.'
                         email = 'support@snowflake.com'
                     }
+                }
+
+                // Deps inlined — strip from POM (else consumers pull dupes).
+                withXml {
+                    def deps = asNode().dependencies
+                    if (deps) { deps.each { it.replaceNode {} } }
                 }
             }
         }
