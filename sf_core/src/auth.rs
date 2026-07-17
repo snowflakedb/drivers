@@ -130,7 +130,9 @@ fn generate_jwt_token(
     Ok(token.as_str().to_string())
 }
 
-pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credentials, AuthError> {
+pub async fn create_credentials(
+    login_parameters: &LoginParameters,
+) -> Result<Credentials, AuthError> {
     match &login_parameters.login_method {
         LoginMethod::Password {
             username,
@@ -160,12 +162,23 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             private_key,
             passphrase,
         } => {
-            let token = generate_jwt_token(
-                &login_parameters.account_name,
-                username,
-                private_key.reveal(),
-                passphrase.as_ref().map(|p| p.reveal().as_str()),
-            )?;
+            // RSA key parsing + RS256 signing is CPU-bound crypto; run it on
+            // the blocking pool so it doesn't stall this runtime worker. Move
+            // the secrets in as owned `SensitiveString`s so they stay zeroizing.
+            let account = login_parameters.account_name.clone();
+            let username_owned = username.clone();
+            let private_key = private_key.clone();
+            let passphrase = passphrase.clone();
+            let token = tokio::task::spawn_blocking(move || {
+                generate_jwt_token(
+                    &account,
+                    &username_owned,
+                    private_key.reveal(),
+                    passphrase.as_ref().map(|p| p.reveal().as_str()),
+                )
+            })
+            .await
+            .context(BlockingTaskJoinSnafu)??;
             Ok(Credentials::Jwt {
                 username: username.clone(),
                 token: token.into(),
@@ -253,6 +266,12 @@ pub enum AuthError {
     #[snafu(display("Failed to sign JWT token"))]
     JWTSign {
         source: jwt::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Background JWT-signing task failed to join"))]
+    BlockingTaskJoin {
+        source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
     },

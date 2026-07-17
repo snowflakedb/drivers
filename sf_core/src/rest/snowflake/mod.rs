@@ -633,7 +633,10 @@ pub async fn auth_request_data(
             data.provider = Some(attestation.provider.to_string());
             data.token = Some(attestation.token);
         }
-        _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
+        _ => match create_credentials(login_parameters)
+            .await
+            .context(AuthenticationSnafu)?
+        {
             Credentials::Password {
                 username,
                 password,

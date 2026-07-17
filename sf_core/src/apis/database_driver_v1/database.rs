@@ -101,7 +101,13 @@ impl DatabaseDriverV1 {
                     .fail();
                 }
                 let parser = JsonChunkParser { row_types };
-                let batches = parser.parse_chunk(bytes).context(JsonChunkDecodeSnafu)?;
+                // JSON->Arrow decode is a per-row serde loop over the whole
+                // chunk body; offload it so a large chunk doesn't stall this
+                // runtime worker.
+                let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
+                    .await
+                    .context(BlockingTaskJoinSnafu)?
+                    .context(JsonChunkDecodeSnafu)?;
                 let schema = batches
                     .first()
                     .map(|b| b.schema())
