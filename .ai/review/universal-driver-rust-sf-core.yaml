@@ -2,14 +2,21 @@ id: universal-driver-rust-sf-core
 friendly_name: "Universal Driver Rust & sf_core Guidelines"
 status: enabled
 allowed_folders:
+  # Shipped driver code governed by these Rust guidelines. Build-time /
+  # debug-only tooling crates are intentionally NOT listed, so the bot never
+  # holds them to the driver rules (e.g. ud-no-unwrap-in-production): a panic
+  # in a dev tool aborts a developer's build or tool run, not a customer's
+  # connection. Deliberately omitted for this reason: proto_generator (protobuf
+  # code generator) and odbc_trace_tool (ODBC capture/replay debug tool).
   - "sf_core/src"
   - "odbc/src"
   - "jdbc_bridge/src"
   - "error_trace/src"
   - "error_trace_derive/src"
   - "proto_utils/src"
-  - "proto_generator/src"
 excluded_folders:
+  # Dev tooling that lives *inside* an allowed folder must be carved out here
+  # (whole dev-tool crates are handled by omission from allowed_folders above).
   - "sf_core/src/bin"
 allowed_file_extensions:
   - ".rs"
