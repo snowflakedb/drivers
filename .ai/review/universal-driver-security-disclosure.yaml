@@ -181,10 +181,13 @@ rules:
       ```
 
   - id: ud-security-fix-minimal-comments
+    scope: full-pr
     rule: |
-      **OBJECTIVE**: Comments on security-fix code must be technical and minimal.
-      Verbose narration of what was wrong, why it was dangerous, or what the fix
-      achieves from a security standpoint turns the comment into a disclosure.
+      **OBJECTIVE**: Comments on security-fix code must be technical and minimal,
+      and PR descriptions must frame security fixes as normal improvements or bug
+      fixes. Verbose narration of what was wrong, why it was dangerous, or what
+      the fix achieves from a security standpoint turns the comment or description
+      into a disclosure.
 
       **REQUIREMENT**: Flag any comment in a security-related diff that:
 
@@ -199,6 +202,10 @@ rules:
          "security patch", "vulnerability fix", "CVE fix", "hardening against".
          The change should look like normal code improvement.
 
+      Also flag any PR title or description that uses the same prohibited phrasing
+      listed above, or any of: "security", "vulnerability", "CVE", "CWE", "exploit",
+      "attack", "patch" in a security-fix context.
+
       **WHAT IS ACCEPTABLE**: Short, technical comments that describe *what the code
       does*, not *what it prevents*:
       - `// Validate the redirect URI against the registered set.`
@@ -206,12 +213,18 @@ rules:
       - `// Bind parameters instead of string interpolation.`
       - A bare `SNOW-\d+` reference (see `ud-security-fix-snow-ticket-only`).
 
-      **SCOPE**: Apply to all code files and — when reviewing the diff as a whole —
-      to the PR title and description. PR descriptions should frame security fixes
-      as normal improvements or bug fixes, not call attention to them as security
-      patches.
+      **TONING TEMPLATE for PR descriptions**: When a PR description covers a
+      security fix, write it as a toned improvement or bug fix using the same
+      past-tense verb pattern as the changelog convention:
 
-      ❌ **BAD:**
+      ```
+      Use the form: "[Fixed|Improved] [neutral behavior description]."
+      - "Fixed an issue where connection tokens were not fully validated."
+      - "Improved input handling in the query-parameter parser."
+      Do NOT use: "security fix", "vulnerability", "exploit", "attack", "patch".
+      ```
+
+      ❌ **BAD — code comment:**
       ```rust
       // Security fix: validate the nonce to prevent replay attacks that could
       // allow session hijacking in multi-tenant environments.
@@ -220,19 +233,22 @@ rules:
       // by enforcing TLS certificate pinning on the OAuth callback.
       ```
 
+      ❌ **BAD — PR description:**
       ```markdown
       ## Summary
       Security patch to fix a critical vulnerability in the authentication flow.
       ```
 
-      ✅ **GOOD:**
+      ✅ **GOOD — code comment:**
       ```rust
       // Validate the nonce on token responses.
 
       // Enforce certificate pinning on the OAuth callback.
       ```
 
+      ✅ **GOOD — PR description:**
       ```markdown
       ## Summary
-      Improved validation in the authentication flow.
+      Fixed an issue where OAuth tokens were accepted without full validation.
+      Improved certificate verification on the OAuth callback endpoint.
       ```
