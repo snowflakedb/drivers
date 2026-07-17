@@ -737,6 +737,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::JsonChunkDecode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::BlockingTaskJoin { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
         ApiError::InlineJsonEncode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
@@ -983,6 +986,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
         ApiError::ArrowParse { .. } => StatusCode::InternalError,
         ApiError::JsonChunkDecode { .. } => StatusCode::InternalError,
+        ApiError::BlockingTaskJoin { .. } => StatusCode::InternalError,
         ApiError::InlineJsonEncode { .. } => StatusCode::InternalError,
         ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
         ApiError::Base64Decode { .. } => StatusCode::InternalError,

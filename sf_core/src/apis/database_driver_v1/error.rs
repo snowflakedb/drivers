@@ -159,6 +159,12 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Background chunk-decode task failed to join"))]
+    BlockingTaskJoin {
+        source: tokio::task::JoinError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to encode inline JSON rowset as Arrow IPC"))]
     InlineJsonEncode {
         #[snafu(implicit)]
