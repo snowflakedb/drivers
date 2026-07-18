@@ -497,10 +497,9 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
         return NoMoreDataSnafu.fail();
     }
 
-    let record = diagnostic_info
-        .records
-        .get((rec_number - 1) as usize)
-        .unwrap();
+    let Some(record) = diagnostic_info.records.get((rec_number - 1) as usize) else {
+        return NoMoreDataSnafu.fail();
+    };
 
     let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
     write_string_chars::<E>(state, sql_state, 6, std::ptr::null_mut(), None);

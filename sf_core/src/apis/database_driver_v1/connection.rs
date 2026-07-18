@@ -557,13 +557,21 @@ impl DatabaseDriverV1 {
                             session_token: conn.tokens.clone(),
                         });
 
-                        // unwrap is safe: telemetry_enabled is only true when
-                        // telemetry_sessions() is Some.
-                        self.telemetry_sessions()
-                            .unwrap()
-                            .write()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(session_id, exporter_session);
+                        if let Some(sessions) = self.telemetry_sessions() {
+                            sessions
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(session_id, exporter_session);
+                        } else {
+                            // `telemetry_enabled` implies `telemetry_sessions()`
+                            // was Some (checked above); reaching None here means
+                            // the registry was cleared concurrently.
+                            tracing::error!(
+                                "telemetry session registry unexpectedly absent after \
+                                 telemetry_enabled check; session {session_id} not \
+                                 registered for telemetry"
+                            );
+                        }
 
                         let env_info = conn
                             .wrapper_identity

@@ -299,20 +299,18 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
         // emitted wire `type` is `INTERVAL_YEAR_MONTH` / `INTERVAL_DAY_TIME`
         // to mirror the result-side logical type GS already uses for
         // native INTERVAL columns (see `sf_core::SnowflakeLogicalType`).
-        sql_type if year_month_subtype_from_sql(sql_type.0).is_some() => {
-            let subtype = year_month_subtype_from_sql(sql_type.0).expect("guarded by match arm");
-            Ok(Box::new(WireParamConverter {
-                snowflake_type: SnowflakeIntervalYearMonth { subtype },
-            }))
-        }
-        sql_type if day_time_subtype_from_sql(sql_type.0).is_some() => {
-            let subtype = day_time_subtype_from_sql(sql_type.0).expect("guarded by match arm");
-            Ok(Box::new(WireParamConverter {
-                snowflake_type: SnowflakeIntervalDayTime { subtype },
-            }))
-        }
-
         _ => {
+            if let Some(subtype) = year_month_subtype_from_sql(sql_type.0) {
+                return Ok(Box::new(WireParamConverter {
+                    snowflake_type: SnowflakeIntervalYearMonth { subtype },
+                }));
+            }
+            if let Some(subtype) = day_time_subtype_from_sql(sql_type.0) {
+                return Ok(Box::new(WireParamConverter {
+                    snowflake_type: SnowflakeIntervalDayTime { subtype },
+                }));
+            }
+
             tracing::error!(
                 "Unsupported SQL data type for parameter binding: {:?}",
                 sql_type

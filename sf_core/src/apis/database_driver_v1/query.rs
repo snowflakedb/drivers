@@ -557,8 +557,8 @@ fn validate_column_count(
     rowset: &[Vec<Option<String>>],
     row_types: &[RowType],
 ) -> Result<(), ReadBatchesError> {
-    if !rowset.is_empty() {
-        let num_columns_rowset = rowset.first().unwrap().len();
+    if let Some(first_row) = rowset.first() {
+        let num_columns_rowset = first_row.len();
         let num_columns_rowtype = row_types.len();
         if num_columns_rowset != num_columns_rowtype {
             return ColumnCountMismatchSnafu {

@@ -589,7 +589,16 @@ where
             return;
         }
 
-        let last = path.last().unwrap();
+        let Some(last) = path.last() else {
+            // Unreachable: `dfs_with_filter` is always entered with a non-empty
+            // path (the caller pushes the leaf before recursing). Log and bail
+            // if that invariant is ever broken rather than silently returning.
+            tracing::error!(
+                target: "sf_core::tls",
+                "dfs_with_filter reached with an empty path (unexpected); skipping"
+            );
+            return;
+        };
         let mut nexts: Vec<Vec<u8>> = Vec::new();
         if let Some(issuer_key) = issuer_der_hash(last)
             && let Some(v) = by_subject.get(&issuer_key)
