@@ -61,7 +61,7 @@ const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
 /// SQLSetConnectAttr provides a value.
-const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
+const DEFAULT_LOGIN_TIMEOUT_SECS: sql::UInteger = 300;
 
 /// Normalizes `CRL_ENABLED` values to the uppercase mode strings `sf_core` accepts for
 /// `crl_check_mode` (see `build_crl_config` in `connection_config.rs`).
@@ -406,7 +406,7 @@ fn connect_with_params(
         if !login_timeout_in_options && !login_timeout_in_attrs {
             let follow_up = HashMap::from([(
                 "authentication_timeout".to_owned(),
-                DEFAULT_LOGIN_TIMEOUT_SECS.to_owned().into(),
+                DEFAULT_LOGIN_TIMEOUT_SECS.to_string().into(),
             )]);
             let response = c
                 .connection_set_options(ConnectionSetOptionsRequest {
@@ -1293,9 +1293,9 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                         "get_connect_attr: LoginTimeout value {s:?} is not a valid integer, \
                          returning default {DEFAULT_LOGIN_TIMEOUT_SECS}",
                     );
-                    DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
+                    DEFAULT_LOGIN_TIMEOUT_SECS
                 }),
-                None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
+                None => DEFAULT_LOGIN_TIMEOUT_SECS,
             };
             drop(connection);
             if !value_ptr.is_null() {
