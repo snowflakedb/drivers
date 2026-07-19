@@ -56,6 +56,14 @@ const UNIX_EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(1970, 1, 1) {
 /// connectors.
 const TZ_OFFSET_BIAS_MINUTES: i32 = 1440;
 
+/// Maximum magnitude, in minutes, of a legal `TIMESTAMP_TZ` offset.
+///
+/// The driver accepts offsets within +/-1439 minutes (past the +/-14:00 the
+/// SQL spec requires), matching the ODBC converter. Validating against this
+/// bound also guarantees `offset_minutes + TZ_OFFSET_BIAS_MINUTES` cannot
+/// overflow `i32` for arbitrary caller input to `ParamValue::TimestampTz`.
+const MAX_TZ_OFFSET_MINUTES: i32 = 1439;
+
 /// A typed parameter value to bind. Each variant maps to a Snowflake logical
 /// type and a canonical wire-text encoding.
 #[derive(Debug, Clone, PartialEq)]
@@ -146,6 +154,10 @@ pub enum BindingError {
         expected: usize,
         actual: usize,
     },
+    #[snafu(display(
+        "timezone offset {offset_minutes} minutes is outside the legal range +/-1439 minutes"
+    ))]
+    TimestampTzOffsetOutOfRange { offset_minutes: i32 },
     #[snafu(display("failed to serialize bindings to JSON"))]
     Serialization { source: serde_json::Error },
 }
@@ -324,9 +336,16 @@ fn encode_epoch_nanos(dt: NaiveDateTime) -> Result<String, BindingError> {
 /// Encode a `TIMESTAMP_TZ` as `"<epoch_nanos> <offset_minutes + 1440>"`.
 ///
 /// The bias ([`TZ_OFFSET_BIAS_MINUTES`]) keeps the offset token non-negative
-/// for any legal offset. Returns [`BindingError::TimestampOutOfRange`] when the
-/// UTC instant falls outside the i64 nanosecond epoch range.
+/// for any legal offset. `offset_minutes` is caller-supplied on the public API,
+/// so it is validated against [`MAX_TZ_OFFSET_MINUTES`] first: this rejects
+/// nonsensical offsets and guarantees the biased sum cannot overflow `i32`.
+/// Returns [`BindingError::TimestampTzOffsetOutOfRange`] for an out-of-range
+/// offset, or [`BindingError::TimestampOutOfRange`] when the UTC instant falls
+/// outside the i64 nanosecond epoch range.
 fn encode_tz(utc: NaiveDateTime, offset_minutes: i32) -> Result<String, BindingError> {
+    if !(-MAX_TZ_OFFSET_MINUTES..=MAX_TZ_OFFSET_MINUTES).contains(&offset_minutes) {
+        return TimestampTzOffsetOutOfRangeSnafu { offset_minutes }.fail();
+    }
     let epoch_nanos = utc
         .and_utc()
         .timestamp_nanos_opt()
@@ -454,6 +473,42 @@ mod tests {
         });
         assert_eq!(v["1"]["type"], "TIMESTAMP_TZ");
         assert_eq!(v["1"]["value"], "0 1770");
+    }
+
+    #[test]
+    fn timestamp_tz_offset_out_of_range_is_rejected() {
+        let utc = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        // i32::MAX would overflow `offset_minutes + 1440`; the builder must
+        // return an error rather than panic (debug) or wrap (release).
+        let err = to_json_single(&[ParamValue::TimestampTz {
+            utc,
+            offset_minutes: i32::MAX,
+        }])
+        .expect_err("out-of-range offset must be rejected");
+        assert!(matches!(
+            err,
+            BindingError::TimestampTzOffsetOutOfRange { offset_minutes } if offset_minutes == i32::MAX
+        ));
+    }
+
+    #[test]
+    fn timestamp_tz_offset_boundaries_are_accepted() {
+        let utc = NaiveDate::from_ymd_opt(1970, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        for (offset_minutes, biased) in [(MAX_TZ_OFFSET_MINUTES, 2879), (-MAX_TZ_OFFSET_MINUTES, 1)]
+        {
+            let v = single(ParamValue::TimestampTz {
+                utc,
+                offset_minutes,
+            });
+            assert_eq!(v["1"]["type"], "TIMESTAMP_TZ");
+            assert_eq!(v["1"]["value"], Value::String(format!("0 {biased}")));
+        }
     }
 
     #[test]
