@@ -359,17 +359,13 @@ fn encode_tz(utc: NaiveDateTime, offset_minutes: i32) -> Result<String, BindingE
 /// Encode a `NaiveDateTime` as a bare `YYYY-MM-DD HH:MM:SS[.fraction]`
 /// wall-clock literal for `TIMESTAMP_LTZ` binds (which are tagged `TEXT`).
 ///
-/// The year is the absolute value zero-padded to a minimum of four digits,
-/// with a leading `-` for negative (proleptic) years. The fractional part is
-/// emitted only when the nanosecond component is non-zero, as nine digits with
-/// trailing zeros trimmed.
+/// The year is zero-padded to a minimum of four digits with the sign counted
+/// within that width, matching the ODBC `put_year` formatter (year `-1` renders
+/// as `-001`, not `-0001`). The fractional part is emitted only when the
+/// nanosecond component is non-zero, as nine digits with trailing zeros trimmed.
 fn encode_wallclock(dt: NaiveDateTime) -> String {
     let year = dt.year();
-    let mut out = if year < 0 {
-        format!("-{:04}", year.unsigned_abs())
-    } else {
-        format!("{:04}", year.unsigned_abs())
-    };
+    let mut out = format!("{:04}", year);
     out.push_str(&format!(
         "-{:02}-{:02} {:02}:{:02}:{:02}",
         dt.month(),
@@ -578,6 +574,19 @@ mod tests {
         let v = single(ParamValue::TimestampLtz(dt));
         assert_eq!(v["1"]["type"], "TEXT");
         assert_eq!(v["1"]["value"], "2024-01-02 03:04:05");
+    }
+
+    #[test]
+    fn ltz_negative_year_counts_sign_in_width() {
+        let dt = NaiveDate::from_ymd_opt(-1, 2, 3)
+            .unwrap()
+            .and_hms_opt(4, 5, 6)
+            .unwrap();
+        let v = single(ParamValue::TimestampLtz(dt));
+        assert_eq!(v["1"]["type"], "TEXT");
+        // Matches ODBC put_year: year -1 is "-001" (sign within min width 4),
+        // not "-0001".
+        assert_eq!(v["1"]["value"], "-001-02-03 04:05:06");
     }
 
     #[test]
