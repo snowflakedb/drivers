@@ -25,7 +25,8 @@
     "fmt:fix": "oxfmt --write .",
     "test:unit": "vitest run --project unit",
     "test:e2e": "vitest run --project e2e",
-    "test:e2e-old-driver": "vitest run --project e2e-old-driver"
+    "test:e2e-old-driver": "vitest run --project e2e-old-driver",
+    "build:core": "node scripts/build-snowflake-sdk-core.mjs"
   },
   "napi": {
     "binaryName": "snowflake-sdk-core",
