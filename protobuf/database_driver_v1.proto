@@ -730,8 +730,8 @@ message ResultChunk {
 
 message DatabaseFetchChunkRequest {
   ConnectionHandle conn_handle = 1;
-  ResultChunk chunk = 2;
-  // Required when chunk.format == CHUNK_FORMAT_JSON (forward from ResultSetGetChunksResponse.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
+  repeated ResultChunk chunks = 2;
+  // Required for JSON remote chunks (forward from ResultSetGetChunksResponse.columns). Ignored otherwise.
   repeated ColumnMetadata columns = 3;
 }
 
@@ -755,7 +755,7 @@ message ResultSetGetChunksRequest {
 
 message ResultSetGetChunksResponse {
   repeated ResultChunk chunks = 1;
-  // Column metadata. Required for CHUNK_FORMAT_JSON (forward on DatabaseFetchChunkRequest); ignored for CHUNK_FORMAT_ARROW_IPC.
+  // Column metadata. Required when any chunk is CHUNK_FORMAT_JSON; ignored for Arrow-only results.
   repeated ColumnMetadata columns = 2;
 }
 

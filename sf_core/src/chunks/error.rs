@@ -65,4 +65,9 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Server response contained more than one inline chunk; expected at most one"))]
+    MultipleInlineChunks {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

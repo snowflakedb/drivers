@@ -4,6 +4,7 @@ use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::chunks::ChunkFormatKind;
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::config::toml_loader::FilePermissionCheck;
@@ -11,8 +12,7 @@ use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
     ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
-    proto_chunk_format_to_kind, proto_options_to_hashmap, reader_to_arrow_stream_ptr,
-    toml_value_to_json,
+    proto_options_to_hashmap, reader_to_arrow_stream_ptr, toml_value_to_json,
 };
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
@@ -123,11 +123,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: DatabaseFetchChunkRequest,
     ) -> Result<DatabaseFetchChunkResponse, DriverException> {
         let conn_handle = input.conn_handle.map(|h| h.into());
-        let chunk = required(input.chunk, "Chunk is required")?;
-        let chunk_format: ChunkFormatKind = required(
-            proto_chunk_format_to_kind(chunk.format),
-            "Chunk format is required",
-        )?;
+        let _ = required(input.chunks.first(), "At least one chunk is required")?;
+
+        // format of the remote chunks, inline chunk is always arrow
+        let chunk_format: ChunkFormatKind = input
+            .chunks
+            .iter()
+            .find_map(|chunk| match chunk.data.as_ref()? {
+                Data::Inline(_) => None,
+                Data::Remote(_) => proto_chunk_format_to_kind(chunk.format),
+            })
+            .unwrap_or(ChunkFormatKind::ArrowIpc);
+
+        let nullable_flags: Vec<bool> = input.columns.iter().map(|c| c.nullable).collect();
         // Columns are only needed for JSON chunks; Arrow IPC streams are self-describing.
         let row_types: Vec<RowType> = match chunk_format {
             ChunkFormatKind::ArrowIpc => Vec::new(),
@@ -138,12 +146,22 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 .collect::<Result<Vec<_>, _>>()
                 .to_protobuf()?,
         };
-        let chunk_data = required(chunk.data, "Chunk data is required")?;
-        let fetch_input: FetchChunkInput = chunk_data.into();
+
+        let chunks: Vec<FetchChunkInput> = input
+            .chunks
+            .iter()
+            .map(FetchChunkInput::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let stream = self
             .driver
-            .database_fetch_chunk(conn_handle, fetch_input, chunk_format, row_types)
+            .database_fetch_chunk(
+                conn_handle,
+                chunks,
+                chunk_format,
+                &nullable_flags,
+                row_types,
+            )
             .await
             .to_protobuf()?;
 
@@ -1116,7 +1134,8 @@ pub type DatabaseDriverClient =
     >;
 
 pub use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
-use crate::chunks::ChunkFormatKind;
+use crate::protobuf::apis::database_driver_v1::converter::proto_chunk_format_to_kind;
+use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::query_types::RowType;
 
 pub fn database_driver_client() -> DatabaseDriverClient {
