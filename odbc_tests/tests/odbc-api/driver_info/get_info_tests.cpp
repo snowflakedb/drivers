@@ -159,7 +159,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(nameLen > 0);
 
-  OLD_DRIVER_ONLY("BD#71") {
+  OLD_DRIVER_ONLY("BD#75") {
     // Reference driver returns the fixed marketing identifier
     // "Snowflake" rather than a file path. This conflicts with the
     // ODBC spec ("a character string with the file name of the driver
@@ -168,7 +168,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api
     // regressions.
     REQUIRE(std::string(driverName) == "Snowflake");
   }
-  NEW_DRIVER_ONLY("BD#71") {
+  NEW_DRIVER_ONLY("BD#75") {
     // New driver is spec-compliant: it returns the on-disk file path
     // of the loaded driver shared library, resolved via the ODBC
     // installer API (`SQLGetPrivateProfileString` against
@@ -213,12 +213,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api]
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(verLen > 0);
 
-  OLD_DRIVER_ONLY("BD#72") {
+  OLD_DRIVER_ONLY("BD#76") {
     // Reference driver reports the version as `MM.mm.bbbb` with each
     // field zero-padded (e.g. `03.17.0000`).
     REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);
   }
-  NEW_DRIVER_ONLY("BD#72") {
+  NEW_DRIVER_ONLY("BD#76") {
     // New driver reports the Cargo package version verbatim: semver
     // `M.m.p` with NO zero-padding (e.g. `4.0.0`). Assert the exact
     // shape — three dot-separated, unpadded, non-negative integer
