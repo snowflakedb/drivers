@@ -2,7 +2,6 @@ use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::ExecuteQueryResult as NativeExecuteQueryResult;
-use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::InlineData;
 use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescriptor;
@@ -17,9 +16,10 @@ use crate::apis::database_driver_v1::{
     ValidationSeverity as CoreValidationSeverity,
 };
 use crate::chunks::{
-    ArrowIpcEncodeSnafu, ChunkError, ChunkFormatKind, ChunkReadSnafu,
-    convert_string_rowset_to_arrow_reader,
+    ArrowIpcEncodeSnafu, ChunkDownloadData, ChunkError, ChunkFormatKind, ChunkReadSnafu,
+    FetchChunkInput, convert_string_rowset_to_arrow_reader,
 };
+use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
 use crate::rest::snowflake::error::SfError;
@@ -215,20 +215,26 @@ pub(super) fn json_rowset_to_arrow_ipc_base64(
 // Result / chunk / column conversions
 // ---------------------------------------------------------------------------
 
-impl From<result_chunk::Data> for FetchChunkInput {
-    fn from(data: result_chunk::Data) -> Self {
-        match data {
-            result_chunk::Data::Inline(bytes) => FetchChunkInput::Inline(bytes),
-            result_chunk::Data::Remote(remote) => {
-                FetchChunkInput::Remote(crate::chunks::ChunkDownloadData {
-                    url: remote.url,
-                    row_count: 0,
-                    uncompressed_size: 0,
-                    compressed_size: 0,
-                    headers: remote.headers,
-                })
-            }
-        }
+impl TryFrom<&ResultChunk> for FetchChunkInput {
+    type Error = DriverException;
+
+    fn try_from(chunk: &ResultChunk) -> Result<Self, Self::Error> {
+        let data = chunk.data.clone().ok_or_else(|| DriverException {
+            message: "Chunk data is required".to_string(),
+            status_code: StatusCode::InvalidArgument as i32,
+            ..Default::default()
+        })?;
+
+        Ok(match data {
+            Data::Inline(inline) => FetchChunkInput::Inline(inline),
+            Data::Remote(remote_chunk) => FetchChunkInput::Remote(ChunkDownloadData {
+                url: remote_chunk.url,
+                row_count: 0, // row count is not needed for fetching
+                uncompressed_size: remote_chunk.uncompressed_size,
+                compressed_size: remote_chunk.compressed_size,
+                headers: remote_chunk.headers,
+            }),
+        })
     }
 }
 

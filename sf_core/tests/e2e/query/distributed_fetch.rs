@@ -81,16 +81,10 @@ fn distributed_fetch_large_result_produces_multiple_chunks() {
         "Large result should contain at least one remote chunk"
     );
 
-    // And fetching all chunks should return 500000 total rows
-    let mut total_rows = 0;
-    for chunk in &chunks_result.chunks {
-        assert_eq!(chunk.format, ChunkFormat::ArrowIpc as i32);
-        let response = client.fetch_chunk(chunk.clone());
-        let batches = read_batches_from_response(response);
-        for batch in &batches {
-            total_rows += batch.num_rows();
-        }
-    }
+    // And fetching all chunks in one request should return 500000 total rows
+    let response = client.fetch_chunks(chunks_result.chunks.clone());
+    let batches = read_batches_from_response(response);
+    let total_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
     assert_eq!(total_rows, 500000);
 
     // And resources should be released

@@ -1,23 +1,16 @@
-use arrow::array::{RecordBatchIterator, RecordBatchReader};
-use arrow::datatypes::{Fields, Schema};
 use std::collections::HashMap;
-use std::io;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
-use crate::chunks::prefetch::{JsonChunkParser, ParseChunk};
-use crate::chunks::{ChunkDownloadData, ChunkFormatKind, get_chunk_data};
+use crate::chunks::{ChunkFormatKind, FetchChunkInput, PrefetchConfig, fetch_chunks_reader};
 use crate::config::ParamStore;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::query_types::RowType;
 use crate::tls;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use arrow_ipc::reader::StreamReader;
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use snafu::ResultExt;
 
 impl DatabaseDriverV1 {
@@ -65,70 +58,50 @@ impl DatabaseDriverV1 {
     pub async fn database_fetch_chunk(
         &self,
         conn_handle: Option<Handle>,
-        input: FetchChunkInput,
-        format: ChunkFormatKind,
+        chunks: Vec<FetchChunkInput>,
+        chunk_format: ChunkFormatKind,
+        nullable_flags: &[bool],
         row_types: Vec<RowType>,
     ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
-        let bytes = match input {
-            FetchChunkInput::Inline(data) => BASE64.decode(&data).context(Base64DecodeSnafu)?,
-            FetchChunkInput::Remote(chunk) => {
-                let client = match conn_handle {
-                    Some(conn_handle) => {
-                        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-                            InvalidArgumentSnafu {
-                                argument: "Connection handle not found".to_string(),
-                            }
-                            .build()
-                        })?;
-                        let conn = conn_ptr.lock().await;
-                        conn.http_client
-                            .clone()
-                            .ok_or_else(|| ConnectionNotInitializedSnafu.build())?
+        let (client, prefetch_config) = match conn_handle {
+            Some(conn_handle) => {
+                let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+                    InvalidArgumentSnafu {
+                        argument: "Connection handle not found".to_string(),
                     }
-                    None => tls::create_tls_client_with_config(
-                        tls::TlsConfig::default(),
-                        self.crl_worker.clone(),
-                    )
-                    .context(TlsClientCreationSnafu)?,
-                };
-                get_chunk_data(client, chunk)
-                    .await
-                    .context(ChunkFetchSnafu)?
+                    .build()
+                })?;
+                let conn = conn_ptr.lock().await;
+                let client = conn
+                    .http_client
+                    .clone()
+                    .ok_or_else(|| ConnectionNotInitializedSnafu.build())?;
+                let session_params = conn.session_parameters.read().await;
+                let prefetch_config = PrefetchConfig::from_session_params(&session_params);
+                (client, prefetch_config)
+            }
+            None => {
+                // TODO(SNOW-3801967): when no conn handle, we fall back to a fresh TLS client and
+                //  default prefetch config, but we could restore proper configuration if it's
+                //  serialized with the result chunk
+                let client = tls::create_tls_client_with_config(
+                    tls::TlsConfig::default(),
+                    self.crl_worker.clone(),
+                )
+                .context(TlsClientCreationSnafu)?;
+                (client, PrefetchConfig::default())
             }
         };
-
-        let reader: Box<dyn RecordBatchReader + Send> = match format {
-            ChunkFormatKind::ArrowIpc => {
-                let cursor = io::Cursor::new(bytes);
-                let reader = StreamReader::try_new(cursor, None).context(ArrowParseSnafu)?;
-                Box::new(reader)
-            }
-            ChunkFormatKind::Json => {
-                if row_types.is_empty() {
-                    return InvalidArgumentSnafu {
-                        argument: "Column metadata is required to decode CHUNK_FORMAT_JSON chunks"
-                            .to_string(),
-                    }
-                    .fail();
-                }
-                let parser = JsonChunkParser { row_types };
-                // JSON->Arrow decode is a per-row serde loop over the whole
-                // chunk body; offload it so a large chunk doesn't stall this
-                // runtime worker.
-                let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
-                    .await
-                    .context(BlockingTaskJoinSnafu)?
-                    .context(JsonChunkDecodeSnafu)?;
-                let schema = batches
-                    .first()
-                    .map(|b| b.schema())
-                    .unwrap_or_else(|| Arc::new(Schema::new(Fields::empty())));
-                Box::new(RecordBatchIterator::new(
-                    batches.into_iter().map(Ok::<_, arrow::error::ArrowError>),
-                    schema,
-                ))
-            }
-        };
+        let reader = fetch_chunks_reader(
+            chunks,
+            chunk_format,
+            row_types,
+            nullable_flags,
+            client,
+            &prefetch_config,
+        )
+        .await
+        .context(ChunkFetchSnafu)?;
 
         Ok(Box::new(FFI_ArrowArrayStream::new(reader)))
     }
@@ -150,9 +123,4 @@ impl Database {
             settings: ParamStore::new(),
         }
     }
-}
-
-pub enum FetchChunkInput {
-    Inline(String),
-    Remote(ChunkDownloadData),
 }

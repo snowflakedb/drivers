@@ -8,6 +8,7 @@ pub mod prefetch;
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::io::Cursor;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ pub use json_parser::convert_string_rowset_to_arrow_reader;
 use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, PrefetchChunkReader};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use snafu::{OptionExt, ResultExt};
+use snafu::{OptionExt, ResultExt, ensure};
 
 pub const DEFAULT_PREFETCH_THREADS: usize = 4;
 pub const DEFAULT_MEMORY_LIMIT_MB: u32 = 1536;
@@ -74,6 +75,23 @@ pub async fn json_prefetch_reader(
     config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)?;
+    json_chunks_reader(
+        initial_reader,
+        row_types,
+        chunk_download_data,
+        client,
+        config,
+    )
+    .await
+}
+
+async fn json_chunks_reader(
+    initial_reader: Box<dyn RecordBatchReader + Send>,
+    row_types: Vec<RowType>,
+    chunk_download_data: Vec<ChunkDownloadData>,
+    client: Client,
+    config: &PrefetchConfig,
+) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let downloader = HttpChunkDownloader { client };
     let parser = JsonChunkParser {
         row_types: row_types.clone(),
@@ -95,18 +113,8 @@ pub async fn arrow_prefetch_reader(
     config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let initial_reader = if let Some(initial_base64) = initial_base64_opt {
-        let bytes = BASE64.decode(initial_base64).context(Base64DecodeSnafu)?;
-        let cursor = io::Cursor::new(bytes);
-        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
-    } else {
-        let first = chunk_download_data
-            .pop_front()
-            .context(MissingInitialChunkSnafu)?;
-        let bytes = get_chunk_data(client.clone(), first).await?;
-        let cursor = io::Cursor::new(bytes);
-        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
-    };
+    let initial_reader =
+        get_initial_chunk_reader(initial_base64_opt, &mut chunk_download_data, &client).await?;
     let downloader = HttpChunkDownloader { client };
     let parser = ArrowChunkParser;
     let reader = PrefetchChunkReader::reader(
@@ -118,6 +126,25 @@ pub async fn arrow_prefetch_reader(
     )
     .await?;
     Ok(maybe_inject_nullable(reader, nullable_flags))
+}
+
+async fn get_initial_chunk_reader(
+    initial_base64_opt: Option<&str>,
+    chunk_download_data: &mut VecDeque<ChunkDownloadData>,
+    client: &Client,
+) -> Result<StreamReader<Cursor<Vec<u8>>>, ChunkError> {
+    Ok(if let Some(initial_base64) = initial_base64_opt {
+        let bytes = BASE64.decode(initial_base64).context(Base64DecodeSnafu)?;
+        let cursor = io::Cursor::new(bytes);
+        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
+    } else {
+        let first = chunk_download_data
+            .pop_front()
+            .context(MissingInitialChunkSnafu)?;
+        let bytes = get_chunk_data(client.clone(), first).await?;
+        let cursor = io::Cursor::new(bytes);
+        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
+    })
 }
 
 pub fn single_chunk_reader(
@@ -211,6 +238,66 @@ fn maybe_inject_nullable(
 pub enum ChunkFormatKind {
     ArrowIpc,
     Json,
+}
+
+#[derive(Debug, Clone)]
+pub enum FetchChunkInput {
+    Inline(String),
+    Remote(ChunkDownloadData),
+}
+
+pub async fn fetch_chunks_reader(
+    chunks: Vec<FetchChunkInput>,
+    chunk_format: ChunkFormatKind,
+    row_types: Vec<RowType>,
+    nullable_flags: &[bool],
+    client: Client,
+    prefetch_config: &PrefetchConfig,
+) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
+    let mut initial_base64_opt = None;
+    let mut remote_chunks = VecDeque::new();
+
+    for chunk in chunks {
+        match chunk {
+            FetchChunkInput::Inline(bytes) => {
+                // The server is expected to send at most one inline chunk.
+                ensure!(initial_base64_opt.is_none(), MultipleInlineChunksSnafu);
+                initial_base64_opt = Some(bytes)
+            }
+            FetchChunkInput::Remote(chunk_download_data) => {
+                remote_chunks.push_back(chunk_download_data)
+            }
+        }
+    }
+
+    match chunk_format {
+        ChunkFormatKind::ArrowIpc => {
+            arrow_prefetch_reader(
+                initial_base64_opt.as_deref(),
+                remote_chunks,
+                client,
+                prefetch_config,
+                Some(nullable_flags),
+            )
+            .await
+        }
+        ChunkFormatKind::Json => {
+            let initial_chunk_reader = get_initial_chunk_reader(
+                initial_base64_opt.as_deref(),
+                &mut remote_chunks,
+                &client,
+            )
+            .await?;
+            json_chunks_reader(
+                Box::new(initial_chunk_reader),
+                row_types,
+                Vec::from(remote_chunks),
+                client,
+                prefetch_config,
+            )
+            .await
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -334,5 +421,33 @@ fn maybe_decompress_gzip(data: Vec<u8>) -> Result<Vec<u8>, ChunkError> {
         Ok(decompressed)
     } else {
         Ok(data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fetch_chunks_reader_rejects_multiple_inline_chunks() {
+        let chunks = vec![
+            FetchChunkInput::Inline("first".to_string()),
+            FetchChunkInput::Inline("second".to_string()),
+        ];
+
+        let result = fetch_chunks_reader(
+            chunks,
+            ChunkFormatKind::Json,
+            Vec::new(),
+            &[],
+            Client::new(),
+            &PrefetchConfig::default(),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ChunkError::MultipleInlineChunks { .. })
+        ));
     }
 }
