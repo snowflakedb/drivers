@@ -16,8 +16,12 @@ impl DownloadChunk for HttpChunkDownloader {
         level = "trace",
         skip_all
     )]
-    async fn download_chunk(&self, chunk: ChunkDownloadData) -> Result<Vec<u8>, ArrowError> {
-        get_chunk_data(self.client.clone(), chunk)
+    async fn download_chunk(
+        &self,
+        chunk: ChunkDownloadData,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Vec<u8>, ArrowError> {
+        get_chunk_data(self.client.clone(), chunk, cancel)
             .await
             .map_err(|e| ArrowError::ExternalError(Box::new(e)))
     }

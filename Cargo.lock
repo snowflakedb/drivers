@@ -2692,6 +2692,7 @@ dependencies = [
  "proto_utils",
  "sf_core",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4117,6 +4118,9 @@ dependencies = [
 [[package]]
 name = "proto_utils"
 version = "0.1.0"
+dependencies = [
+ "tokio-util",
+]
 
 [[package]]
 name = "ptr_meta"

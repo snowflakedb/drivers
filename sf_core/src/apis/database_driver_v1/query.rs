@@ -53,6 +53,7 @@ pub struct StageInfoRefreshContext {
     pub sql: String,
     pub query_parameters: crate::config::rest_parameters::QueryParameters,
     pub conn: Arc<Mutex<Connection>>,
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
@@ -87,6 +88,7 @@ pub(super) async fn perform_put_get_transfer(
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
     crl_worker: crate::crl::worker::SharedCrlWorker,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -111,9 +113,10 @@ pub(super) async fn perform_put_get_transfer(
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
             file_upload_data.stage_info.crl_worker = crl_worker.clone();
-            let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
-                .await
-                .context(FileUploadSnafu)?;
+            let upload_results =
+                upload_files(&file_upload_data, retry_policy, refresher_handle, cancel)
+                    .await
+                    .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
@@ -133,7 +136,7 @@ pub(super) async fn perform_put_get_transfer(
             file_download_data.stage_info.tls_config = tls_config;
             file_download_data.stage_info.crl_worker = crl_worker;
             let download_results =
-                download_files(file_download_data, retry_policy, refresher_handle)
+                download_files(file_download_data, retry_policy, refresher_handle, cancel)
                     .await
                     .context(FileDownloadSnafu)?;
             Ok(RowsetData::Download(download_results))
@@ -162,6 +165,7 @@ pub(super) async fn perform_stream_upload(
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
     bytes: Vec<u8>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     let upload_data = data
         .to_file_upload_data(
@@ -209,9 +213,10 @@ pub(super) async fn perform_stream_upload(
         multipart: upload_data.multipart,
     };
 
-    let result = upload_in_memory_file(bytes, single, put_get_policy, &mut refresher_handle)
-        .await
-        .context(FileUploadSnafu)?;
+    let result =
+        upload_in_memory_file(bytes, single, put_get_policy, &mut refresher_handle, cancel)
+            .await
+            .context(FileUploadSnafu)?;
 
     Ok(RowsetData::Upload(vec![result]))
 }
@@ -430,6 +435,7 @@ async fn fetch_fresh_stage_info_with_sql(
             let http_client = http_client.clone();
             let query_parameters = ctx.query_parameters.clone();
             let query_input = query_input.clone();
+            let cancel = ctx.cancel.clone();
             async move {
                 rest::snowflake::snowflake_query_with_client(
                     &http_client,
@@ -438,6 +444,7 @@ async fn fetch_fresh_stage_info_with_sql(
                     query_input,
                     &crate::config::retry::RetryPolicy::default(),
                     rest::snowflake::QueryExecutionMode::Blocking,
+                    cancel,
                 )
                 .await
             }
@@ -470,6 +477,7 @@ pub(super) async fn build_reader_from_rowset_data(
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
     nullable_flags: Option<&[bool]>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data {
         RowsetData::Upload(results) => {
@@ -477,7 +485,7 @@ pub(super) async fn build_reader_from_rowset_data(
         }
         RowsetData::Download(results) => download_results_reader(results, wrapper_presets)
             .context(DownloadResultsConversionSnafu),
-        _ => read_batches(data, http_client, prefetch_config, nullable_flags)
+        _ => read_batches(data, http_client, prefetch_config, nullable_flags, cancel)
             .await
             .context(BatchReadSnafu),
     }
@@ -488,6 +496,7 @@ pub(super) async fn read_batches(
     http_client: Client,
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
@@ -503,6 +512,7 @@ pub(super) async fn read_batches(
             http_client.clone(),
             prefetch_config,
             nullable_flags,
+            cancel,
         )
         .await
         .context(ChunkReadSnafu),
@@ -519,6 +529,7 @@ pub(super) async fn read_batches(
                 Vec::new(),
                 http_client.clone(),
                 prefetch_config,
+                cancel,
             )
             .await
             .context(ChunkReadSnafu)
@@ -537,6 +548,7 @@ pub(super) async fn read_batches(
                 chunk_download_data.clone(),
                 http_client.clone(),
                 prefetch_config,
+                cancel,
             )
             .await
             .context(ChunkReadSnafu)
@@ -808,6 +820,17 @@ pub enum QueryResponseProcessingError {
     },
 }
 
+impl QueryResponseProcessingError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        match self {
+            QueryResponseProcessingError::BatchRead { source, .. } => source.is_cancelled(),
+            QueryResponseProcessingError::FileUpload { source, .. } => source.is_cancelled(),
+            QueryResponseProcessingError::FileDownload { source, .. } => source.is_cancelled(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum ReadBatchesError {
     #[snafu(display(
@@ -848,6 +871,12 @@ pub enum ReadBatchesError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+impl ReadBatchesError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, ReadBatchesError::ChunkRead { source, .. } if source.is_cancelled())
+    }
 }
 
 #[cfg(test)]

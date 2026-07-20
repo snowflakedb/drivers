@@ -6,3 +6,6 @@ edition = "2024"
 [lib]
 name = "proto_utils"
 
+[dependencies]
+tokio-util = "0.7"
+

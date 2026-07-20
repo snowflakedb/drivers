@@ -70,4 +70,15 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl ChunkError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, ChunkError::Cancelled { .. })
+    }
 }

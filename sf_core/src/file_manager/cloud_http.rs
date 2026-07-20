@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 /// Read-buffer size in bytes for the streaming upload producer — one channel chunk.
 const UPLOAD_CHUNK_SIZE_BYTES: usize = 64 * 1024;
@@ -27,6 +28,8 @@ const UPLOAD_CHUNK_SIZE_BYTES: usize = 64 * 1024;
 /// 300s cap; the retry budget (`policy.max_elapsed`) must exceed this so at
 /// least one full attempt can complete.
 const REQUEST_TIMEOUT_SECS: u64 = 300;
+
+pub(super) const STREAM_CANCELLED_MESSAGE: &str = "download cancelled";
 
 use std::collections::BTreeSet;
 
@@ -129,12 +132,29 @@ impl std::io::Read for StreamReader {
 /// scope; revisit if Range-resume becomes a requirement. The
 /// `gcs_streaming_mid_body_disconnect_surfaces_error` test pins this
 /// behaviour.
-pub(super) fn spawn_byte_stream_producer(response: reqwest::Response) -> StreamReader {
+pub(super) fn spawn_byte_stream_producer(
+    response: reqwest::Response,
+    cancel: CancellationToken,
+) -> StreamReader {
     let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<Bytes>>(8);
     let stream = response.bytes_stream();
     tokio::spawn(async move {
         let mut stream = stream;
-        while let Some(chunk_result) = stream.next().await {
+        loop {
+            let chunk_result = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    let _ = tx.send(Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        STREAM_CANCELLED_MESSAGE,
+                    )));
+                    break;
+                }
+                chunk_result = stream.next() => chunk_result,
+            };
+            let Some(chunk_result) = chunk_result else {
+                break;
+            };
             let mapped = chunk_result.map_err(std::io::Error::other);
             // If the consumer dropped (decryption finished/errored) while we
             // had a pending error, the error is silently lost — the consumer
@@ -376,6 +396,7 @@ pub(super) trait UploadRetryAdapter {
     fn on_http_failure(&self, status: u16, body: String) -> Self::Err;
     fn on_transport(&self, e: reqwest::Error) -> Self::Err;
     fn on_exhausted(&self, detail: String) -> Self::Err;
+    fn on_cancelled(&self) -> Self::Err;
 }
 
 /// Shared retry/backoff loop for the cloud upload paths. The async closure
@@ -392,6 +413,7 @@ pub(super) async fn upload_with_retry<F, M>(
     method: &reqwest::Method,
     url: &str,
     build_request: F,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), M::Err>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, M::BuildErr>,
@@ -406,6 +428,9 @@ where
     let log_path = url.split(['?', '#']).next().unwrap_or("");
 
     for attempt in 1..=max_attempts {
+        if cancel.is_cancelled() {
+            return Err(adapter.on_cancelled());
+        }
         let remaining = if let Some(budget) = policy.max_elapsed {
             let elapsed = start.elapsed();
             if elapsed >= budget {
@@ -424,14 +449,24 @@ where
             (None, None) => Duration::from_secs(REQUEST_TIMEOUT_SECS),
         };
 
-        let req = match build_request().await {
+        let build = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(adapter.on_cancelled()),
+            b = build_request() => b,
+        };
+        let req = match build {
             Ok(r) => r.timeout(timeout),
             Err(e) => return Err(adapter.on_build_err(e)),
         };
 
         tracing::info!(method = %method, path = %log_path, attempt, "outbound HTTP call");
 
-        match req.send().await {
+        let send_result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(adapter.on_cancelled()),
+            r = req.send() => r,
+        };
+        match send_result {
             Ok(resp) => {
                 tracing::info!(status = resp.status().as_u16(), "HTTP response");
                 if resp.status().is_success() {
@@ -443,12 +478,20 @@ where
                 let status_code = resp.status().as_u16();
                 let retryable = is_retryable_status(status_code, &policy.extra_retryable_statuses);
                 if !retryable || attempt >= max_attempts {
-                    let body = read_error_body(resp).await;
+                    let body = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return Err(adapter.on_cancelled()),
+                        b = read_error_body(resp) => b,
+                    };
                     return Err(adapter.on_http_failure(status_code, body));
                 }
                 let delay = Duration::from_millis(sleep_ms as u64);
                 sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
-                tokio::time::sleep(delay).await;
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(adapter.on_cancelled()),
+                    _ = tokio::time::sleep(delay) => {}
+                }
             }
             Err(e) => {
                 if attempt >= max_attempts {
@@ -456,7 +499,11 @@ where
                 }
                 let delay = Duration::from_millis(sleep_ms as u64);
                 sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
-                tokio::time::sleep(delay).await;
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Err(adapter.on_cancelled()),
+                    _ = tokio::time::sleep(delay) => {}
+                }
             }
         }
     }

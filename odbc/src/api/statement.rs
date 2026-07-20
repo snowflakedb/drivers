@@ -169,7 +169,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         let multi_statement_count = inner.multi_statement_count;
         let async_enabled = inner.async_enabled;
 
-        match run_cancellable(&guard, async_enabled, |client| async move {
+        match run_cancellable(&guard, async_enabled, |client, cancel| async move {
             let _bindings_owner = bindings_owner;
             if multi_statement_count >= 0 {
                 let mut options = std::collections::HashMap::new();
@@ -182,30 +182,39 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                     },
                 );
                 client
-                    .statement_set_options(StatementSetOptionsRequest {
-                        stmt_handle: Some(stmt_handle),
-                        options,
-                    })
+                    .statement_set_options(
+                        StatementSetOptionsRequest {
+                            stmt_handle: Some(stmt_handle),
+                            options,
+                        },
+                        cancel.clone(),
+                    )
                     .await?;
             }
 
             client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: effective_query,
-                })
+                .statement_set_sql_query(
+                    StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        query: effective_query,
+                    },
+                    cancel.clone(),
+                )
                 .await?;
 
             let response = client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
+                .statement_execute_query(
+                    StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
                     },
-                })
+                    cancel.clone(),
+                )
                 .await?;
             Ok(ExecDirectOutcome {
                 response,
@@ -230,6 +239,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     };
 
     // === POST-PROCESSING (shared by poll and sync paths) ===
+    // Arm a fresh statement token so SQLCancel can interrupt result-stream
+    // materialization during finalization (run_cancellable's RPC token was
+    // already dropped). Sequential per-phase tokens avoid stale-cancel bleed.
+    let (_finalize_cancel_guard, finalize_cancel) = arm_statement_cancel(&guard);
     finalize_execute_response(
         &mut conn,
         &mut inner,
@@ -237,6 +250,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         outcome.response,
         ExecutionOrigin::Direct,
         Some(statement_text),
+        finalize_cancel,
     )?;
     Ok(())
 }
@@ -254,8 +268,9 @@ fn finalize_execute_response(
     response: ExecuteQueryResponse,
     origin: ExecutionOrigin,
     last_sql: Option<&str>,
+    cancel: CancellationToken,
 ) -> OdbcResult<()> {
-    update_numeric_settings(&conn_handle, &mut conn.numeric_settings, last_sql)?;
+    update_numeric_settings(&conn_handle, &mut conn.numeric_settings, last_sql, cancel.clone())?;
 
     // Snapshot output pointers before passing `inner` into apply_execute_response.
     let param_set_size = inner.with_effective_apd(|apd| apd.array_size);
@@ -266,7 +281,7 @@ fn finalize_execute_response(
     // actually skipped.
     let param_operation_ptr = inner.with_effective_apd(|apd| apd.array_status_ptr);
 
-    let result = apply_execute_response(inner, conn_handle, response, origin);
+    let result = apply_execute_response(inner, conn_handle, response, origin, cancel);
     inner.rows_returned = 0;
 
     // Write PARAMS_PROCESSED and PARAM_STATUS regardless of result so the
@@ -306,14 +321,18 @@ fn update_numeric_settings(
     conn_handle: &ConnectionHandle,
     settings: &mut NumericSettings,
     last_sql: Option<&str>,
+    cancel: CancellationToken,
 ) -> OdbcResult<()> {
     let g = global().context(OdbcRuntimeSnafu)?;
     g.block_on(async |c| {
         if let Ok(resp) = c
-            .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
-                key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
-            })
+            .connection_get_parameter(
+                ConnectionGetParameterRequest {
+                    conn_handle: Some(*conn_handle),
+                    key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
+                },
+                cancel.clone(),
+            )
             .await
             && let Some(value) = resp.value
         {
@@ -323,10 +342,13 @@ fn update_numeric_settings(
         }
 
         if let Ok(resp) = c
-            .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
-                key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
-            })
+            .connection_get_parameter(
+                ConnectionGetParameterRequest {
+                    conn_handle: Some(*conn_handle),
+                    key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
+                },
+                cancel.clone(),
+            )
             .await
             && let Some(value) = resp.value
         {
@@ -336,10 +358,13 @@ fn update_numeric_settings(
         }
 
         if let Ok(resp) = c
-            .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
-                key: "VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT".to_string(),
-            })
+            .connection_get_parameter(
+                ConnectionGetParameterRequest {
+                    conn_handle: Some(*conn_handle),
+                    key: "VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT".to_string(),
+                },
+                cancel.clone(),
+            )
             .await
             && let Some(value) = resp.value
             && let Ok(size) = value.parse::<u64>()
@@ -383,16 +408,25 @@ fn update_numeric_settings(
         // See PR #1068 review on `statement.rs:209`.
         if tz_format_needs_refresh(settings.tz_offset_format_cache, last_sql) {
             let rpc_result = c
-                .connection_get_parameter(ConnectionGetParameterRequest {
-                    conn_handle: Some(*conn_handle),
-                    key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
-                })
+                .connection_get_parameter(
+                    ConnectionGetParameterRequest {
+                        conn_handle: Some(*conn_handle),
+                        key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
+                    },
+                    cancel.clone(),
+                )
                 .await
                 .map(|resp| resp.value)
                 .map_err(|e| format!("{e:?}"));
             apply_tz_offset_format_update(&mut settings.tz_offset_format_cache, rpc_result);
         }
     });
+    // A cancelled settings refresh must surface as OperationCanceled rather than
+    // silently completing finalization; the per-RPC error-swallowing above is for
+    // genuine transient failures, not caller-initiated cancellation.
+    if cancel.is_cancelled() {
+        return OperationCanceledSnafu.fail();
+    }
     Ok(())
 }
 
@@ -827,48 +861,55 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 
         let query_owned = query.to_string();
 
-        let execution_outcome = run_cancellable(&guard, async_enabled, |client| async move {
-            client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: query_owned,
-                })
-                .await?;
+        let execution_outcome =
+            run_cancellable(&guard, async_enabled, |client, cancel| async move {
+                client
+                    .statement_set_sql_query(
+                        StatementSetSqlQueryRequest {
+                            stmt_handle: Some(stmt_handle),
+                            query: query_owned,
+                        },
+                        cancel.clone(),
+                    )
+                    .await?;
 
-            let prepare_response = client
-                .statement_prepare(StatementPrepareRequest {
-                    stmt_handle: Some(stmt_handle),
-                })
-                .await?;
+                let prepare_response = client
+                    .statement_prepare(
+                        StatementPrepareRequest {
+                            stmt_handle: Some(stmt_handle),
+                        },
+                        cancel.clone(),
+                    )
+                    .await?;
 
-            let result = prepare_response.result.required("Result is required")?;
-            let stream_ptr = result.stream.required("Stream is required")?;
-            let reader = reader_from_protobuf_stream(stream_ptr)?;
-            let schema = reader.schema();
+                let result = prepare_response.result.required("Result is required")?;
+                let stream_ptr = result.stream.required("Stream is required")?;
+                let reader = reader_from_protobuf_stream(stream_ptr)?;
+                let schema = reader.schema();
 
-            if result.number_of_binds < 0 {
-                tracing::warn!(
-                    "prepare: server reported negative bind count ({}), treating as 0",
-                    result.number_of_binds
-                );
-            }
-            let raw_bind_count = result.number_of_binds.max(0);
-            let param_count = u16::try_from(raw_bind_count).map_err(|_| {
-                crate::api::error::CountFieldIncorrectSnafu {
+                if result.number_of_binds < 0 {
+                    tracing::warn!(
+                        "prepare: server reported negative bind count ({}), treating as 0",
+                        result.number_of_binds
+                    );
+                }
+                let raw_bind_count = result.number_of_binds.max(0);
+                let param_count = u16::try_from(raw_bind_count).map_err(|_| {
+                    crate::api::error::CountFieldIncorrectSnafu {
                     reason: format!(
                         "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
                         u16::MAX
                     ),
                 }
                 .build()
-            })?;
+                })?;
 
-            Ok(PrepareOutcome {
-                number_of_binds: param_count,
-                schema,
-                array_bind_supported: result.array_bind_supported,
-            })
-        })?;
+                Ok(PrepareOutcome {
+                    number_of_binds: param_count,
+                    schema,
+                    array_bind_supported: result.array_bind_supported,
+                })
+            })?;
         match execution_outcome {
             Execution::Completed(outcome) => outcome,
             Execution::Spawned(join_handle) => {
@@ -1035,7 +1076,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         let multi_statement_count = inner.multi_statement_count;
         let async_enabled = inner.async_enabled;
 
-        let outcome = match run_cancellable(&guard, async_enabled, |client| async move {
+        let outcome = match run_cancellable(&guard, async_enabled, |client, cancel| async move {
             let _bindings_owner = bindings_owner;
             if multi_statement_count >= 0 {
                 let mut options = std::collections::HashMap::new();
@@ -1048,22 +1089,28 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                     },
                 );
                 client
-                    .statement_set_options(StatementSetOptionsRequest {
-                        stmt_handle: Some(stmt_handle),
-                        options,
-                    })
+                    .statement_set_options(
+                        StatementSetOptionsRequest {
+                            stmt_handle: Some(stmt_handle),
+                            options,
+                        },
+                        cancel.clone(),
+                    )
                     .await?;
             }
             let response = client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
+                .statement_execute_query(
+                    StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
                     },
-                })
+                    cancel.clone(),
+                )
                 .await?;
             Ok(ExecuteOutcome {
                 response,
@@ -1097,6 +1144,10 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     // RPC. An `ALTER SESSION` issued via prepare/execute (very rare) is
     // the documented edge case where the new format won't take effect
     // until the next `SQLExecDirect` runs.
+    // Arm a fresh statement token so SQLCancel can interrupt result-stream
+    // materialization during finalization (run_cancellable's RPC token was
+    // already dropped). Sequential per-phase tokens avoid stale-cancel bleed.
+    let (_finalize_cancel_guard, finalize_cancel) = arm_statement_cancel(&guard);
     finalize_execute_response(
         &mut conn,
         &mut inner,
@@ -1104,6 +1155,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         outcome.response,
         origin,
         None,
+        finalize_cancel,
     )?;
     Ok(())
 }
@@ -1139,6 +1191,7 @@ fn apply_execute_response(
     conn_handle: ConnectionHandle,
     response: ExecuteQueryResponse,
     origin: ExecutionOrigin,
+    cancel: CancellationToken,
 ) -> OdbcResult<()> {
     let result = response.result.required("Execute result is required")?;
 
@@ -1155,7 +1208,7 @@ fn apply_execute_response(
                 .result_set_handle
                 .required("ResultSet handle is required")?;
             let query_id = descriptor.query_id.clone();
-            let stream = fetch_stream_and_release(rs_handle)?;
+            let stream = fetch_stream_and_release(rs_handle, cancel)?;
             let execute_state = create_execute_state_from_stream(
                 stream,
                 descriptor.statement_type_id,
@@ -1199,14 +1252,14 @@ fn apply_execute_response(
 
             // Fetch and apply the first child result set.
             let first_id = &stmt.multi_query_ids[0];
-            let rs = fetch_result_set_by_query_id(conn_handle, first_id)?;
+            let rs = fetch_result_set_by_query_id(conn_handle, first_id, cancel.clone())?;
             let descriptor = rs.result_descriptor.as_ref();
             let statement_type_id = descriptor.and_then(|d| d.statement_type_id);
             let rows_affected = descriptor.and_then(|d| d.rows_affected);
             let rs_handle = rs
                 .result_set_handle
                 .required("ResultSet handle is required")?;
-            let stream = fetch_stream_and_release(rs_handle)?;
+            let stream = fetch_stream_and_release(rs_handle, cancel)?;
             let execute_state =
                 create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
             stmt.multi_current_idx = 1;
@@ -1220,12 +1273,16 @@ fn apply_execute_response(
 fn fetch_result_set_by_query_id(
     conn_handle: ConnectionHandle,
     query_id: &str,
+    cancel: CancellationToken,
 ) -> OdbcResult<ResultSetResponse> {
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.connection_get_result_set(ConnectionGetResultSetRequest {
-            conn_handle: Some(conn_handle),
-            query_id: query_id.to_string(),
-        })
+        c.connection_get_result_set(
+            ConnectionGetResultSetRequest {
+                conn_handle: Some(conn_handle),
+                query_id: query_id.to_string(),
+            },
+            cancel,
+        )
         .await
     })?;
     Ok(response)
@@ -1235,26 +1292,35 @@ fn fetch_result_set_by_query_id(
 ///
 /// `result_set_get_stream` takes ownership of the prebuilt stream (one-shot),
 /// so the handle is no longer useful after this call.
-fn fetch_stream_and_release(rs_handle: ResultSetHandle) -> OdbcResult<ArrowArrayStreamPtr> {
-    let stream = {
-        let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-            c.result_set_get_stream(ResultSetGetStreamRequest {
+fn fetch_stream_and_release(
+    rs_handle: ResultSetHandle,
+    cancel: CancellationToken,
+) -> OdbcResult<ArrowArrayStreamPtr> {
+    let fetch_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.result_set_get_stream(
+            ResultSetGetStreamRequest {
                 result_set_handle: Some(rs_handle),
-            })
-            .await
-        })?;
-        response.stream.required("Stream is required")?
-    };
+            },
+            cancel,
+        )
+        .await
+    });
+    // Release the handle whether or not the fetch succeeded — an error (including
+    // cancellation) must not leak the result set and its stored rowset data.
     release_result_set(rs_handle);
+    let stream = fetch_result?.stream.required("Stream is required")?;
     Ok(stream)
 }
 
 fn release_result_set(rs_handle: ResultSetHandle) {
     if let Ok(rt) = global() {
         let _ = rt.block_on(async |c| {
-            c.result_set_release(ResultSetReleaseRequest {
-                result_set_handle: Some(rs_handle),
-            })
+            c.result_set_release(
+                ResultSetReleaseRequest {
+                    result_set_handle: Some(rs_handle),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await
         });
     }
@@ -1262,11 +1328,28 @@ fn release_result_set(rs_handle: ResultSetHandle) {
 
 pub(crate) fn collect_nested_batch(
     mut reader: Box<dyn RecordBatchReader + Send>,
+    cancel: CancellationToken,
 ) -> OdbcResult<RecordBatch> {
     let schema = reader.schema();
     let mut batches = vec![];
     for b in &mut *reader {
-        let batch = b.context(ArrowBatchReadSnafu)?;
+        // Check on the success path too: a reader draining already-buffered
+        // batches yields no error, so an error-only check would let SQLCancel
+        // slip through and the operation complete instead of returning HY008.
+        if cancel.is_cancelled() {
+            return OperationCanceledSnafu.fail();
+        }
+        let batch = match b {
+            Ok(batch) => batch,
+            // Draining the reader materializes external chunks; if SQLCancel
+            // fired during that blocking read, classify it as OperationCanceled
+            // (HY008) rather than a generic ArrowBatchRead error.
+            Err(e) if cancel.is_cancelled() => {
+                tracing::debug!(error = %e, "reader drain cancelled");
+                return OperationCanceledSnafu.fail();
+            }
+            Err(e) => return Err(e).context(ArrowBatchReadSnafu),
+        };
         batches.push(batch);
     }
     if batches.is_empty() {
@@ -1282,19 +1365,26 @@ pub(crate) fn collect_nested_batch(
 pub(crate) fn execute_show_query_collect_batch(
     stmt_handle: StatementHandle,
     sql: &str,
+    cancel: CancellationToken,
 ) -> OdbcResult<RecordBatch> {
     let rt = global().context(OdbcRuntimeSnafu)?;
     let response = rt.block_on(async |c| {
-        c.statement_set_sql_query(StatementSetSqlQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            query: sql.to_string(),
-        })
+        c.statement_set_sql_query(
+            StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                query: sql.to_string(),
+            },
+            cancel.clone(),
+        )
         .await?;
-        c.statement_execute_query(StatementExecuteQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            bindings: None,
-            timeout_seconds: None,
-        })
+        c.statement_execute_query(
+            StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+                timeout_seconds: None,
+            },
+            cancel.clone(),
+        )
         .await
     })?;
 
@@ -1314,9 +1404,9 @@ pub(crate) fn execute_show_query_collect_batch(
         }
     };
 
-    let stream = fetch_stream_and_release(rs_handle)?;
+    let stream = fetch_stream_and_release(rs_handle, cancel.clone())?;
     let reader = reader_from_protobuf_stream(stream)?;
-    collect_nested_batch(Box::new(reader))
+    collect_nested_batch(Box::new(reader), cancel)
 }
 
 fn create_execute_state_from_stream(
@@ -1499,10 +1589,13 @@ fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResul
         .context(OdbcRuntimeSnafu)?
         .block_on(async |c| {
             let resp = c
-                .connection_get_parameter(ConnectionGetParameterRequest {
-                    conn_handle: Some(*conn_handle),
-                    key: key.to_string(),
-                })
+                .connection_get_parameter(
+                    ConnectionGetParameterRequest {
+                        conn_handle: Some(*conn_handle),
+                        key: key.to_string(),
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
                 .await?;
             Ok(resp.value)
         })
@@ -2956,7 +3049,7 @@ fn accumulate_put_data(
 
 /// Sets `cancel_token` on creation and clears it on drop, so every exit
 /// path (including early returns and panics) releases the token.
-struct CancelTokenGuard<'a> {
+pub(crate) struct CancelTokenGuard<'a> {
     slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
 }
 
@@ -2975,6 +3068,20 @@ impl Drop for CancelTokenGuard<'_> {
         *self.slot.lock() = None;
     }
 }
+
+/// Arms a fresh cancellation token on the statement so `SQLCancel` can abort
+/// the in-flight operation, returning the RAII guard (clears the slot on every
+/// exit path) and a clone of the token to thread into the operation's RPCs.
+/// The token slot is a separate mutex from `StatementInner`, so `SQLCancel`
+/// reaches it without contending on the lock a running operation holds.
+pub(crate) fn arm_statement_cancel(
+    stmt: &crate::api::Statement,
+) -> (CancelTokenGuard<'_>, CancellationToken) {
+    let token = CancellationToken::new();
+    let guard = CancelTokenGuard::arm(&stmt.cancel_token, token.clone());
+    (guard, token)
+}
+
 
 /// Awaits a finished `JoinHandle` and translates panics into internal errors.
 fn poll_join_handle<T>(join_handle: tokio::task::JoinHandle<OdbcResult<T>>) -> OdbcResult<T> {
@@ -3032,6 +3139,7 @@ fn run_cancellable<T, F>(
     async_enabled: bool,
     f: impl FnOnce(
         std::sync::Arc<sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient>,
+        CancellationToken,
     ) -> F,
 ) -> OdbcResult<Execution<T>>
 where
@@ -3044,7 +3152,11 @@ where
 
     if async_enabled {
         let token_clone = token.clone();
-        let future = f(client);
+        let future = f(client, token.clone());
+        // Publish the token BEFORE spawning so a concurrent SQLCancel cannot
+        // observe an empty slot while the task is already running (TOCTOU race).
+        // The async cleanup path clears the slot on poll completion / free.
+        *stmt.cancel_token.lock() = Some(token);
         let join_handle = g.spawn(async move {
             tokio::select! {
                 biased;
@@ -3052,12 +3164,11 @@ where
                 result = future => result,
             }
         });
-        *stmt.cancel_token.lock() = Some(token);
         return Ok(Execution::Spawned(join_handle));
     }
 
     let _cancel_guard = CancelTokenGuard::arm(&stmt.cancel_token, token.clone());
-    let future = f(client);
+    let future = f(client, token.clone());
     let result = g.block_on(async move |_c| {
         tokio::select! {
             biased;
@@ -3211,6 +3322,7 @@ fn execute_dae(
         Ok(globals) => globals,
     };
     let response = globals.block_on(async |c| {
+        let rpc_token = token.clone();
         tokio::select! {
             biased;
             _ = token.cancelled() => OperationCanceledSnafu.fail(),
@@ -3219,7 +3331,7 @@ fn execute_dae(
                     c.statement_set_sql_query(StatementSetSqlQueryRequest {
                         stmt_handle: Some(stmt_handle),
                         query,
-                    })
+                    }, rpc_token.clone())
                     .await?;
                 }
                 c.statement_execute_query(StatementExecuteQueryRequest {
@@ -3230,7 +3342,7 @@ fn execute_dae(
                     } else {
                         None
                     },
-                })
+                }, rpc_token.clone())
                 .await
             } => result.map_err(Into::into),
         }
@@ -3252,11 +3364,12 @@ fn execute_dae(
         &conn_handle,
         &mut conn.numeric_settings,
         last_sql.as_deref(),
+        token.clone(),
     ) {
         inner.state.set(restored);
         return Err(e);
     }
-    apply_execute_response(inner, conn_handle, response, origin)?;
+    apply_execute_response(inner, conn_handle, response, origin, token.clone())?;
     inner.rows_returned = 0;
     Ok(())
 }
@@ -3344,14 +3457,18 @@ pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
     };
     drop(conn);
 
-    let rs = fetch_result_set_by_query_id(conn_handle, &query_id)?;
+    // Arm the statement token so a concurrent SQLCancel can interrupt the
+    // blocking result-set/stream fetch for the next child result set.
+    let (_cancel_guard, cancel) = arm_statement_cancel(&guard);
+
+    let rs = fetch_result_set_by_query_id(conn_handle, &query_id, cancel.clone())?;
     let descriptor = rs.result_descriptor.as_ref();
     let statement_type_id = descriptor.and_then(|d| d.statement_type_id);
     let rows_affected = descriptor.and_then(|d| d.rows_affected);
     let rs_handle = rs
         .result_set_handle
         .required("ResultSet handle is required")?;
-    let stream = fetch_stream_and_release(rs_handle)?;
+    let stream = fetch_stream_and_release(rs_handle, cancel)?;
     let execute_state =
         create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
     set_state(&mut inner, execute_state);

@@ -592,6 +592,9 @@ pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> Vali
 
 fn to_driver_error(error: &ApiError) -> DriverError {
     match error {
+        ApiError::Cancelled { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
         ApiError::GenericError { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
@@ -889,127 +892,132 @@ fn extract_query_id(error: &ApiError) -> Option<String> {
 }
 
 fn to_driver_exception(error: ApiError) -> DriverException {
-    let status_code = match &error {
-        ApiError::GenericError { .. } => StatusCode::GenericError,
-        ApiError::RuntimeCreation { .. } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::InvalidParameterValue { .. },
-            ..
-        } => StatusCode::InvalidParameterValue,
-        ApiError::Configuration {
-            source: ConfigError::MissingParameter { .. },
-            ..
-        } => StatusCode::MissingParameter,
-        ApiError::Configuration {
-            source: ConfigError::ConflictingParameters { .. },
-            ..
-        } => StatusCode::InvalidParameterValue,
-        ApiError::Configuration {
-            source: ConfigError::ConfigFileRead { .. },
-            ..
-        } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::TomlParse { .. },
-            ..
-        } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::IniParse { .. },
-            ..
-        } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::IniAlreadyLoaded { .. },
-            ..
-        } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::InsecurePermissions { .. },
-            ..
-        } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::ConfigDirNotFound { .. },
-            ..
-        } => StatusCode::InternalError,
-        ApiError::Configuration {
-            source: ConfigError::ConnectionNotFound { .. },
-            ..
-        } => StatusCode::MissingParameter,
-        ApiError::Configuration {
-            source: ConfigError::Validation { issues, .. },
-            ..
-        } if issues
-            .iter()
-            .any(|i| i.code == CoreValidationCode::MissingRequired) =>
-        {
-            StatusCode::MissingParameter
-        }
-        ApiError::Configuration {
-            source: ConfigError::Validation { .. },
-            ..
-        } => StatusCode::InvalidParameterValue,
-        ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
-        ApiError::Login { source, .. } => match source.as_ref() {
-            RestError::LoginError { .. } => StatusCode::LoginError,
-            _ => StatusCode::AuthenticationError,
-        },
-        ApiError::ConnectionLock { .. } => StatusCode::InternalError,
-        ApiError::StatementLocking { .. } => StatusCode::InternalError,
-        ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
-        ApiError::QueryResponseProcess {
-            source: boxed_error,
-            ..
-        } => {
-            use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
-            use crate::compression_types::CompressionTypeError;
-            use crate::file_manager::FileManagerError;
-
-            match boxed_error.as_ref() {
-                QueryResponseProcessingError::FileUpload { source, .. }
-                | QueryResponseProcessingError::FileDownload { source, .. } => match source {
-                    FileManagerError::NoFilesMatched { .. } => StatusCode::LocalFileNotFound,
-                    FileManagerError::CompressionType {
-                        source: CompressionTypeError::UnsupportedCompressionType { .. },
-                        ..
-                    } => StatusCode::UnsupportedCompression,
-                    // A too-large source file / stage object is an input
-                    // error, not a driver fault — surface it as
-                    // `InvalidArgument` rather than `InternalError`.
-                    s if s.is_file_too_large() => StatusCode::InvalidArgument,
-                    _ => StatusCode::InternalError,
-                },
-                QueryResponseProcessingError::RemoteFileNotFound { .. } => {
-                    StatusCode::RemoteFileNotFound
-                }
-                _ => StatusCode::InternalError,
+    let status_code = if error.is_cancelled() {
+        StatusCode::Cancelled
+    } else {
+        match &error {
+            ApiError::GenericError { .. } => StatusCode::GenericError,
+            ApiError::RuntimeCreation { .. } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::InvalidParameterValue { .. },
+                ..
+            } => StatusCode::InvalidParameterValue,
+            ApiError::Configuration {
+                source: ConfigError::MissingParameter { .. },
+                ..
+            } => StatusCode::MissingParameter,
+            ApiError::Configuration {
+                source: ConfigError::ConflictingParameters { .. },
+                ..
+            } => StatusCode::InvalidParameterValue,
+            ApiError::Configuration {
+                source: ConfigError::ConfigFileRead { .. },
+                ..
+            } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::TomlParse { .. },
+                ..
+            } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::IniParse { .. },
+                ..
+            } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::IniAlreadyLoaded { .. },
+                ..
+            } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::InsecurePermissions { .. },
+                ..
+            } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::ConfigDirNotFound { .. },
+                ..
+            } => StatusCode::InternalError,
+            ApiError::Configuration {
+                source: ConfigError::ConnectionNotFound { .. },
+                ..
+            } => StatusCode::MissingParameter,
+            ApiError::Configuration {
+                source: ConfigError::Validation { issues, .. },
+                ..
+            } if issues
+                .iter()
+                .any(|i| i.code == CoreValidationCode::MissingRequired) =>
+            {
+                StatusCode::MissingParameter
             }
+            ApiError::Configuration {
+                source: ConfigError::Validation { .. },
+                ..
+            } => StatusCode::InvalidParameterValue,
+            ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
+            ApiError::Login { source, .. } => match source.as_ref() {
+                RestError::LoginError { .. } => StatusCode::LoginError,
+                _ => StatusCode::AuthenticationError,
+            },
+            ApiError::ConnectionLock { .. } => StatusCode::InternalError,
+            ApiError::StatementLocking { .. } => StatusCode::InternalError,
+            ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
+            ApiError::QueryResponseProcess {
+                source: boxed_error,
+                ..
+            } => {
+                use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
+                use crate::compression_types::CompressionTypeError;
+                use crate::file_manager::FileManagerError;
+
+                match boxed_error.as_ref() {
+                    QueryResponseProcessingError::FileUpload { source, .. }
+                    | QueryResponseProcessingError::FileDownload { source, .. } => match source {
+                        FileManagerError::NoFilesMatched { .. } => StatusCode::LocalFileNotFound,
+                        FileManagerError::CompressionType {
+                            source: CompressionTypeError::UnsupportedCompressionType { .. },
+                            ..
+                        } => StatusCode::UnsupportedCompression,
+                        // A too-large source file / stage object is an input
+                        // error, not a driver fault — surface it as
+                        // `InvalidArgument` rather than `InternalError`.
+                        s if s.is_file_too_large() => StatusCode::InvalidArgument,
+                        _ => StatusCode::InternalError,
+                    },
+                    QueryResponseProcessingError::RemoteFileNotFound { .. } => {
+                        StatusCode::RemoteFileNotFound
+                    }
+                    _ => StatusCode::InternalError,
+                }
+            }
+            ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
+            ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
+            ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
+            ApiError::Statement { .. } => StatusCode::InternalError,
+            ApiError::Query { .. } => StatusCode::InternalError,
+            ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
+            ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
+            ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
+            ApiError::ChunkFetch { .. } => StatusCode::InternalError,
+            ApiError::ArrowParse { .. } => StatusCode::InternalError,
+            ApiError::JsonChunkDecode { .. } => StatusCode::InternalError,
+            ApiError::BlockingTaskJoin { .. } => StatusCode::InternalError,
+            ApiError::InlineJsonEncode { .. } => StatusCode::InternalError,
+            ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
+            ApiError::Base64Decode { .. } => StatusCode::InternalError,
+            ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
+            ApiError::HttpRequest { .. } => StatusCode::GenericError,
+            ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
+            ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
+            ApiError::Logout { .. } => StatusCode::InternalError,
+            // Stage-binding failures are surfaced as a transport-layer
+            // generic error for now (no dedicated proto status code yet);
+            // the wrapper-side fallback work will add a dedicated variant and
+            // map to it. Until then, `GenericError` is the right bucket — the
+            // error trace carries enough detail for diagnostics.
+            ApiError::StageBinding { .. } => StatusCode::GenericError,
+            // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
+            // language wrappers can surface HYT00 / OperationalError correctly.
+            ApiError::QueryTimeout { .. } => StatusCode::GenericError,
+            ApiError::Cancelled { .. } => StatusCode::Cancelled,
         }
-        ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
-        ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
-        ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
-        ApiError::Statement { .. } => StatusCode::InternalError,
-        ApiError::Query { .. } => StatusCode::InternalError,
-        ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
-        ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
-        ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
-        ApiError::ChunkFetch { .. } => StatusCode::InternalError,
-        ApiError::ArrowParse { .. } => StatusCode::InternalError,
-        ApiError::JsonChunkDecode { .. } => StatusCode::InternalError,
-        ApiError::BlockingTaskJoin { .. } => StatusCode::InternalError,
-        ApiError::InlineJsonEncode { .. } => StatusCode::InternalError,
-        ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
-        ApiError::Base64Decode { .. } => StatusCode::InternalError,
-        ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
-        ApiError::HttpRequest { .. } => StatusCode::GenericError,
-        ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
-        ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
-        ApiError::Logout { .. } => StatusCode::InternalError,
-        // Stage-binding failures are surfaced as a transport-layer
-        // generic error for now (no dedicated proto status code yet);
-        // the wrapper-side fallback work will add a dedicated variant and
-        // map to it. Until then, `GenericError` is the right bucket — the
-        // error trace carries enough detail for diagnostics.
-        ApiError::StageBinding { .. } => StatusCode::GenericError,
-        // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
-        // language wrappers can surface HYT00 / OperationalError correctly.
-        ApiError::QueryTimeout { .. } => StatusCode::GenericError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);

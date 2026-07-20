@@ -471,6 +471,7 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
         &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
     let elapsed = start.elapsed();
@@ -533,6 +534,7 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
         &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
     let elapsed = start.elapsed();
@@ -611,6 +613,7 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
             &SensitiveString::from("test_token"),
             &client_info,
             &RetryPolicy::default(),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
 
@@ -692,6 +695,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
                 &SensitiveString::from("test_token"),
                 &client_info,
                 &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
             )
             .await;
 
@@ -761,6 +765,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
                 &SensitiveString::from("test_token"),
                 &client_info,
                 &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
             )
             .await;
 
@@ -1096,6 +1101,7 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
             &SensitiveString::from("test_token"),
             &client_info,
             &retry_policy,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
 
@@ -1165,6 +1171,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
             &SensitiveString::from("test_token"),
             &client_info,
             &retry_policy,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         let elapsed = start.elapsed();
@@ -1665,6 +1672,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
         &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
     let elapsed = start.elapsed();
@@ -1740,6 +1748,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
     let elapsed = start.elapsed();

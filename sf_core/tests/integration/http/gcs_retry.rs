@@ -112,6 +112,7 @@ async fn gcs_download_401_returns_token_expired() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -154,6 +155,7 @@ async fn gcs_download_403_is_retried_then_succeeds() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -197,6 +199,7 @@ async fn gcs_download_400_with_presigned_url_is_retried() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -230,6 +233,7 @@ async fn gcs_download_400_without_presigned_url_is_not_retried() {
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -271,6 +275,7 @@ async fn gcs_download_404_is_not_retried() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -310,6 +315,7 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -374,6 +380,7 @@ async fn gcs_download_content_encoding_gzip_with_non_gzip_body_is_returned_verba
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -428,6 +435,7 @@ async fn gcs_download_content_encoding_gzip_with_gzip_body_is_not_decoded() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("download must succeed");
@@ -468,6 +476,7 @@ async fn gcs_download_without_content_encoding_header_is_unchanged() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("happy-path download must still succeed");
@@ -507,6 +516,7 @@ async fn gcs_download_content_length_match_succeeds() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("matching Content-Length must succeed");
@@ -548,6 +558,7 @@ async fn gcs_download_content_length_mismatch_truncated_body_is_http_error() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -581,6 +592,7 @@ async fn gcs_download_no_content_length_header_succeeds() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -620,6 +632,7 @@ async fn gcs_download_content_encoding_present_skips_length_check() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -654,6 +667,7 @@ async fn gcs_download_zero_byte_file_succeeds() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("zero-byte file must succeed");
@@ -692,6 +706,7 @@ async fn gcs_download_malformed_content_length_rejected_by_http_layer() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -732,6 +747,7 @@ async fn gcs_download_does_not_advertise_gzip_accept_encoding() {
         &test_policy(true, 0),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("download must succeed");
@@ -826,9 +842,14 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         unsafe_file_write: false,
     };
 
-    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("multi-file presigned GET should succeed");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        None,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("multi-file presigned GET should succeed");
 
     assert_eq!(results.len(), 2);
     let dir = std::path::Path::new(&local_location);
@@ -862,9 +883,14 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         unsafe_file_write: false,
     };
 
-    let err = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect_err("download must fail when neither URL nor token is available");
+    let err = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        None,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect_err("download must fail when neither URL nor token is available");
     // Walk the error chain (snafu wraps the leaf `MissingGcsCredentials`
     // through `GcsDownloadError` → `FileManagerError`).
     let chain: Vec<String> =
@@ -1018,6 +1044,7 @@ async fn gcs_download_400_triggers_url_refresh_and_succeeds() {
         &test_policy(true, 0),
         0,
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -1099,6 +1126,7 @@ async fn gcs_download_400_after_url_refresh_returns_presigned_url_expired() {
         &test_policy(true, 0),
         0,
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect_err("two consecutive 400s must fail fast");
@@ -1182,6 +1210,7 @@ async fn gcs_download_401_triggers_token_refresh_and_succeeds() {
         &test_policy(false, 0),
         0,
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -1245,6 +1274,7 @@ async fn gcs_download_401_with_unchanged_token_returns_token_expired() {
         &test_policy(false, 0),
         0,
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect_err("unchanged token must surface TokenExpired");
@@ -1338,6 +1368,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         true,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -1426,6 +1457,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         true,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -1505,6 +1537,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         true,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -1578,6 +1611,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         true,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect_err("two consecutive 400s on PUT must fail fast");
@@ -1681,6 +1715,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         &test_policy(true, 0),
         0,
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
     assert!(
@@ -1695,6 +1730,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         &test_policy(true, 0),
         0,
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
     assert!(
@@ -1798,6 +1834,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         data,
         &RetryPolicy::put_get(&ParamStore::new()),
         refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("batch download should succeed after per-file URL refresh");
@@ -1891,6 +1928,7 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         true,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -1966,9 +2004,14 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
         unsafe_file_write: false,
     };
 
-    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("git stage download should succeed even without sfc-digest");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        None,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("git stage download should succeed even without sfc-digest");
 
     assert_eq!(results.len(), 1);
     let written = std::fs::read(std::path::Path::new(&local_location).join("git-file.txt"))

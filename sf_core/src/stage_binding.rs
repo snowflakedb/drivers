@@ -113,6 +113,17 @@ pub enum StageBindingError {
     },
 }
 
+impl StageBindingError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        match self {
+            StageBindingError::CreateStage { source, .. }
+            | StageBindingError::PutQuery { source, .. } => source.is_cancelled(),
+            StageBindingError::Upload { source, .. } => source.is_cancelled(),
+            _ => false,
+        }
+    }
+}
+
 pub struct StageBindingContext<'a> {
     pub client: &'a reqwest::Client,
     pub query_parameters: &'a QueryParameters,
@@ -132,14 +143,15 @@ pub async fn upload_csv_bindings(
     flags: &StageBindingFlags,
     request_id: Uuid,
     csv_bytes: &[u8],
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<String, StageBindingError> {
     if flags.stage_state.load(Ordering::Relaxed) == StageState::Disabled {
         return DisabledSnafu.fail();
     }
 
-    ensure_stage(ctx, flags).await?;
-    let put_response = issue_put_query(ctx, request_id).await?;
-    upload_blob(ctx, csv_bytes, &put_response.data).await?;
+    ensure_stage(ctx, flags, cancel.clone()).await?;
+    let put_response = issue_put_query(ctx, request_id, cancel.clone()).await?;
+    upload_blob(ctx, csv_bytes, &put_response.data, cancel).await?;
 
     Ok(format!("@{BIND_STAGE_NAME}/{request_id}"))
 }
@@ -147,6 +159,7 @@ pub async fn upload_csv_bindings(
 async fn ensure_stage(
     ctx: &StageBindingContext<'_>,
     flags: &StageBindingFlags,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), StageBindingError> {
     if flags.stage_state.load(Ordering::Relaxed) == StageState::Created {
         return Ok(());
@@ -167,6 +180,7 @@ async fn ensure_stage(
         query_input,
         ctx.retry_policy,
         QueryExecutionMode::Blocking,
+        cancel,
     )
     .await;
 
@@ -178,9 +192,12 @@ async fn ensure_stage(
             Ok(())
         }
         Err(e) => {
-            flags
-                .stage_state
-                .store(StageState::Disabled, Ordering::Relaxed);
+            let next_state = if e.is_cancelled() {
+                StageState::Unknown
+            } else {
+                StageState::Disabled
+            };
+            flags.stage_state.store(next_state, Ordering::Relaxed);
             Err(e).context(CreateStageSnafu)
         }
     }
@@ -189,6 +206,7 @@ async fn ensure_stage(
 async fn issue_put_query(
     ctx: &StageBindingContext<'_>,
     request_id: Uuid,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Response, StageBindingError> {
     let put_sql = format!(
         "PUT 'file:///tmp/placeholder/0' '@{BIND_STAGE_NAME}/{request_id}' overwrite=true",
@@ -209,6 +227,7 @@ async fn issue_put_query(
         query_input,
         ctx.retry_policy,
         QueryExecutionMode::Blocking,
+        cancel,
     )
     .await
     .context(PutQuerySnafu)
@@ -218,6 +237,7 @@ async fn upload_blob(
     ctx: &StageBindingContext<'_>,
     csv_bytes: &[u8],
     data: &Data,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), StageBindingError> {
     let single = data
         .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param)
@@ -233,9 +253,15 @@ async fn upload_blob(
     // `perform_put_get_transfer`, so the storage client uses the default TLS
     // version window rather than the connection's narrowed one (see
     // adr/tls_version_enforcement_implementation_notes.md, "Known gaps").
-    upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, &mut None)
-        .await
-        .context(UploadSnafu)?;
+    upload_in_memory_file(
+        csv_bytes.to_vec(),
+        single,
+        ctx.put_get_policy,
+        &mut None,
+        cancel,
+    )
+    .await
+    .context(UploadSnafu)?;
     Ok(())
 }
 

@@ -40,6 +40,7 @@ async fn should_include_request_id_in_query_parameters() {
         QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -112,6 +113,7 @@ async fn should_retry_sync_query_on_connection_reset() {
         QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -167,6 +169,7 @@ async fn should_use_sync_mode_by_default() {
         QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -231,6 +234,7 @@ async fn should_include_statement_timeout_in_parameters_when_set() {
         },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -287,6 +291,7 @@ async fn should_not_include_parameters_when_timeout_not_set() {
         QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 

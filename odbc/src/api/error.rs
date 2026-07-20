@@ -15,7 +15,8 @@ use odbc_sys as sql;
 use proto_utils::ProtoError;
 use sf_core::protobuf::generated::database_driver_v1::{
     ErrorTraceEntry, GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
-    MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
+    MissingParameter as ProtoMissingParameter, StatusCode as ProtoStatusCode,
+    driver_error::ErrorType,
 };
 
 use error_trace::ErrorTrace;
@@ -1098,20 +1099,28 @@ impl OdbcError {
         let loc = std::panic::Location::caller();
         let location = Location::new(loc.file(), loc.line(), loc.column());
         let core_error = match error {
-            ProtoError::Application(driver_exception) => CoreProtobufError::Application {
-                error: Box::new(
-                    driver_exception
-                        .error
-                        .and_then(|error| error.error_type)
-                        .unwrap_or(ErrorType::GenericError(GenericError {})),
-                ),
-                message: driver_exception.message,
-                status_code: driver_exception.status_code,
-                error_trace: driver_exception.error_trace,
-                sql_state: driver_exception.sql_state,
-                query_id: driver_exception.query_id,
-                location,
-            },
+            ProtoError::Application(driver_exception) => {
+                // A core-side cancellation must surface as OperationCanceled (HY008),
+                // not a generic CoreError (HY000); the status_code carries the
+                // classification the ApiError->protobuf boundary already erased.
+                if driver_exception.status_code == ProtoStatusCode::Cancelled as i32 {
+                    return OdbcError::OperationCanceled { location };
+                }
+                CoreProtobufError::Application {
+                    error: Box::new(
+                        driver_exception
+                            .error
+                            .and_then(|error| error.error_type)
+                            .unwrap_or(ErrorType::GenericError(GenericError {})),
+                    ),
+                    message: driver_exception.message,
+                    status_code: driver_exception.status_code,
+                    error_trace: driver_exception.error_trace,
+                    sql_state: driver_exception.sql_state,
+                    query_id: driver_exception.query_id,
+                    location,
+                }
+            }
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
         };
         OdbcError::CoreError {

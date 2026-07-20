@@ -62,6 +62,7 @@ impl DatabaseDriverV1 {
         chunk_format: ChunkFormatKind,
         nullable_flags: &[bool],
         row_types: Vec<RowType>,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
         let (client, prefetch_config) = match conn_handle {
             Some(conn_handle) => {
@@ -99,6 +100,7 @@ impl DatabaseDriverV1 {
             nullable_flags,
             client,
             &prefetch_config,
+            cancel,
         )
         .await
         .context(ChunkFetchSnafu)?;

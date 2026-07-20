@@ -43,6 +43,7 @@ pub(super) async fn upload_to_azure_or_skip(
     skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<UploadStatus, AzureUploadError> {
     let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -50,7 +51,7 @@ pub(super) async fn upload_to_azure_or_skip(
 
     let head_needed = !overwrite || skip_upload_on_content_match;
     let remote = if head_needed {
-        match send_head_to_azure_blob(&client, &url, sas_token, policy).await {
+        match send_head_to_azure_blob(&client, &url, sas_token, policy, cancel.clone()).await {
             Ok(remote) => remote,
             Err(e) if !overwrite => {
                 // Cannot verify whether the blob exists; fail-CLOSED to
@@ -87,9 +88,13 @@ pub(super) async fn upload_to_azure_or_skip(
         SkipDecision::Upload => {}
     }
 
-    let body_len = multipart::upload_body_len(&prepared)
-        .await
-        .context(azure_upload_error::SourceIoSnafu)?;
+    let body_len = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return azure_upload_error::CancelledSnafu.fail(),
+        len = multipart::upload_body_len(&prepared) => {
+            len.context(azure_upload_error::SourceIoSnafu)?
+        }
+    };
     if body_len >= multipart.threshold.bytes() {
         azure_multipart_upload(
             &client,
@@ -99,10 +104,11 @@ pub(super) async fn upload_to_azure_or_skip(
             body_len,
             multipart.concurrency,
             policy,
+            cancel,
         )
         .await?;
     } else {
-        upload_to_azure(&client, &url, sas_token, prepared, policy).await?;
+        upload_to_azure(&client, &url, sas_token, prepared, policy, cancel).await?;
     }
     Ok(UploadStatus::Uploaded)
 }
@@ -158,6 +164,7 @@ pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<DownloadResponse, AzureDownloadError> {
     let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -166,19 +173,22 @@ pub async fn download_from_azure(
         || client.get(build_sas_url(&url, sas_token.reveal())),
         Method::GET,
         policy,
+        cancel.clone(),
     )
     .await?;
 
     // Extract metadata from response headers
     let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
 
-    let data = response
-        .bytes()
-        .await
-        .map_err(|e| AzureRequestError::Http {
-            detail: sanitize_sas(e.to_string()),
-        })?
-        .to_vec();
+    let data = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return azure_download_error::CancelledSnafu.fail(),
+        bytes = response.bytes() => bytes
+            .map_err(|e| AzureRequestError::Http {
+                detail: sanitize_sas(e.to_string()),
+            })?
+            .to_vec(),
+    };
     let cloud_byte_count = data.len() as i64;
 
     Ok(DownloadResponse {
@@ -217,11 +227,13 @@ async fn send_head_to_azure_blob(
     url: &str,
     sas_token: &SensitiveString,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Option<RemoteBlobHeader>, AzureUploadError> {
     match azure_request_with_retry(
         || client.head(build_sas_url(url, sas_token.reveal())),
         Method::HEAD,
         policy,
+        cancel.clone(),
     )
     .await
     {
@@ -262,6 +274,7 @@ async fn upload_to_azure(
     sas_token: &SensitiveString,
     prepared: PreparedUpload,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), AzureUploadError> {
     // `body_for` re-opens the source per retry; `prepared`'s gzip-tempfile guard
     // (if any) lives inside `prepared.source` and outlives this fn. CSE params
@@ -332,6 +345,7 @@ async fn upload_to_azure(
         &Method::PUT,
         url,
         policy,
+        cancel,
     )
     .await?;
 
@@ -355,6 +369,7 @@ async fn azure_multipart_upload(
     body_len: u64,
     concurrency: usize,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), AzureUploadError> {
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
         .context(azure_upload_error::FileTooLargeSnafu)?;
@@ -378,11 +393,14 @@ async fn azure_multipart_upload(
         multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
 
     let mut block_numbers: Vec<i32> = ReceiverStream::new(parts_rx)
-        .map(|part| async move {
-            let part = part.context(azure_upload_error::SourceIoSnafu)?;
-            let number = part.number;
-            azure_put_block(client, full_url, part, policy).await?;
-            Ok::<i32, AzureUploadError>(number)
+        .map(|part| {
+            let cancel = cancel.clone();
+            async move {
+                let part = part.context(azure_upload_error::SourceIoSnafu)?;
+                let number = part.number;
+                azure_put_block(client, full_url, part, policy, cancel).await?;
+                Ok::<i32, AzureUploadError>(number)
+            }
         })
         .buffer_unordered(concurrency)
         .try_collect()
@@ -413,6 +431,7 @@ async fn azure_multipart_upload(
         encryption_data_str.as_deref(),
         mat_desc_str.as_deref(),
         policy,
+        cancel,
     )
     .await?;
 
@@ -436,6 +455,7 @@ async fn azure_put_block(
     full_url: &str,
     part: multipart::UploadPart,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), AzureUploadError> {
     let block_id = azure_block_id(part.number);
     let body = part.body;
@@ -456,6 +476,7 @@ async fn azure_put_block(
         &Method::PUT,
         full_url,
         policy,
+        cancel,
     )
     .await
 }
@@ -470,6 +491,7 @@ async fn azure_put_block_list(
     encryption_data_str: Option<&str>,
     mat_desc_str: Option<&str>,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), AzureUploadError> {
     let body = build_block_list_xml(block_numbers);
     // Own everything the per-attempt async closure touches so the future is
@@ -497,6 +519,7 @@ async fn azure_put_block_list(
         &Method::PUT,
         full_url,
         policy,
+        cancel,
     )
     .await
 }
@@ -556,15 +579,22 @@ async fn azure_request_with_retry<F>(
     build_request: F,
     method: Method,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<reqwest::Response, AzureRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
     let ctx = HttpContext::new(method, "azure-transfer");
 
-    let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
+    let response = http_execute_with_retry(
+        build_request,
+        &ctx,
+        policy,
+        |r| async move { Ok(r) },
+        cancel,
+    )
+    .await
+    .map_err(map_http_error)?;
 
     tracing::info!(status = response.status().as_u16(), "HTTP response");
 
@@ -621,6 +651,10 @@ impl UploadRetryAdapter for AzureUploadRetry {
         }
         .build()
     }
+
+    fn on_cancelled(&self) -> AzureUploadError {
+        azure_upload_error::CancelledSnafu.build()
+    }
 }
 
 /// Executes an Azure upload with retry, accepting a **fallible** request-builder closure.
@@ -636,15 +670,17 @@ async fn azure_upload_with_retry<F>(
     method: &reqwest::Method,
     url: &str,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), AzureUploadError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
 {
-    cloud_http::upload_with_retry(policy, &AzureUploadRetry, method, url, build_request).await
+    cloud_http::upload_with_retry(policy, &AzureUploadRetry, method, url, build_request, cancel).await
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
     match e {
+        HttpError::Cancelled { .. } => AzureRequestError::Cancelled,
         HttpError::Transport { source, .. } => AzureRequestError::Http {
             detail: sanitize_sas(source.to_string()),
         },
@@ -824,6 +860,7 @@ pub async fn download_from_azure_streaming(
     multipart: MultipartParams,
     policy: &RetryPolicy,
     spill_target: cloud_http::CloudSpillTarget<'_>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -831,7 +868,9 @@ pub async fn download_from_azure_streaming(
     let full_url = build_sas_url(&url, sas_token.reveal());
 
     // HEAD (Get Blob Properties) for size + metadata, to route single vs ranged.
-    let head = azure_request_with_retry(|| client.head(&full_url), Method::HEAD, policy).await?;
+    let head =
+        azure_request_with_retry(|| client.head(&full_url), Method::HEAD, policy, cancel.clone())
+            .await?;
     // Read the size from the Content-Length header rather than reqwest's
     // `content_length()`, which is unreliable for HEAD responses (no body to
     // measure). Real Azure always sends Content-Length on Get Blob Properties.
@@ -877,6 +916,7 @@ pub async fn download_from_azure_streaming(
             multipart.concurrency,
             policy,
             spill_target,
+            cancel,
         )
         .await?;
         // Ranged path: size came from HEAD, so no wire-byte tracking is needed.
@@ -886,8 +926,9 @@ pub async fn download_from_azure_streaming(
         )
     } else {
         let response =
-            azure_request_with_retry(|| client.get(&full_url), Method::GET, policy).await?;
-        let reader = cloud_http::spawn_byte_stream_producer(response);
+            azure_request_with_retry(|| client.get(&full_url), Method::GET, policy, cancel.clone())
+                .await?;
+        let reader = cloud_http::spawn_byte_stream_producer(response, cancel);
         let handle = reader.bytes_read_handle();
         (
             cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
@@ -927,6 +968,7 @@ async fn azure_range_download(
     concurrency: usize,
     policy: &RetryPolicy,
     target: cloud_http::CloudSpillTarget<'_>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
     let mk_temp_err = |e: std::io::Error| {
         azure_download_error::TempFileSnafu {
@@ -982,8 +1024,9 @@ async fn azure_range_download(
     let results: Vec<Result<(), AzureDownloadError>> = futures::stream::iter(ranges)
         .map(|range| {
             let file = Arc::clone(&file);
+            let cancel = cancel.clone();
             async move {
-                let bytes = azure_get_range(client, full_url, &range, policy).await?;
+                let bytes = azure_get_range(client, full_url, &range, policy, cancel).await?;
                 tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
                     .await
                     .map_err(|e| {
@@ -1033,6 +1076,7 @@ async fn azure_get_range(
     full_url: &str,
     range: &multipart::DownloadRange,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Bytes, AzureDownloadError> {
     let range_header = format!("bytes={}-{}", range.start, range.end);
     let response = azure_request_with_retry(
@@ -1043,6 +1087,7 @@ async fn azure_get_range(
         },
         Method::GET,
         policy,
+        cancel,
     )
     .await?;
     // A body-read failure after a successful response maps to the same
@@ -1106,6 +1151,8 @@ enum AzureRequestError {
     MissingMetadata { field: String },
     #[snafu(display("Azure retry exhausted: {detail}"))]
     RetryExhausted { detail: String },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled,
 }
 
 impl From<AzureRequestError> for AzureUploadError {
@@ -1124,6 +1171,7 @@ impl From<AzureRequestError> for AzureUploadError {
             AzureRequestError::RetryExhausted { detail } => {
                 azure_upload_error::RetryExhaustedSnafu { detail }.build()
             }
+            AzureRequestError::Cancelled => azure_upload_error::CancelledSnafu.build(),
         }
     }
 }
@@ -1146,6 +1194,7 @@ impl From<AzureRequestError> for AzureDownloadError {
             AzureRequestError::RetryExhausted { detail } => {
                 azure_download_error::RetryExhaustedSnafu { detail }.build()
             }
+            AzureRequestError::Cancelled => azure_download_error::CancelledSnafu.build(),
         }
     }
 }
@@ -1202,6 +1251,17 @@ pub enum AzureUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl AzureUploadError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, AzureUploadError::Cancelled { .. })
+    }
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -1262,6 +1322,17 @@ pub enum AzureDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl AzureDownloadError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, AzureDownloadError::Cancelled { .. })
+    }
 }
 
 // --- Unit tests ---
@@ -1642,6 +1713,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -1676,6 +1748,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1722,6 +1795,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -1756,6 +1830,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1787,6 +1862,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1820,6 +1896,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1943,6 +2020,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2000,6 +2078,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         assert!(
@@ -2049,6 +2128,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2133,6 +2213,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("retry should recover and existence skip should fire");
@@ -2164,6 +2245,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         assert!(
@@ -2203,6 +2285,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("skip_match path should fail-OPEN to PUT after HEAD retry exhaustion");
@@ -2235,6 +2318,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         assert!(
@@ -2272,6 +2356,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
         assert!(
@@ -2346,6 +2431,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("block-blob upload should succeed against the mock");
@@ -2403,6 +2489,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             cloud_http::CloudSpillTarget::Temp(spill.path()),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -2448,6 +2535,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             cloud_http::CloudSpillTarget::Part(&part_path),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -2494,6 +2582,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             cloud_http::CloudSpillTarget::Part(&part_path),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
 

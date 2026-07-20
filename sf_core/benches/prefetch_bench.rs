@@ -223,6 +223,7 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
                             downloader,
                             parser,
                             &config,
+                            tokio_util::sync::CancellationToken::new(),
                         ))
                         .expect("failed to create prefetch reader");
 
@@ -324,6 +325,7 @@ fn bench_json_prefetch(c: &mut Criterion) {
                             downloader,
                             parser,
                             &config,
+                            tokio_util::sync::CancellationToken::new(),
                         ))
                         .expect("failed to create prefetch reader");
 

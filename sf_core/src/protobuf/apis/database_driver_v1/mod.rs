@@ -64,6 +64,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn database_new(
         &self,
         _input: DatabaseNewRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<DatabaseNewResponse, DriverException> {
         let handle = self.driver.database_new();
         Ok(DatabaseNewResponse {
@@ -75,6 +76,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn database_set_options(
         &self,
         input: DatabaseSetOptionsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<DatabaseSetOptionsResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
         let options = proto_options_to_hashmap(input.options);
@@ -97,6 +99,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn database_init(
         &self,
         input: DatabaseInitRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<DatabaseInitResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
@@ -108,6 +111,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn database_release(
         &self,
         input: DatabaseReleaseRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<DatabaseReleaseResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
@@ -121,6 +125,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn database_fetch_chunk(
         &self,
         input: DatabaseFetchChunkRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<DatabaseFetchChunkResponse, DriverException> {
         let conn_handle = input.conn_handle.map(|h| h.into());
         let _ = required(input.chunks.first(), "At least one chunk is required")?;
@@ -161,6 +166,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 chunk_format,
                 &nullable_flags,
                 row_types,
+                cancel,
             )
             .await
             .to_protobuf()?;
@@ -175,6 +181,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_new(
         &self,
         _input: ConnectionNewRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionNewResponse, DriverException> {
         let handle = self.driver.connection_new();
         Ok(ConnectionNewResponse {
@@ -186,6 +193,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_set_options(
         &self,
         input: ConnectionSetOptionsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionSetOptionsResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let options = proto_options_to_hashmap(input.options);
@@ -208,6 +216,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_init(
         &self,
         input: ConnectionInitRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let db_handle = required(input.db_handle, "Database handle is required")?;
@@ -241,7 +250,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         }
 
         self.driver
-            .connection_init(conn_handle.into(), db_handle.into())
+            .connection_init(conn_handle.into(), db_handle.into(), cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionInitResponse {})
@@ -251,6 +260,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_release(
         &self,
         input: ConnectionReleaseRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionReleaseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -264,11 +274,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_close(
         &self,
         input: ConnectionCloseRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionCloseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         self.driver
-            .connection_close(conn_handle.into())
+            .connection_close(conn_handle.into(), cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionCloseResponse {})
@@ -278,6 +289,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_is_closed(
         &self,
         input: ConnectionIsClosedRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionIsClosedResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -293,6 +305,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_is_expired(
         &self,
         input: ConnectionIsExpiredRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionIsExpiredResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -308,6 +321,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_info(
         &self,
         input: ConnectionGetInfoRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetInfoResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -327,6 +341,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_objects(
         &self,
         input: ConnectionGetObjectsRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetObjectsResponse, DriverException> {
         use crate::apis::database_driver_v1::GetObjectsRequest;
 
@@ -344,7 +359,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let info = self
             .driver
-            .connection_get_objects(req)
+            .connection_get_objects(req, cancel)
             .await
             .to_protobuf()?;
 
@@ -361,6 +376,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_table_schema(
         &self,
         _input: ConnectionGetTableSchemaRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetTableSchemaResponse, DriverException> {
         Err(not_implemented(
             "connection_get_table_schema is not yet implemented",
@@ -374,6 +390,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_table_types(
         &self,
         _input: ConnectionGetTableTypesRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetTableTypesResponse, DriverException> {
         Err(not_implemented(
             "connection_get_table_types is not yet implemented",
@@ -388,11 +405,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_commit(
         &self,
         input: ConnectionCommitRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionCommitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         self.driver
-            .connection_commit(conn_handle.into())
+            .connection_commit(conn_handle.into(), cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionCommitResponse {})
@@ -406,11 +424,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_rollback(
         &self,
         input: ConnectionRollbackRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionRollbackResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         self.driver
-            .connection_rollback(conn_handle.into())
+            .connection_rollback(conn_handle.into(), cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionRollbackResponse {})
@@ -424,12 +443,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_set_autocommit(
         &self,
         input: ConnectionSetAutocommitRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionSetAutocommitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         tracing::Span::current().record("autocommit", input.autocommit);
         self.driver
-            .connection_set_autocommit(conn_handle.into(), input.autocommit)
+            .connection_set_autocommit(conn_handle.into(), input.autocommit, cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionSetAutocommitResponse {})
@@ -443,6 +463,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_use_database(
         &self,
         input: ConnectionUseDatabaseRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionUseDatabaseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         // Record the trimmed form so the span matches what actually executes — the
@@ -450,7 +471,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         tracing::Span::current().record("database", input.database.trim());
         self.driver
-            .connection_use_database(conn_handle.into(), &input.database)
+            .connection_use_database(conn_handle.into(), &input.database, cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionUseDatabaseResponse {})
@@ -464,12 +485,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_use_schema(
         &self,
         input: ConnectionUseSchemaRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionUseSchemaResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         tracing::Span::current().record("schema", input.schema.trim());
         self.driver
-            .connection_use_schema(conn_handle.into(), &input.schema)
+            .connection_use_schema(conn_handle.into(), &input.schema, cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionUseSchemaResponse {})
@@ -482,6 +504,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_set_session_parameters(
         &self,
         input: ConnectionSetSessionParametersRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionSetSessionParametersResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -497,6 +520,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_parameter(
         &self,
         input: ConnectionGetParameterRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetParameterResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -516,6 +540,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_server_version(
         &self,
         input: ConnectionGetServerVersionRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetServerVersionResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -535,6 +560,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_all_parameters(
         &self,
         input: ConnectionGetAllParametersRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetAllParametersResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -554,6 +580,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_validate_options(
         &self,
         input: ConnectionValidateOptionsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionValidateOptionsResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -578,12 +605,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_query_result(
         &self,
         input: ConnectionGetQueryResultRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .connection_get_query_result(conn_handle.into(), input.query_id)
+            .connection_get_query_result(conn_handle.into(), input.query_id, cancel)
             .await
             .to_protobuf()?;
 
@@ -597,12 +625,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_result_set(
         &self,
         input: ConnectionGetResultSetRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ResultSetResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .create_result_set_from_sfqid(conn_handle.into(), input.query_id)
+            .create_result_set_from_sfqid(conn_handle.into(), input.query_id, cancel)
             .await
             .to_protobuf()?;
 
@@ -613,11 +642,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_upload_stream(
         &self,
         input: ConnectionUploadStreamRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionUploadStreamResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let rs_info = self
             .driver
-            .connection_upload_stream(conn_handle.into(), input.sql, input.data)
+            .connection_upload_stream(conn_handle.into(), input.sql, input.data, cancel)
             .await
             .to_protobuf()?;
         Ok(ConnectionUploadStreamResponse {
@@ -633,6 +663,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_download_stream(
         &self,
         input: ConnectionDownloadStreamRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionDownloadStreamResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let data = self
@@ -642,6 +673,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 &input.stage_name,
                 &input.source_filename,
                 input.decompress,
+                cancel,
             )
             .await
             .to_protobuf()?;
@@ -655,12 +687,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_get_query_status(
         &self,
         input: ConnectionGetQueryStatusRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionGetQueryStatusResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let result = self
             .driver
-            .connection_get_query_status(conn_handle.into(), &input.query_id)
+            .connection_get_query_status(conn_handle.into(), &input.query_id, cancel)
             .await
             .to_protobuf()?;
 
@@ -671,6 +704,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_abort_query(
         &self,
         input: ConnectionAbortQueryRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionAbortQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -690,6 +724,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_send_http(
         &self,
         input: ConnectionSendHttpRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionSendHttpResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -716,6 +751,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_request_token(
         &self,
         input: ConnectionTokenRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionTokenResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -747,6 +783,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn connection_heartbeat(
         &self,
         input: ConnectionHeartbeatRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConnectionHeartbeatResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let timeout = input
@@ -764,6 +801,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_new(
         &self,
         input: StatementNewRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementNewResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
@@ -780,6 +818,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_release(
         &self,
         input: StatementReleaseRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementReleaseResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
@@ -793,6 +832,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_set_sql_query(
         &self,
         input: StatementSetSqlQueryRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementSetSqlQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
@@ -810,6 +850,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_set_substrait_plan(
         &self,
         _input: StatementSetSubstraitPlanRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementSetSubstraitPlanResponse, DriverException> {
         // TODO: Implement when corresponding API method is available
         Err(not_implemented(
@@ -821,11 +862,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_prepare(
         &self,
         input: StatementPrepareRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
         let result = self
             .driver
-            .statement_prepare(stmt_handle.into())
+            .statement_prepare(stmt_handle.into(), cancel)
             .await
             .to_protobuf()?;
         let result_ptr = reader_to_arrow_stream_ptr(result.stream);
@@ -847,6 +889,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_set_options(
         &self,
         input: StatementSetOptionsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementSetOptionsResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
         let options = proto_options_to_hashmap(input.options);
@@ -872,6 +915,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_get_parameter_schema(
         &self,
         _input: StatementGetParameterSchemaRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementGetParameterSchemaResponse, DriverException> {
         Err(not_implemented(
             "statement_get_parameter_schema is not yet implemented",
@@ -882,6 +926,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_execute_query(
         &self,
         input: StatementExecuteQueryRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
@@ -900,7 +945,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_query(stmt_handle.into(), bindings_opt, timeout_seconds)
+            .statement_execute_query(stmt_handle.into(), bindings_opt, timeout_seconds, cancel)
             .await
             .to_protobuf()?;
 
@@ -911,6 +956,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_execute_async(
         &self,
         input: StatementExecuteAsyncRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementExecuteAsyncResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
@@ -927,7 +973,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_async(stmt_handle.into(), bindings_opt)
+            .statement_execute_async(stmt_handle.into(), bindings_opt, cancel)
             .await
             .to_protobuf()?;
 
@@ -943,6 +989,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_execute_partitions(
         &self,
         _input: StatementExecutePartitionsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementExecutePartitionsResponse, DriverException> {
         Err(not_implemented(
             "statement_execute_partitions is not yet implemented",
@@ -956,6 +1003,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn statement_read_partition(
         &self,
         _input: StatementReadPartitionRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StatementReadPartitionResponse, DriverException> {
         Err(not_implemented(
             "statement_read_partition is not yet implemented",
@@ -966,12 +1014,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn result_set_get_stream(
         &self,
         input: ResultSetGetStreamRequest,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ResultSetGetStreamResponse, DriverException> {
         let handle = required(input.result_set_handle, "ResultSet handle is required")?;
 
         let result = self
             .driver
-            .result_set_get_stream(handle.into())
+            .result_set_get_stream(handle.into(), cancel)
             .await
             .to_protobuf()?;
 
@@ -982,6 +1031,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn result_set_get_chunks(
         &self,
         input: ResultSetGetChunksRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ResultSetGetChunksResponse, DriverException> {
         let result_set_handle = required(input.result_set_handle, "ResultSet handle is required")?;
 
@@ -996,6 +1046,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn result_set_release(
         &self,
         input: ResultSetReleaseRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ResultSetReleaseResponse, DriverException> {
         let handle = required(input.result_set_handle, "ResultSet handle is required")?;
 
@@ -1010,6 +1061,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn config_load_all_sections(
         &self,
         input: ConfigLoadAllSectionsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
         let paths = if input.config_file.is_some() || input.connections_file.is_some() {
             path_resolver::ConfigPaths {
@@ -1045,6 +1097,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn config_get_paths(
         &self,
         _input: ConfigGetPathsRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ConfigGetPathsResponse, DriverException> {
         let paths = path_resolver::get_config_paths()
             .context(ConfigurationSnafu)
@@ -1074,6 +1127,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn telemetry_send_api_usage(
         &self,
         input: TelemetrySendApiUsageRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
@@ -1097,6 +1151,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn telemetry_send_wrapper_error(
         &self,
         input: TelemetrySendWrapperErrorRequest,
+        _cancel: tokio_util::sync::CancellationToken,
     ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
@@ -1287,188 +1342,234 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         &self,
         input: DatabaseNewRequest,
     ) -> BlockingProtoResult<DatabaseNewResponse> {
-        block_on_client_call(self.database_new(input))
+        block_on_client_call(self.database_new(input, tokio_util::sync::CancellationToken::new()))
     }
 
     fn database_init_blocking(
         &self,
         input: DatabaseInitRequest,
     ) -> BlockingProtoResult<DatabaseInitResponse> {
-        block_on_client_call(self.database_init(input))
+        block_on_client_call(self.database_init(input, tokio_util::sync::CancellationToken::new()))
     }
 
     fn connection_new_blocking(
         &self,
         input: ConnectionNewRequest,
     ) -> BlockingProtoResult<ConnectionNewResponse> {
-        block_on_client_call(self.connection_new(input))
+        block_on_client_call(self.connection_new(input, tokio_util::sync::CancellationToken::new()))
     }
 
     fn connection_init_blocking(
         &self,
         input: ConnectionInitRequest,
     ) -> BlockingProtoResult<ConnectionInitResponse> {
-        block_on_client_call(self.connection_init(input))
+        block_on_client_call(
+            self.connection_init(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_set_options_blocking(
         &self,
         input: ConnectionSetOptionsRequest,
     ) -> BlockingProtoResult<ConnectionSetOptionsResponse> {
-        block_on_client_call(self.connection_set_options(input))
+        block_on_client_call(
+            self.connection_set_options(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn statement_new_blocking(
         &self,
         input: StatementNewRequest,
     ) -> BlockingProtoResult<StatementNewResponse> {
-        block_on_client_call(self.statement_new(input))
+        block_on_client_call(self.statement_new(input, tokio_util::sync::CancellationToken::new()))
     }
 
     fn statement_execute_query_blocking(
         &self,
         input: StatementExecuteQueryRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
-        block_on_client_call(self.statement_execute_query(input))
+        block_on_client_call(
+            self.statement_execute_query(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn statement_set_sql_query_blocking(
         &self,
         input: StatementSetSqlQueryRequest,
     ) -> BlockingProtoResult<StatementSetSqlQueryResponse> {
-        block_on_client_call(self.statement_set_sql_query(input))
+        block_on_client_call(
+            self.statement_set_sql_query(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn statement_set_options_blocking(
         &self,
         input: StatementSetOptionsRequest,
     ) -> BlockingProtoResult<StatementSetOptionsResponse> {
-        block_on_client_call(self.statement_set_options(input))
+        block_on_client_call(
+            self.statement_set_options(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn statement_release_blocking(
         &self,
         input: StatementReleaseRequest,
     ) -> BlockingProtoResult<StatementReleaseResponse> {
-        block_on_client_call(self.statement_release(input))
+        block_on_client_call(
+            self.statement_release(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
     ) -> BlockingProtoResult<DatabaseFetchChunkResponse> {
-        block_on_client_call(self.database_fetch_chunk(input))
+        block_on_client_call(
+            self.database_fetch_chunk(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
     ) -> BlockingProtoResult<ConnectionReleaseResponse> {
-        block_on_client_call(self.connection_release(input))
+        block_on_client_call(
+            self.connection_release(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn database_release_blocking(
         &self,
         input: DatabaseReleaseRequest,
     ) -> BlockingProtoResult<DatabaseReleaseResponse> {
-        block_on_client_call(self.database_release(input))
+        block_on_client_call(
+            self.database_release(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_close_blocking(
         &self,
         input: ConnectionCloseRequest,
     ) -> BlockingProtoResult<ConnectionCloseResponse> {
-        block_on_client_call(self.connection_close(input))
+        block_on_client_call(
+            self.connection_close(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_is_closed_blocking(
         &self,
         input: ConnectionIsClosedRequest,
     ) -> BlockingProtoResult<ConnectionIsClosedResponse> {
-        block_on_client_call(self.connection_is_closed(input))
+        block_on_client_call(
+            self.connection_is_closed(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_is_expired_blocking(
         &self,
         input: ConnectionIsExpiredRequest,
     ) -> BlockingProtoResult<ConnectionIsExpiredResponse> {
-        block_on_client_call(self.connection_is_expired(input))
+        block_on_client_call(
+            self.connection_is_expired(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_get_info_blocking(
         &self,
         input: ConnectionGetInfoRequest,
     ) -> BlockingProtoResult<ConnectionGetInfoResponse> {
-        block_on_client_call(self.connection_get_info(input))
+        block_on_client_call(
+            self.connection_get_info(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_get_server_version_blocking(
         &self,
         input: ConnectionGetServerVersionRequest,
     ) -> BlockingProtoResult<ConnectionGetServerVersionResponse> {
-        block_on_client_call(self.connection_get_server_version(input))
+        block_on_client_call(
+            self.connection_get_server_version(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_get_result_set_blocking(
         &self,
         input: ConnectionGetResultSetRequest,
     ) -> Result<ResultSetResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_get_result_set(input))
+        BLOCKING_CLIENT_RUNTIME.block_on(
+            self.connection_get_result_set(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn result_set_get_stream_blocking(
         &self,
         input: ResultSetGetStreamRequest,
     ) -> BlockingProtoResult<ResultSetGetStreamResponse> {
-        block_on_client_call(self.result_set_get_stream(input))
+        block_on_client_call(
+            self.result_set_get_stream(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn result_set_get_chunks_blocking(
         &self,
         input: ResultSetGetChunksRequest,
     ) -> BlockingProtoResult<ResultSetGetChunksResponse> {
-        block_on_client_call(self.result_set_get_chunks(input))
+        block_on_client_call(
+            self.result_set_get_chunks(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn result_set_release_blocking(
         &self,
         input: ResultSetReleaseRequest,
     ) -> BlockingProtoResult<ResultSetReleaseResponse> {
-        block_on_client_call(self.result_set_release(input))
+        block_on_client_call(
+            self.result_set_release(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn telemetry_send_api_usage_blocking(
         &self,
         input: TelemetrySendApiUsageRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse> {
-        block_on_client_call(self.telemetry_send_api_usage(input))
+        block_on_client_call(
+            self.telemetry_send_api_usage(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn telemetry_send_wrapper_error_blocking(
         &self,
         input: TelemetrySendWrapperErrorRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse> {
-        block_on_client_call(self.telemetry_send_wrapper_error(input))
+        block_on_client_call(
+            self.telemetry_send_wrapper_error(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_get_query_result_blocking(
         &self,
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
-        block_on_client_call(self.connection_get_query_result(input))
+        block_on_client_call(
+            self.connection_get_query_result(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_upload_stream_blocking(
         &self,
         input: ConnectionUploadStreamRequest,
     ) -> BlockingProtoResult<ConnectionUploadStreamResponse> {
-        block_on_client_call(self.connection_upload_stream(input))
+        block_on_client_call(
+            self.connection_upload_stream(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 
     fn connection_download_stream_blocking(
         &self,
         input: ConnectionDownloadStreamRequest,
     ) -> BlockingProtoResult<ConnectionDownloadStreamResponse> {
-        block_on_client_call(self.connection_download_stream(input))
+        block_on_client_call(
+            self.connection_download_stream(input, tokio_util::sync::CancellationToken::new()),
+        )
     }
 }

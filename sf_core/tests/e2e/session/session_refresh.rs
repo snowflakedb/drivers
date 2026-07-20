@@ -113,10 +113,17 @@ fn should_refresh_session_proactively() {
 
         // When we login and immediately call refresh
         let policy = sf_core::config::retry::RetryPolicy::default();
-        let login_result =
-            snowflake_login_with_client(&http_client, &login_parameters, None, None, None, &policy)
-                .await
-                .expect("Login should succeed");
+        let login_result = snowflake_login_with_client(
+            &http_client,
+            &login_parameters,
+            None,
+            None,
+            None,
+            &policy,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("Login should succeed");
 
         let original_session_token = login_result.tokens.session_token.clone();
 

@@ -68,12 +68,19 @@ async fn request_text_with_retry(
     build: impl Fn() -> reqwest::RequestBuilder,
     ctx: &HttpContext,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(StatusCode, String), HttpError> {
-    execute_with_retry(build, ctx, policy, |resp| async move {
-        let status = resp.status();
-        let text = resp.text().await.context(TransportSnafu)?;
-        Ok((status, text))
-    })
+    execute_with_retry(
+        build,
+        ctx,
+        policy,
+        |resp| async move {
+            let status = resp.status();
+            let text = resp.text().await.context(TransportSnafu)?;
+            Ok((status, text))
+        },
+        cancel,
+    )
     .await
 }
 
@@ -503,6 +510,7 @@ pub async fn auth_request_data(
     token_cache: Option<&dyn TokenCache>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -517,10 +525,15 @@ pub async fn auth_request_data(
 
     match &login_parameters.login_method {
         LoginMethod::NativeOkta(okta_config) => {
-            let saml_html =
-                fetch_native_okta_saml(client, login_parameters, retry_policy, okta_config)
-                    .await
-                    .context(NativeOktaSnafu)?;
+            let saml_html = fetch_native_okta_saml(
+                client,
+                login_parameters,
+                retry_policy,
+                okta_config,
+                cancel.clone(),
+            )
+            .await
+            .context(NativeOktaSnafu)?;
 
             data.login_name = Some(okta_config.username.clone());
             data.authenticator = Some(okta_config.okta_url.to_string());
@@ -568,6 +581,7 @@ pub async fn auth_request_data(
                     *authentication_timeout_secs,
                     &DefaultBrowserOpener,
                     retry_policy,
+                    cancel.clone(),
                 )
                 .await
                 .context(ExternalBrowserSnafu)?;
@@ -730,6 +744,7 @@ async fn send_login_request(
     login_parameters: &LoginParameters,
     login_request: &AuthRequest,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<AuthResponse, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
 
@@ -799,15 +814,27 @@ async fn send_login_request(
 
     let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
 
-    let response = execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .context(HttpRetrySnafu {
-            context: "login request",
-        })?;
+    let response = execute_with_retry(
+        build_request,
+        &ctx,
+        policy,
+        |r| async move { Ok(r) },
+        cancel.clone(),
+    )
+    .await
+    .context(HttpRetrySnafu {
+        context: "login request",
+    })?;
 
-    read_response_json::<auth::AuthResponseMain>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(crate::http::retry::CancelledSnafu.build()).context(HttpRetrySnafu {
+            context: "login request",
+        }),
+        parsed = read_response_json::<auth::AuthResponseMain>(response) => {
+            parsed.context(InvalidSnowflakeResponseSnafu)
+        }
+    }
 }
 
 /// Drift C.5: per-request DPoP signing context for `send_login_request`.
@@ -827,6 +854,7 @@ pub async fn snowflake_login(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     crl_worker: SharedCrlWorker,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info, crl_worker)?;
     let policy = RetryPolicy::default();
@@ -837,6 +865,7 @@ pub async fn snowflake_login(
         None,
         None,
         &policy,
+        cancel,
     )
     .await
 }
@@ -858,6 +887,7 @@ pub async fn snowflake_login_with_client(
     token_cache: Option<&dyn TokenCache>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -980,6 +1010,7 @@ pub async fn snowflake_login_with_client(
         token_cache,
         prompt_locks,
         retry_policy,
+        cancel.clone(),
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -994,8 +1025,14 @@ pub async fn snowflake_login_with_client(
     );
 
     // Send the actual login request
-    let mut auth_response =
-        send_login_request(client, login_parameters, &login_request, retry_policy).await?;
+    let mut auth_response = send_login_request(
+        client,
+        login_parameters,
+        &login_request,
+        retry_policy,
+        cancel.clone(),
+    )
+    .await?;
 
     // Revoke cached token and retry if cached token caused failure
     if !auth_response.success {
@@ -1038,12 +1075,18 @@ pub async fn snowflake_login_with_client(
                     token_cache,
                     prompt_locks,
                     retry_policy,
+                    cancel.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
-                auth_response =
-                    send_login_request(client, login_parameters, &retry_request, retry_policy)
-                        .await?;
+                auth_response = send_login_request(
+                    client,
+                    login_parameters,
+                    &retry_request,
+                    retry_policy,
+                    cancel.clone(),
+                )
+                .await?;
             }
         }
         // OAuth refresh-on-failure: when GS rejects the OAuth access token
@@ -1093,12 +1136,18 @@ pub async fn snowflake_login_with_client(
                     token_cache,
                     prompt_locks,
                     retry_policy,
+                    cancel.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
-                auth_response =
-                    send_login_request(client, login_parameters, &retry_request, retry_policy)
-                        .await?;
+                auth_response = send_login_request(
+                    client,
+                    login_parameters,
+                    &retry_request,
+                    retry_policy,
+                    cancel.clone(),
+                )
+                .await?;
             }
         }
     }
@@ -1500,6 +1549,7 @@ pub async fn snowflake_query<'a>(
     query_input: QueryInput<'a>,
     execution_mode: QueryExecutionMode,
     crl_worker: SharedCrlWorker,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info, crl_worker)?;
     let policy = RetryPolicy::default();
@@ -1510,6 +1560,7 @@ pub async fn snowflake_query<'a>(
         query_input,
         &policy,
         execution_mode,
+        cancel,
     )
     .await
 }
@@ -1525,6 +1576,7 @@ pub async fn snowflake_query_with_client<'a>(
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     let session_token = session_token.as_ref();
 
@@ -1536,6 +1588,7 @@ pub async fn snowflake_query_with_client<'a>(
             session_token,
             query_input,
             retry_policy,
+            cancel,
         )
         .await;
     }
@@ -1547,6 +1600,7 @@ pub async fn snowflake_query_with_client<'a>(
         session_token,
         &query_input,
         retry_policy,
+        cancel,
     )
     .await
 }
@@ -1558,6 +1612,7 @@ async fn execute_async_with_fallback<'a>(
     session_token: &str,
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
         client,
@@ -1565,6 +1620,7 @@ async fn execute_async_with_fallback<'a>(
         session_token,
         &query_input,
         retry_policy,
+        cancel.clone(),
     )
     .await
     {
@@ -1612,6 +1668,7 @@ async fn execute_async_with_fallback<'a>(
         session_token,
         &query_input,
         retry_policy,
+        cancel,
     )
     .await?;
 
@@ -1652,6 +1709,7 @@ async fn execute_sync_with_retry<'a>(
     session_token: &str,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
 
@@ -1662,6 +1720,7 @@ async fn execute_sync_with_retry<'a>(
         query_input,
         request_id,
         retry_policy,
+        cancel,
     )
     .await
 }
@@ -1707,6 +1766,7 @@ async fn execute_sync_query<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
 
@@ -1769,15 +1829,29 @@ async fn execute_sync_query<'a>(
 
     let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
 
-    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
-        .await
-        .context(HttpRetrySnafu {
-            context: "query request",
-        })?;
+    let response = execute_with_retry(
+        build_request,
+        &ctx,
+        retry_policy,
+        |r| async move { Ok(r) },
+        cancel.clone(),
+    )
+    .await
+    .context(HttpRetrySnafu {
+        context: "query request",
+    })?;
 
-    let query_response = read_response_json::<query_response::Data>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let query_response = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(crate::http::retry::CancelledSnafu.build()).context(HttpRetrySnafu {
+                context: "query request",
+            });
+        }
+        parsed = read_response_json::<query_response::Data>(response) => {
+            parsed.context(InvalidSnowflakeResponseSnafu)?
+        }
+    };
 
     let elapsed_ms = send_start.elapsed().as_secs_f64() * 1000.0;
     tracing::debug!(
@@ -1795,6 +1869,7 @@ async fn execute_sync_query<'a>(
             session_token,
             &query_response,
             retry_policy,
+            cancel,
         )
         .await
         .context(AsyncQuerySnafu {
@@ -1823,6 +1898,7 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     session_token: S,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
     crate::rest::snowflake::async_exec::execute_blocking_with_async(
@@ -1832,6 +1908,7 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
         query_input,
         request_id,
         retry_policy,
+        cancel,
     )
     .await
     .context(AsyncQuerySnafu {
@@ -1852,6 +1929,7 @@ pub async fn snowflake_get_query_result(
     session_token: &str,
     query_id: &str,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, RestError> {
     tracing::info!(query_id = query_id, "Fetching query result");
 
@@ -1866,6 +1944,7 @@ pub async fn snowflake_get_query_result(
         session_token,
         &result_url,
         retry_policy,
+        cancel,
     )
     .await
     .context(AsyncQuerySnafu {
@@ -1906,6 +1985,7 @@ pub async fn get_query_status(
     session_token: &SensitiveString,
     query_id: &str,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<QueryStatusResult, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
 
@@ -1931,15 +2011,29 @@ pub async fn get_query_status(
     };
 
     let ctx = HttpContext::new(Method::GET, MONITORING_QUERIES_PATH);
-    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
-        .await
-        .context(HttpRetrySnafu {
-            context: "query status",
-        })?;
+    let response = execute_with_retry(
+        build_request,
+        &ctx,
+        retry_policy,
+        |r| async move { Ok(r) },
+        cancel.clone(),
+    )
+    .await
+    .context(HttpRetrySnafu {
+        context: "query status",
+    })?;
 
-    let body: QueryStatusResponse = read_response_json::<Option<QueryStatusResponseData>>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let body: QueryStatusResponse = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(crate::http::retry::CancelledSnafu.build()).context(HttpRetrySnafu {
+                context: "query status",
+            });
+        }
+        parsed = read_response_json::<Option<QueryStatusResponseData>>(response) => {
+            parsed.context(InvalidSnowflakeResponseSnafu)?
+        }
+    };
 
     if !body.success {
         let message = body.message.unwrap_or_else(|| "Unknown error".to_owned());
@@ -2388,6 +2482,19 @@ pub enum RestError {
         location: Location,
     },
 }
+
+impl RestError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        match self {
+            RestError::AsyncQuery { source, .. } => source.is_cancelled(),
+            RestError::HttpRetry { source, .. } => source.is_cancelled(),
+            RestError::NativeOkta { source, .. } => source.is_cancelled(),
+            RestError::ExternalBrowser { source, .. } => source.is_cancelled(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
     #[snafu(display("Failed to parse Snowflake response {source}"))]
@@ -2842,6 +2949,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
             ))
             .unwrap();
 
@@ -2876,6 +2984,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
             ))
             .unwrap();
 
@@ -2902,6 +3011,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
             ))
             .unwrap();
 
@@ -2932,6 +3042,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
             ))
             .unwrap();
 
@@ -2994,8 +3105,14 @@ mod tests {
                 },
             };
 
-            let result =
-                send_login_request(&client, &params, &auth_req, &RetryPolicy::default()).await;
+            let result = send_login_request(
+                &client,
+                &params,
+                &auth_req,
+                &RetryPolicy::default(),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
 
             assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
             assert_eq!(
@@ -3249,6 +3366,7 @@ mod tests {
                 &query_input,
                 uuid::Uuid::new_v4(),
                 &retry_policy,
+                tokio_util::sync::CancellationToken::new(),
             )
             .await;
 

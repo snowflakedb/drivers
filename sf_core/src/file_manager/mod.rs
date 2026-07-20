@@ -114,6 +114,7 @@ pub async fn upload_files(
     data: &UploadData,
     policy: &RetryPolicy,
     mut refresher: Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
         expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
@@ -151,7 +152,8 @@ pub async fn upload_files(
             multipart: data.multipart,
         };
 
-        let result = upload_single_file(single_upload_data, policy, &mut refresher).await?;
+        let result =
+            upload_single_file(single_upload_data, policy, &mut refresher, cancel.clone()).await?;
         results.push(result);
     }
 
@@ -172,6 +174,22 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
     )
 }
 
+fn is_stream_cancelled_error(err: &FileManagerError) -> bool {
+    fn is_cancelled_io(source: &std::io::Error) -> bool {
+        source.kind() == std::io::ErrorKind::Interrupted
+            && source.to_string() == cloud_http::STREAM_CANCELLED_MESSAGE
+    }
+
+    match err {
+        FileManagerError::Io { source, .. } => is_cancelled_io(source),
+        FileManagerError::Decryption {
+            source: EncryptionError::Io { source, .. },
+            ..
+        } => is_cancelled_io(source),
+        _ => false,
+    }
+}
+
 /// Uploads one file. The `refresher` (if any) is used to refresh stage info
 /// on recoverable errors:
 /// - S3 stages: AWS `ExpiredToken` triggers a creds refresh
@@ -186,10 +204,11 @@ pub async fn upload_single_file(
     data: SingleUploadData,
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads a `ByteSource::Path` itself
     // (streaming), so `upload_single_file` no longer pre-reads the file.
-    upload_prepared_source(data.source.clone(), data, policy, refresher).await
+    upload_prepared_source(data.source.clone(), data, policy, refresher, cancel).await
 }
 
 /// Uploads an in-memory byte buffer to the stage location described by
@@ -207,8 +226,16 @@ pub async fn upload_in_memory_file(
     data: SingleUploadData,
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<UploadResult, FileManagerError> {
-    upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, refresher).await
+    upload_prepared_source(
+        ByteSource::Bytes(buffer.into()),
+        data,
+        policy,
+        refresher,
+        cancel,
+    )
+    .await
 }
 
 /// Shared core of the upload path used by both `upload_single_file` (file
@@ -220,6 +247,7 @@ async fn upload_prepared_source(
     data: SingleUploadData,
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads the source file from disk and
     // AES-encrypts it (blocking I/O + CPU-bound); run it off the async executor
@@ -242,6 +270,7 @@ async fn upload_prepared_source(
             policy,
             data.multipart,
             refresher,
+            cancel,
         )
         .await
         .context(S3UploadSnafu)?,
@@ -252,6 +281,7 @@ async fn upload_prepared_source(
             data.overwrite,
             &gcs_retry_policy(data.stage_info.presigned_url.is_some(), policy),
             refresher,
+            cancel,
         )
         .await
         .context(GcsUploadSnafu)?,
@@ -263,6 +293,7 @@ async fn upload_prepared_source(
             data.skip_upload_on_content_match,
             data.multipart,
             &azure_retry_policy(policy),
+            cancel,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -522,6 +553,7 @@ pub async fn download_files(
     mut data: DownloadData,
     policy: &RetryPolicy,
     mut refresher: Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
@@ -553,8 +585,14 @@ pub async fn download_files(
             unsafe_file_write: data.unsafe_file_write,
         };
 
-        let result =
-            download_single_file(single_download_data, policy, index, &mut refresher).await?;
+        let result = download_single_file(
+            single_download_data,
+            policy,
+            index,
+            &mut refresher,
+            cancel.clone(),
+        )
+        .await?;
         results.push(result);
     }
 
@@ -654,6 +692,7 @@ pub async fn download_single_file(
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<DownloadResult, FileManagerError> {
     // Blocking FS syscalls (create_dir_all/canonicalize); keep off the async executor.
     let (output_path, partial_path) = {
@@ -721,6 +760,7 @@ pub async fn download_single_file(
                 data.multipart,
                 refresher,
                 spill_target,
+                cancel.clone(),
             )
             .await
             .context(S3DownloadSnafu)?;
@@ -801,6 +841,20 @@ pub async fn download_single_file(
             .await
             .context(BlockingTaskSnafu)??;
 
+            // Cancelled after the blocking write but before publish: abandon the
+            // artifact and report cancellation rather than publishing a completed
+            // file (mirrors the GCS/Azure arms). The git-stage spilled temp
+            // auto-deletes on drop; only the `.part` path needs explicit removal.
+            if cancel.is_cancelled() {
+                if spilled_temp.is_none() {
+                    warn_remove_partial(&partial_path);
+                }
+                return Err(DownloadFileError::Cancelled {
+                    location: Location::new(file!(), line!(), 0),
+                })
+                .context(S3DownloadSnafu);
+            }
+
             // Atomic publish: rename into place after the .await cancellation point.
             // `Some(temp)` (git-stage ranged download): the raw temp is renamed
             // directly to output — single same-FS rename.
@@ -857,6 +911,7 @@ pub async fn download_single_file(
                 ),
                 per_file_index,
                 refresher,
+                cancel.clone(),
             )
             .await
             .context(GcsDownloadSnafu)?;
@@ -873,7 +928,7 @@ pub async fn download_single_file(
             // Rename happens after the `.await` (see below), so a cancelled/
             // dropped outer future cannot publish a file written by a detached
             // blocking task. The `.await` itself is the cancellation point.
-            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(move || {
+            let output_result = tokio::task::spawn_blocking(move || {
                 write_cloud_download(
                     body,
                     cse_info,
@@ -884,7 +939,34 @@ pub async fn download_single_file(
                 )
             })
             .await
-            .context(BlockingTaskSnafu)??;
+            .context(BlockingTaskSnafu)?;
+
+            // A cancelled streamed download surfaces as an Interrupted io error
+            // through write_cloud_download; classify it as CANCELLED rather than
+            // a generic write/decrypt failure.
+            let (output_byte_len, spilled_temp) = match output_result {
+                Ok(v) => v,
+                Err(e) if is_stream_cancelled_error(&e) => {
+                    return Err(GcsDownloadError::Cancelled {
+                        location: Location::new(file!(), line!(), 0),
+                    })
+                    .context(GcsDownloadSnafu);
+                }
+                Err(e) => return Err(e),
+            };
+
+            // Cancelled after the blocking write but before publish: abandon the
+            // artifact rather than publishing a completed file. The spilled temp
+            // auto-deletes on drop; only the `.part` path needs explicit removal.
+            if cancel.is_cancelled() {
+                if spilled_temp.is_none() {
+                    warn_remove_partial(&partial_path);
+                }
+                return Err(GcsDownloadError::Cancelled {
+                    location: Location::new(file!(), line!(), 0),
+                })
+                .context(GcsDownloadSnafu);
+            }
 
             // Atomic publish — runs after .await so a dropped future cannot publish.
             match spilled_temp {
@@ -952,6 +1034,7 @@ pub async fn download_single_file(
                 data.multipart,
                 &azure_retry_policy(policy),
                 spill_target,
+                cancel.clone(),
             )
             .await
             .context(AzureDownloadSnafu)?;
@@ -963,7 +1046,7 @@ pub async fn download_single_file(
             let partial_path2 = partial_path.clone();
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking;
             // same cancellation-safety rationale as the GCS arm above.
-            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(move || {
+            let output_result = tokio::task::spawn_blocking(move || {
                 write_cloud_download(
                     body,
                     cse_info,
@@ -974,7 +1057,34 @@ pub async fn download_single_file(
                 )
             })
             .await
-            .context(BlockingTaskSnafu)??;
+            .context(BlockingTaskSnafu)?;
+
+            // A cancelled streamed download surfaces as an Interrupted io error
+            // through write_cloud_download; classify it as CANCELLED rather than
+            // a generic write/decrypt failure.
+            let (output_byte_len, spilled_temp) = match output_result {
+                Ok(v) => v,
+                Err(e) if is_stream_cancelled_error(&e) => {
+                    return Err(AzureDownloadError::Cancelled {
+                        location: Location::new(file!(), line!(), 0),
+                    })
+                    .context(AzureDownloadSnafu);
+                }
+                Err(e) => return Err(e),
+            };
+
+            // Cancelled after the blocking write but before publish: abandon the
+            // artifact rather than publishing a completed file. The spilled temp
+            // auto-deletes on drop; only the `.part` path needs explicit removal.
+            if cancel.is_cancelled() {
+                if spilled_temp.is_none() {
+                    warn_remove_partial(&partial_path);
+                }
+                return Err(AzureDownloadError::Cancelled {
+                    location: Location::new(file!(), line!(), 0),
+                })
+                .context(AzureDownloadSnafu);
+            }
 
             // Atomic publish — runs after .await so a dropped future cannot publish.
             match spilled_temp {
@@ -1339,6 +1449,18 @@ impl FileManagerError {
                 ..
             }
         )
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        match self {
+            FileManagerError::GcsUpload { source, .. } => source.is_cancelled(),
+            FileManagerError::GcsDownload { source, .. } => source.is_cancelled(),
+            FileManagerError::AzureUpload { source, .. } => source.is_cancelled(),
+            FileManagerError::AzureDownload { source, .. } => source.is_cancelled(),
+            FileManagerError::S3Upload { source, .. } => source.is_cancelled(),
+            FileManagerError::S3Download { source, .. } => source.is_cancelled(),
+            _ => false,
+        }
     }
 }
 
@@ -2441,9 +2563,14 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        upload_single_file(data, &policy, &mut refresher)
-            .await
-            .expect("upload_single_file should succeed against the mock")
+        upload_single_file(
+            data,
+            &policy,
+            &mut refresher,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("upload_single_file should succeed against the mock")
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2566,9 +2693,14 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, &mut refresher)
-            .await
-            .expect("S3 upload should succeed against the mock");
+        let result = upload_single_file(
+            data,
+            &policy,
+            &mut refresher,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("S3 upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");
     }
 }

@@ -80,6 +80,7 @@ async fn azure_download_success_returns_data_and_metadata() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -128,6 +129,7 @@ async fn azure_download_403_is_retried_then_succeeds() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -162,6 +164,7 @@ async fn azure_download_404_is_not_retried() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -197,6 +200,7 @@ async fn azure_download_503_is_retried_then_succeeds() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -231,6 +235,7 @@ async fn azure_error_response_redacts_sas_token() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -281,6 +286,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -314,6 +320,7 @@ async fn azure_download_with_wrong_creds_type_fails() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -337,6 +344,7 @@ async fn azure_download_with_missing_storage_account_fails() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -416,9 +424,14 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         unsafe_file_write: false,
     };
 
-    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
-        .await
-        .expect("git stage download should succeed even without sfcdigest");
+    let results = download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        None,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("git stage download should succeed even without sfcdigest");
 
     assert_eq!(results.len(), 1);
     let written = std::fs::read(std::path::Path::new(&local_location).join("file.txt"))

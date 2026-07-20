@@ -434,24 +434,33 @@ fn connect_with_params(
 
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let db_handle = c
-            .database_new(DatabaseNewRequest {})
+            .database_new(
+                DatabaseNewRequest {},
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await?
             .db_handle
             .required("Database handle is required")?;
         let conn_handle = c
-            .connection_new(ConnectionNewRequest {})
+            .connection_new(
+                ConnectionNewRequest {},
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await?
             .conn_handle
             .required("Connection handle is required")?;
 
         let response = c
-            .connection_set_options(ConnectionSetOptionsRequest {
-                conn_handle: Some(conn_handle),
-                options,
-                // ODBC always connects via a connection string / DSN, so there
-                // is no bare-connect default-profile fallback to trigger.
-                no_connection_details: false,
-            })
+            .connection_set_options(
+                ConnectionSetOptionsRequest {
+                    conn_handle: Some(conn_handle),
+                    options,
+                    // ODBC always connects via a connection string / DSN, so there
+                    // is no bare-connect default-profile fallback to trigger.
+                    no_connection_details: false,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await?;
 
         for warning in &response.warnings {
@@ -465,11 +474,14 @@ fn connect_with_params(
                 DEFAULT_LOGIN_TIMEOUT_SECS.to_string().into(),
             )]);
             let response = c
-                .connection_set_options(ConnectionSetOptionsRequest {
-                    conn_handle: Some(conn_handle),
-                    options: follow_up,
-                    no_connection_details: false,
-                })
+                .connection_set_options(
+                    ConnectionSetOptionsRequest {
+                        conn_handle: Some(conn_handle),
+                        options: follow_up,
+                        no_connection_details: false,
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
                 .await?;
             for warning in &response.warnings {
                 tracing::warn!("connection option warning: {}", warning.message);
@@ -478,18 +490,21 @@ fn connect_with_params(
 
         apply_pre_connection_runtime_attrs_async(c, &pre_connection_attrs, conn_handle).await?;
 
-        c.connection_init(ConnectionInitRequest {
-            conn_handle: Some(conn_handle),
-            db_handle: Some(db_handle),
-            wrapper_identity: Some(WrapperIdentity {
-                driver_name: Some(ODBC_DRIVER_NAME.to_string()),
-                driver_version: Some(ODBC_DRIVER_VERSION.to_string()),
-                // Set at compile time in `build.rs` (`SF_ODBC_*`) from Cargo / rustc.
-                language_runtime: Some(env!("SF_ODBC_WRAPPER_LANGUAGE_RUNTIME").to_string()),
-                language_version: Some(env!("SF_ODBC_BUILD_RUST_SEMVER").to_string()),
-                language_compiler: None,
-            }),
-        })
+        c.connection_init(
+            ConnectionInitRequest {
+                conn_handle: Some(conn_handle),
+                db_handle: Some(db_handle),
+                wrapper_identity: Some(WrapperIdentity {
+                    driver_name: Some(ODBC_DRIVER_NAME.to_string()),
+                    driver_version: Some(ODBC_DRIVER_VERSION.to_string()),
+                    // Set at compile time in `build.rs` (`SF_ODBC_*`) from Cargo / rustc.
+                    language_runtime: Some(env!("SF_ODBC_WRAPPER_LANGUAGE_RUNTIME").to_string()),
+                    language_version: Some(env!("SF_ODBC_BUILD_RUST_SEMVER").to_string()),
+                    language_compiler: None,
+                }),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await?;
 
         Ok::<_, crate::api::OdbcError>((db_handle, conn_handle))
@@ -510,11 +525,14 @@ fn connect_with_params(
         Ok(rt) => rt
             .block_on(async |c| {
                 let info = c
-                    .connection_get_info(ConnectionGetInfoRequest {
-                        conn_handle: Some(conn_handle),
-                        info_codes: vec![],
-                        include_master_token: false,
-                    })
+                    .connection_get_info(
+                        ConnectionGetInfoRequest {
+                            conn_handle: Some(conn_handle),
+                            info_codes: vec![],
+                            include_master_token: false,
+                        },
+                        tokio_util::sync::CancellationToken::new(),
+                    )
                     .await?;
                 Ok::<Option<String>, crate::api::OdbcError>(info.database)
             })
@@ -586,10 +604,13 @@ async fn apply_pre_connection_runtime_attrs_async(
         {
             Some(val) => {
                 client
-                    .connection_set_autocommit(ConnectionSetAutocommitRequest {
-                        conn_handle: Some(conn_handle),
-                        autocommit: matches!(val, AutocommitValue::On),
-                    })
+                    .connection_set_autocommit(
+                        ConnectionSetAutocommitRequest {
+                            conn_handle: Some(conn_handle),
+                            autocommit: matches!(val, AutocommitValue::On),
+                        },
+                        tokio_util::sync::CancellationToken::new(),
+                    )
                     .await?;
             }
             None => {
@@ -792,17 +813,26 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     };
 
     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
+        c.connection_close(
+            ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await?;
-        c.connection_release(ConnectionReleaseRequest {
-            conn_handle: Some(conn_handle),
-        })
+        c.connection_release(
+            ConnectionReleaseRequest {
+                conn_handle: Some(conn_handle),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await?;
-        c.database_release(DatabaseReleaseRequest {
-            db_handle: Some(db_handle),
-        })
+        c.database_release(
+            DatabaseReleaseRequest {
+                db_handle: Some(db_handle),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await?;
         Ok::<_, crate::api::OdbcError>(())
     })?;
@@ -868,10 +898,13 @@ pub fn native_sql<E: OdbcEncoding>(
 fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResult<Option<String>> {
     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let resp = c
-            .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
-                key: key.to_string(),
-            })
+            .connection_get_parameter(
+                ConnectionGetParameterRequest {
+                    conn_handle: Some(*conn_handle),
+                    key: key.to_string(),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await?;
         Ok(resp.value)
     })
@@ -971,15 +1004,21 @@ fn commit_or_rollback(dbc: &Dbc, op: TxnOp) -> OdbcResult<()> {
     g.block_on(async |c| -> OdbcResult<()> {
         match op {
             TxnOp::Commit => {
-                c.connection_commit(ConnectionCommitRequest {
-                    conn_handle: Some(conn_handle),
-                })
+                c.connection_commit(
+                    ConnectionCommitRequest {
+                        conn_handle: Some(conn_handle),
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
                 .await?;
             }
             TxnOp::Rollback => {
-                c.connection_rollback(ConnectionRollbackRequest {
-                    conn_handle: Some(conn_handle),
-                })
+                c.connection_rollback(
+                    ConnectionRollbackRequest {
+                        conn_handle: Some(conn_handle),
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
                 .await?;
             }
         }
@@ -1080,10 +1119,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                     let autocommit_on = matches!(val, AutocommitValue::On);
                     drop(connection);
                     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                        c.connection_set_autocommit(ConnectionSetAutocommitRequest {
-                            conn_handle: Some(conn_handle),
-                            autocommit: autocommit_on,
-                        })
+                        c.connection_set_autocommit(
+                            ConnectionSetAutocommitRequest {
+                                conn_handle: Some(conn_handle),
+                                autocommit: autocommit_on,
+                            },
+                            tokio_util::sync::CancellationToken::new(),
+                        )
                         .await
                     })?;
                     let mut connection = dbc.connection.lock();
@@ -1166,10 +1208,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             global()
                 .context(OdbcRuntimeSnafu)?
                 .block_on(async |c| {
-                    c.connection_use_database(ConnectionUseDatabaseRequest {
-                        conn_handle: Some(conn_handle),
-                        database: catalog.clone(),
-                    })
+                    c.connection_use_database(
+                        ConnectionUseDatabaseRequest {
+                            conn_handle: Some(conn_handle),
+                            database: catalog.clone(),
+                        },
+                        tokio_util::sync::CancellationToken::new(),
+                    )
                     .await
                 })
                 .map_err(|e| -> crate::api::OdbcError {
@@ -1604,11 +1649,14 @@ fn current_database(dbc: &HandleGuard<Dbc>) -> OdbcResult<Option<String>> {
         Some(handle) => {
             let db = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 let info = c
-                    .connection_get_info(ConnectionGetInfoRequest {
-                        conn_handle: Some(handle),
-                        info_codes: vec![],
-                        include_master_token: false,
-                    })
+                    .connection_get_info(
+                        ConnectionGetInfoRequest {
+                            conn_handle: Some(handle),
+                            info_codes: vec![],
+                            include_master_token: false,
+                        },
+                        tokio_util::sync::CancellationToken::new(),
+                    )
                     .await?;
                 Ok::<Option<String>, crate::api::OdbcError>(info.database)
             })?;
@@ -1686,9 +1734,12 @@ pub fn get_info<E: OdbcEncoding>(
             let version = match conn_handle {
                 Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                     let resp = c
-                        .connection_get_server_version(ConnectionGetServerVersionRequest {
-                            conn_handle: Some(handle),
-                        })
+                        .connection_get_server_version(
+                            ConnectionGetServerVersionRequest {
+                                conn_handle: Some(handle),
+                            },
+                            tokio_util::sync::CancellationToken::new(),
+                        )
                         .await?;
                     Ok::<Option<String>, crate::api::OdbcError>(resp.server_version)
                 })?,

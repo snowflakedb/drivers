@@ -191,7 +191,12 @@ async fn save_arrow_data(
         let row_count = chunk.row_count;
         let uncompressed_size = chunk.uncompressed_size;
         let compressed_size = chunk.compressed_size;
-        let bytes = get_chunk_data(client.clone(), chunk).await?;
+        let bytes = get_chunk_data(
+            client.clone(),
+            chunk,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await?;
         let saved_size = bytes.len() as u64;
         let path = output_dir.join(format!("chunk_{i}.bin"));
         tokio::fs::write(&path, &bytes).await?;
@@ -264,7 +269,12 @@ async fn save_json_data(
         let row_count = chunk.row_count;
         let uncompressed_size = chunk.uncompressed_size;
         let compressed_size = chunk.compressed_size;
-        let bytes = get_chunk_data(client.clone(), chunk).await?;
+        let bytes = get_chunk_data(
+            client.clone(),
+            chunk,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await?;
         let saved_size = bytes.len() as u64;
         let path = output_dir.join(format!("chunk_{i}.bin"));
         tokio::fs::write(&path, &bytes).await?;
@@ -360,7 +370,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let login_params = build_login_params(&params, client_info.clone(), server_url.clone())?;
 
     println!("Logging in to Snowflake...");
-    let login_result = snowflake_login(&login_params, None, crl_worker.clone()).await?;
+    let login_result = snowflake_login(
+        &login_params,
+        None,
+        crl_worker.clone(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await?;
     println!(
         "Login successful (session_id={})",
         login_result.tokens.session_id
@@ -386,6 +402,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         QueryInput::new(alter_sql),
         QueryExecutionMode::Blocking,
         crl_worker.clone(),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await?;
 
@@ -401,6 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         QueryInput::new(cli.sql.clone()),
         QueryExecutionMode::Blocking,
         crl_worker.clone(),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await?;
 

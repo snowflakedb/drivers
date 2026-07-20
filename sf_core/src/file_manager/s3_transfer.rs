@@ -32,6 +32,7 @@ use aws_sdk_s3::types::BucketAccelerateStatus;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_smithy_types::body::SdkBody;
+use tokio_util::sync::CancellationToken;
 
 const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
@@ -82,6 +83,7 @@ pub(super) async fn upload_to_s3_or_skip(
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: CancellationToken,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -103,13 +105,20 @@ pub(super) async fn upload_to_s3_or_skip(
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         let policy = policy.clone();
+        let cancel = cancel.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_UPLOAD_PROVIDER, &policy)
-                .await
-                .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
+            let s3_client = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+                }
+                result = create_s3_client(&stage_info, SNOWFLAKE_UPLOAD_PROVIDER, &policy) => {
+                    result.map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?
+                }
+            };
 
             if !overwrite
-                && check_if_file_exists(&s3_client, &stage_info, &s3_key)
+                && check_if_file_exists(&s3_client, &stage_info, &s3_key, cancel.clone())
                     .await
                     .map_err(S3AttemptError::Other)?
             {
@@ -125,10 +134,11 @@ pub(super) async fn upload_to_s3_or_skip(
                     &s3_key,
                     body_len,
                     multipart.concurrency,
+                    cancel,
                 )
                 .await?;
             } else {
-                put_object(prepared, &s3_client, &stage_info, &s3_key).await?;
+                put_object(prepared, &s3_client, &stage_info, &s3_key, cancel).await?;
             }
             Ok(UploadStatus::Uploaded)
         }
@@ -143,6 +153,8 @@ pub(super) async fn upload_to_s3_or_skip(
         // any other S3 PUT error.
         |aws_err| upload_file_error::S3UploadSnafu.into_error(aws_err),
         attempt,
+        cancel.clone(),
+        || upload_file_error::CancelledSnafu.build(),
     )
     .await
 }
@@ -173,35 +185,43 @@ enum S3AttemptError<E> {
 /// actually rotate (refresher inside its coalescing window) reports
 /// `Ok(false)` and the helper propagates the original error rather than
 /// spinning.
-struct S3StsRefresher<'a, E, W> {
+struct S3StsRefresher<'a, E, W, C> {
     refresher: &'a mut dyn StageInfoRefresher,
     last_seen_key: Option<String>,
     map_refresh_err: W,
+    cancel: CancellationToken,
+    map_cancel_err: C,
     _marker: PhantomData<fn() -> E>,
 }
 
-impl<'a, E, W> S3StsRefresher<'a, E, W>
+impl<'a, E, W, C> S3StsRefresher<'a, E, W, C>
 where
     W: Fn(StageInfoRefreshError) -> E,
+    C: Fn() -> E,
 {
     fn new(
         refresher: &'a mut dyn StageInfoRefresher,
         initial: &CloudCredentials,
         map_refresh_err: W,
+        cancel: CancellationToken,
+        map_cancel_err: C,
     ) -> Self {
         Self {
             refresher,
             last_seen_key: aws_key_id(initial).map(str::to_string),
             map_refresh_err,
+            cancel,
+            map_cancel_err,
             _marker: PhantomData,
         }
     }
 }
 
-impl<'a, E, W> Refresher<CloudCredentials, S3AttemptError<E>> for S3StsRefresher<'a, E, W>
+impl<'a, E, W, C> Refresher<CloudCredentials, S3AttemptError<E>> for S3StsRefresher<'a, E, W, C>
 where
     E: Send,
     W: Fn(StageInfoRefreshError) -> E + Send,
+    C: Fn() -> E + Send,
 {
     fn current(
         &mut self,
@@ -218,10 +238,14 @@ where
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, S3AttemptError<E>>> {
         Box::pin(async move {
             tracing::info!("S3 hit ExpiredToken; refreshing stage credentials");
-            self.refresher
-                .refresh()
-                .await
-                .map_err(|e| S3AttemptError::Other((self.map_refresh_err)(e)))?;
+            let result = tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => {
+                    return Err(S3AttemptError::Other((self.map_cancel_err)()));
+                }
+                result = self.refresher.refresh() => result,
+            };
+            result.map_err(|e| S3AttemptError::Other((self.map_refresh_err)(e)))?;
             let new = self.refresher.cache().snapshot().creds;
             let new_key = aws_key_id(&new).map(str::to_string);
             if new_key == self.last_seen_key {
@@ -250,6 +274,8 @@ async fn run_s3_with_sts_refresh<F, Fut, T, E>(
     map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
     map_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
     attempt: F,
+    cancel: CancellationToken,
+    map_cancel_err: impl Fn() -> E + Send,
 ) -> Result<T, E>
 where
     F: Fn(CloudCredentials) -> Fut,
@@ -258,7 +284,8 @@ where
 {
     let outcome = match refresher.as_deref_mut() {
         Some(r) => {
-            let mut sts_refresher = S3StsRefresher::new(r, initial_creds, map_refresh_err);
+            let mut sts_refresher =
+                S3StsRefresher::new(r, initial_creds, map_refresh_err, cancel, map_cancel_err);
             execute_with_refresh(&mut sts_refresher, attempt).await
         }
         None => attempt(initial_creds.clone()).await,
@@ -295,14 +322,18 @@ async fn check_if_file_exists(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    cancel: CancellationToken,
 ) -> Result<bool, UploadFileError> {
-    match s3_client
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return upload_file_error::CancelledSnafu.fail(),
+        result = s3_client
         .head_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+    match result {
         Ok(_) => Ok(true),
         Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
         Err(SdkError::ServiceError(ref err)) if err.raw().status().as_u16() == 403 => {
@@ -396,6 +427,7 @@ async fn put_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    cancel: CancellationToken,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
     // CSE params (cloud metadata + encryptor) are both present or both absent.
     let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
@@ -411,10 +443,14 @@ async fn put_object(
         // can replay the body (re-encryption is deterministic).
         (source, Some(encryptor)) => encrypting_byte_stream(source, encryptor),
         // SSE Path: hand the SDK the file directly (FsBuilder is retryable).
-        (ByteSource::Path(ref path), None) => ByteStream::read_from()
+        (ByteSource::Path(ref path), None) => tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+            }
+            result = ByteStream::read_from()
             .path(path)
-            .build()
-            .await
+            .build() => result
             .map_err(|e| {
                 S3AttemptError::Other(
                     upload_file_error::SourceOpenSnafu {
@@ -422,7 +458,8 @@ async fn put_object(
                     }
                     .build(),
                 )
-            })?,
+            })?
+        },
         // SSE in-memory (small / passthrough payloads).
         (ByteSource::Bytes(bytes), None) => ByteStream::from(bytes),
     };
@@ -454,12 +491,18 @@ async fn put_object(
     // Log only safe metadata.
     tracing::trace!(bucket = %stage_info.bucket, key = ?s3_key, "Sending S3 PutObject request");
 
-    match put_object_request
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+        }
+        result = put_object_request
         .customize()
         .disable_payload_signing()
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+
+    match result {
         Ok(res) => {
             tracing::debug!("S3 upload result: {:?}", res);
             Ok(())
@@ -496,12 +539,15 @@ async fn s3_multipart_upload(
     s3_key: &str,
     body_len: u64,
     concurrency: usize,
+    cancel: CancellationToken,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
         .context(upload_file_error::FileTooLargeSnafu)
         .map_err(S3AttemptError::Other)?;
 
-    let upload_id = s3_create_multipart_upload(&prepared, s3_client, stage_info, s3_key).await?;
+    let upload_id =
+        s3_create_multipart_upload(&prepared, s3_client, stage_info, s3_key, cancel.clone())
+            .await?;
     tracing::debug!(
         "S3 multipart upload started: key={s3_key:?} upload_id={upload_id:?} \
          body_len={body_len} chunk_size={chunk_size} concurrency={concurrency}"
@@ -522,6 +568,7 @@ async fn s3_multipart_upload(
         &upload_id,
         parts_rx,
         concurrency,
+        cancel,
     )
     .await;
 
@@ -546,6 +593,7 @@ async fn s3_create_multipart_upload(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    cancel: CancellationToken,
 ) -> Result<String, S3AttemptError<UploadFileError>> {
     let mut request = s3_client
         .create_multipart_upload()
@@ -570,7 +618,14 @@ async fn s3_create_multipart_upload(
         key = ?s3_key,
         "S3 CreateMultipartUpload"
     );
-    match request.send().await {
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+        }
+        result = request.send() => result,
+    };
+    match result {
         Ok(out) => {
             tracing::debug!(bucket = %stage_info.bucket, key = ?s3_key, "S3 CreateMultipartUpload succeeded");
             out.upload_id().map(str::to_string).ok_or_else(|| {
@@ -611,22 +666,47 @@ async fn upload_parts_and_complete(
     upload_id: &str,
     parts_rx: tokio::sync::mpsc::Receiver<std::io::Result<multipart::UploadPart>>,
     concurrency: usize,
+    cancel: CancellationToken,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
-    let mut completed: Vec<CompletedPart> = ReceiverStream::new(parts_rx)
-        .map(|part| async move {
-            let part = part.map_err(|e| {
-                S3AttemptError::Other(
-                    upload_file_error::SourceReadSnafu {
-                        detail: e.to_string(),
-                    }
-                    .build(),
+    let cancel_for_parts = cancel.clone();
+    let completed_parts = ReceiverStream::new(parts_rx)
+        .map(move |part| {
+            let cancel = cancel_for_parts.clone();
+            async move {
+                if cancel.is_cancelled() {
+                    return Err(S3AttemptError::Other(
+                        upload_file_error::CancelledSnafu.build(),
+                    ));
+                }
+                let part = part.map_err(|e| {
+                    S3AttemptError::Other(
+                        upload_file_error::SourceReadSnafu {
+                            detail: e.to_string(),
+                        }
+                        .build(),
+                    )
+                })?;
+                upload_one_part(
+                    s3_client,
+                    stage_info,
+                    s3_key,
+                    upload_id,
+                    part,
+                    cancel.clone(),
                 )
-            })?;
-            upload_one_part(s3_client, stage_info, s3_key, upload_id, part).await
+                .await
+            }
         })
         .buffer_unordered(concurrency)
-        .try_collect()
-        .await?;
+        .try_collect();
+
+    let mut completed: Vec<CompletedPart> = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+        }
+        completed = completed_parts => completed?,
+    };
 
     // A multipart upload with zero parts makes S3 reject CompleteMultipartUpload
     // with an opaque `MalformedXML`; surface a clear error instead. Unreachable on
@@ -655,15 +735,20 @@ async fn upload_parts_and_complete(
         upload_id = ?upload_id,
         "S3 CompleteMultipartUpload"
     );
-    match s3_client
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+        }
+        result = s3_client
         .complete_multipart_upload()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
         .upload_id(upload_id)
         .multipart_upload(completed_upload)
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+    match result {
         Ok(res) => {
             tracing::debug!("S3 CompleteMultipartUpload succeeded: {:?}", res);
             Ok(())
@@ -686,6 +771,7 @@ async fn upload_one_part(
     s3_key: &str,
     upload_id: &str,
     part: multipart::UploadPart,
+    cancel: CancellationToken,
 ) -> Result<CompletedPart, S3AttemptError<UploadFileError>> {
     let part_number = part.number;
     let content_length = part.body.len() as i64;
@@ -698,7 +784,12 @@ async fn upload_one_part(
         part_number,
         "S3 UploadPart"
     );
-    match s3_client
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(upload_file_error::CancelledSnafu.build()));
+        }
+        result = s3_client
         .upload_part()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
@@ -708,9 +799,9 @@ async fn upload_one_part(
         .set_content_length(Some(content_length))
         .customize()
         .disable_payload_signing()
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+    match result {
         Ok(out) => Ok(CompletedPart::builder()
             .set_e_tag(out.e_tag().map(str::to_string))
             .part_number(part_number)
@@ -881,6 +972,7 @@ pub(super) async fn download_from_s3(
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
     spill_target: SpillTarget<'_>,
+    cancel: CancellationToken,
 ) -> Result<S3Download, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -889,11 +981,26 @@ pub(super) async fn download_from_s3(
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         let policy = policy.clone();
+        let cancel = cancel.clone();
         async move {
-            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
-                .await
-                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
-            s3_download_attempt(&s3_client, &stage_info, &s3_key, multipart, spill_target).await
+            let s3_client = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    return Err(S3AttemptError::Other(download_file_error::CancelledSnafu.build()));
+                }
+                result = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy) => {
+                    result.map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?
+                }
+            };
+            s3_download_attempt(
+                &s3_client,
+                &stage_info,
+                &s3_key,
+                multipart,
+                spill_target,
+                cancel,
+            )
+            .await
         }
     };
 
@@ -903,6 +1010,8 @@ pub(super) async fn download_from_s3(
         |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
         |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
         attempt,
+        cancel.clone(),
+        || download_file_error::CancelledSnafu.build(),
     )
     .await
 }
@@ -917,8 +1026,9 @@ async fn s3_download_attempt(
     s3_key: &str,
     multipart: MultipartParams,
     spill_target: SpillTarget<'_>,
+    cancel: CancellationToken,
 ) -> Result<S3Download, S3AttemptError<DownloadFileError>> {
-    let head = s3_head_object(s3_client, stage_info, s3_key).await?;
+    let head = s3_head_object(s3_client, stage_info, s3_key, cancel.clone()).await?;
     let content_length = head.content_length().unwrap_or(0).max(0) as u64;
     let metadata_map = head.metadata().cloned().unwrap_or_default();
     let (digest, file_metadata) =
@@ -941,11 +1051,12 @@ async fn s3_download_attempt(
             chunk_size,
             multipart.concurrency,
             spill_target,
+            cancel,
         )
         .await?;
         S3DownloadBody::Spilled(spilled)
     } else {
-        S3DownloadBody::InMemory(s3_get_whole(s3_client, stage_info, s3_key).await?)
+        S3DownloadBody::InMemory(s3_get_whole(s3_client, stage_info, s3_key, cancel).await?)
     };
 
     Ok(S3Download {
@@ -996,6 +1107,7 @@ async fn s3_head_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    cancel: CancellationToken,
 ) -> Result<aws_sdk_s3::operation::head_object::HeadObjectOutput, S3AttemptError<DownloadFileError>>
 {
     tracing::info!(
@@ -1004,13 +1116,18 @@ async fn s3_head_object(
         key = ?s3_key,
         "S3 HeadObject"
     );
-    match s3_client
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(download_file_error::CancelledSnafu.build()));
+        }
+        result = s3_client
         .head_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+    match result {
         Ok(out) => Ok(out),
         Err(sdk_err) => {
             tracing::warn!(
@@ -1030,12 +1147,15 @@ async fn s3_head_object(
 /// `ByteStream` download error. Shared by the single-GET and ranged-GET paths.
 async fn collect_s3_body(
     out: aws_sdk_s3::operation::get_object::GetObjectOutput,
+    cancel: CancellationToken,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
-    out.body
-        .collect()
-        .await
-        .map(|agg| agg.into_bytes())
-        .map_err(|e| S3AttemptError::Other(download_file_error::ByteStreamSnafu.into_error(e)))
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(S3AttemptError::Other(download_file_error::CancelledSnafu.build())),
+        result = out.body.collect() => result
+            .map(|agg| agg.into_bytes())
+            .map_err(|e| S3AttemptError::Other(download_file_error::ByteStreamSnafu.into_error(e))),
+    }
 }
 
 /// Single buffered GET of the whole object body. Folds `ExpiredToken` into
@@ -1044,6 +1164,7 @@ async fn s3_get_whole(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    cancel: CancellationToken,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
     tracing::info!(
         method = "GET",
@@ -1051,13 +1172,18 @@ async fn s3_get_whole(
         key = ?s3_key,
         "S3 GetObject"
     );
-    let out = match s3_client
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(download_file_error::CancelledSnafu.build()));
+        }
+        result = s3_client
         .get_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+    let out = match result {
         Ok(out) => out,
         Err(sdk_err) => {
             tracing::warn!(
@@ -1071,7 +1197,7 @@ async fn s3_get_whole(
             }));
         }
     };
-    collect_s3_body(out).await
+    collect_s3_body(out, cancel).await
 }
 
 /// Downloads the object with parallel ranged GETs into a pre-allocated file,
@@ -1099,6 +1225,7 @@ async fn s3_range_download(
     chunk_size: u64,
     concurrency: usize,
     target: SpillTarget<'_>,
+    cancel: CancellationToken,
 ) -> Result<SpilledBody, S3AttemptError<DownloadFileError>> {
     let mk_temp_err = |detail: String| {
         S3AttemptError::Other(download_file_error::TempFileSnafu { detail }.build())
@@ -1157,8 +1284,15 @@ async fn s3_range_download(
     let results: Vec<Result<(), S3AttemptError<DownloadFileError>>> = futures::stream::iter(ranges)
         .map(|range| {
             let file = Arc::clone(&file);
+            let cancel = cancel.clone();
             async move {
-                let bytes = s3_get_range(s3_client, stage_info, s3_key, &range).await?;
+                if cancel.is_cancelled() {
+                    return Err(S3AttemptError::Other(
+                        download_file_error::CancelledSnafu.build(),
+                    ));
+                }
+                let bytes =
+                    s3_get_range(s3_client, stage_info, s3_key, &range, cancel.clone()).await?;
                 // Guard against endpoints that ignore Range and return the whole
                 // object (200 not 206): writing at range.start would corrupt the
                 // assembled file by overrunning the pre-allocated length.
@@ -1210,6 +1344,7 @@ async fn s3_get_range(
     stage_info: &StageInfo,
     s3_key: &str,
     range: &multipart::DownloadRange,
+    cancel: CancellationToken,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
     let range_header = format!("bytes={}-{}", range.start, range.end);
     tracing::info!(
@@ -1219,14 +1354,19 @@ async fn s3_get_range(
         range = %range_header,
         "S3 GetObject (ranged)"
     );
-    let out = match s3_client
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(S3AttemptError::Other(download_file_error::CancelledSnafu.build()));
+        }
+        result = s3_client
         .get_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
         .range(range_header)
-        .send()
-        .await
-    {
+        .send() => result,
+    };
+    let out = match result {
         Ok(out) => out,
         Err(sdk_err) => {
             tracing::warn!(
@@ -1240,7 +1380,7 @@ async fn s3_get_range(
             }));
         }
     };
-    collect_s3_body(out).await
+    collect_s3_body(out, cancel).await
 }
 
 /// Returns a retry policy tuned for S3 file-transfer operations.
@@ -1566,6 +1706,17 @@ pub enum UploadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl UploadFileError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, UploadFileError::Cancelled { .. })
+    }
 }
 
 /// `pub` for the same reason as [`UploadFileError`] — a `source` field on the
@@ -1623,6 +1774,17 @@ pub enum DownloadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl DownloadFileError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, DownloadFileError::Cancelled { .. })
+    }
 }
 
 // --- Unit tests ---
@@ -2032,12 +2194,22 @@ mod tests {
         e
     }
 
+    fn unexpected_cancel() -> StageInfoRefreshError {
+        panic!("unexpected cancellation")
+    }
+
     #[tokio::test]
     async fn s3_sts_refresher_refresh_returns_true_when_creds_rotate() {
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
         let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(
+            &mut fake,
+            &initial,
+            identity_map,
+            CancellationToken::new(),
+            unexpected_cancel,
+        );
 
         let rotated = sts_refresher.refresh().await.unwrap();
 
@@ -2059,7 +2231,13 @@ mod tests {
         // spinning.
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(
+            &mut fake,
+            &initial,
+            identity_map,
+            CancellationToken::new(),
+            unexpected_cancel,
+        );
 
         let rotated = sts_refresher.refresh().await.unwrap();
 
@@ -2078,7 +2256,13 @@ mod tests {
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
         let initial = s3_creds("AKIA1");
-        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
+        let mut sts_refresher = S3StsRefresher::new(
+            &mut fake,
+            &initial,
+            identity_map,
+            CancellationToken::new(),
+            unexpected_cancel,
+        );
 
         assert!(sts_refresher.refresh().await.unwrap()); // AKIA1 -> AKIA2
         // Cache still holds AKIA2; arming nothing means refresh() leaves
@@ -2128,6 +2312,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2219,6 +2404,7 @@ mod tests {
                 &base_policy(),
                 MultipartParams::default(),
                 &mut None,
+                tokio_util::sync::CancellationToken::new(),
             ),
         )
         .await
@@ -2323,6 +2509,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("encrypted S3 upload should succeed against the mock");
@@ -2536,6 +2723,7 @@ mod tests {
             &base_policy(),
             always_multipart(),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("multipart upload should succeed against the mock");
@@ -2595,6 +2783,7 @@ mod tests {
             &base_policy_with_attempts(1), // single attempt: fail fast, no SDK retry storm
             always_multipart(),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
 
@@ -2640,6 +2829,7 @@ mod tests {
             always_multipart(),
             &mut None,
             SpillTarget::Temp(spill.path()),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -2689,6 +2879,7 @@ mod tests {
             always_multipart(),
             &mut None,
             SpillTarget::Part(&part_path),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -2732,6 +2923,7 @@ mod tests {
             always_multipart(),
             &mut None,
             SpillTarget::Part(&part_path),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
 

@@ -20,6 +20,7 @@ pub trait DownloadChunk: Send + Sync + Clone + 'static {
     fn download_chunk(
         &self,
         chunk: ChunkDownloadData,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> impl Future<Output = Result<Vec<u8>, ArrowError>> + Send;
 }
 
@@ -63,6 +64,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         downloader: D,
         parser: P,
         config: &PrefetchConfig,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
         let schema = initial.schema();
         let initial = initial
@@ -83,6 +85,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
                 tx,
                 prefetch_concurrency,
                 memory_budget,
+                cancel,
             )
             .with_current_subscriber(),
         );
@@ -103,6 +106,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         tx: tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
         prefetch_concurrency: usize,
         memory_budget: MemoryBudget,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
         let send = |msg: Result<Chunk, ArrowError>| {
             let tx = &tx;
@@ -133,8 +137,9 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
                 let d = downloader.clone();
                 let p = parser.clone();
+                let task_cancel = cancel.clone();
                 chunk_tasks.push_back(tokio::task::spawn(
-                    get_chunk(d, p, data, ticket).with_current_subscriber(),
+                    get_chunk(d, p, data, ticket, task_cancel).with_current_subscriber(),
                 ));
             }
         }
@@ -158,8 +163,9 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
                 let d = downloader.clone();
                 let p = parser.clone();
+                let task_cancel = cancel.clone();
                 chunk_tasks.push_back(tokio::task::spawn(
-                    get_chunk(d, p, data, ticket).with_current_subscriber(),
+                    get_chunk(d, p, data, ticket, task_cancel).with_current_subscriber(),
                 ));
             }
         }
@@ -173,8 +179,9 @@ async fn get_chunk(
     parser: impl ParseChunk,
     data: ChunkDownloadData,
     ticket: MemoryTicket,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Chunk, ArrowError> {
-    let bytes = downloader.download_chunk(data).await?;
+    let bytes = downloader.download_chunk(data, cancel).await?;
     // Arrow IPC / JSON→Arrow decode is CPU-bound; run it on the blocking pool so
     // it doesn't occupy this runtime worker (result chunks are routinely multi-MB).
     let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))

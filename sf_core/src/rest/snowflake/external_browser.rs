@@ -121,6 +121,20 @@ pub enum ExternalBrowserError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("External browser login cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl ExternalBrowserError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(
+            self,
+            ExternalBrowserError::Cancelled { .. }
+        ) || matches!(self, ExternalBrowserError::RetryExhausted { source, .. } if source.is_cancelled())
+    }
 }
 
 // ─── Main entry point ────────────────────────────────────────────────────────
@@ -142,6 +156,7 @@ pub(crate) async fn external_browser_authenticate(
     authentication_timeout_secs: u64,
     browser_opener: &dyn BrowserOpener,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<ExternalBrowserAuthResult, ExternalBrowserError> {
     let budget = Duration::from_secs(authentication_timeout_secs);
     let start = Instant::now();
@@ -153,8 +168,15 @@ pub(crate) async fn external_browser_authenticate(
     let local_port = listener.local_addr().context(ListenerBindSnafu)?.port();
     tracing::debug!(port = local_port, "Local callback listener bound");
 
-    let idp_data =
-        request_authenticator(client, login_parameters, username, local_port, retry_policy).await?;
+    let idp_data = request_authenticator(
+        client,
+        login_parameters,
+        username,
+        local_port,
+        retry_policy,
+        cancel.clone(),
+    )
+    .await?;
     let proof_key = idp_data.proof_key;
     tracing::debug!("Received SSO URL and proof key from Snowflake");
 
@@ -193,12 +215,17 @@ pub(crate) async fn external_browser_authenticate(
     }
 
     let remaining = budget.saturating_sub(start.elapsed());
-    let callback = tokio::time::timeout(remaining, accept_token_from_callback(&listener))
-        .await
-        .map_err(|_| ExternalBrowserError::AuthenticationTimeout {
-            budget,
-            location: Location::new(file!(), line!(), column!()),
-        })??;
+    let callback = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return CancelledSnafu.fail(),
+        result = tokio::time::timeout(remaining, accept_token_from_callback(&listener)) => {
+            result
+                .map_err(|_| ExternalBrowserError::AuthenticationTimeout {
+                    budget,
+                    location: Location::new(file!(), line!(), column!()),
+                })??
+        }
+    };
 
     tracing::info!(
         elapsed_ms = start.elapsed().as_millis(),
@@ -237,6 +264,7 @@ async fn request_authenticator(
     username: &str,
     redirect_port: u16,
     retry_policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<AuthenticatorRequestData, ExternalBrowserError> {
     let mut data: AuthRequestData = super::base_auth_request_data(login_parameters);
     data.login_name = Some(username.to_string());
@@ -264,6 +292,7 @@ async fn request_authenticator(
         },
         &ctx,
         retry_policy,
+        cancel,
     )
     .await
     .context(RetryExhaustedSnafu)?;

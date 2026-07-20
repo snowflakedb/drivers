@@ -128,11 +128,12 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
         } else {
             std::slice::from_raw_parts(request, request_len)
         };
-        state.runtime.block_on(
-            state
-                .transport
-                .handle_message(&api, &method, message.to_vec()),
-        )
+        state.runtime.block_on(state.transport.handle_message(
+            &api,
+            &method,
+            message.to_vec(),
+            CancellationToken::new(),
+        ))
     });
 
     match result {
@@ -226,6 +227,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
                 &api_str,
                 &method_str,
                 request_vec,
+                cancel_token_for_task.clone(),
             ))
             .catch_unwind() => Some(match result {
                 Ok(Ok(r)) => (0, r),

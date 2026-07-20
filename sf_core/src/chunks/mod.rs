@@ -73,6 +73,7 @@ pub async fn json_prefetch_reader(
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)?;
     json_chunks_reader(
@@ -81,6 +82,7 @@ pub async fn json_prefetch_reader(
         chunk_download_data,
         client,
         config,
+        cancel,
     )
     .await
 }
@@ -91,6 +93,7 @@ async fn json_chunks_reader(
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let downloader = HttpChunkDownloader { client };
     let parser = JsonChunkParser {
@@ -102,6 +105,7 @@ async fn json_chunks_reader(
         downloader,
         parser,
         config,
+        cancel,
     )
     .await
 }
@@ -112,9 +116,11 @@ pub async fn arrow_prefetch_reader(
     client: Client,
     config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader =
-        get_initial_chunk_reader(initial_base64_opt, &mut chunk_download_data, &client).await?;
+        get_initial_chunk_reader(initial_base64_opt, &mut chunk_download_data, &client, cancel.clone())
+            .await?;
     let downloader = HttpChunkDownloader { client };
     let parser = ArrowChunkParser;
     let reader = PrefetchChunkReader::reader(
@@ -123,6 +129,7 @@ pub async fn arrow_prefetch_reader(
         downloader,
         parser,
         config,
+        cancel,
     )
     .await?;
     Ok(maybe_inject_nullable(reader, nullable_flags))
@@ -132,6 +139,7 @@ async fn get_initial_chunk_reader(
     initial_base64_opt: Option<&str>,
     chunk_download_data: &mut VecDeque<ChunkDownloadData>,
     client: &Client,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<StreamReader<Cursor<Vec<u8>>>, ChunkError> {
     Ok(if let Some(initial_base64) = initial_base64_opt {
         let bytes = BASE64.decode(initial_base64).context(Base64DecodeSnafu)?;
@@ -141,7 +149,7 @@ async fn get_initial_chunk_reader(
         let first = chunk_download_data
             .pop_front()
             .context(MissingInitialChunkSnafu)?;
-        let bytes = get_chunk_data(client.clone(), first).await?;
+        let bytes = get_chunk_data(client.clone(), first, cancel).await?;
         let cursor = io::Cursor::new(bytes);
         StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
     })
@@ -253,6 +261,7 @@ pub async fn fetch_chunks_reader(
     nullable_flags: &[bool],
     client: Client,
     prefetch_config: &PrefetchConfig,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let mut initial_base64_opt = None;
     let mut remote_chunks = VecDeque::new();
@@ -278,6 +287,7 @@ pub async fn fetch_chunks_reader(
                 client,
                 prefetch_config,
                 Some(nullable_flags),
+                cancel,
             )
             .await
         }
@@ -286,6 +296,7 @@ pub async fn fetch_chunks_reader(
                 initial_base64_opt.as_deref(),
                 &mut remote_chunks,
                 &client,
+                cancel.clone(),
             )
             .await?;
             json_chunks_reader(
@@ -294,6 +305,7 @@ pub async fn fetch_chunks_reader(
                 Vec::from(remote_chunks),
                 client,
                 prefetch_config,
+                cancel,
             )
             .await
         }
@@ -346,6 +358,7 @@ pub struct InitialChunkData {
 pub async fn get_chunk_data(
     client: Client,
     chunk: ChunkDownloadData,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<u8>, ChunkError> {
     let url = &chunk.url;
     let mut headers = HeaderMap::new();
@@ -366,6 +379,7 @@ pub async fn get_chunk_data(
         &ctx,
         &policy,
         |r| async move { Ok(r) },
+        cancel.clone(),
     )
     .await
     {
@@ -387,6 +401,7 @@ pub async fn get_chunk_data(
                     status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
                 }
                 .fail(),
+                HttpError::Cancelled { .. } => CancelledSnafu.fail(),
             };
         }
     };
@@ -398,7 +413,11 @@ pub async fn get_chunk_data(
         .fail()?;
     }
 
-    let body = response.bytes().await.context(CommunicationSnafu)?;
+    let body = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return CancelledSnafu.fail(),
+        body = response.bytes() => body.context(CommunicationSnafu)?,
+    };
     let bytes = body.to_vec();
     // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
     // body doesn't stall this runtime worker.
@@ -442,6 +461,7 @@ mod tests {
             &[],
             Client::new(),
             &PrefetchConfig::default(),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await;
 

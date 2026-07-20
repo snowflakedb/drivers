@@ -315,6 +315,7 @@ pub(super) async fn resolve_reader_ctx(
 pub(super) async fn fetch_query_response_data(
     conn_ptr: &Arc<Mutex<Connection>>,
     query_id: &str,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Data, ApiError> {
     let (query_parameters, http_client, retry_policy) = {
         let conn = conn_ptr.lock().await;
@@ -338,6 +339,7 @@ pub(super) async fn fetch_query_response_data(
                 session_token.reveal(),
                 query_id,
                 &retry_policy,
+                cancel.clone(),
             )
             .await
             {
@@ -403,6 +405,7 @@ impl DatabaseDriverV1 {
     pub async fn result_set_get_stream(
         &self,
         result_handle: Handle,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
         let rs_ptr = self
             .results
@@ -424,6 +427,7 @@ impl DatabaseDriverV1 {
             &prefetch_config,
             &self.wrapper_presets,
             flags,
+            cancel,
         )
         .await
         .context(QueryResponseProcessSnafu)?;
@@ -550,6 +554,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         query_id: String,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ResultSetInfo, ApiError> {
         let conn_ptr =
             self.connections
@@ -558,7 +563,7 @@ impl DatabaseDriverV1 {
                     argument: "Connection handle not found".to_string(),
                 })?;
 
-        let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
+        let data = fetch_query_response_data(&conn_ptr, &query_id, cancel).await?;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
         let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
         let handle =
@@ -667,7 +672,9 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
         let reader: Box<dyn RecordBatchReader + Send> = runtime
-            .block_on(driver.result_set_get_stream(handle))
+            .block_on(
+                driver.result_set_get_stream(handle, tokio_util::sync::CancellationToken::new()),
+            )
             .expect("result_set_get_stream should succeed for an inline JSON rowset");
 
         assert_id_name_reader(reader);
@@ -697,7 +704,9 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
         let reader: Box<dyn RecordBatchReader + Send> = runtime
-            .block_on(driver.result_set_get_stream(handle))
+            .block_on(
+                driver.result_set_get_stream(handle, tokio_util::sync::CancellationToken::new()),
+            )
             .expect("result_set_get_stream should succeed for an inline Arrow rowset");
 
         assert_id_name_reader(reader);

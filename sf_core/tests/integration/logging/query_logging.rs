@@ -81,6 +81,7 @@ async fn sync_query_emits_info_log_without_sql_when_flag_off() {
         QueryInput::new(SQL_LONG),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -122,6 +123,7 @@ async fn sync_query_emits_info_log_with_sql_when_text_flag_on() {
         QueryInput::new(SQL_LONG),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -167,6 +169,7 @@ async fn sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on() {
         input,
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 
@@ -310,6 +313,7 @@ async fn async_submit_emits_info_log_with_sql_when_text_flag_on() {
         QueryInput::new(SQL_LONG),
         &RetryPolicy::default(),
         QueryExecutionMode::Async,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await;
 

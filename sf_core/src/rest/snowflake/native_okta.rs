@@ -102,6 +102,12 @@ pub enum NativeOktaError {
     },
 }
 
+impl NativeOktaError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, NativeOktaError::RetryExhausted { source, .. } if source.is_cancelled())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct AuthenticatorRequestResponse {
     success: bool,
@@ -206,6 +212,7 @@ pub(crate) async fn fetch_native_okta_saml(
     login_parameters: &LoginParameters,
     base_policy: &RetryPolicy,
     config: &NativeOktaConfig,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<String, NativeOktaError> {
     tracing::info!("Starting native Okta authentication");
     let budget = Duration::from_secs(config.authentication_timeout_secs);
@@ -219,6 +226,7 @@ pub(crate) async fn fetch_native_okta_saml(
         config,
         start,
         budget,
+        cancel.clone(),
     )
     .await?;
 
@@ -235,6 +243,7 @@ pub(crate) async fn fetch_native_okta_saml(
         &token_url,
         &sso_url,
         start,
+        cancel,
     )
     .await
 }
@@ -247,6 +256,7 @@ async fn request_authenticator_endpoints(
     config: &NativeOktaConfig,
     start: Instant,
     budget: Duration,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<AuthenticatorRequestData, NativeOktaError> {
     let policy = remaining_policy(base_policy, start, budget)?;
     let mut data: AuthRequestData = super::base_auth_request_data(login_parameters);
@@ -274,6 +284,7 @@ async fn request_authenticator_endpoints(
         },
         &ctx,
         &policy,
+        cancel,
     )
     .await
     .context(RetryExhaustedSnafu)?;
@@ -374,6 +385,7 @@ async fn fetch_saml_with_retries(
     token_url: &Url,
     sso_url: &Url,
     start: Instant,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<String, NativeOktaError> {
     let budget = Duration::from_secs(config.authentication_timeout_secs);
     let idp_login = config.okta_username.as_deref().unwrap_or(&config.username);
@@ -396,6 +408,7 @@ async fn fetch_saml_with_retries(
             config.password.reveal(),
             &policy,
             start,
+            cancel.clone(),
         )
         .await?;
         tracing::debug!(attempt = saml_attempt, "Obtained one-time token from Okta");
@@ -415,6 +428,7 @@ async fn fetch_saml_with_retries(
             },
             &saml_ctx,
             &single_attempt_policy,
+            cancel.clone(),
         )
         .await;
 
@@ -495,6 +509,7 @@ async fn request_okta_token(
     password: &str,
     policy: &RetryPolicy,
     start: Instant,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(String, String), NativeOktaError> {
     let token_ctx = HttpContext::new(Method::POST, "okta:token").allow_post_retry();
     let token_body = serde_json::json!({
@@ -512,6 +527,7 @@ async fn request_okta_token(
         },
         &token_ctx,
         policy,
+        cancel,
     )
     .await
     .context(RetryExhaustedSnafu)?;

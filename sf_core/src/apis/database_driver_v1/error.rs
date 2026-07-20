@@ -203,4 +203,27 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl ApiError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        match self {
+            ApiError::Cancelled { .. } => true,
+            ApiError::Login { source, .. }
+            | ApiError::Query { source, .. }
+            | ApiError::TokenRequest { source, .. }
+            | ApiError::SessionRefresh { source, .. } => source.is_cancelled(),
+            ApiError::ChunkFetch { source, .. } | ApiError::InlineJsonEncode { source, .. } => {
+                source.is_cancelled()
+            }
+            ApiError::QueryResponseProcess { source, .. } => source.is_cancelled(),
+            ApiError::StageBinding { source, .. } => source.is_cancelled(),
+            _ => false,
+        }
+    }
 }

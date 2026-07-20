@@ -32,9 +32,10 @@ impl Transport for RustTransport {
         service: &str,
         method: &str,
         message: Vec<u8>,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
         match service {
-            "DatabaseDriver" => self.driver.handle_message(method, message).await,
+            "DatabaseDriver" => self.driver.handle_message(method, message, cancel).await,
             _ => Err(ProtoError::Transport(format!("Unknown API: {}", service))),
         }
     }

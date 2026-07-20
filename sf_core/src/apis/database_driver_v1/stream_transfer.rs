@@ -48,6 +48,7 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         sql: String,
         data: Vec<u8>,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<ResultSetInfo, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
@@ -75,6 +76,7 @@ impl DatabaseDriverV1 {
                 &query_parameters,
                 &retry_policy,
                 sql.clone(),
+                cancel.clone(),
             )
             .await?;
 
@@ -99,6 +101,7 @@ impl DatabaseDriverV1 {
                 sql: sql.clone(),
                 query_parameters: query_parameters.clone(),
                 conn: conn_ptr.clone(),
+                cancel: cancel.clone(),
             };
             let use_s3_regional_url = conn_ptr
                 .lock()
@@ -120,6 +123,7 @@ impl DatabaseDriverV1 {
                 use_s3_regional_url,
                 &put_get_policy,
                 data,
+                cancel,
             )
             .await
             .context(QueryResponseProcessSnafu)?;
@@ -144,6 +148,7 @@ impl DatabaseDriverV1 {
         stage_name: &str,
         source_filename: &str,
         decompress: bool,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Vec<u8>, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
@@ -179,6 +184,7 @@ impl DatabaseDriverV1 {
                 &query_parameters,
                 &retry_policy,
                 get_sql.clone(),
+                cancel.clone(),
             )
             .await?;
 
@@ -238,6 +244,7 @@ impl DatabaseDriverV1 {
                 sql: get_sql,
                 query_parameters,
                 conn: conn_ptr.clone(),
+                cancel: cancel.clone(),
             };
             let mut refresher = stream_stage_info_refresher(refresh_ctx, initial_snapshot);
 
@@ -265,14 +272,23 @@ impl DatabaseDriverV1 {
 
             let mut refresher_dyn: Option<&mut dyn file_manager::StageInfoRefresher> =
                 Some(&mut refresher);
-            download_single_file(single_download, &put_get_policy, 0, &mut refresher_dyn)
-                .await
-                .map_err(|e| {
-                    InvalidArgumentSnafu {
-                        argument: format!("Download failed: {e}"),
-                    }
-                    .build()
-                })?;
+            download_single_file(
+                single_download,
+                &put_get_policy,
+                0,
+                &mut refresher_dyn,
+                cancel,
+            )
+            .await
+            .map_err(|e| {
+                if e.is_cancelled() {
+                    return CancelledSnafu.build();
+                }
+                InvalidArgumentSnafu {
+                    argument: format!("Download failed: {e}"),
+                }
+                .build()
+            })?;
 
             // The downloaded file lives at `<tmp_dir>/<basename(source_filename)>`.
             // Read the first regular file we find — there will be exactly one.
@@ -346,6 +362,7 @@ async fn run_sql_against_gs(
     query_parameters: &QueryParameters,
     retry_policy: &crate::config::retry::RetryPolicy,
     sql: String,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, ApiError> {
     let query_input = QueryInput::new(sql);
 
@@ -360,6 +377,7 @@ async fn run_sql_against_gs(
             query_input.clone(),
             retry_policy,
             QueryExecutionMode::Blocking,
+            cancel.clone(),
         )
         .await
         {

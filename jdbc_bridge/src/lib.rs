@@ -64,6 +64,7 @@ impl JdbcBridge {
             service_name,
             method_name,
             request_bytes,
+            tokio_util::sync::CancellationToken::new(),
         ))
     }
 }

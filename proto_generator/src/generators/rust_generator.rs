@@ -102,6 +102,7 @@ impl RustGenerator {
         r#"
 use proto_utils::*;
 use prost::Message;
+use tokio_util::sync::CancellationToken;
 "#
         .to_string()
     }
@@ -165,13 +166,13 @@ use prost::Message;
         match method_error {
             Some(error) => {
                 format!(
-                    r#"	fn {name}(&self, input: {input_type}) -> impl std::future::Future<Output = Result<{output_type}, {error}>> + Send;
+                    r#"	fn {name}(&self, input: {input_type}, cancel: CancellationToken) -> impl std::future::Future<Output = Result<{output_type}, {error}>> + Send;
 "#
                 )
             }
             None => {
                 format!(
-                    r#"	fn {name}(&self, input: {input_type}) -> impl std::future::Future<Output = {output_type}> + Send;
+                    r#"	fn {name}(&self, input: {input_type}, cancel: CancellationToken) -> impl std::future::Future<Output = {output_type}> + Send;
 "#
                 )
             }
@@ -194,7 +195,7 @@ use prost::Message;
 
         let mut content = format!(
             r#"pub trait {service_name}Server : {service_name} {{
-	fn handle_message(&self, method: &str, message: Vec<u8>) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
+	fn handle_message(&self, method: &str, message: Vec<u8>, cancel: CancellationToken) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
 		match method {{
 "#
         );
@@ -230,7 +231,7 @@ use prost::Message;
 					Ok(input) => input,
 					Err(e) => return Err(ProtoError::Transport(e.to_string())),
 				}};
-				let result = Box::pin(self.{name}(input)).await;
+				let result = Box::pin(self.{name}(input, cancel.clone())).await;
 				match result {{
 				Ok(output) => Ok(output.encode_to_vec()),
 				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -307,8 +308,8 @@ impl<T: Transport> {service_name}Client<T> {{
             Some(error) => {
                 format!(
                     r#"
-    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<{error}>> {{
-        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+    pub async fn {name}(&self, input: {input_type}, cancel: CancellationToken) -> Result<{output_type}, ProtoError<{error}>> {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec(), cancel).await;
         match result {{
             Ok(output) => {{
                 let output = {output_type}::decode(&output[..]);
@@ -333,8 +334,8 @@ impl<T: Transport> {service_name}Client<T> {{
             None => {
                 format!(
                     r#"
-    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<()>> {{
-        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+    pub async fn {name}(&self, input: {input_type}, cancel: CancellationToken) -> Result<{output_type}, ProtoError<()>> {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec(), cancel).await;
         match result {{
             Ok(output) => {{
                 let output = {output_type}::decode(&output[..]);

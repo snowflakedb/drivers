@@ -193,6 +193,7 @@ pub async fn submit_statement_async<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<SubmitOk, SfError> {
     let server_url = &params.server_url;
     let client_info = &params.client_info;
@@ -218,11 +219,23 @@ pub async fn submit_statement_async<'a>(
     };
 
     let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
-    let response = execute_with_retry(submit_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
+    let response = execute_with_retry(
+        submit_request,
+        &ctx,
+        policy,
+        |r| async move { Ok(r) },
+        cancel.clone(),
+    )
+    .await
+    .map_err(map_http_error)?;
 
-    parse_submit_response(server_url, response).await
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(SfError::Cancelled {
+            location: current_location(),
+        }),
+        parsed = parse_submit_response(server_url, response) => parsed,
+    }
 }
 
 pub(super) async fn poll_query_status(
@@ -231,22 +244,29 @@ pub(super) async fn poll_query_status(
     session_token: &str,
     get_result_url: &str,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, SfError> {
     let result_url = get_result_url.to_string();
     let poll_request =
         move || apply_query_headers(client.get(result_url.clone()), client_info, session_token);
     let ctx = HttpContext::new(Method::GET, get_result_url.to_string());
-    let response = execute_with_retry(poll_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
+    let response =
+        execute_with_retry(poll_request, &ctx, policy, |r| async move { Ok(r) }, cancel.clone())
+            .await
+            .map_err(map_http_error)?;
     let status = response.status();
     if !status.is_success() {
         return Err(http_status_error(status));
     }
-    let body_bytes = response
-        .bytes()
-        .await
-        .map_err(|source| transport_error(source))?;
+    let body_bytes = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            return Err(SfError::Cancelled {
+                location: current_location(),
+            });
+        }
+        bytes = response.bytes() => bytes.map_err(|source| transport_error(source))?,
+    };
     let parsed: query_response::Response =
         serde_json::from_slice(&body_bytes).map_err(|source| body_parse_error(source))?;
     debug!(
@@ -273,6 +293,7 @@ pub(super) async fn execute_blocking_with_async<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, SfError> {
     // query logging guarded with: log_query_text, log_query_parameters
     let (sql, bindings) = query_log_fields(params, query_input);
@@ -292,6 +313,7 @@ pub(super) async fn execute_blocking_with_async<'a>(
         query_input,
         request_id,
         policy,
+        cancel.clone(),
     )
     .await?;
     metrics.record_submit(submit_start.elapsed());
@@ -316,6 +338,7 @@ pub(super) async fn execute_blocking_with_async<'a>(
             result_url,
             policy,
             &mut metrics,
+            cancel,
         )
         .await?
     };
@@ -418,9 +441,17 @@ async fn inline_poll_for_completion(
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Option<query_response::Response>, SfError> {
-    let response =
-        poll_query_status(client, client_info, session_token, result_url, policy).await?;
+    let response = poll_query_status(
+        client,
+        client_info,
+        session_token,
+        result_url,
+        policy,
+        cancel,
+    )
+    .await?;
     handle_poll_response(response, true) // First poll
 }
 
@@ -438,6 +469,7 @@ async fn wait_for_completion(
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(query_response::Response, usize), SfError> {
     let start = Instant::now();
     let mut attempt: usize = 0;
@@ -445,6 +477,11 @@ async fn wait_for_completion(
     let mut polls: usize = 0;
 
     loop {
+        if cancel.is_cancelled() {
+            return Err(SfError::Cancelled {
+                location: current_location(),
+            });
+        }
         if let Some(deadline) = STATEMENT_POLL_DEADLINE {
             let elapsed = start.elapsed();
             if elapsed >= deadline {
@@ -475,11 +512,26 @@ async fn wait_for_completion(
                     });
                 }
             }
-            tokio::time::sleep(delay).await;
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    return Err(SfError::Cancelled {
+                        location: current_location(),
+                    });
+                }
+                _ = tokio::time::sleep(delay) => {}
+            }
         }
 
-        let response =
-            poll_query_status(client, client_info, session_token, result_url, policy).await?;
+        let response = poll_query_status(
+            client,
+            client_info,
+            session_token,
+            result_url,
+            policy,
+            cancel.clone(),
+        )
+        .await?;
         polls += 1;
 
         if let Some(done) = handle_poll_response(response, false)? {
@@ -500,10 +552,18 @@ async fn poll_for_result(
     result_url: &str,
     policy: &RetryPolicy,
     metrics: &mut AsyncExecutionMetrics,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, SfError> {
     let inline_start = Instant::now();
-    let inline_result =
-        inline_poll_for_completion(client, client_info, session_token, result_url, policy).await?;
+    let inline_result = inline_poll_for_completion(
+        client,
+        client_info,
+        session_token,
+        result_url,
+        policy,
+        cancel.clone(),
+    )
+    .await?;
 
     match inline_result {
         Some(response) => {
@@ -513,8 +573,15 @@ async fn poll_for_result(
         None => {
             metrics.record_inline(inline_start.elapsed(), false);
             let wait_start = Instant::now();
-            let (response, polls) =
-                wait_for_completion(client, client_info, session_token, result_url, policy).await?;
+            let (response, polls) = wait_for_completion(
+                client,
+                client_info,
+                session_token,
+                result_url,
+                policy,
+                cancel,
+            )
+            .await?;
             metrics.record_wait(wait_start.elapsed(), polls);
             Ok(response)
         }
@@ -530,6 +597,7 @@ pub(super) async fn poll_detached_query(
     session_token: &str,
     response: &query_response::Response,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<query_response::Response, SfError> {
     let result_url = extract_result_url_from_response(&query_parameters.server_url, response)?
         .ok_or_else(|| SfError::MissingResultUrl {
@@ -544,6 +612,7 @@ pub(super) async fn poll_detached_query(
         &result_url,
         policy,
         &mut metrics,
+        cancel,
     )
     .await;
     metrics.emit("detached query poll timings");
@@ -629,6 +698,25 @@ fn handle_poll_response(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn wait_for_completion_cancels_when_token_already_cancelled() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        let client = reqwest::Client::new();
+        let client_info = crate::config::rest_parameters::test_fixtures::test_client_info();
+        let policy = crate::config::retry::RetryPolicy::default();
+        let result = wait_for_completion(
+            &client,
+            &client_info,
+            "session-token",
+            "http://127.0.0.1:9/result",
+            &policy,
+            cancel,
+        )
+        .await;
+        assert!(matches!(result, Err(SfError::Cancelled { .. })));
+    }
 
     fn response_from_json(value: serde_json::Value) -> query_response::Response {
         serde_json::from_value(value).expect("valid response JSON")

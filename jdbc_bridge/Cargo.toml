@@ -17,6 +17,7 @@ proto_utils = { path = "../proto_utils" }
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 tracing = "0.1.41"
 tokio = { version = "1.50.0", features = ["rt"] }
+tokio-util = "0.7"
 
 [dependencies.jni]
 version = "0.21"

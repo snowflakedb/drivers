@@ -204,10 +204,14 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         skip_upload_on_content_match: false,
         multipart,
     };
-    let upload_result =
-        upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), &mut None)
-            .await
-            .expect("upload should succeed");
+    let upload_result = upload_single_file(
+        upload,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        &mut None,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("upload should succeed");
     assert_eq!(upload_result.status, "UPLOADED");
 
     assert_eq!(
@@ -248,6 +252,7 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         &RetryPolicy::put_get(&ParamStore::new()),
         0,
         &mut None,
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("download should succeed");

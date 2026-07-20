@@ -100,6 +100,12 @@ pub enum SfError {
     },
 }
 
+impl SfError {
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, SfError::Cancelled { .. })
+    }
+}
+
 // Intentionally no From<reqwest::Error> to force explicit location on construction
 
 /// Capture the caller's source location for use in snafu error construction.
@@ -120,6 +126,7 @@ pub(crate) fn current_location() -> Location {
 pub(crate) fn map_http_error(err: HttpError) -> SfError {
     let location = current_location();
     match err {
+        HttpError::Cancelled { .. } => SfError::Cancelled { location },
         HttpError::Transport { source, .. } => SfError::Transport { source, location },
         HttpError::DeadlineExceeded {
             configured,

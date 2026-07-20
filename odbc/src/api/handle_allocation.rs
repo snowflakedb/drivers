@@ -122,9 +122,12 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
     };
 
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.statement_new(StatementNewRequest {
-            conn_handle: Some(conn_handle),
-        })
+        c.statement_new(
+            StatementNewRequest {
+                conn_handle: Some(conn_handle),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await
     })?;
 
@@ -204,9 +207,12 @@ fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
             ]
         };
         if let Err(e) = g.block_on(async |c| {
-            c.statement_release(StatementReleaseRequest {
-                stmt_handle: Some(stmt_handle),
-            })
+            c.statement_release(
+                StatementReleaseRequest {
+                    stmt_handle: Some(stmt_handle),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await
         }) {
             tracing::warn!("free_connection: failed to release statement {stmt_handle:?}: {e:?}");
@@ -297,9 +303,12 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     // Release the server-side handle first; only delete on success so that
     // free_connection's cleanup loop can still find the handle on failure.
     let release_result = g.block_on(async |c| {
-        c.statement_release(StatementReleaseRequest {
-            stmt_handle: Some(stmt_handle),
-        })
+        c.statement_release(
+            StatementReleaseRequest {
+                stmt_handle: Some(stmt_handle),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await?;
         Ok(())
     });

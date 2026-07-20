@@ -53,6 +53,7 @@ pub async fn upload_to_gcs_or_skip(
     overwrite: bool,
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -85,17 +86,21 @@ pub async fn upload_to_gcs_or_skip(
         let key = key.clone();
         let client = client.clone();
         let wire_policy = wire_policy.clone();
+        let attempt_factory_cancel = cancel.clone();
         move |snapshot: super::types::StageInfoSnapshot| {
             let stage_info = base.with_snapshot(snapshot);
             let prepared = prepared.clone();
             let key = key.clone();
             let client = client.clone();
             let wire_policy = wire_policy.clone();
+            let attempt_cancel = attempt_factory_cancel.clone();
             async move {
                 let (url, token) = resolve_url_and_token(&stage_info, &key, None)
                     .map_err(map_gcs_request_error_for_attempt)?;
 
-                let head = check_file_exists_gcs(&client, &url, token).await;
+                let head = check_file_exists_gcs(&client, &url, token, &attempt_cancel)
+                    .await
+                    .map_err(map_gcs_request_error_for_attempt)?;
 
                 if !overwrite && matches!(head, GcsHeadResult::Found { .. }) {
                     tracing::info!("File already exists in GCS: {key}");
@@ -118,7 +123,7 @@ pub async fn upload_to_gcs_or_skip(
                     return Ok(UploadStatus::Skipped);
                 }
 
-                upload_to_gcs(&client, &url, token, prepared, &wire_policy)
+                upload_to_gcs(&client, &url, token, prepared, &wire_policy, attempt_cancel)
                     .await
                     .map_err(map_gcs_request_error_for_attempt)?;
                 Ok(UploadStatus::Uploaded)
@@ -237,6 +242,7 @@ async fn gcs_get_with_refresh(
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<reqwest::Response, GcsDownloadError> {
     let client = create_gcs_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -269,12 +275,14 @@ async fn gcs_get_with_refresh(
         let key = key.clone();
         let client = client.clone();
         let wire_policy = wire_policy.clone();
+        let cancel = cancel.clone();
         move |snapshot: super::types::StageInfoSnapshot| {
             let stage_info = base.with_snapshot(snapshot);
             let key = key.clone();
             let client = client.clone();
             let per_file_url = per_file_url.clone();
             let wire_policy = wire_policy.clone();
+            let cancel = cancel.clone();
             async move {
                 let (url, token) =
                     resolve_url_and_token(&stage_info, &key, per_file_url.as_deref())
@@ -290,6 +298,7 @@ async fn gcs_get_with_refresh(
                     },
                     Method::GET,
                     &wire_policy,
+                    cancel,
                 )
                 .await
                 .map_err(map_gcs_request_error_for_attempt)
@@ -389,6 +398,7 @@ pub async fn download_from_gcs(
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<DownloadResponse, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
@@ -397,6 +407,7 @@ pub async fn download_from_gcs(
         policy,
         per_file_index,
         refresher,
+        cancel.clone(),
     )
     .await?;
 
@@ -439,11 +450,13 @@ pub async fn download_from_gcs(
         None => None,
     };
 
-    let data = response
-        .bytes()
-        .await
-        .map_err(|source| GcsRequestError::Http { source })?
-        .to_vec();
+    let data = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return gcs_download_error::CancelledSnafu.fail(),
+        bytes = response.bytes() => bytes
+            .map_err(|source| GcsRequestError::Http { source })?
+            .to_vec(),
+    };
     let actual_len = data.len() as u64;
 
     if let Some(expected) = expected_length {
@@ -489,7 +502,7 @@ enum GcsHeadResult {
 /// Issue a HEAD against the GCS object and return `Found { digest }` on
 /// 200, or `NotFound` otherwise.
 ///
-/// Any non-200 status (including 403 / unexpected codes) and any
+/// Any non-200 status (including 403 / unexpected codes) and any non-cancel
 /// transport-level error are treated as `NotFound` — the caller falls
 /// through to a PUT. A malformed sfc-digest header yields
 /// `Found { digest: None }`; the digest comparison then misses and the
@@ -498,13 +511,20 @@ async fn check_file_exists_gcs(
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
-) -> GcsHeadResult {
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<GcsHeadResult, GcsRequestError> {
     let mut request = client.head(url);
     if let Some(t) = token {
         request = request.bearer_auth(t);
     }
 
-    match request.send().await {
+    let send_result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(GcsRequestError::Cancelled),
+        result = request.send() => result,
+    };
+
+    let head = match send_result {
         Ok(resp) => match resp.status() {
             StatusCode::OK => {
                 let digest = match try_get_header(resp.headers(), GCS_META_SFC_DIGEST) {
@@ -543,7 +563,8 @@ async fn check_file_exists_gcs(
             );
             GcsHeadResult::NotFound
         }
-    }
+    };
+    Ok(head)
 }
 
 /// Upload data to GCS with retry logic.
@@ -568,6 +589,7 @@ async fn upload_to_gcs(
     token: Option<&str>,
     prepared: PreparedUpload,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), GcsRequestError> {
     // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
     // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
@@ -649,6 +671,7 @@ async fn upload_to_gcs(
         &Method::PUT,
         url,
         policy,
+        cancel,
     )
     .await?;
 
@@ -703,15 +726,22 @@ async fn gcs_request_with_retry<F>(
     build_request: F,
     method: Method,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
     let ctx = HttpContext::new(method, "gcs-transfer");
 
-    let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
+    let response = http_execute_with_retry(
+        build_request,
+        &ctx,
+        policy,
+        |r| async move { Ok(r) },
+        cancel,
+    )
+    .await
+    .map_err(map_http_error)?;
 
     if response.status().is_success() {
         return Ok(response);
@@ -759,6 +789,10 @@ impl UploadRetryAdapter for GcsUploadRetry {
             detail: format!("GCS upload {detail}"),
         }
     }
+
+    fn on_cancelled(&self) -> GcsRequestError {
+        GcsRequestError::Cancelled
+    }
 }
 
 /// Executes a GCS upload with retry, accepting a **fallible** request-builder closure.
@@ -779,15 +813,17 @@ async fn gcs_upload_with_retry<F>(
     method: &Method,
     url: &str,
     policy: &RetryPolicy,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), GcsRequestError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
 {
-    cloud_http::upload_with_retry(policy, &GcsUploadRetry, method, url, build_request).await
+    cloud_http::upload_with_retry(policy, &GcsUploadRetry, method, url, build_request, cancel).await
 }
 
 fn map_http_error(e: HttpError) -> GcsRequestError {
     match e {
+        HttpError::Cancelled { .. } => GcsRequestError::Cancelled,
         HttpError::Transport { source, .. } => GcsRequestError::Http { source },
         other => GcsRequestError::RetryExhausted {
             detail: other.to_string(),
@@ -949,6 +985,7 @@ pub async fn download_from_gcs_streaming(
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
@@ -957,6 +994,7 @@ pub async fn download_from_gcs_streaming(
         policy,
         per_file_index,
         refresher,
+        cancel.clone(),
     )
     .await?;
 
@@ -1004,7 +1042,7 @@ pub async fn download_from_gcs_streaming(
         (None, _) => None,
     };
 
-    let reader = cloud_http::spawn_byte_stream_producer(response);
+    let reader = cloud_http::spawn_byte_stream_producer(response, cancel);
     let cloud_bytes_read = reader.bytes_read_handle();
     Ok(CloudStreamingDownload {
         cloud_byte_count,
@@ -1201,6 +1239,8 @@ enum GcsRequestError {
     ClientSetup { detail: String },
     #[snafu(display("Failed to serialize GCS metadata"))]
     Serialization { source: serde_json::Error },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled,
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -1229,6 +1269,7 @@ impl From<GcsRequestError> for GcsUploadError {
             GcsRequestError::Serialization { source } => {
                 gcs_upload_error::SerializationSnafu.into_error(source)
             }
+            GcsRequestError::Cancelled => gcs_upload_error::CancelledSnafu.build(),
         }
     }
 }
@@ -1264,6 +1305,7 @@ impl From<GcsRequestError> for GcsDownloadError {
             GcsRequestError::Serialization { source } => {
                 gcs_download_error::DeserializationSnafu.into_error(source)
             }
+            GcsRequestError::Cancelled => gcs_download_error::CancelledSnafu.build(),
         }
     }
 }
@@ -1333,6 +1375,17 @@ pub enum GcsUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl GcsUploadError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, GcsUploadError::Cancelled { .. })
+    }
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -1414,6 +1467,17 @@ pub enum GcsDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Operation cancelled"))]
+    Cancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl GcsDownloadError {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        matches!(self, GcsDownloadError::Cancelled { .. })
+    }
 }
 
 // --- Unit tests ---
@@ -2143,7 +2207,10 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = check_file_exists_gcs(&client, &url, Some("token"), &cancel)
+            .await
+            .unwrap();
 
         assert_eq!(
             result,
@@ -2164,7 +2231,10 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = check_file_exists_gcs(&client, &url, Some("token"), &cancel)
+            .await
+            .unwrap();
 
         // Older objects (pre-`sfc-digest`-write era, libsfclient-S3-style
         // uploads, etc.) lack the header; the conservative fall-through
@@ -2186,7 +2256,10 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = check_file_exists_gcs(&client, &url, Some("token"), &cancel)
+            .await
+            .unwrap();
 
         assert_eq!(result, GcsHeadResult::NotFound);
     }
@@ -2202,7 +2275,10 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = check_file_exists_gcs(&client, &url, Some("token"), &cancel)
+            .await
+            .unwrap();
 
         // 403 indicates limited credentials (e.g. PUT-only); proceed
         // with upload rather than surface a hard error — the worst
@@ -2221,7 +2297,10 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = check_file_exists_gcs(&client, &url, Some("token"), &cancel)
+            .await
+            .unwrap();
 
         assert_eq!(result, GcsHeadResult::NotFound);
     }
@@ -2244,7 +2323,10 @@ mod tests {
 
         let client = create_gcs_client(&make_stage_for_mock(&server.uri())).unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = check_file_exists_gcs(&client, &url, Some("token"), &cancel)
+            .await
+            .unwrap();
 
         assert_eq!(result, GcsHeadResult::Found { digest: None });
     }
@@ -2349,6 +2431,7 @@ mod tests {
             true,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2380,6 +2463,7 @@ mod tests {
             false,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2406,6 +2490,7 @@ mod tests {
             true,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2431,6 +2516,7 @@ mod tests {
             true,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2456,6 +2542,7 @@ mod tests {
             false,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2477,6 +2564,7 @@ mod tests {
             false,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2508,6 +2596,7 @@ mod tests {
             true,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2537,6 +2626,7 @@ mod tests {
             true,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -2573,6 +2663,7 @@ mod tests {
             true,
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap();

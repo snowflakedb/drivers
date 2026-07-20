@@ -24,13 +24,16 @@ pub fn record_api_usage(
     let Ok(globals) = global() else { return };
     let result = globals.block_on(async |client| {
         client
-            .telemetry_send_api_usage(TelemetrySendApiUsageRequest {
-                conn_handle: Some(conn_handle),
-                api_method: api_method.to_string(),
-                // ODBC records bare entry-point names; argument capture is a
-                // wrapper-level concern that ODBC does not implement.
-                passed_arguments: Vec::new(),
-            })
+            .telemetry_send_api_usage(
+                TelemetrySendApiUsageRequest {
+                    conn_handle: Some(conn_handle),
+                    api_method: api_method.to_string(),
+                    // ODBC records bare entry-point names; argument capture is a
+                    // wrapper-level concern that ODBC does not implement.
+                    passed_arguments: Vec::new(),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await
     });
     if let Err(e) = result {
@@ -53,11 +56,14 @@ pub fn record_wrapper_error(handle_type: sql::HandleType, handle: sql::Handle, e
     let error_source: &'static str = error_source.into();
     let result = globals.block_on(async |client| {
         client
-            .telemetry_send_wrapper_error(TelemetrySendWrapperErrorRequest {
-                conn_handle: Some(conn_handle),
-                exception_type: exception_type.to_string(),
-                error_source: error_source.to_string(),
-            })
+            .telemetry_send_wrapper_error(
+                TelemetrySendWrapperErrorRequest {
+                    conn_handle: Some(conn_handle),
+                    exception_type: exception_type.to_string(),
+                    error_source: error_source.to_string(),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await
     });
     if let Err(e) = result {

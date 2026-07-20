@@ -9,7 +9,11 @@ use super::prefetch::DownloadChunk;
 pub struct FileChunkDownloader;
 
 impl DownloadChunk for FileChunkDownloader {
-    async fn download_chunk(&self, chunk: ChunkDownloadData) -> Result<Vec<u8>, ArrowError> {
+    async fn download_chunk(
+        &self,
+        chunk: ChunkDownloadData,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Vec<u8>, ArrowError> {
         let path = PathBuf::from(&chunk.url);
         tokio::fs::read(&path)
             .await

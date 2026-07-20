@@ -63,6 +63,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         autocommit: bool,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
@@ -73,7 +74,7 @@ impl DatabaseDriverV1 {
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(&conn, sql, SessionStateRefresh::Apply)
+                    self.execute_session_sql(&conn, sql, SessionStateRefresh::Apply, cancel)
                         .await
                 } else {
                     conn.init_session_parameters
@@ -96,6 +97,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         database: &str,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), ApiError> {
         let db = database.trim();
         if db.is_empty() {
@@ -117,7 +119,7 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply)
+                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply, cancel)
                     .await
             }
             None => InvalidArgumentSnafu {
@@ -129,15 +131,23 @@ impl DatabaseDriverV1 {
 
     /// Commit the open transaction on the given connection by executing `COMMIT`.
     /// Must only be called after the connection is initialised (`is_post_connect()`).
-    pub async fn connection_commit(&self, conn_handle: Handle) -> Result<(), ApiError> {
-        self.execute_transaction_control(conn_handle, "COMMIT")
+    pub async fn connection_commit(
+        &self,
+        conn_handle: Handle,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<(), ApiError> {
+        self.execute_transaction_control(conn_handle, "COMMIT", cancel)
             .await
     }
 
     /// Roll back the open transaction on the given connection by executing `ROLLBACK`.
     /// Must only be called after the connection is initialised (`is_post_connect()`).
-    pub async fn connection_rollback(&self, conn_handle: Handle) -> Result<(), ApiError> {
-        self.execute_transaction_control(conn_handle, "ROLLBACK")
+    pub async fn connection_rollback(
+        &self,
+        conn_handle: Handle,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<(), ApiError> {
+        self.execute_transaction_control(conn_handle, "ROLLBACK", cancel)
             .await
     }
 
@@ -147,6 +157,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         sql: &str,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
@@ -160,7 +171,7 @@ impl DatabaseDriverV1 {
                 // COMMIT/ROLLBACK do not change session parameters or
                 // current database/schema/warehouse/role, so skip the
                 // session-state cache refresh.
-                self.execute_session_sql(&conn, sql, SessionStateRefresh::Skip)
+                self.execute_session_sql(&conn, sql, SessionStateRefresh::Skip, cancel)
                     .await
             }
             None => InvalidArgumentSnafu {
@@ -177,6 +188,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         schema: &str,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), ApiError> {
         let schema = schema.trim();
         if schema.is_empty() {
@@ -198,7 +210,7 @@ impl DatabaseDriverV1 {
                 }
                 let database = resolve_session_database(&conn)?;
                 let sql = build_use_schema_sql(database.as_deref(), schema);
-                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply)
+                self.execute_session_sql(&conn, &sql, SessionStateRefresh::Apply, cancel)
                     .await
             }
             None => InvalidArgumentSnafu {
@@ -222,6 +234,7 @@ impl DatabaseDriverV1 {
         conn: &Connection,
         sql: &str,
         refresh: SessionStateRefresh,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), ApiError> {
         let query_input = QueryInput {
             sql: sql.to_string(),
@@ -248,6 +261,7 @@ impl DatabaseDriverV1 {
                 query_input.clone(),
                 &retry_policy,
                 QueryExecutionMode::Blocking,
+                cancel.clone(),
             )
             .await
             {
@@ -277,6 +291,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         _db_handle: Handle,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
@@ -454,6 +469,7 @@ impl DatabaseDriverV1 {
                     token_cache.map(|c| c as &dyn TokenCache),
                     Some(&self.prompt_locks),
                     &retry_policy,
+                    cancel,
                 );
 
                 let login_result = if let Some(budget) = timeout_config.login_timeout {
@@ -1902,6 +1918,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         query_id: &str,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<snowflake::QueryStatusResult, ApiError> {
         if query_id.is_empty() {
             return InvalidArgumentSnafu {
@@ -1938,6 +1955,7 @@ impl DatabaseDriverV1 {
             let server_url = &server_url;
             let client_info = &client_info;
             let retry_policy = &retry_policy;
+            let cancel = cancel.clone();
             async move {
                 snowflake::get_query_status(
                     http_client,
@@ -1946,6 +1964,7 @@ impl DatabaseDriverV1 {
                     &token,
                     query_id,
                     retry_policy,
+                    cancel,
                 )
                 .await
             }
@@ -2432,7 +2451,11 @@ impl DatabaseDriverV1 {
     ///
     /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
     /// which configure logout behavior at connection initialization, not at close time.
-    pub async fn connection_close(&self, conn_handle: Handle) -> Result<(), ApiError> {
+    pub async fn connection_close(
+        &self,
+        conn_handle: Handle,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<(), ApiError> {
         let conn_ptr = self
             .connections
             .get_obj(conn_handle)
@@ -2482,7 +2505,8 @@ impl DatabaseDriverV1 {
         self.flush_connection_telemetry(conn_handle).await;
 
         // Execute logout — network I/O, lock must not be held
-        let logout_result = logout::execute_logout_with_strategy(logout_data, error_strategy).await;
+        let logout_result =
+            logout::execute_logout_with_strategy(logout_data, error_strategy, cancel).await;
 
         // Cleanup connection resources (separate lock acquisition after I/O)
         cleanup_connection(&conn_ptr).await?;

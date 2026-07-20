@@ -29,9 +29,14 @@ async fn should_retry_get_after_transient_failure() {
     let ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
-        .await
-        .expect("retry to succeed");
+    let body = execute_bytes_with_retry(
+        || client.get(&url),
+        &ctx,
+        &RetryPolicy::default(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("retry to succeed");
 
     // Then it should have retried once and returned the successful body
     assert_eq!(body, b"ok");
@@ -72,9 +77,14 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
     };
 
     // When the helper executes the request
-    let err = execute_bytes_with_retry(|| client.get(&url), &ctx, &policy)
-        .await
-        .expect_err("should exceed retry-after budget");
+    let err = execute_bytes_with_retry(
+        || client.get(&url),
+        &ctx,
+        &policy,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect_err("should exceed retry-after budget");
 
     // Then it should return a Retry-After exceeded error
     match err {
@@ -106,6 +116,7 @@ async fn should_retry_idempotent_put_after_transient_failure() {
         || client.put(&url).body("payload"),
         &ctx,
         &RetryPolicy::default(),
+        tokio_util::sync::CancellationToken::new(),
     )
     .await
     .expect("retry to succeed");
@@ -147,9 +158,14 @@ async fn should_fail_after_reaching_max_attempts() {
     };
 
     // When the helper executes the request
-    let err = execute_bytes_with_retry(|| client.get(&url), &ctx, &policy)
-        .await
-        .expect_err("should stop after max attempts");
+    let err = execute_bytes_with_retry(
+        || client.get(&url),
+        &ctx,
+        &policy,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect_err("should stop after max attempts");
 
     // Then it should return a max attempts error
     match err {
@@ -212,9 +228,14 @@ async fn async_style_retries_transient_error() {
     let ctx = HttpContext::new(Method::GET, url.clone());
 
     // When using execute_with_retry (async-style)
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
-        .await
-        .expect("retry to succeed");
+    let body = execute_bytes_with_retry(
+        || client.get(&url),
+        &ctx,
+        &RetryPolicy::default(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("retry to succeed");
 
     // Then it retries and succeeds
     assert_eq!(body, b"ok");
@@ -256,9 +277,14 @@ async fn should_retry_after_connection_reset() {
     let ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
-        .await
-        .expect("should retry after connection reset");
+    let body = execute_bytes_with_retry(
+        || client.get(&url),
+        &ctx,
+        &RetryPolicy::default(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("should retry after connection reset");
 
     // Then it should have retried and succeeded
     assert_eq!(body, b"ok");
@@ -279,7 +305,13 @@ async fn should_not_retry_401_unauthorized() {
     let ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let result = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default()).await;
+    let result = execute_bytes_with_retry(
+        || client.get(&url),
+        &ctx,
+        &RetryPolicy::default(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
 
     // Then it should NOT retry (401 is not retryable) and return the response
     // The caller is responsible for handling 401 as session expired
