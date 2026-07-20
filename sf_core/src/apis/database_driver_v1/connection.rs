@@ -302,10 +302,11 @@ impl DatabaseDriverV1 {
                     // drivers can set arbitrary Snowflake session params
                     // via regular connection options.
                     let mut unknown_settings = collect_unknown_settings(&conn.connection_seed);
-                    // `CLIENT_SESSION_KEEP_ALIVE` and
-                    // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are registered
-                    // params so they don't show up as "unknown"; mirror them into
-                    // login session parameters to match the Python connector.
+                    // `CLIENT_SESSION_KEEP_ALIVE`,
+                    // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY`, and
+                    // `CLIENT_PREFETCH_THREADS` are registered params so they
+                    // don't show up as "unknown"; mirror them into login session
+                    // parameters to match the Python connector.
                     if let Some(v) = resolved.get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE) {
                         unknown_settings.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE.as_str().to_string(),
@@ -319,6 +320,12 @@ impl DatabaseDriverV1 {
                             param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY
                                 .as_str()
                                 .to_string(),
+                            v.to_string(),
+                        );
+                    }
+                    if let Some(v) = resolved.get_int(param_names::CLIENT_PREFETCH_THREADS) {
+                        unknown_settings.insert(
+                            param_names::CLIENT_PREFETCH_THREADS.as_str().to_string(),
                             v.to_string(),
                         );
                     }

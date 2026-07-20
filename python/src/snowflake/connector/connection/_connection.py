@@ -21,7 +21,9 @@ from .._internal.connection import (
     CURRENT_VERSION_SQL,
     ROLLBACK_SQL,
     SET_AUTOCOMMIT_SQL,
+    SET_CLIENT_PREFETCH_THREADS_SQL,
     ConnectionMixin,
+    clamp_client_prefetch_threads,
     requires_open,
 )
 from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
@@ -412,6 +414,46 @@ class Connection(ConnectionMixin):
     def autocommit(self, value: bool) -> None:
         """Set autocommit mode."""
         self.set_autocommit(value)
+
+    # ------------------------------------------------------------------
+    # Client prefetch threads
+    # ------------------------------------------------------------------
+
+    @requires_open
+    @api_telemetry
+    def set_client_prefetch_threads(self, value: int) -> None:
+        """Set the number of concurrent chunk-prefetch threads.
+
+        Executes ``ALTER SESSION SET CLIENT_PREFETCH_THREADS`` so the change
+        takes effect on subsequent result-set fetches — matching the legacy
+        connector's immediate, locally-effective setter — rather than only
+        updating local config, which the core's chunk downloader never reads
+        back from after connect.
+        """
+        value = clamp_client_prefetch_threads(value)
+        self.config.client_prefetch_threads = value
+        cur = self.cursor()
+        try:
+            cur.execute(SET_CLIENT_PREFETCH_THREADS_SQL.format(value=value))
+        finally:
+            cur.close()
+
+    @api_telemetry
+    def get_client_prefetch_threads(self) -> int:
+        """Get the configured number of chunk-prefetch threads."""
+        return cast(int, self.config.client_prefetch_threads)
+
+    @property
+    @api_telemetry
+    def client_prefetch_threads(self) -> int | None:
+        """The number of threads used to prefetch query result data."""
+        return self.config.client_prefetch_threads
+
+    @client_prefetch_threads.setter
+    @api_telemetry
+    def client_prefetch_threads(self, value: int) -> None:
+        """Set client_prefetch_threads; applies immediately via ``ALTER SESSION SET``."""
+        self.set_client_prefetch_threads(value)
 
     # ------------------------------------------------------------------
     # Connection state
