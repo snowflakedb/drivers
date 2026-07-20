@@ -60,11 +60,11 @@ behavior_differences:
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
-      The PUT result set message column (column 8) contains "ENCRYPTED" and the GET result set message column (column 4) contains "DECRYPTED" after a successful file transfer.
+      The PUT result set encryption column (column 8) contains "ENCRYPTED" and the GET result set encryption column (column 4) contains "DECRYPTED" after a successful file transfer.
     new_driver_behavior: |
-      Both the PUT and GET result set message columns return an empty string on success. The message column is only populated on failure (currently always empty because errors are surfaced earlier).
+      Realigned to the legacy driver: the PUT (column 8) and GET (column 4) encryption columns again contain "ENCRYPTED" / "DECRYPTED" on a successful transfer. (The earlier regression that returned an empty string on success has been reverted; this entry is now status: fixed.)
     description: |
-      Applications that inspect the PUT/GET message column to confirm client-side encryption or decryption happened no longer see those values.
+      Regression fixed. Applications that inspect the PUT/GET encryption column again see "ENCRYPTED" / "DECRYPTED" on success, matching the legacy driver.
   4:
     name: "GET rowset metadata contains file size after decryption instead of file size before decryption"
     status: fixed
@@ -77,9 +77,9 @@ behavior_differences:
     old_driver_behavior: |
       The GET result set size column (column 2) reports the raw downloaded byte count (e.g. 32 bytes for a small test file), which includes the client-side encryption padding/overhead before decryption.
     new_driver_behavior: |
-      Reports the size of the decrypted payload written to disk (e.g. 26 bytes for the same test file), matching the size of the file the user actually ends up with locally.
+      Realigned to the legacy driver: the GET size column (column 2) again reports the raw downloaded byte count before decryption (e.g. 32 bytes for the same test file). (The earlier regression that reported the decrypted-on-disk size, e.g. 26 bytes, has been reverted; this entry is now status: fixed.)
     description: |
-      Applications that compare the reported GET size against the on-stage encrypted object length will see a smaller value. Applications that compare against the file written to disk will see a matching value.
+      Regression fixed. The GET size column again matches the legacy driver's pre-decryption byte count.
   5:
     name: "Header of a gzip-compressed file does not contain filename"
     status: todo
@@ -105,11 +105,11 @@ behavior_differences:
     is_breaking_change: true
     impact: high
     old_driver_behavior: |
-      PUT with SOURCE_COMPRESSION=AUTO_DETECT on a file with an unsupported compression format (e.g. LZMA/xz) returns SQL_SUCCESS and uploads the file anyway.
+      PUT with SOURCE_COMPRESSION=AUTO_DETECT on a file with an unsupported compression format (e.g. LZMA/xz) returns SQL_SUCCESS and uploads the file anyway (treated as uncompressed).
     new_driver_behavior: |
-      Returns SQL_ERROR for files whose compression format is not in the supported set (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE).
+      Realigned to the legacy driver: PUT with SOURCE_COMPRESSION=AUTO_DETECT on an unsupported compression format again returns SQL_SUCCESS and uploads the file (treated as uncompressed). (The earlier regression that returned SQL_ERROR for formats outside the supported set has been reverted; this entry is now status: fixed.)
     description: |
-      Applications that previously uploaded LZMA or other unsupported formats under AUTO_DETECT will now receive an error at PUT time instead of silently uploading.
+      Regression fixed. Applications uploading LZMA or other unsupported formats under AUTO_DETECT again succeed silently, matching the legacy driver.
   7:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
     status: allowed
@@ -276,9 +276,9 @@ behavior_differences:
     old_driver_behavior: |
       On Windows, the PUT result set source column returns the full absolute file path (e.g. C:/Users/.../test_data.csv).
     new_driver_behavior: |
-      Returns just the filename (e.g. test_data.csv), same as on Linux.
+      Realigned to the legacy driver: on Windows the PUT source column again returns the full absolute file path. (The earlier regression that returned just the filename, matching Linux, has been reverted; this entry is now status: fixed.) The put_get tests encode this via expected_put_source(), which returns the absolute path on Windows for both drivers.
     description: |
-      Applications that parse the PUT source column for the full path on Windows will now receive only the filename.
+      Regression fixed. Applications that parse the PUT source column for the full path on Windows again receive the absolute path.
   18:
     name: "Interval leading field precision is enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is respected"
     status: allowed
