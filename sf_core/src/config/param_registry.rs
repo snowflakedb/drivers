@@ -1596,7 +1596,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         description: "Number of concurrent chunk prefetch threads for result set downloading",
         deprecated_by: None,
         scope: ParamScope::Session,
-        used_at_connect: false,
+        used_at_connect: true,
         mutable_after_connect: true,
     },
     ParamDef {

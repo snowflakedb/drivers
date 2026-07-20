@@ -16,6 +16,22 @@ from ..extras import numpy as np
 from .constants import LOG_MAX_QUERY_LENGTH
 
 
+# Matches the legacy connector's `MAX_CLIENT_PREFETCH_THREADS` /
+# `_validate_client_prefetch_threads` bounds (`connection.py`).
+MIN_CLIENT_PREFETCH_THREADS = 1
+MAX_CLIENT_PREFETCH_THREADS = 10
+
+
+def clamp_client_prefetch_threads(value: int) -> int:
+    """Clamp to ``[1, 10]``, matching the legacy connector's validation."""
+    value = int(value)
+    if value <= 0:
+        return MIN_CLIENT_PREFETCH_THREADS
+    if value > MAX_CLIENT_PREFETCH_THREADS:
+        return MAX_CLIENT_PREFETCH_THREADS
+    return value
+
+
 class ConnectionMixin(ErrorHandlerMixin):
     """Zero-I/O connection members shared by sync and async connection classes.
 
@@ -49,6 +65,9 @@ class ConnectionMixin(ErrorHandlerMixin):
             config=config,
             **kwargs,
         )
+
+        if self.config.client_prefetch_threads is not None:
+            self.config.client_prefetch_threads = clamp_client_prefetch_threads(self.config.client_prefetch_threads)
 
         from snowflake.connector import paramstyle as default_paramstyle
 
@@ -205,14 +224,26 @@ class ConnectionMixin(ErrorHandlerMixin):
 
     @property
     @api_telemetry
-    def client_prefetch_threads(self) -> int:
+    def client_prefetch_threads(self) -> int | None:
         """The number of threads used to prefetch query result data."""
-        raise NotImplementedError("client_prefetch_threads is not yet implemented")
+        return self.config.client_prefetch_threads
 
     @client_prefetch_threads.setter
     @api_telemetry
     def client_prefetch_threads(self, value: int) -> None:
-        raise NotImplementedError("client_prefetch_threads is not yet implemented")
+        """Update local state only; this is the base (zero-I/O) implementation.
+
+        The core's chunk-prefetch pool size is read from the server-echoed
+        session-parameter cache, not from this config value, so on its own
+        this setter has no effect on an already-open connection. The
+        synchronous ``Connection`` class overrides this property to also run
+        ``ALTER SESSION SET CLIENT_PREFETCH_THREADS`` so the change actually
+        takes effect on subsequent fetches, matching the legacy connector's
+        immediate, locally-effective setter. Async connections cannot do the
+        same through a synchronous property setter (it can't ``await``); use
+        ``await conn.set_client_prefetch_threads(value)`` there instead.
+        """
+        self.config.client_prefetch_threads = clamp_client_prefetch_threads(value)
 
     @property
     @api_telemetry
