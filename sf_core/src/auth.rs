@@ -18,7 +18,11 @@ use crate::sensitive::SensitiveString;
 /// - `"driverspreprod6.preprod6.us-west-2.aws"` -> `"DRIVERSPREPROD6"`
 /// - `"myaccount.us-east-1"` -> `"MYACCOUNT"`
 pub fn extract_account_locator(account: &str) -> String {
-    account.split('.').next().unwrap().to_uppercase()
+    account
+        .split('.')
+        .next()
+        .expect("str::split always yields at least one element")
+        .to_uppercase()
 }
 
 pub enum Credentials {

@@ -122,9 +122,10 @@ pub struct HandleGuard<T> {
 impl<T> Deref for HandleGuard<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        // SAFETY: Read lock guarantees no concurrent write can set this to None.
-        // Only get_for_delete (write lock) can set None, and our read lock prevents that.
-        self.guard.as_ref().unwrap()
+        self.guard.as_ref().expect(
+            "read lock guarantees Some: only get_for_delete (write lock) clears the slot, \
+             and our read lock prevents that",
+        )
     }
 }
 
@@ -136,7 +137,9 @@ pub struct DeleteGuard<T> {
 
 impl<T> DeleteGuard<T> {
     pub fn value(&self) -> &T {
-        self.guard.as_ref().unwrap()
+        self.guard
+            .as_ref()
+            .expect("delete guard holds the value until delete() consumes it")
     }
 
     pub fn delete(mut self) {

@@ -2025,7 +2025,9 @@ impl<T> State<T> {
     }
 
     pub fn as_ref(&self) -> &T {
-        self.current_state.as_ref().unwrap()
+        self.current_state
+            .as_ref()
+            .expect("state is present between public API calls; set() restores it after take()")
     }
 }
 
