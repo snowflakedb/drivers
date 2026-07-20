@@ -174,6 +174,10 @@ class ConnectionConfigMixin:
         "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
         "private_key_file_pwd": "private_key_password",
         "oauth_socket_uri": "oauth_redirect_uri",
+        # Old LinuxLocalFileCache internal toggle that leaked out as a
+        # connection kwarg; renames to the ``unsafe_`` form so the fan-out
+        # block below can handle both names uniformly.
+        "skip_file_permissions_check": "unsafe_skip_file_permissions_check",
     }
     """Deprecated parameter names -> canonical replacements.
 
@@ -259,6 +263,23 @@ class ConnectionConfigMixin:
                 if new_name not in kwargs:
                     kwargs[new_name] = value
 
+        # Apply deprecated rewrites with a ``DeprecationWarning`` so callers
+        # migrating from snowflake-connector-python see a pointer to the new
+        # name.  ``stacklevel=3`` surfaces the caller of ``Connection(...)`` /
+        # ``ConnectionConfig.from_kwargs(...)`` rather than this file.
+        # Runs before the fan-out block below so that aliases that resolve
+        # to ``unsafe_skip_file_permissions_check`` are renamed in time.
+        for old_name, new_name in cls._DEPRECATED_REWRITES.items():
+            if old_name in kwargs:
+                value = kwargs.pop(old_name)
+                warnings.warn(
+                    f"{old_name!r} is deprecated; use {new_name!r} instead.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+                if new_name not in kwargs:
+                    kwargs[new_name] = value
+
         # The old snowflake-connector-python exposed a single
         # ``unsafe_skip_file_permissions_check`` that governed BOTH the
         # config-file and the CRL-cache permission checks. The universal driver
@@ -272,21 +293,6 @@ class ConnectionConfigMixin:
             ):
                 if target not in kwargs:
                     kwargs[target] = legacy_skip
-
-        # Apply deprecated rewrites with a ``DeprecationWarning`` so callers
-        # migrating from snowflake-connector-python see a pointer to the new
-        # name.  ``stacklevel=3`` surfaces the caller of ``Connection(...)`` /
-        # ``ConnectionConfig.from_kwargs(...)`` rather than this file.
-        for old_name, new_name in cls._DEPRECATED_REWRITES.items():
-            if old_name in kwargs:
-                value = kwargs.pop(old_name)
-                warnings.warn(
-                    f"{old_name!r} is deprecated; use {new_name!r} instead.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-                if new_name not in kwargs:
-                    kwargs[new_name] = value
 
         # Drop unsupported legacy kwargs with a warning so the caller knows
         # they had no effect instead of silently forwarding them to Rust.
