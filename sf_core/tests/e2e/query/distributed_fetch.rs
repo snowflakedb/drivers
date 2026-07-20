@@ -12,7 +12,7 @@ fn read_batches_from_response(
 }
 
 #[test]
-fn distributed_fetch_simple_query() {
+fn should_return_inline_chunk_for_simple_distributed_fetch_query() {
     // Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
 
@@ -49,7 +49,7 @@ fn distributed_fetch_simple_query() {
 }
 
 #[test]
-fn distributed_fetch_large_result_produces_multiple_chunks() {
+fn should_produce_multiple_chunks_for_large_distributed_fetch_result() {
     // Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
 
