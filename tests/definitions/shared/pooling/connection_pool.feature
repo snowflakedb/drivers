@@ -34,6 +34,52 @@ Feature: Connection pooling
     Then A query can be executed on the logical connection
 
   # ============================================================================
+  # POOLED CONNECTION AND POOL DATA SOURCE API SURFACE
+  # javax.sql.PooledConnection / ConnectionPoolDataSource / CommonDataSource methods.
+  # Legacy: pooling.ConnectionPoolingDataSourceIT, PooledConnectionLatestIT
+  # BD#27 (borrow after close), BD#36 (single active handle), BD#28 (listener isolation),
+  # BD#39 (statement-event listeners are no-ops).
+  #
+  # SPEC-ONLY in this PR: these scenarios are intentionally left UNTAGGED (TODO)
+  # so they carry no test-method requirement yet and CI stays green. The
+  # @jdbc_e2e tags and the mirrored ConnectionPoolTests methods land in the
+  # implementation PR.
+  # ============================================================================
+
+  Scenario: should reject borrowing a logical connection after the pooled connection is closed
+    Given Snowflake connection pool data source is configured
+    When The pooled connection is closed
+    Then Borrowing a logical connection should raise connection closed error
+
+  Scenario: should invalidate the previous logical connection when a new one is borrowed
+    Given Snowflake connection pool data source is configured
+    When A second logical connection is borrowed while the first is still open
+    Then The first logical connection should be invalidated and the second should run queries
+
+  Scenario: should accept statement event listeners without firing statement events
+    Given Snowflake connection pool data source is configured
+    And A statement event listener is registered
+    When A statement is prepared and executed on a logical connection
+    Then No statement events should be fired and the listener can be removed
+
+  Scenario: should stop firing connection events after the listener is removed
+    Given Snowflake connection pool data source is configured
+    And A connection event listener is registered
+    When The listener is removed after one logical connection close and another handle is closed
+    Then Only the close before removal should be delivered to the listener
+
+  Scenario: should isolate connection event listener exceptions during dispatch
+    Given Snowflake connection pool data source is configured
+    And A failing and a recording connection event listener are registered
+    When A logical connection is borrowed and closed
+    Then The recording listener should still receive the connection closed event
+
+  Scenario: should get and set login timeout on the pool data source
+    Given Snowflake connection pool data source is configured
+    When The login timeout is set on the pool data source
+    Then The login timeout getter should return the configured value
+
+  # ============================================================================
   # NODE.JS CONNECTION POOL PARITY (generic-pool semantics on logical connections)
   # Legacy reference: nodejs/tests/e2e/connection-pool.test.ts
   # ============================================================================
