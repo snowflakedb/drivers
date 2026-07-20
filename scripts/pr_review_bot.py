@@ -1224,6 +1224,15 @@ def _skip_assign(reason: str) -> int:
     return 0
 
 
+def _format_pr_change_stats(pr: dict) -> str:
+    """Return a compact ``+N/-M`` line-change summary from a PR payload."""
+    additions = pr.get("additions")
+    deletions = pr.get("deletions")
+    if additions is None and deletions is None:
+        return ""
+    return f"+{additions or 0}/-{deletions or 0}"
+
+
 def cmd_assign(args: argparse.Namespace) -> int:
     repo = os.environ["GH_REPO"]
     pr_number_env = os.environ.get("PR_NUMBER", "").strip()
@@ -1407,8 +1416,10 @@ def cmd_assign(args: argparse.Namespace) -> int:
         return 0
 
     reviewer_display = names.name(reviewer)
+    change_stats = _format_pr_change_stats(pr)
+    stats_suffix = f" `{change_stats}`" if change_stats else ""
     fallback = (
-        f"New PR ready for review: #{pr_number} — {title} "
+        f"New PR ready for review: #{pr_number} — {title}{stats_suffix} "
         f"(by @{author}, reviewer {reviewer_display})"
     )
     blocks: list[dict] = [
@@ -1423,7 +1434,9 @@ def cmd_assign(args: argparse.Namespace) -> int:
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"<{html_url}|#{pr_number} — {title}>",
+                "text": (
+                    f"<{html_url}|#{pr_number} — {title}>{stats_suffix}"
+                ),
             },
         },
         {
