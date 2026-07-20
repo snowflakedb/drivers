@@ -3077,7 +3077,9 @@ fn mark_apd_record_null(
     null_indicators.push(sql::NULL_DATA);
     if let Some(rec) = apd.records.get_mut(&param_num) {
         rec.data_ptr = std::ptr::null_mut();
-        rec.str_len_or_ind_ptr = null_indicators.last_mut().unwrap();
+        rec.str_len_or_ind_ptr = null_indicators
+            .last_mut()
+            .expect("NULL_DATA was just pushed above");
     }
 }
 
@@ -3145,11 +3147,15 @@ fn execute_dae(
                 let concatenated: Vec<u8> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
                 len_indicators.push(concatenated.len() as sql::Len);
                 dae_buffers.push(concatenated);
-                let buf = dae_buffers.last().unwrap();
+                let buf = dae_buffers
+                    .last()
+                    .expect("concatenated buffer was just pushed above");
                 if let Some(rec) = temp_apd.records.get_mut(&param_num) {
                     rec.data_ptr = buf.as_ptr() as sql::Pointer;
                     rec.buffer_length = buf.len() as sql::Len;
-                    rec.str_len_or_ind_ptr = len_indicators.last_mut().unwrap();
+                    rec.str_len_or_ind_ptr = len_indicators
+                        .last_mut()
+                        .expect("length indicator was just pushed above");
                 }
             }
         }
