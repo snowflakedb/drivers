@@ -100,8 +100,8 @@ jobs:
     with:
       targets: ${{ needs.load-python-matrix.outputs.build-targets }}
 
-  # Packaging tests - verify sdist can be built and installed from source
-  packaging_tests:
+  # Packaging tests — wheel build path (full workspace, lto = "thin")
+  packaging_tests_wheel:
     needs: [detect-changes]
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
@@ -117,7 +117,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "packaging"
+          shared-key: "packaging-wheel"
 
       - name: Restore core-target cache
         id: core-target-cache
@@ -126,8 +126,8 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: core-target
-          key: ${{ runner.os }}-rust-packaging-core-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-rust-packaging-core-target-
+          key: ${{ runner.os }}-rust-packaging-wheel-core-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-wheel-core-target-
 
       - name: Restore proto-target cache
         id: proto-target-cache-pkg
@@ -153,9 +153,9 @@ jobs:
       - name: Mock parameters.json
         run: echo '{"testconnection":{}}' > parameters.json
 
-      - name: Run packaging tests
+      - name: Run wheel packaging test
         working-directory: ./python
-        run: hatch run packaging.py3.13:test -v --timeout=900
+        run: hatch run packaging.py3.13:test -v --timeout=900 tests/packaging/test_wheel_build.py
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/core-target
@@ -171,7 +171,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "packaging"
+          shared-key: "packaging-wheel"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
@@ -186,7 +186,108 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: core-target
-          key: ${{ runner.os }}-rust-packaging-core-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-rust-packaging-wheel-core-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save proto-target cache
+        if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
+
+  # Packaging tests — sdist install path (minimal workspace, lto = false)
+  packaging_tests_sdist:
+    needs: [detect-changes]
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.run_python_packaging == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "packaging-sdist"
+
+      - name: Restore core-target cache
+        id: core-target-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: core-target
+          key: ${{ runner.os }}-rust-packaging-sdist-core-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-sdist-core-target-
+
+      - name: Restore proto-target cache
+        id: proto-target-cache-pkg
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-proto-target-v2-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Mock parameters.json
+        run: echo '{"testconnection":{}}' > parameters.json
+
+      - name: Run sdist packaging test
+        working-directory: ./python
+        run: hatch run packaging.py3.13:test -v --timeout=900 tests/packaging/test_sdist.py
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/core-target
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Save Rust cache
+        if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "packaging-sdist"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save core-target cache
+        if: always() && steps.core-target-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: core-target
+          key: ${{ runner.os }}-rust-packaging-sdist-core-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save proto-target cache
         if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
@@ -760,7 +861,7 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [detect-changes, build_wheels, packaging_tests, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheels, packaging_tests_wheel, packaging_tests_sdist, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -778,12 +879,14 @@ jobs:
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.packaging_tests_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.packaging_tests_sdist.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_wheels: ${{ needs.build_wheels.result }}"
-            echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
+            echo "  - packaging_tests_wheel: ${{ needs.packaging_tests_wheel.result }}"
+            echo "  - packaging_tests_sdist: ${{ needs.packaging_tests_sdist.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
@@ -793,7 +896,8 @@ jobs:
           # Tests ran and passed
           echo "✓ Python CI PASSED"
           echo "  - build_wheels: ${{ needs.build_wheels.result }}"
-          echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
+          echo "  - packaging_tests_wheel: ${{ needs.packaging_tests_wheel.result }}"
+          echo "  - packaging_tests_sdist: ${{ needs.packaging_tests_sdist.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
