@@ -808,6 +808,12 @@ rules:
 
       Do NOT write to relative paths (implicitly in the working directory of the test runner), hardcoded paths in `/tmp`, or project-relative paths like `./test_output/` that are shared across invocations.
 
+      **TEMPORARY / CONDITIONAL-GUARD EXCEPTION — do NOT flag (or drop to Low with context)**: a fixed path is not a live collision risk when the code is explicitly marked as short-lived or is gated so at most one worker ever takes the branch. Suppress the finding when either is true near the write:
+      - An adjacent comment (within ~3 lines) marks it as provisional: `// TEMPORARY`, `// TODO`, `// FIXME`, `// HACK`, or `// XXX` acknowledging the path.
+      - The write is guarded by a condition that admits only one writer, e.g. `#ifdef _WIN32` / `#if defined(GITHUB_WORKSPACE)` preprocessor guards, a CI-only branch keyed on an env var like `GITHUB_WORKSPACE`, or an `Assumptions.assumeTrue(...)` / single-platform guard that prevents concurrent workers from racing on the path.
+
+      When both the marker/guard is present AND the collision window is genuinely closed, stay silent. If the path is fixed and unguarded but a temporary marker is present, prefer a single Low-severity nudge ("this fixed path is marked TEMPORARY; migrate to `@TempDir`/`tmp_path` when de-temporizing") rather than a standard finding. Do NOT suppress merely because a comment exists — the comment must actually acknowledge the path's provisional/conditional nature.
+
       ❌ **BAD (Java):**
       ```java
       @Test
@@ -815,6 +821,14 @@ rules:
           Path keyFile = Paths.get("/tmp/test_key.pem");   // collides across workers
           Files.writeString(keyFile, privateKeyPem);
       }
+      ```
+
+      ✅ **ALSO FINE — do NOT flag (temporary + platform-gated single writer):**
+      ```cpp
+      // TEMPORARY: trace config path until per-run dir lands; only the Windows CI job hits this
+      #if defined(_WIN32) && defined(GITHUB_WORKSPACE)
+          write_trace_config(fixed_trace_config_path());
+      #endif
       ```
 
       ✅ **GOOD (Java):**
