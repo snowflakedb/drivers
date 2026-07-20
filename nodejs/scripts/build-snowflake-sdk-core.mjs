@@ -71,6 +71,8 @@ const producedFiles = await fs.readdir(BUILD_CORE_PACKAGE_DIR);
 const binaryFileName = producedFiles.find((file) => file.endsWith('.node'));
 const dtsFileName = producedFiles.find((file) => file.endsWith('.d.ts'));
 const platformTriple = binaryFileName.slice(`${NAPI_CONFIG.binaryName}.`.length, -'.node'.length);
+// TODO: Consider enforcing a merge gate to ensure the committed declaration file
+// stays in sync with the current nodejs_bridge state in git
 await fs.rename(
   path.join(BUILD_CORE_PACKAGE_DIR, dtsFileName),
   path.join(ROOT_DIR, 'src', 'core', 'binary-types.generated.ts'),

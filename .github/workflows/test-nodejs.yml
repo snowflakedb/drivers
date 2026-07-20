@@ -40,6 +40,18 @@ jobs:
         with:
           node-version: '22'
 
+      # build:core compiles the nodejs_bridge crate (transitively sf_core) via
+      # @napi-rs/cli -> cargo. Restore the cargo registry + target cache so the
+      # build reuses artifacts instead of recompiling the dep graph every run.
+      - name: Restore Rust cache
+        id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "nodejs"
+
       - name: Install dependencies
         run: npm install
         working-directory: nodejs
@@ -50,8 +62,19 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Run unit tests
-        run: npm run test:unit
+        run: npm run build:core && npm run test:unit
         working-directory: nodejs
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "nodejs"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       # TODO: for now skip e2e as they fail anyway
       # - name: Run e2e tests (new driver)
