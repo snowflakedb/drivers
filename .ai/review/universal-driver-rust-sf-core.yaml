@@ -94,7 +94,11 @@ rules:
 
       **REQUIREMENT**: Never use `.unwrap()` or `.expect()` on `Result` or `Option` in non-test code. Always propagate errors with `?`, use `.context(MySnafu)?` for `Result`, or use `ensure!()` / `XxxSnafu.fail()` for explicit error construction.
 
-      Mutex lock poisoning must also be handled with `.map_err()` or `.context()` instead of `.unwrap()` on `.lock()` calls.
+      Mutex/RwLock poisoning must never be handled with `.unwrap()`/`.expect()` on `.lock()`/`.read()`/`.write()`. Handle poisoning one of two ways:
+      1. **Propagate** the poison — `.map_err(...)` / `.context(MutexPoisonedSnafu { ... })?` — when the enclosing function returns a `Result`.
+      2. **Recover and log** — use the `sf_core::utils::sync` extension trait (`lock_recover` / `read_recover` / `write_recover`), which recovers the guard via `PoisonError::into_inner()` and logs the poison at ERROR with the call site. Prefer this when the function cannot return an error (accessors, `Deref`, `Display`, `Drop`, etc.).
+
+      Do NOT recover *silently*: a bare `.unwrap_or_else(|e| e.into_inner())` hides that a thread panicked and left the data possibly-inconsistent. Route recovery through the extension trait so every poison is logged.
 
       **PREFER ELIMINATION OVER JUSTIFICATION**: When an `.unwrap()`/`.expect()` is "provably safe" because an earlier check guarantees it, the correct fix is almost always to **restructure so the `.unwrap()` disappears**, NOT to keep it with a `// SAFETY:` comment. Recommend the refactor first; only fall back to suggesting a commented exception when the value genuinely cannot be obtained fallibly (see EXCEPTION below).
 
@@ -129,16 +133,23 @@ rules:
       ```rust
       let config = load_config(&path).unwrap();
       let value = map.get("key").expect("key must exist");
-      let guard = self.cache.lock().unwrap();
+      let guard = self.cache.lock().unwrap();                       // panics on poison
+      let guard = self.cache.lock().unwrap_or_else(|e| e.into_inner()); // recovers, but SILENTLY
       ```
 
       ✅ **GOOD:**
       ```rust
       let config = load_config(&path).context(ConfigLoadSnafu { path })?;
       let value = map.get("key").context(MissingKeySnafu { key: "key" })?;
+
+      // Poisoned lock, option 1 — propagate when the fn returns Result:
       let guard = self.cache.lock().map_err(|e| {
           MutexPoisonedSnafu { message: format!("cache lock poisoned: {e}") }.build()
       })?;
+
+      // Poisoned lock, option 2 — recover + log via the extension trait when it can't:
+      use sf_core::utils::sync::MutexRecoverExt;
+      let guard = self.cache.lock_recover();
       ```
 
   - id: ud-domain-specific-error-types

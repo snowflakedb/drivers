@@ -5,6 +5,7 @@ use crate::crl::error::{
     MutexPoisonedSnafu, VerificationTaskSnafu,
 };
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry_capped};
+use crate::utils::sync::MutexRecoverExt;
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use once_cell::sync::OnceCell;
@@ -1244,7 +1245,7 @@ impl CrlCache {
     }
 
     fn record_backoff_failure(&self, url: &str) {
-        let mut guard = self.backoff.lock().unwrap();
+        let mut guard = self.backoff.lock_recover();
         let entry = guard
             .entry(url.to_string())
             .or_insert((0, std::time::Instant::now()));
