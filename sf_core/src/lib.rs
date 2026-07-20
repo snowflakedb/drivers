@@ -29,6 +29,7 @@ pub mod stage_binding;
 pub mod telemetry;
 pub mod tls;
 pub mod token_cache;
+pub mod utils;
 
 #[cfg(feature = "protobuf")]
 pub mod protobuf;

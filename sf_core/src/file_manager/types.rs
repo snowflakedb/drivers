@@ -2,6 +2,7 @@ use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
 use crate::tls::config::TlsConfig;
+use crate::utils::sync::RwLockRecoverExt;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use snafu::{Location, Snafu};
@@ -577,16 +578,13 @@ impl StageInfoCache {
 
     /// Returns a clone of the current snapshot.
     pub fn snapshot(&self) -> StageInfoSnapshot {
-        self.inner
-            .read()
-            .expect("stage info cache poisoned")
-            .clone()
+        self.inner.read_recover().clone()
     }
 
     /// Replaces the full snapshot. Called by `StageInfoRefresher::refresh`
     /// and `refresh_url` after a successful PUT/GET re-issue.
     pub fn store(&self, new: StageInfoSnapshot) {
-        *self.inner.write().expect("stage info cache poisoned") = new;
+        *self.inner.write_recover() = new;
     }
 }
 
