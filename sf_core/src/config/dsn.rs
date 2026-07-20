@@ -143,9 +143,9 @@ pub fn parse_dsn(dsn: &str) -> Result<ParsedDsn, DsnError> {
                 continue;
             }
             let Some((key, raw_value)) = pair.split_once('=') else {
-                warnings.push(format!(
-                    "dropped malformed connection-string parameter `{pair}` (missing '=')"
-                ));
+                warnings.push(
+                    "dropped a malformed connection-string parameter (missing '='); content omitted in case it is sensitive".to_string(),
+                );
                 continue;
             };
             let value = query_unescape("parameter value", raw_value)?;
@@ -652,11 +652,16 @@ mod tests {
     }
 
     #[test]
-    fn key_only_query_pair_warns() {
-        let p = parse("u:pw@acct?flagonly");
+    fn key_only_query_pair_is_dropped_without_leaking_content() {
+        let p = parse("u:pw@acct?SuperSecretToken");
         assert!(
-            p.warnings.iter().any(|w| w.contains("flagonly")),
-            "expected a warning for the key-only pair, got {:?}",
+            p.warnings.iter().any(|w| w.contains("malformed")),
+            "expected a malformed-parameter warning, got {:?}",
+            p.warnings
+        );
+        assert!(
+            !p.warnings.iter().any(|w| w.contains("SuperSecretToken")),
+            "warning must not echo the raw segment: {:?}",
             p.warnings
         );
     }
