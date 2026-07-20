@@ -34,9 +34,9 @@ final class NativeLibraryLoader {
       SFLoggerFactory.getDeliveryLogger(NativeLibraryLoader.class.getName());
 
   /**
-   * Root resource dir where {@code copyNativeLib} (build.gradle) places the native libs. The fat
-   * JAR carries one lib per platform under an {@code <os>-<arch>} subdirectory; {@link #load()}
-   * picks the running platform's at startup.
+   * Root resource dir for the native libs. The fat JAR carries one lib per platform under an {@code
+   * <os>-<arch>} subdir; each {@code snowflake-jdbc-v2-native} artifact carries one. {@link
+   * #load()} picks the running platform's at startup.
    */
   private static final String NATIVE_RESOURCE_DIR =
       "/net/snowflake/client/internal/unicore/native/";
@@ -70,7 +70,8 @@ final class NativeLibraryLoader {
     } catch (IOException e) {
       throw new RuntimeException(
           "Failed to extract bundled native library from JAR resources. Either ensure the lib is "
-              + "bundled in the JAR (built via Gradle copyNativeLib) or set CORE_PATH / "
+              + "bundled in the JAR (the self-contained snowflake-jdbc-v2-standalone jar, or the "
+              + "matching snowflake-jdbc-v2-native artifact for this platform) or set CORE_PATH / "
               + "jdbc.library.path explicitly.",
           e);
     }

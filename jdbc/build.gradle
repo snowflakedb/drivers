@@ -389,6 +389,62 @@ def configureCommonPom = { pom ->
     }
 }
 
+// ====================
+// Per-platform native artifacts (net.snowflake:snowflake-jdbc-v2-native:<classifier>)
+// ====================
+// One jar per platform, each with one lib at .../unicore/native/<os>-<arch>/<lib>. Added
+// alongside the thin jar; NativeLibraryLoader finds it by classpath resource lookup.
+//
+// Two decoupled naming conventions:
+//   - `classifier`: os-maven-plugin convention (osx, aarch_64) for ${os.detected.classifier};
+//   - `dir`: internal resource subdir, matches NativeLibraryLoader.osToken()/archToken()
+//     (darwin, aarch64) — must not change or runtime lookup breaks.
+def nativePlatforms = [
+    [dir: 'linux-x86_64',   classifier: 'linux-x86_64',   lib: 'libjdbc_bridge.so'],
+    [dir: 'linux-aarch64',  classifier: 'linux-aarch_64', lib: 'libjdbc_bridge.so'],
+    [dir: 'darwin-x86_64',  classifier: 'osx-x86_64',     lib: 'libjdbc_bridge.dylib'],
+    [dir: 'darwin-aarch64', classifier: 'osx-aarch_64',   lib: 'libjdbc_bridge.dylib'],
+    [dir: 'windows-x86_64', classifier: 'windows-x86_64', lib: 'jdbc_bridge.dll'],
+]
+
+// Each jar reads its one lib from the staged tree (-PnativeLibsDir); without it (dev) the jar
+// is empty. verifyNativeJars (below) enforces one-lib-at-the-right-path.
+def nativePlatformJars = nativePlatforms.collect { p ->
+    tasks.register("nativeJar-${p.classifier}", Jar) {
+        archiveBaseName = 'snowflake-jdbc-v2-native'
+        archiveClassifier = p.classifier
+        if (project.hasProperty('nativeLibsDir')) {
+            from("${project.property('nativeLibsDir')}/${p.dir}") {
+                include p.lib
+                into "net/snowflake/client/internal/unicore/native/${p.dir}"
+            }
+        }
+    }
+}
+
+// Maven Central requires -sources/-javadoc per GAV, but a native jar has no sources. Ship a
+// stub pointing at the main artifact.
+def nativeStubDir = layout.buildDirectory.dir('native-stub')
+def generateNativeStub = tasks.register('generateNativeStub') {
+    outputs.dir(nativeStubDir)
+    doLast {
+        def readme = nativeStubDir.get().file('README.txt').asFile
+        readme.parentFile.mkdirs()
+        readme.text = 'snowflake-jdbc-v2-native ships only the compiled native library for a ' +
+            'single platform. It has no Java sources or Javadoc; see net.snowflake:snowflake-jdbc-v2.\n'
+    }
+}
+def nativeSourcesJar = tasks.register('nativeSourcesJar', Jar) {
+    archiveBaseName = 'snowflake-jdbc-v2-native'
+    archiveClassifier = 'sources'
+    from generateNativeStub
+}
+def nativeJavadocJar = tasks.register('nativeJavadocJar', Jar) {
+    archiveBaseName = 'snowflake-jdbc-v2-native'
+    archiveClassifier = 'javadoc'
+    from generateNativeStub
+}
+
 // Shadow adds shadowJar to the `java` component (shadowRuntimeElements). Skip it so the thin
 // publication's `from components.java` emits only the plain jar; the fat publication attaches
 // shadowJar explicitly.
@@ -431,6 +487,14 @@ publishing {
                     if (deps) { deps.each { it.replaceNode {} } }
                 }
             }
+        }
+        // Native: one GAV, a jar per platform keyed by os-maven-plugin classifier. No deps.
+        nativePlatform(MavenPublication) {
+            artifactId = 'snowflake-jdbc-v2-native'
+            nativePlatformJars.each { artifact(it) }
+            artifact nativeSourcesJar
+            artifact nativeJavadocJar
+            pom { configureCommonPom(delegate) }
         }
     }
 }
@@ -479,6 +543,44 @@ def verifyThinJar = tasks.register('verifyThinJar') {
     }
 }
 tasks.named('jar') { finalizedBy verifyThinJar }
+
+// Self-verify the native jars: each holds exactly one lib at the resource path
+// NativeLibraryLoader expects, guarding the classifier<->dir decoupling (classifier
+// osx-aarch_64 → darwin-aarch64/libjdbc_bridge.dylib). Needs -PnativeLibsDir; skipped in dev.
+def verifyNativeJars = tasks.register('verifyNativeJars') {
+    dependsOn nativePlatformJars
+    def specs = nativePlatforms.collect { p ->
+        [jar: tasks.named("nativeJar-${p.classifier}").flatMap { it.archiveFile },
+         classifier: p.classifier, dir: p.dir, lib: p.lib]
+    }
+    def enforce = project.hasProperty('nativeLibsDir')
+    doLast {
+        if (!enforce) {
+            logger.lifecycle("verifyNativeJars: skipped (no -PnativeLibsDir; native jars are empty).")
+            return
+        }
+        def base = 'net/snowflake/client/internal/unicore/native'
+        def problems = []
+        specs.each { s ->
+            def files = new java.util.zip.ZipFile(s.jar.get().asFile).withCloseable { zf ->
+                zf.entries().collect { it.name }.findAll { !it.endsWith('/') }
+            }
+            def libs = files.findAll { it.startsWith("${base}/") }
+            def expected = "${base}/${s.dir}/${s.lib}".toString()
+            if (libs != [expected]) {
+                problems << "${s.classifier}: expected exactly [${expected}] but jar holds ${libs}"
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("Native jar verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("verifyNativeJars: OK — ${specs.size()} platform jars, each with exactly one lib at its resource path.")
+    }
+}
+// Verify when native artifacts are staged, mirroring verifyShadowJar/verifyThinJar.
+tasks.matching { it.name.startsWith('publishNativePlatformPublicationTo') }.configureEach {
+    finalizedBy verifyNativeJars
+}
 
 // ====================
 // Test tasks
