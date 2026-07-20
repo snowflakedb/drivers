@@ -44,6 +44,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from .._internal.statement_utils import statement
+from .._internal.utils import _resolve_alias
 from ..errors import NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
@@ -57,24 +58,6 @@ if TYPE_CHECKING:
     from ..connection import Connection
 
 logger = get_logger(__name__)
-
-
-def _resolve_alias(
-    canonical: object,
-    alias: object,
-    canonical_name: str,
-    alias_name: str,
-) -> object:
-    """Return the resolved value from a canonical/legacy-alias pair.
-
-    Raises ProgrammingError if both are provided.
-    """
-    if canonical is not None and alias is not None:
-        raise ProgrammingError(
-            msg=f"Cannot supply both '{canonical_name}' and '{alias_name}'; pass one only.",
-            errno=ER_INVALID_VALUE,
-        )
-    return alias if alias is not None else canonical
 
 
 class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
