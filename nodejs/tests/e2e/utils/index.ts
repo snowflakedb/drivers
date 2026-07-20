@@ -27,9 +27,11 @@ export function getSnowflakeSDK() {
 }
 
 export const TEST_CONNECTION_OPTIONS: ConnectionOptions = {
+  authenticator: 'SNOWFLAKE_JWT',
+  privateKey: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS'),
+  privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
   account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
   username: getTestParameter('SNOWFLAKE_TEST_USER'),
-  password: getTestParameter('SNOWFLAKE_TEST_PASSWORD'),
   warehouse: getTestParameter('SNOWFLAKE_TEST_WAREHOUSE'),
   database: getTestParameter('SNOWFLAKE_TEST_DATABASE'),
   schema: getTestParameter('SNOWFLAKE_TEST_SCHEMA'),
