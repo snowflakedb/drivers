@@ -1,10 +1,10 @@
 name: Build JDBC JARs
 
-# Builds the release JARs (unsigned; gated on jdbc_tests via the caller in test-jdbc.yml):
-#   - fat / standalone: jdbc_bridge built per platform, then assembled into one JAR bundling
-#     them under net/snowflake/client/internal/unicore/native/<os>-<arch>/ (assemble job).
-#   - thin (net.snowflake:snowflake-jdbc-v2): unshaded plain jar + real Maven deps, no native
-#     (assemble_thin job); independent of the native builds.
+# Builds the release JARs (unsigned; gated on jdbc_tests via test-jdbc.yml):
+#   - fat / standalone: jdbc_bridge per platform, assembled into one JAR (assemble job).
+#   - thin (snowflake-jdbc-v2): unshaded plain jar + Maven deps, no native (assemble_thin).
+#   - per-platform native (snowflake-jdbc-v2-native:<classifier>): one jar per platform,
+#     paired with the thin jar (assemble_native).
 #
 # windows-aarch64 omitted: arrow-c-data 17.0.0 ships no arrow_cdata_jni for it.
 
@@ -272,3 +272,45 @@ jobs:
           shared-key: jdbc-assemble-thin-proto
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  assemble_native:
+    needs: build_native
+    runs-on: ubuntu-latest
+    name: assemble native jars
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download all native libs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jdbc-native-*
+          merge-multiple: true
+          path: jdbc/build/native-staging
+
+      - name: Show staged native tree
+        run: find jdbc/build/native-staging -type f | sort
+
+      # Native jars are plain Jar tasks over the staged libs — no cargo/protobuf, so no Rust cache.
+      # verifyNativeJars enforces one lib per jar at the correct resource path before staging.
+      - name: Build + stage per-platform native JARs (unsigned)
+        working-directory: jdbc
+        run: |
+          ./gradlew --no-daemon \
+            verifyNativeJars publishNativePlatformPublicationToStagingRepository \
+            -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
+
+      - name: Upload native JAR bundle (unsigned, ready for signing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-native
+          # Staged Maven-repo layout: one jar per classifier + stub sources/javadoc + pom.
+          path: jdbc/build/staging-deploy/**
+          if-no-files-found: error
