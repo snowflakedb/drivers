@@ -37,6 +37,24 @@ def setupVenv() {
             source .venv/bin/activate
             python -m pip install --upgrade pip setuptools wheel
             python -m pip install hatch "virtualenv<21.0.0"
+
+            # Set up mTLS cert for internal Artifactory (needed for benchstore-client-library>=4.0.0)
+            SF_CERT_FILE="${SF_CERT_FILE:-/dev/shm/sfcert.pem}"
+            SF_KEY_FILE="${SF_KEY_FILE:-/dev/shm/sfcert.key}"
+            if [ ! -f "$SF_CERT_FILE" ] || [ ! -f "$SF_KEY_FILE" ]; then
+                if command -v sf >/dev/null 2>&1; then
+                    eval "$(sf artifact auth generate-cert)"
+                fi
+            fi
+            if [ -f "$SF_CERT_FILE" ] && [ -f "$SF_KEY_FILE" ]; then
+                SF_COMBINED_PEM=$(mktemp)
+                cat "$SF_CERT_FILE" "$SF_KEY_FILE" > "$SF_COMBINED_PEM"
+                export PIP_CLIENT_CERT="$SF_COMBINED_PEM"
+            fi
+
+            python -m hatch env create default
+
+            [ -n "${SF_COMBINED_PEM:-}" ] && rm -f "$SF_COMBINED_PEM"
         '''
     }
 }

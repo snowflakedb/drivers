@@ -194,14 +194,7 @@ def upload_coverage_metrics(
     
     # Login to Benchstore
     sf_storage = login_to_benchstore(use_local_auth=use_local_auth)
-    
-    # Get connection params
-    if use_local_auth:
-        snowflake_connection_params = get_local_connection_params()
-    else:
-        snowhouse_config = get_snowhouse_config()
-        snowflake_connection_params = get_snowflake_connection_params(snowhouse_config)
-    
+
     # Get or create benchmark
     try:
         _ = benchmark_manager.find_or_create_benchmark(
@@ -233,7 +226,7 @@ def upload_coverage_metrics(
     
     # Upload metrics
     try:
-        with Quickstore(quickstore_input, snowflake_connection_params=snowflake_connection_params) as quickstore:
+        with Quickstore(quickstore_input, storage=sf_storage) as quickstore:
             timestamp = Timestamp()
             timestamp.FromSeconds(int(time.time()))
             

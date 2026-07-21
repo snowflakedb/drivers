@@ -463,13 +463,6 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     
     # Get or create benchmark
     try:
-        # Get connection params for benchmark manager
-        if use_local_auth:
-            snowflake_connection_params = get_local_connection_params()
-        else:
-            snowhouse_config = get_snowhouse_config()
-            snowflake_connection_params = get_snowflake_connection_params(snowhouse_config)
-        
         _ = benchmark_manager.find_or_create_benchmark(
             PROJECT_NAME,
             BENCHMARK_NAME,
@@ -585,7 +578,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         
         # Open Quickstore once for all CSV files in this group
         try:
-            with Quickstore(quickstore_input, snowflake_connection_params=snowflake_connection_params) as quickstore:
+            with Quickstore(quickstore_input, storage=sf_storage) as quickstore:
                 results_by_test = {}
                 
                 # Upload all CSV files in this group
