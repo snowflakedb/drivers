@@ -39,7 +39,6 @@ use crate::rest::snowflake::{
     heartbeat, snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
-use crate::token_cache::TokenCache;
 
 /// Whether `execute_session_sql` should refresh the connection's local
 /// session-state cache (`session_parameters`, `final_session_names`) from
@@ -451,7 +450,7 @@ impl DatabaseDriverV1 {
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
-                    token_cache.map(|c| c as &dyn TokenCache),
+                    token_cache,
                     Some(&self.prompt_locks),
                     &retry_policy,
                 );
