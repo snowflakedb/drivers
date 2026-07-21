@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
 import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable.ResultSetRetrieveConfig;
-import net.snowflake.jdbc.utils.SkipNewDriver;
 import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
@@ -32,7 +31,6 @@ import org.junit.jupiter.api.Test;
  * each one on its own, then in parallel worker threads deserialize a partition and fetch its rows
  * without a live session.
  */
-@SkipNewDriver("not yet implemented")
 class DistributedFetchTests extends SnowflakeIntegrationTestBase {
 
   private static final int LARGE_RESULT_SET_ROW_COUNT = 100_000;

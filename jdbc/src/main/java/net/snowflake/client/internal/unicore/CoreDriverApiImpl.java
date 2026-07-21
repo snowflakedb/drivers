@@ -1,10 +1,12 @@
 package net.snowflake.client.internal.unicore;
 
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
@@ -53,6 +55,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseFetchChunkRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseFetchChunkResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
@@ -62,6 +66,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetChunksRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetChunksResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamRequest;
@@ -402,6 +407,17 @@ class CoreDriverApiImpl implements CoreDriverApi {
     ResultSetReleaseRequest request =
         ResultSetReleaseRequest.newBuilder().setResultSetHandle(resultSetHandle).build();
     return invoke(() -> client.resultSetRelease(request));
+  }
+
+  @Override
+  public DatabaseFetchChunkResponse databaseFetchChunk(
+      List<ResultChunk> chunks, List<ColumnMetadata> columnMetadata) throws SQLException {
+    DatabaseFetchChunkRequest request =
+        DatabaseFetchChunkRequest.newBuilder()
+            .addAllChunks(chunks)
+            .addAllColumns(columnMetadata)
+            .build();
+    return invoke(() -> client.databaseFetchChunk(request));
   }
 
   // =========================================================================

@@ -213,7 +213,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
    */
   private DataConversionContext conversionContext() {
     if (conversionContext == null) {
-      conversionContext = SessionDataConversionContext.fromConnection(connection.getParameters());
+      conversionContext = SessionDataConversionContext.from(connection.getParameters());
     }
     return conversionContext;
   }
