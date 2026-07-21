@@ -3128,6 +3128,7 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "tokio",
 ]
 
 [[package]]
@@ -3209,6 +3210,9 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "sf_core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
