@@ -374,10 +374,24 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         "keySize": "256"
     });
     // No x-ms-meta-sfcdigest header — matches what Snowflake's git integration uploads.
+    // The streaming download path issues a HEAD (Get Blob Properties) first to learn
+    // size + metadata, then a GET for the bytes. The CSE metadata is parsed from the
+    // HEAD response, so the git-stage headers must live there; Content-Length stays
+    // below the multipart threshold so the single streamed GET path runs.
+    let raw_bytes = b"raw-git-file-bytes".to_vec();
+    Mock::given(method("HEAD"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(vec![0u8; raw_bytes.len()])
+                .insert_header("x-ms-meta-encryptiondata", enc_data.to_string().as_str())
+                .insert_header("x-ms-meta-matdesc", mat_desc.to_string().as_str()),
+        )
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_bytes(b"raw-git-file-bytes".to_vec())
+                .set_body_bytes(raw_bytes.clone())
                 .insert_header("x-ms-meta-encryptiondata", enc_data.to_string().as_str())
                 .insert_header("x-ms-meta-matdesc", mat_desc.to_string().as_str()),
         )

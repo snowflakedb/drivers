@@ -85,7 +85,6 @@ impl MultipartConfig {
     /// of failing. (libsnowflakeclient grows the block the same way; Python/JDBC
     /// keep it fixed at 4 MiB.)
     /// <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
-    #[allow(dead_code)] // wired up by the Azure multipart PR stacked on this one.
     pub(super) const AZURE: Self = Self {
         cloud: "Azure",
         default_part: 4 * MIB,

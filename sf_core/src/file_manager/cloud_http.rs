@@ -15,6 +15,7 @@ use futures::StreamExt as _;
 use futures::stream::Stream;
 use reqwest::StatusCode;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -186,9 +187,83 @@ pub struct CloudStreamingDownload {
     /// `Some` for a client-side-encrypted object (both metadata + digest
     /// headers were present); `None` for SSE / raw objects.
     pub cse_info: Option<CseDownloadInfo>,
-    /// Streaming body reader — feed to `decrypt_ciphertext_to_writer` or
-    /// `std::io::copy` from a `spawn_blocking` task.
-    pub reader: StreamReader,
+    /// Running total of on-cloud (pre-decryption) ciphertext bytes pulled off
+    /// the wire. `load` it after the decrypt task joins to recover the
+    /// `cloud_byte_count` when `Content-Length` was absent (chunked transfer
+    /// encoding) — it counts wire bytes, not the misleading decrypted plaintext
+    /// length. Because the body is now type-erased behind [`CloudDownloadBody`],
+    /// this handle is surfaced here rather than via
+    /// `StreamReader::bytes_read_handle`. For a tempfile-backed ranged download
+    /// the size is already known from the HEAD `Content-Length`, so this stays 0
+    /// and the hint is used instead.
+    pub cloud_bytes_read: Arc<AtomicU64>,
+    /// Download body — a live network stream (single GET) or a spilled tempfile
+    /// (parallel ranged GETs). On the SSE / non-decrypting path a `Spilled` body
+    /// is renamed into place rather than copied; see `download_single_file`.
+    pub body: CloudDownloadBody,
+}
+
+/// Where a streaming download's bytes live. Mirrors S3's `S3DownloadBody`: a
+/// network stream must be read (and, for SSE, copied) into the destination, but
+/// a spilled tempfile — which the parallel ranged GETs already assembled in the
+/// destination directory — can be renamed into place with no extra full-file
+/// copy.
+pub enum CloudDownloadBody {
+    /// Live reqwest byte stream from a single GET (below the multipart threshold).
+    Streamed(Box<dyn Read + Send>),
+    /// File assembled by parallel ranged GETs, living in the destination dir.
+    Spilled(CloudSpilledBody),
+}
+
+/// A ranged cloud download assembled to disk. Mirrors S3's `SpilledBody`; the
+/// two shapes differ only in who owns the file and how it is finalized:
+///
+/// * `Part` — a non-encrypted (SSE) download assembled straight into the
+///   caller's `<dst>.part` staging file. The bytes are already the final
+///   plaintext, so the caller just renames `.part` to the destination (a single
+///   same-FS rename). Any leftover after a hard kill is a self-documenting,
+///   self-overwriting `.part`, never random debris.
+/// * `Temp` — a client-side-encrypted (or git-stage) download assembled into a
+///   throwaway RAII temp. CSE bytes are ciphertext that must still be decrypted
+///   into `.part`, so they cannot land in `.part` directly; the temp is unlinked
+///   on drop once consumed.
+pub enum CloudSpilledBody {
+    Part(PathBuf),
+    Temp(tempfile::TempPath),
+}
+
+/// Where a ranged cloud download should assemble its bytes. Chosen by the caller
+/// (which knows whether the object is client-side-encrypted) and threaded down to
+/// the per-cloud `*_range_download`. `Copy` so it can be handed to each retry.
+#[derive(Clone, Copy)]
+pub enum CloudSpillTarget<'a> {
+    /// Non-encrypted download: assemble directly into this `<dst>.part` file.
+    Part(&'a Path),
+    /// Encrypted / git-stage download: assemble ciphertext into a temp in this
+    /// directory (kept on the destination's filesystem so the later finalize is
+    /// a same-FS rename, not a cross-device copy).
+    Temp(&'a Path),
+}
+
+impl CloudDownloadBody {
+    /// A uniform blocking `Read` over the body: the network stream directly, or
+    /// a reader over the spilled file (a [`SpilledReader`](super::multipart::SpilledReader)
+    /// that keeps a `Temp` alive for the read's duration, or a plain file for a
+    /// `Part`).
+    pub fn into_reader(self) -> std::io::Result<Box<dyn Read + Send>> {
+        match self {
+            CloudDownloadBody::Streamed(reader) => Ok(reader),
+            // The decrypt/copy step only reads a spilled body for CSE, which is
+            // always a `Temp`; a `Part` body is the final plaintext and is
+            // finalized by rename, not read back. Handle both for totality.
+            CloudDownloadBody::Spilled(CloudSpilledBody::Temp(temp)) => {
+                Ok(Box::new(super::multipart::SpilledReader::open(temp)?))
+            }
+            CloudDownloadBody::Spilled(CloudSpilledBody::Part(path)) => {
+                Ok(Box::new(std::fs::File::open(path)?))
+            }
+        }
+    }
 }
 
 /// Builds a streaming `reqwest::Body` for a GCS/Azure upload. CSE wraps the
@@ -314,6 +389,8 @@ pub(super) trait UploadRetryAdapter {
 pub(super) async fn upload_with_retry<F, M>(
     policy: &RetryPolicy,
     adapter: &M,
+    method: &reqwest::Method,
+    url: &str,
     build_request: F,
 ) -> Result<(), M::Err>
 where
@@ -323,6 +400,10 @@ where
     let max_attempts = policy.max_attempts;
     let start = Instant::now();
     let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+
+    // Only the host + path may be logged (ud-log-every-http-call-at-info); the
+    // query string can carry a SAS token / signature, so strip it.
+    let log_path = url.split(['?', '#']).next().unwrap_or("");
 
     for attempt in 1..=max_attempts {
         let remaining = if let Some(budget) = policy.max_elapsed {
@@ -348,8 +429,11 @@ where
             Err(e) => return Err(adapter.on_build_err(e)),
         };
 
+        tracing::info!(method = %method, path = %log_path, attempt, "outbound HTTP call");
+
         match req.send().await {
             Ok(resp) => {
+                tracing::info!(status = resp.status().as_u16(), "HTTP response");
                 if resp.status().is_success() {
                     return Ok(());
                 }

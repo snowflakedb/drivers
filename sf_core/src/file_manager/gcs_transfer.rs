@@ -613,7 +613,7 @@ async fn upload_to_gcs(
     // these from this frame couldn't satisfy the `'static` bound the FFI/trait
     // futures require. `reqwest::Client` clone is a cheap `Arc` bump.
     let client = client.clone();
-    let url = url.to_string();
+    let url_owned = url.to_string();
     let token = token.map(str::to_string);
 
     gcs_upload_with_retry(
@@ -629,7 +629,7 @@ async fn upload_to_gcs(
             // S3 PUT path. Today this relies only on TLS + the GET-time `sfc-digest`
             // (verified over plaintext, on read), so corruption isn't caught at PUT.
             let mut req = client
-                .put(&url)
+                .put(&url_owned)
                 .header(GCS_META_SFC_DIGEST, &digest)
                 .header("content-encoding", "")
                 .header(reqwest::header::CONTENT_LENGTH, content_length)
@@ -646,6 +646,8 @@ async fn upload_to_gcs(
             }
             Ok(req)
         },
+        &Method::PUT,
+        url,
         policy,
     )
     .await?;
@@ -774,12 +776,14 @@ impl UploadRetryAdapter for GcsUploadRetry {
 /// reason as `gcs_request_with_retry`: the backoff is injectable for tests.
 async fn gcs_upload_with_retry<F>(
     build_request: F,
+    method: &Method,
+    url: &str,
     policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
 {
-    cloud_http::upload_with_retry(policy, &GcsUploadRetry, build_request).await
+    cloud_http::upload_with_retry(policy, &GcsUploadRetry, method, url, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> GcsRequestError {
@@ -1000,10 +1004,13 @@ pub async fn download_from_gcs_streaming(
         (None, _) => None,
     };
 
+    let reader = cloud_http::spawn_byte_stream_producer(response);
+    let cloud_bytes_read = reader.bytes_read_handle();
     Ok(CloudStreamingDownload {
         cloud_byte_count,
         cse_info,
-        reader: cloud_http::spawn_byte_stream_producer(response),
+        cloud_bytes_read,
+        body: cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
     })
 }
 

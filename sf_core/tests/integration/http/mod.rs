@@ -1,3 +1,4 @@
+mod azure_multipart;
 mod azure_retry;
 mod gcs_retry;
 mod retry;
