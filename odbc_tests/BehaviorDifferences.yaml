@@ -1432,6 +1432,85 @@ behavior_differences:
       on the new driver. The e2e bad-client-secret test pins CLIENT_STORE_TEMPORARY_CREDENTIAL=false
       on the legacy driver so a token cached by the preceding happy-path test cannot mask the
       expected token-exchange failure.
+
+  94:
+    name: "SQLSetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT) after connect returns HY011 instead of SQL_SUCCESS"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The old driver accepts SQL_ATTR_LOGIN_TIMEOUT set calls after the connection is established,
+      returning SQL_SUCCESS silently. The attribute has no effect post-connect (the login timeout
+      only applies during the connection attempt), so the acceptance is misleading.
+    new_driver_behavior: |
+      The new driver correctly rejects SQL_ATTR_LOGIN_TIMEOUT set calls after connect with
+      SQL_ERROR / HY011 ("attribute cannot be set now"), per the ODBC spec designation of
+      SQL_ATTR_LOGIN_TIMEOUT as a pre-connect-only attribute. Note: some Driver Managers (e.g.
+      Windows DM) manage login timeout state internally and return SQL_SUCCESS without forwarding
+      the call to the driver, so the HY011 is only observable when the DM forwards the call.
+    description: |
+      Applications that set SQL_ATTR_LOGIN_TIMEOUT post-connect and rely on SQL_SUCCESS without
+      error-checking will encounter HY011 on platforms where the DM forwards the call. The change
+      is a spec-compliance fix; the attribute was always a no-op post-connect.
+
+  95:
+    name: "SQLGetConnectAttr with out-of-range attribute identifier returns HY092 instead of accepting silently"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The old driver does not classify completely out-of-range attribute identifiers (e.g. 99999)
+      as HY092; it may return HY000 or pass through without an error.
+    new_driver_behavior: |
+      The new driver returns SQL_ERROR / HY092 ("invalid attribute/option identifier") for any
+      attribute identifier outside the defined ODBC range, matching the ODBC 3.x specification.
+    description: |
+      Applications querying unknown connection attribute IDs will now receive a well-defined
+      HY092 error instead of an undefined response. No impact on well-formed applications.
+
+  96:
+    name: "SQLSetStmtAttr(SQL_ATTR_CURSOR_TYPE) with unsupported type returns SQL_SUCCESS_WITH_INFO/01S02 and substitutes SQL_CURSOR_FORWARD_ONLY"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The old driver silently accepts non-forward-only cursor types (SQL_CURSOR_STATIC,
+      SQL_CURSOR_DYNAMIC, SQL_CURSOR_KEYSET_DRIVEN) on SQL_ATTR_CURSOR_TYPE without warning.
+      The stored value reflects whatever was requested, even though Snowflake only supports
+      forward-only cursors.
+    new_driver_behavior: |
+      The new driver substitutes any unsupported cursor type with SQL_CURSOR_FORWARD_ONLY and
+      returns SQL_SUCCESS_WITH_INFO / 01S02 ("option value changed"), per the ODBC spec requirement
+      that drivers substitute unsupported values and report the substitution.
+    description: |
+      Applications that set a scrollable cursor type and then check the return code for exactly
+      SQL_SUCCESS will see SQL_SUCCESS_WITH_INFO instead. Applications that read back
+      SQL_ATTR_CURSOR_TYPE after setting it will see SQL_CURSOR_FORWARD_ONLY regardless of the
+      requested type. This is spec-correct behavior.
+
+  97:
+    name: "SQL_SF_CONN_ATTR_APPLICATION is a Snowflake-custom pre-connect attribute not present in the legacy driver"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The legacy driver does not expose SQL_SF_CONN_ATTR_APPLICATION. Setting or getting this
+      attribute returns an error on the old driver.
+    new_driver_behavior: |
+      The new driver accepts SQL_SF_CONN_ATTR_APPLICATION before connect, stores the value, and
+      returns it on GET. The attribute is forwarded to the server as the application name.
+    description: |
+      Applications using SQL_SF_CONN_ATTR_APPLICATION require the new driver. The old driver
+      has no equivalent attribute, so tests for this attribute are gated with NEW_DRIVER_ONLY.
+
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
     status: allowed

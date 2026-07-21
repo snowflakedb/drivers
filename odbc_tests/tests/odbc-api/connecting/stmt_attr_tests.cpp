@@ -1143,3 +1143,124 @@ TEST_CASE("should route SQL_ATTR_PARAM_OPERATION_PTR to an explicit APP_PARAM_DE
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(got == other_ops);
 }
+
+// ============================================================================
+// SQL_ATTR_CURSOR_TYPE (6) — Snowflake supports forward-only only (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should get SQL_ATTR_CURSOR_TYPE default as SQL_CURSOR_FORWARD_ONLY", "[odbc-api][stmt_attr][cursor_type]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_CURSOR_TYPE is queried without being set
+  SQLULEN cursor_type = 99;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, nullptr);
+
+  // Then It should default to SQL_CURSOR_FORWARD_ONLY
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(cursor_type == SQL_CURSOR_FORWARD_ONLY);
+}
+
+TEST_CASE("should substitute non-forward-only SQL_ATTR_CURSOR_TYPE with 01S02",
+          "[odbc-api][stmt_attr][cursor_type][warning]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_CURSOR_TYPE is set to a scrollable type Snowflake does not support
+  const SQLULEN requested = GENERATE(SQL_CURSOR_STATIC, SQL_CURSOR_DYNAMIC, SQL_CURSOR_KEYSET_DRIVEN);
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, reinterpret_cast<SQLPOINTER>(requested), 0);
+
+  OLD_DRIVER_ONLY("BD#96") {
+    // Old driver silently accepts without substitution or warning.
+    REQUIRE(SQL_SUCCEEDED(ret));
+  }
+  NEW_DRIVER_ONLY("BD#96") {
+    // New driver substitutes with SQL_CURSOR_FORWARD_ONLY and warns 01S02.
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+    REQUIRE(!records.empty());
+    CHECK(records[0].sqlState == "01S02");
+
+    // And the stored value should be substituted to SQL_CURSOR_FORWARD_ONLY
+    SQLULEN cursor_type = 99;
+    ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(cursor_type == SQL_CURSOR_FORWARD_ONLY);
+  }
+}
+
+// ============================================================================
+// SQL_ATTR_ROW_ARRAY_SIZE (27) (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should set and get SQL_ATTR_ROW_ARRAY_SIZE", "[odbc-api][stmt_attr][row_array_size]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_ROW_ARRAY_SIZE is set
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, reinterpret_cast<SQLPOINTER>(10), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return the value that was set
+  SQLULEN size = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, &size, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(size == 10);
+}
+
+// ============================================================================
+// Implicit descriptor handles: SQL_ATTR_APP_ROW_DESC / SQL_ATTR_IMP_ROW_DESC (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should return automatic descriptor handles for SQL_ATTR_APP_ROW_DESC / SQL_ATTR_IMP_ROW_DESC",
+          "[odbc-api][stmt_attr][descriptor_handles]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When the automatically-allocated row descriptor handles are queried
+  SQLHDESC ard = nullptr;
+  SQLHDESC ird = nullptr;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_ROW_DESC, &ird, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Both handles are non-null and distinct
+  CHECK(ard != nullptr);
+  CHECK(ird != nullptr);
+  CHECK(ard != ird);
+}
+
+// ============================================================================
+// Parameter array attrs: SQL_ATTR_PARAMSET_SIZE / SQL_ATTR_PARAM_BIND_TYPE (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should set and get SQL_ATTR_PARAMSET_SIZE and SQL_ATTR_PARAM_BIND_TYPE",
+          "[odbc-api][stmt_attr][param_array]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_PARAMSET_SIZE is set
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(5), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  // And SQL_ATTR_PARAM_BIND_TYPE is set to column-wise binding
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE,
+                       reinterpret_cast<SQLPOINTER>(SQL_PARAM_BIND_BY_COLUMN), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Both round-trip on GET
+  SQLULEN paramset_size = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, &paramset_size, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(paramset_size == 5);
+
+  SQLULEN bind_type = 99;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, &bind_type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(bind_type == static_cast<SQLULEN>(SQL_PARAM_BIND_BY_COLUMN));
+}
