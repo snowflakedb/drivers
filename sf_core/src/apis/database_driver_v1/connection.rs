@@ -25,7 +25,7 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
 use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{ParamKey, ParamScope, param_names};
+use crate::config::param_registry::{ParamKey, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
@@ -2045,7 +2045,7 @@ impl DatabaseDriverV1 {
 
                 let (canonical, def) = canonicalize_setting_key(&key);
                 if let Some(d) = def
-                    && d.scope == ParamScope::Session
+                    && d.is_session_scoped()
                 {
                     if let Some(s) = conn
                         .session_overrides

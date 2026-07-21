@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
-use crate::config::param_registry::{self, ParamScope, ValueType, param_names};
+use crate::config::param_registry::{self, ValueType, param_names};
 use crate::config::settings::{Setting, Settings};
 
 pub use crate::config::connection_config::{ValidationCode, ValidationIssue, ValidationSeverity};
@@ -359,7 +359,7 @@ pub(crate) fn validate_connection_seed_write(
     let Some(d) = def else {
         return Ok(());
     };
-    if d.scope == ParamScope::Statement {
+    if d.is_statement_only() {
         return InvalidArgumentSnafu {
             argument: format!(
                 "Parameter '{}' is statement-scoped; set it on a statement handle",
@@ -369,7 +369,7 @@ pub(crate) fn validate_connection_seed_write(
         .fail();
     }
     if post_connect {
-        if d.scope == ParamScope::Session {
+        if d.is_session_scoped() {
             return InvalidArgumentSnafu {
                 argument: format!(
                     "Parameter '{}' is session-scoped; use connection_set_session_option after connect",
@@ -397,23 +397,19 @@ pub(crate) fn validate_session_override_write(
     let Some(d) = def else {
         return Ok(());
     };
-    if d.scope == ParamScope::Statement {
-        return InvalidArgumentSnafu {
-            argument: format!(
+    if !d.is_session_scoped() {
+        let argument = if d.is_statement_only() {
+            format!(
                 "Parameter '{}' is statement-scoped; set it on a statement handle",
                 d.canonical_name
-            ),
-        }
-        .fail();
-    }
-    if d.scope == ParamScope::Connection {
-        return InvalidArgumentSnafu {
-            argument: format!(
+            )
+        } else {
+            format!(
                 "Parameter '{}' is connection-scoped; set it via connection options before connect",
                 d.canonical_name
-            ),
-        }
-        .fail();
+            )
+        };
+        return InvalidArgumentSnafu { argument }.fail();
     }
     Ok(())
 }
@@ -424,7 +420,7 @@ pub(crate) fn validate_statement_option_write(
     let Some(d) = def else {
         return Ok(());
     };
-    if d.scope != ParamScope::Statement {
+    if !d.is_statement_scoped() {
         return InvalidArgumentSnafu {
             argument: format!(
                 "Parameter '{}' is not statement-scoped; set it on the connection or session",
