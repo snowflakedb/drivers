@@ -178,6 +178,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _skip_upload_on_content_match: bool = False,
         *,
         _force_qmark_paramstyle: bool = False,
+        _statement_params: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -200,12 +201,18 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
                 the connection's paramstyle is pyformat/format. Used by
                 callers that emit ``?`` placeholders unconditionally.
+            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
+                sent to Snowflake with this query only. Never persisted on the
+                cursor; forwarded as query-request parameters, so they tag only
+                this query without mutating session state.
         """
         # Per-call params: this execute() only, never persisted on the cursor.
         statement_parameters = self._collect_statement_params(
             skip_upload_on_content_match=_skip_upload_on_content_match,
             num_statements=num_statements,
         )
+        if _statement_params:
+            statement_parameters.update(_statement_params)
 
         await self.reset()
         return await self._execute(

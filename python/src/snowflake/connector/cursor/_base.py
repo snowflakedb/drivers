@@ -186,6 +186,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         params: Sequence[Any] | dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
+        _statement_params: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -210,6 +211,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
                 the connection's paramstyle is pyformat/format. Used by
                 callers that emit ``?`` placeholders unconditionally.
+            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
+                sent to Snowflake with this query only. Never persisted on the
+                cursor; forwarded as query-request parameters, so they tag only
+                this query without mutating session state.
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
 
@@ -218,6 +223,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             skip_upload_on_content_match=_skip_upload_on_content_match,
             num_statements=num_statements,
         )
+        if _statement_params:
+            statement_parameters.update(_statement_params)
 
         self.reset()
         return self._execute(
