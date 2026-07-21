@@ -2,7 +2,7 @@ use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::encoding::{
     OdbcEncoding, read_pre_connection_string_attr, read_string_from_pointer, write_string_bytes,
-    write_string_bytes_i32, write_string_chars_i32,
+    write_string_bytes_i32, write_string_chars, write_string_chars_i32,
 };
 use crate::api::error::Required;
 use crate::api::error::{
@@ -45,6 +45,7 @@ use crate::api::{
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
+use sf_core::sensitive::SensitiveString;
 use snafu::{OptionExt, ResultExt};
 use std::collections::HashMap;
 use tracing;
@@ -295,11 +296,39 @@ fn parse_connection_string(connection_string: &str) -> OdbcResult<HashMap<String
     Ok(map)
 }
 
+/// Serialise a key=value parameter map back to a semicolon-separated
+/// connection string. Values that contain `;` are brace-quoted so the
+/// result round-trips through `parse_connection_string`. Keys are sorted
+/// for deterministic output.
+fn serialize_connection_string(params: &HashMap<String, String>) -> String {
+    let mut parts: Vec<String> = params
+        .iter()
+        .map(|(k, v)| {
+            if v.contains(';') {
+                format!("{k}={{{v}}}")
+            } else {
+                format!("{k}={v}")
+            }
+        })
+        .collect();
+    parts.sort();
+    parts.join(";")
+}
+
 /// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
+///
+/// On success the completed connection string is written back to
+/// `out_connection_string` (character units, per the ODBC spec for
+/// `SQLDriverConnect`); a too-small buffer is truncated and reported as a
+/// `01004` warning via `warnings`.
 pub fn driver_connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     in_connection_string: *const E::Char,
     in_string_length: sql::SmallInt,
+    out_connection_string: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let params = parse_connection_string(&connection_string)?;
@@ -312,7 +341,34 @@ pub fn driver_connect<E: OdbcEncoding>(
     // underneath the caller-supplied connection-string params so that a bare
     // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
     let params = merge_dsn_config(params, dsn_name.as_deref())?;
-    connect_with_params(connection_handle, params, driver_section, dsn_name)
+    // Build the completed connection string before params are consumed.
+    // The ODBC spec requires OutConnectionString to contain all attributes
+    // including those expanded from the DSN, and must include DSN= or DRIVER=.
+    let completed_conn_str = {
+        let mut out = params.clone();
+        if let Some(ref dsn) = dsn_name {
+            out.insert("DSN".to_owned(), dsn.clone());
+        }
+        if let Some(ref driver) = driver_section {
+            out.insert("DRIVER".to_owned(), driver.clone());
+        }
+        SensitiveString::from(serialize_connection_string(&out))
+    };
+    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
+
+    // Per the ODBC spec, `SQLDriverConnect` returns the completed connection
+    // string — all attributes including those expanded from the DSN — so the
+    // application can persist it and reconnect without re-reading odbc.ini.
+    // Buffer/length units are characters; a short buffer truncates and posts
+    // a `01004` warning.
+    write_string_chars::<E>(
+        completed_conn_str.reveal(),
+        out_connection_string,
+        buffer_length,
+        string_length_ptr,
+        Some(warnings),
+    );
+    Ok(())
 }
 
 /// Core connection logic shared by `driver_connect` and `connect`.

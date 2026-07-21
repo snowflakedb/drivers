@@ -1398,23 +1398,33 @@ pub unsafe extern "system" fn SQLDriverConnect(
     _window_handle: sql::Handle,
     in_connection_string: *const sql::Char,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut sql::Char,
-    _buffer_length: sql::SmallInt,
-    _out_string_length: *mut sql::SmallInt,
+    out_connection_string: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::driver_connect::<Narrow>(
         connection_handle,
         in_connection_string,
         in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     // Record AFTER the call: same rationale as SQLConnect.
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDriverConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1425,22 +1435,32 @@ pub unsafe extern "system" fn SQLDriverConnectW(
     _window_handle: sql::Handle,
     in_connection_string: *const WideChar,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut WideChar,
-    _buffer_length: sql::SmallInt,
-    _out_string_length: *mut sql::SmallInt,
+    out_connection_string: *mut WideChar,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::driver_connect::<Wide>(
         connection_handle,
         in_connection_string,
         in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDriverConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
