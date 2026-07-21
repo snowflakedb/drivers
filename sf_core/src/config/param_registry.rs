@@ -92,6 +92,7 @@ pub mod param_names {
     pub const CRL_CONNECTION_TIMEOUT: ParamKey = ParamKey("crl_connection_timeout");
     pub const ASYNC_EXECUTION: ParamKey = ParamKey("async_execution");
     pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
+    pub const QUERY_TAG: ParamKey = ParamKey("query_tag");
     pub const SKIP_UPLOAD_ON_CONTENT_MATCH: ParamKey = ParamKey("skip_upload_on_content_match");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
@@ -288,8 +289,8 @@ pub struct ParamDef {
     pub deprecated_by: Option<&'static str>,
 
     /// Which API layer(s) may write this parameter. A parameter may be valid at
-    /// more than one level — e.g. a session parameter that is also overridable
-    /// per-statement lists both `Session` and `Statement`.
+    /// more than one level (e.g. `QUERY_TAG` is settable both at the
+    /// session/connection level and per-statement).
     pub scopes: &'static [ParamScope],
 
     /// When true, the resolved connection-seed value participates in login / new session.
@@ -1569,6 +1570,23 @@ static PARAM_DEFS: &[ParamDef] = &[
         description: "Exact number of statements in a multi-statement query",
         deprecated_by: None,
         scopes: &[ParamScope::Statement],
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::QUERY_TAG.as_str(),
+        aliases: &["QUERY_TAG"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "String label attached to queries and surfaced in QUERY_HISTORY. \
+                      Settable at the session level (connection option or session override, \
+                      forwarded as a login session parameter) and overridable per-statement.",
+        deprecated_by: None,
+        // A session parameter that may also be overridden per-statement.
+        scopes: &[ParamScope::Session, ParamScope::Statement],
         used_at_connect: false,
         mutable_after_connect: true,
     },

@@ -924,8 +924,8 @@ mod tests {
         );
         // Unknown string key — should appear uppercased
         store.insert(
-            "query_tag".to_string(),
-            Setting::String("my_tag".to_string()),
+            "some_string_key".to_string(),
+            Setting::String("my_val".to_string()),
         );
         // Unknown non-string keys — should be stringified
         store.insert("some_int_key".to_string(), Setting::Int(42));
@@ -934,7 +934,7 @@ mod tests {
         let unknown = collect_unknown_settings(&store);
 
         assert_eq!(unknown.len(), 3);
-        assert_eq!(unknown.get("QUERY_TAG"), Some(&"my_tag".to_string()));
+        assert_eq!(unknown.get("SOME_STRING_KEY"), Some(&"my_val".to_string()));
         assert_eq!(unknown.get("SOME_INT_KEY"), Some(&"42".to_string()));
         assert_eq!(unknown.get("SOME_BOOL_KEY"), Some(&"true".to_string()));
         assert!(!unknown.contains_key("host"));

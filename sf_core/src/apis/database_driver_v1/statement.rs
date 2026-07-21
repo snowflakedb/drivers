@@ -740,8 +740,14 @@ fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
 
 /// Server-side parameter names forwarded in the query request.
 /// Each entry maps a local `ParamKey` to the Snowflake server-side parameter name.
-const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] =
-    &[(param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT")];
+/// Statement-scoped options forwarded to GS in the query-request `parameters`
+/// map. Maps the local `ParamKey` to the server-side parameter name. Only
+/// registry-recognized, server-meaningful options belong here (the client-only
+/// `skip_upload_on_content_match` is intentionally excluded).
+const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] = &[
+    (param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT"),
+    (param_names::QUERY_TAG, "QUERY_TAG"),
+];
 
 fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde_json::Value>> {
     let mut params = HashMap::new();
@@ -964,6 +970,34 @@ mod tests {
         for (key, _server_name) in QUERY_PARAMETER_NAMES {
             assert_ne!(key.as_str(), "skip_upload_on_content_match");
         }
+    }
+
+    #[test]
+    fn query_tag_statement_option_is_forwarded_as_query_parameter() {
+        // Stored under the canonical key (as `statement_set_options` resolves it).
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "query_tag".to_string(),
+            Setting::String("stmt_tag".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("QUERY_TAG should be forwarded");
+        assert_eq!(
+            params.get("QUERY_TAG"),
+            Some(&serde_json::Value::String("stmt_tag".to_string()))
+        );
+    }
+
+    #[test]
+    fn registered_client_only_statement_option_is_not_forwarded() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "skip_upload_on_content_match".to_string(),
+            Setting::Bool(true),
+        );
+        assert!(
+            build_query_parameters(&settings).is_none(),
+            "registered client-only statement option must not be forwarded to GS"
+        );
     }
 
     #[test]
