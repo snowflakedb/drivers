@@ -111,9 +111,9 @@ public class SnowflakeStatementImplTest {
     SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi);
     stmt.close();
 
-    // ResultSetFactory.buildConversionContext relies on getConnectionInternal() to build the
-    // conversion context during ResultSet construction; it must not enforce checkClosed(), so a
-    // statement concurrently closed after execute() still yields a ResultSet (legacy parity).
+    // ResultSetFactory.parametersOf() relies on getConnectionInternal() to build the conversion
+    // context during ResultSet construction; it must not enforce checkClosed(), so a statement
+    // concurrently closed after execute() still yields a ResultSet (legacy parity).
     assertSame(mockConnection, stmt.getConnectionInternal());
 
     // The public JDBC getConnection() still enforces the closed check.

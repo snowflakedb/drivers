@@ -1,7 +1,9 @@
 package net.snowflake.client.internal.unicore;
 
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
@@ -27,12 +29,14 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseFetchChunkResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetChunksResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
@@ -154,6 +158,9 @@ public interface CoreDriverApi {
       throws SQLException;
 
   ResultSetReleaseResponse resultSetRelease(ResultSetHandle resultSetHandle) throws SQLException;
+
+  DatabaseFetchChunkResponse databaseFetchChunk(
+      List<ResultChunk> chunk, List<ColumnMetadata> columnMetadata) throws SQLException;
 
   // Telemetry
 

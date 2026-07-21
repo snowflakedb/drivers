@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
+import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
@@ -47,8 +48,8 @@ public class SessionDataConversionContextTest {
               ConnectionGetParameterResponse.newBuilder().setValue(entry.getValue()).build());
     }
     ParametersRegistry registry =
-        new ParametersRegistry(api, ConnectionHandle.getDefaultInstance());
-    return SessionDataConversionContext.fromConnection(registry);
+        new CoreParametersRegistry(api, ConnectionHandle.getDefaultInstance());
+    return SessionDataConversionContext.from(registry);
   }
 
   @Test

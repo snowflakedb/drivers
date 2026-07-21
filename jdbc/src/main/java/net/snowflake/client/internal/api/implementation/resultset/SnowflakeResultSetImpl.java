@@ -42,10 +42,20 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   private final RowReader rowReader;
   private final SnowflakeResultSetMetaDataImpl resultSetMetaData;
   private final boolean ownsStatement;
+  private final ResultSetChunksProvider resultSetChunksProvider;
 
   private boolean closed = false;
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
+
+  SnowflakeResultSetImpl(
+      SnowflakeStatementImpl statement,
+      String queryId,
+      RowReader rowReader,
+      SnowflakeResultSetMetaDataImpl resultSetMetaData,
+      boolean ownsStatement) {
+    this(statement, queryId, rowReader, resultSetMetaData, ownsStatement, null);
+  }
 
   @Override
   public boolean next() throws SQLException {
@@ -63,11 +73,16 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
     try {
       rowReader.close();
     } finally {
+      if (resultSetChunksProvider != null) {
+        resultSetChunksProvider.release();
+      }
       closed = true;
-      statement.removeClosedResultSet(this);
+      if (statement != null) {
+        statement.removeClosedResultSet(this);
+      }
     }
 
-    if (ownsStatement) {
+    if (ownsStatement && statement != null) {
       try {
         if (!statement.isClosed()) {
           statement.close();
@@ -1137,7 +1152,14 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
    */
   RowReader detachRowReader() {
     closed = true;
-    statement.removeClosedResultSet(this);
+    // The converted view exposes a different column shape,
+    // release now rather than transferring ownership to the wrapping result set.
+    if (resultSetChunksProvider != null) {
+      resultSetChunksProvider.release();
+    }
+    if (statement != null) {
+      statement.removeClosedResultSet(this);
+    }
     return rowReader;
   }
 
@@ -1155,7 +1177,14 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   @Override
   public List<SnowflakeResultSetSerializable> getResultSetSerializables(long maxSizeInBytes)
       throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    if (resultSetChunksProvider == null) {
+      // Plain in-memory (metadata) and converter-wrapped result sets have no chunk backing to
+      // slice, matching snowflake-jdbc whose SnowflakeDatabaseMetaDataResultSet rejects this.
+      throw new SQLFeatureNotSupportedException(
+          "getResultSetSerializables is not supported for this result set");
+    }
+    return resultSetChunksProvider.getChunks(maxSizeInBytes);
   }
 
   @Override

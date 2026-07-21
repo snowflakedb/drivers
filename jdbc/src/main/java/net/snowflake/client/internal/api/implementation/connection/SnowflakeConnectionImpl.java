@@ -44,6 +44,7 @@ import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
+import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
@@ -115,7 +116,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
       this.sqlWarnings = sqlWarnings;
-      this.parametersRegistry = new ParametersRegistry(coreDriverApi, connHandle);
+      this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
     } catch (SQLException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);

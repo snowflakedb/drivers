@@ -28,7 +28,7 @@ public final class SessionDataConversionContext implements DataConversionContext
   private final String timestampMappedType;
   private final boolean treatDecimalAsInt;
 
-  public static DataConversionContext fromConnection(ParametersRegistry params) {
+  public static DataConversionContext from(ParametersRegistry params) {
     SnowflakeDateTimeFormat dateFormatter =
         buildDateFormatter(params.get(Parameter.DATE_OUTPUT_FORMAT));
     TimeZone sessionTimeZone = buildSessionTimeZone(params.get(Parameter.TIMEZONE));
