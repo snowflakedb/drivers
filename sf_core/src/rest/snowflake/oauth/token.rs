@@ -51,12 +51,12 @@ fn host_from_token_url_inner(token_request_url: &str, fallback_server_url: &str)
 
 // ─── Access token ────────────────────────────────────────────────────────
 
-pub(crate) fn try_get_cached_oauth_access_token(
+pub(crate) async fn try_get_cached_oauth_access_token(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) -> Option<SensitiveString> {
     let cache = token_cache?;
     let key = CacheKey {
@@ -66,26 +66,31 @@ pub(crate) fn try_get_cached_oauth_access_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    match cache.get_token(&key) {
-        Ok(Some(token)) if !token.is_empty() => {
+    let result = tokio::task::spawn_blocking(move || cache.get_token(&key)).await;
+    match result {
+        Ok(Ok(Some(token))) if !token.is_empty() => {
             tracing::info!("Found cached OAuth access token");
             Some(token.into())
         }
-        Ok(_) => None,
-        Err(e) => {
+        Ok(Ok(_)) => None,
+        Ok(Err(e)) => {
             tracing::warn!(error = %e, "Failed to retrieve cached OAuth access token");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth access token retrieval task panicked");
             None
         }
     }
 }
 
-pub(crate) fn store_oauth_access_token(
+pub(crate) async fn store_oauth_access_token(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
     access_token: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         tracing::debug!("No token cache available for OAuth access token storage");
@@ -98,19 +103,27 @@ pub(crate) fn store_oauth_access_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.add_token(&key, access_token) {
-        tracing::warn!(error = %e, "Failed to cache OAuth access token");
-    } else {
-        tracing::info!("Cached OAuth access token for future use");
+    let access_token = access_token.to_string();
+    let result = tokio::task::spawn_blocking(move || cache.add_token(&key, &access_token)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Cached OAuth access token for future use");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to cache OAuth access token");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth access token store task panicked");
+        }
     }
 }
 
-pub(crate) fn remove_oauth_access_token(
+pub(crate) async fn remove_oauth_access_token(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         return;
@@ -122,21 +135,28 @@ pub(crate) fn remove_oauth_access_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.remove_token(&key) {
-        tracing::warn!(error = %e, "Failed to remove cached OAuth access token");
-    } else {
-        tracing::info!("Removed cached OAuth access token");
+    let result = tokio::task::spawn_blocking(move || cache.remove_token(&key)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Removed cached OAuth access token");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to remove cached OAuth access token");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth access token removal task panicked");
+        }
     }
 }
 
 // ─── Refresh token ───────────────────────────────────────────────────────
 
-pub(crate) fn try_get_cached_oauth_refresh_token(
+pub(crate) async fn try_get_cached_oauth_refresh_token(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) -> Option<SensitiveString> {
     let cache = token_cache?;
     let key = CacheKey {
@@ -146,26 +166,31 @@ pub(crate) fn try_get_cached_oauth_refresh_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    match cache.get_token(&key) {
-        Ok(Some(token)) if !token.is_empty() => {
+    let result = tokio::task::spawn_blocking(move || cache.get_token(&key)).await;
+    match result {
+        Ok(Ok(Some(token))) if !token.is_empty() => {
             tracing::info!("Found cached OAuth refresh token");
             Some(token.into())
         }
-        Ok(_) => None,
-        Err(e) => {
+        Ok(Ok(_)) => None,
+        Ok(Err(e)) => {
             tracing::warn!(error = %e, "Failed to retrieve cached OAuth refresh token");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth refresh token retrieval task panicked");
             None
         }
     }
 }
 
-pub(crate) fn store_oauth_refresh_token(
+pub(crate) async fn store_oauth_refresh_token(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
     refresh_token: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         tracing::debug!("No token cache available for OAuth refresh token storage");
@@ -178,19 +203,27 @@ pub(crate) fn store_oauth_refresh_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.add_token(&key, refresh_token) {
-        tracing::warn!(error = %e, "Failed to cache OAuth refresh token");
-    } else {
-        tracing::info!("Cached OAuth refresh token for future use");
+    let refresh_token = refresh_token.to_string();
+    let result = tokio::task::spawn_blocking(move || cache.add_token(&key, &refresh_token)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Cached OAuth refresh token for future use");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to cache OAuth refresh token");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth refresh token store task panicked");
+        }
     }
 }
 
-pub(crate) fn remove_oauth_refresh_token(
+pub(crate) async fn remove_oauth_refresh_token(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         return;
@@ -202,10 +235,17 @@ pub(crate) fn remove_oauth_refresh_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.remove_token(&key) {
-        tracing::warn!(error = %e, "Failed to remove cached OAuth refresh token");
-    } else {
-        tracing::info!("Removed cached OAuth refresh token");
+    let result = tokio::task::spawn_blocking(move || cache.remove_token(&key)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Removed cached OAuth refresh token");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to remove cached OAuth refresh token");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth refresh token removal task panicked");
+        }
     }
 }
 
@@ -230,12 +270,12 @@ pub(crate) fn unpack_dpop_bundle(packed: &str) -> Option<(String, String)> {
     Some((String::from_utf8(at).ok()?, String::from_utf8(jwk).ok()?))
 }
 
-pub(crate) fn try_get_cached_oauth_dpop_bundled(
+pub(crate) async fn try_get_cached_oauth_dpop_bundled(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) -> Option<(SensitiveString, String)> {
     let cache = token_cache?;
     let key = CacheKey {
@@ -245,34 +285,49 @@ pub(crate) fn try_get_cached_oauth_dpop_bundled(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    match cache.get_token(&key) {
-        Ok(Some(packed)) if !packed.is_empty() => match unpack_dpop_bundle(&packed) {
+    // Clone the cache before moving one handle into the blocking closure so the
+    // corrupt-entry eviction path below still has a handle to remove with.
+    let eviction_cache = std::sync::Arc::clone(&cache);
+    let result = tokio::task::spawn_blocking(move || cache.get_token(&key)).await;
+    match result {
+        Ok(Ok(Some(packed))) if !packed.is_empty() => match unpack_dpop_bundle(&packed) {
             Some((access_token, jwk_json)) => {
                 tracing::info!("Found cached DPoP-bundled OAuth access token");
                 Some((SensitiveString::from(access_token), jwk_json))
             }
             None => {
                 tracing::warn!("Cached DPoP-bundled access token has unexpected format; evicting");
-                remove_oauth_dpop_bundled(idp_url, snowflake_url, username, role, token_cache);
+                remove_oauth_dpop_bundled(
+                    idp_url,
+                    snowflake_url,
+                    username,
+                    role,
+                    Some(eviction_cache),
+                )
+                .await;
                 None
             }
         },
-        Ok(_) => None,
-        Err(e) => {
+        Ok(Ok(_)) => None,
+        Ok(Err(e)) => {
             tracing::warn!(error = %e, "Failed to retrieve cached DPoP-bundled access token");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "DPoP-bundled access token retrieval task panicked");
             None
         }
     }
 }
 
-pub(crate) fn store_oauth_dpop_bundled(
+pub(crate) async fn store_oauth_dpop_bundled(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
     access_token: &str,
     jwk_json: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         tracing::debug!("No token cache available for DPoP-bundled access token storage");
@@ -286,19 +341,26 @@ pub(crate) fn store_oauth_dpop_bundled(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.add_token(&key, &packed) {
-        tracing::warn!(error = %e, "Failed to cache DPoP-bundled access token");
-    } else {
-        tracing::info!("Cached DPoP-bundled OAuth access token for future use");
+    let result = tokio::task::spawn_blocking(move || cache.add_token(&key, &packed)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Cached DPoP-bundled OAuth access token for future use");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to cache DPoP-bundled access token");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "DPoP-bundled access token store task panicked");
+        }
     }
 }
 
-pub(crate) fn remove_oauth_dpop_bundled(
+pub(crate) async fn remove_oauth_dpop_bundled(
     idp_url: &str,
     snowflake_url: &str,
     username: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         return;
@@ -310,10 +372,17 @@ pub(crate) fn remove_oauth_dpop_bundled(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.remove_token(&key) {
-        tracing::warn!(error = %e, "Failed to remove cached DPoP-bundled access token");
-    } else {
-        tracing::info!("Removed cached DPoP-bundled OAuth access token");
+    let result = tokio::task::spawn_blocking(move || cache.remove_token(&key)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Removed cached DPoP-bundled OAuth access token");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "Failed to remove cached DPoP-bundled access token");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "DPoP-bundled access token removal task panicked");
+        }
     }
 }
 
@@ -384,32 +453,62 @@ mod tests {
         assert!(host.is_none());
     }
 
-    #[test]
-    fn access_token_round_trip() {
-        let cache = StubTokenCache::new();
-        store_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", "AAA", Some(&cache));
-        let got =
-            try_get_cached_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache));
+    #[tokio::test]
+    async fn access_token_round_trip() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
+        store_oauth_access_token(
+            IDP_URL,
+            SNOWFLAKE_URL,
+            "alice",
+            "",
+            "AAA",
+            Some(cache.clone()),
+        )
+        .await;
+        let got = try_get_cached_oauth_access_token(
+            IDP_URL,
+            SNOWFLAKE_URL,
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await;
         assert_eq!(got.as_ref().map(|s| s.reveal().as_str()), Some("AAA"));
 
-        remove_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache));
+        remove_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(cache.clone())).await;
         assert!(
-            try_get_cached_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache))
+            try_get_cached_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(cache))
+                .await
                 .is_none()
         );
     }
 
-    #[test]
-    fn refresh_token_round_trip() {
-        let cache = StubTokenCache::new();
-        store_oauth_refresh_token(IDP_URL, SNOWFLAKE_URL, "alice", "", "RRR", Some(&cache));
-        let got =
-            try_get_cached_oauth_refresh_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache));
+    #[tokio::test]
+    async fn refresh_token_round_trip() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
+        store_oauth_refresh_token(
+            IDP_URL,
+            SNOWFLAKE_URL,
+            "alice",
+            "",
+            "RRR",
+            Some(cache.clone()),
+        )
+        .await;
+        let got = try_get_cached_oauth_refresh_token(
+            IDP_URL,
+            SNOWFLAKE_URL,
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await;
         assert_eq!(got.as_ref().map(|s| s.reveal().as_str()), Some("RRR"));
 
-        remove_oauth_refresh_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache));
+        remove_oauth_refresh_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(cache.clone())).await;
         assert!(
-            try_get_cached_oauth_refresh_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache))
+            try_get_cached_oauth_refresh_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(cache))
+                .await
                 .is_none()
         );
     }
@@ -428,9 +527,9 @@ mod tests {
         assert!(unpack_dpop_bundle("zz!.zz!").is_none());
     }
 
-    #[test]
-    fn dpop_bundle_round_trip_through_cache() {
-        let cache = StubTokenCache::new();
+    #[tokio::test]
+    async fn dpop_bundle_round_trip_through_cache() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
         store_oauth_dpop_bundled(
             IDP_URL,
             SNOWFLAKE_URL,
@@ -438,18 +537,20 @@ mod tests {
             "",
             "ACCESS-TOK",
             r#"{"crv":"P-256","kty":"EC"}"#,
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         let got =
-            try_get_cached_oauth_dpop_bundled(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache))
+            try_get_cached_oauth_dpop_bundled(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(cache))
+                .await
                 .expect("hit");
         assert_eq!(got.0.reveal().as_str(), "ACCESS-TOK");
         assert_eq!(got.1, r#"{"crv":"P-256","kty":"EC"}"#);
     }
 
-    #[test]
-    fn dpop_bundle_corrupt_entry_is_evicted() {
-        let cache = StubTokenCache::new();
+    #[tokio::test]
+    async fn dpop_bundle_corrupt_entry_is_evicted() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
         // Insert a corrupt entry using the same key that try_get_cached_oauth_dpop_bundled
         // will look up (normalize_url + normalize_identifier applied to the same inputs).
         let key = CacheKey {
@@ -461,8 +562,14 @@ mod tests {
         };
         cache.add_token(&key, "totally-not-a-bundle").unwrap();
 
-        let got =
-            try_get_cached_oauth_dpop_bundled(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache));
+        let got = try_get_cached_oauth_dpop_bundled(
+            IDP_URL,
+            SNOWFLAKE_URL,
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await;
         assert!(got.is_none(), "corrupt bundle should not be returned");
 
         // …and should have been evicted as a side effect.
@@ -470,9 +577,9 @@ mod tests {
         assert!(stored.is_none(), "corrupt entry should have been evicted");
     }
 
-    #[test]
-    fn empty_cache_value_returns_none_not_empty_string() {
-        let cache = StubTokenCache::new();
+    #[tokio::test]
+    async fn empty_cache_value_returns_none_not_empty_string() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
         let key = CacheKey {
             token_type: TokenType::OAuthAccessToken,
             idp: normalize_url(IDP_URL),
@@ -483,22 +590,24 @@ mod tests {
         cache.add_token(&key, "").unwrap();
 
         let got =
-            try_get_cached_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(&cache));
+            try_get_cached_oauth_access_token(IDP_URL, SNOWFLAKE_URL, "alice", "", Some(cache))
+                .await;
         assert!(got.is_none());
     }
 
-    #[test]
-    fn different_snowflake_accounts_sharing_one_idp_do_not_collide() {
-        let cache = StubTokenCache::new();
+    #[tokio::test]
+    async fn different_snowflake_accounts_sharing_one_idp_do_not_collide() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
         let idp = "https://idp.shared.com/oauth/token";
         let sf1 = "https://org-account1.snowflakecomputing.com";
         let sf2 = "https://org-account2.snowflakecomputing.com";
 
-        store_oauth_access_token(idp, sf1, "alice", "", "AT-FOR-SF1", Some(&cache));
-        store_oauth_access_token(idp, sf2, "alice", "", "AT-FOR-SF2", Some(&cache));
+        store_oauth_access_token(idp, sf1, "alice", "", "AT-FOR-SF1", Some(cache.clone())).await;
+        store_oauth_access_token(idp, sf2, "alice", "", "AT-FOR-SF2", Some(cache.clone())).await;
 
-        let got1 = try_get_cached_oauth_access_token(idp, sf1, "alice", "", Some(&cache));
-        let got2 = try_get_cached_oauth_access_token(idp, sf2, "alice", "", Some(&cache));
+        let got1 =
+            try_get_cached_oauth_access_token(idp, sf1, "alice", "", Some(cache.clone())).await;
+        let got2 = try_get_cached_oauth_access_token(idp, sf2, "alice", "", Some(cache)).await;
         assert_eq!(
             got1.as_ref().map(|s| s.reveal().as_str()),
             Some("AT-FOR-SF1")
@@ -509,9 +618,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn distinct_roles_get_distinct_entries() {
-        let cache = StubTokenCache::new();
+    #[tokio::test]
+    async fn distinct_roles_get_distinct_entries() {
+        let cache: std::sync::Arc<dyn TokenCache> = std::sync::Arc::new(StubTokenCache::new());
 
         store_oauth_access_token(
             IDP_URL,
@@ -519,31 +628,35 @@ mod tests {
             "alice",
             "ANALYST",
             "AT-ANALYST",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         store_oauth_access_token(
             IDP_URL,
             SNOWFLAKE_URL,
             "alice",
             "ADMIN",
             "AT-ADMIN",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
 
         let got_analyst = try_get_cached_oauth_access_token(
             IDP_URL,
             SNOWFLAKE_URL,
             "alice",
             "ANALYST",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         let got_admin = try_get_cached_oauth_access_token(
             IDP_URL,
             SNOWFLAKE_URL,
             "alice",
             "ADMIN",
-            Some(&cache),
-        );
+            Some(cache),
+        )
+        .await;
         assert_eq!(
             got_analyst.as_ref().map(|s| s.reveal().as_str()),
             Some("AT-ANALYST")

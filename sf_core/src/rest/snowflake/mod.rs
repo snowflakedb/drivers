@@ -375,12 +375,12 @@ fn set_duo_authn_fields(
     }
 }
 
-fn try_get_cached_token(
+async fn try_get_cached_token(
     server_url: &str,
     username: &str,
     role: &str,
     token_type: TokenType,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) -> Option<SensitiveString> {
     let cache = token_cache?;
     let key = CacheKey {
@@ -390,26 +390,31 @@ fn try_get_cached_token(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    match cache.get_token(&key) {
-        Ok(Some(token)) if !token.is_empty() => {
+    let result = tokio::task::spawn_blocking(move || cache.get_token(&key)).await;
+    match result {
+        Ok(Ok(Some(token))) if !token.is_empty() => {
             tracing::info!(%token_type, "Found cached token");
             Some(token.into())
         }
-        Ok(_) => None,
-        Err(e) => {
+        Ok(Ok(_)) => None,
+        Ok(Err(e)) => {
             tracing::warn!(%token_type, error = %e, "Failed to retrieve cached token");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(%token_type, error = %e, "Cache retrieval task panicked");
             None
         }
     }
 }
 
-fn store_token_in_cache(
+async fn store_token_in_cache(
     server_url: &str,
     username: &str,
     role: &str,
     token_type: TokenType,
     token_value: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         tracing::debug!(%token_type, "No token cache available");
@@ -422,19 +427,27 @@ fn store_token_in_cache(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.add_token(&key, token_value) {
-        tracing::warn!(%token_type, error = %e, "Failed to cache token");
-    } else {
-        tracing::info!(%token_type, "Cached token for future use");
+    let token_value = token_value.to_string();
+    let result = tokio::task::spawn_blocking(move || cache.add_token(&key, &token_value)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!(%token_type, "Cached token for future use");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(%token_type, error = %e, "Failed to cache token");
+        }
+        Err(e) => {
+            tracing::warn!(%token_type, error = %e, "Cache store task panicked");
+        }
     }
 }
 
-fn remove_token_from_cache(
+async fn remove_token_from_cache(
     server_url: &str,
     username: &str,
     role: &str,
     token_type: TokenType,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let Some(cache) = token_cache else {
         return;
@@ -446,10 +459,17 @@ fn remove_token_from_cache(
         username: normalize_identifier(username),
         role: normalize_identifier(role),
     };
-    if let Err(e) = cache.remove_token(&key) {
-        tracing::warn!(%token_type, error = %e, "Failed to remove cached token");
-    } else {
-        tracing::info!(%token_type, "Removed cached token");
+    let result = tokio::task::spawn_blocking(move || cache.remove_token(&key)).await;
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!(%token_type, "Removed cached token");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(%token_type, error = %e, "Failed to remove cached token");
+        }
+        Err(e) => {
+            tracing::warn!(%token_type, error = %e, "Cache removal task panicked");
+        }
     }
 }
 
@@ -464,11 +484,11 @@ fn remove_token_from_cache(
 /// sides and produces byte-exact cache keys even for URLs with explicit default
 /// ports (e.g. `:443`), and neither path can drift from the other
 /// (SNOW-3780375). The `snowflake_url` is always the Snowflake server URL.
-fn evict_oauth_access_token_for_authorization_code(
+async fn evict_oauth_access_token_for_authorization_code(
     cfg: &crate::config::rest_parameters::OAuthAuthorizationCodeConfig,
     server_url: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
 ) {
     let parsed_server_url = match Url::parse(server_url) {
         Ok(url) => url,
@@ -492,15 +512,22 @@ fn evict_oauth_access_token_for_authorization_code(
             .unwrap_or_default(),
         "Evicting cached OAuth access token"
     );
-    oauth::remove_oauth_access_token(&idp_url, server_url, &cfg.username, role, token_cache);
-    oauth::remove_oauth_dpop_bundled(&idp_url, server_url, &cfg.username, role, token_cache);
+    oauth::remove_oauth_access_token(
+        &idp_url,
+        server_url,
+        &cfg.username,
+        role,
+        token_cache.clone(),
+    )
+    .await;
+    oauth::remove_oauth_dpop_bundled(&idp_url, server_url, &cfg.username, role, token_cache).await;
 }
 
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
 ) -> Result<AuthRequestData, RestError> {
@@ -549,8 +576,9 @@ pub async fn auth_request_data(
                     username,
                     login_parameters.role.as_deref().unwrap_or(""),
                     TokenType::IdToken,
-                    token_cache,
+                    token_cache.clone(),
                 )
+                .await
             } else {
                 None
             };
@@ -590,7 +618,7 @@ pub async fn auth_request_data(
                 &login_parameters.server_url,
                 cfg,
                 login_parameters.role.as_deref().unwrap_or(""),
-                token_cache,
+                token_cache.clone(),
                 login_parameters.disable_parallel_user_prompt,
                 prompt_locks,
             )
@@ -693,8 +721,9 @@ pub async fn auth_request_data(
                         &username,
                         "",
                         TokenType::MfaToken,
-                        token_cache,
+                        token_cache.clone(),
                     )
+                    .await
                 } else {
                     None
                 };
@@ -855,7 +884,7 @@ pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
 ) -> Result<LoginResult, RestError> {
@@ -977,7 +1006,7 @@ pub async fn snowflake_login_with_client(
         client,
         login_parameters,
         session_parameters,
-        token_cache,
+        token_cache.clone(),
         prompt_locks,
         retry_policy,
     )
@@ -1029,13 +1058,14 @@ pub async fn snowflake_login_with_client(
                     username,
                     role,
                     token_type,
-                    token_cache,
-                );
+                    token_cache.clone(),
+                )
+                .await;
                 let retry_data = auth_request_data(
                     client,
                     login_parameters,
                     session_parameters,
-                    token_cache,
+                    token_cache.clone(),
                     prompt_locks,
                     retry_policy,
                 )
@@ -1068,8 +1098,9 @@ pub async fn snowflake_login_with_client(
                         cfg,
                         &login_parameters.server_url,
                         login_parameters.role.as_deref().unwrap_or(""),
-                        token_cache,
-                    );
+                        token_cache.clone(),
+                    )
+                    .await;
                     should_retry = true;
                 }
                 LoginMethod::OAuthClientCredentials(_) => {
@@ -1090,7 +1121,7 @@ pub async fn snowflake_login_with_client(
                     client,
                     login_parameters,
                     session_parameters,
-                    token_cache,
+                    token_cache.clone(),
                     prompt_locks,
                     retry_policy,
                 )
@@ -1133,8 +1164,9 @@ pub async fn snowflake_login_with_client(
                     username,
                     role,
                     token_type,
-                    token_cache,
-                );
+                    token_cache.clone(),
+                )
+                .await;
             }
         }
         LoginSnafu { message, code }.fail()?;
@@ -1179,7 +1211,8 @@ pub async fn snowflake_login_with_client(
             token_type,
             token.reveal(),
             token_cache,
-        );
+        )
+        .await;
     }
 
     // Extract tokens and session id from response
@@ -2530,42 +2563,68 @@ mod tests {
     mod token_cache_helpers_tests {
         use super::*;
 
-        fn assert_get_store_remove_for(token_type: TokenType) {
+        async fn assert_get_store_remove_for(token_type: TokenType) {
+            use std::sync::Arc;
             const SERVER: &str = "https://host.example.com";
 
             // try_get: returns cached token on hit
-            let cache = StubTokenCache::with_token(SERVER, "alice", "", token_type, "tok_val");
-            let result = try_get_cached_token(SERVER, "alice", "", token_type, Some(&cache));
+            let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::with_token(
+                SERVER, "alice", "", token_type, "tok_val",
+            ));
+            let result =
+                try_get_cached_token(SERVER, "alice", "", token_type, Some(cache.clone())).await;
             assert_eq!(result.unwrap().reveal(), "tok_val");
 
             // try_get: returns None on cache miss
-            let empty = StubTokenCache::new();
-            assert!(try_get_cached_token(SERVER, "alice", "", token_type, Some(&empty)).is_none());
+            let empty: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
+            assert!(
+                try_get_cached_token(SERVER, "alice", "", token_type, Some(empty.clone()))
+                    .await
+                    .is_none()
+            );
 
             // try_get: returns None when no cache provided
-            assert!(try_get_cached_token(SERVER, "alice", "", token_type, None).is_none());
+            assert!(
+                try_get_cached_token(SERVER, "alice", "", token_type, None)
+                    .await
+                    .is_none()
+            );
 
             // try_get: returns None for invalid URL
             assert!(
-                try_get_cached_token("not-a-url", "alice", "", token_type, Some(&empty)).is_none()
+                try_get_cached_token("not-a-url", "alice", "", token_type, Some(empty.clone()))
+                    .await
+                    .is_none()
             );
 
             // try_get: returns None for empty cached value
-            let empty_val = StubTokenCache::with_token(SERVER, "alice", "", token_type, "");
+            let empty_val: Arc<dyn TokenCache> = Arc::new(StubTokenCache::with_token(
+                SERVER, "alice", "", token_type, "",
+            ));
             assert!(
-                try_get_cached_token(SERVER, "alice", "", token_type, Some(&empty_val)).is_none()
+                try_get_cached_token(SERVER, "alice", "", token_type, Some(empty_val))
+                    .await
+                    .is_none()
             );
 
             // store + get round-trip
-            let cache = StubTokenCache::new();
-            store_token_in_cache(SERVER, "alice", "", token_type, "new_tok", Some(&cache));
+            let cache = Arc::new(StubTokenCache::new());
+            store_token_in_cache(
+                SERVER,
+                "alice",
+                "",
+                token_type,
+                "new_tok",
+                Some(cache.clone() as Arc<dyn TokenCache>),
+            )
+            .await;
             let stored = cache
                 .get_token(&key_for(SERVER, "alice", "", token_type))
                 .unwrap();
             assert_eq!(stored.as_deref(), Some("new_tok"));
 
             // store: no panic when no cache
-            store_token_in_cache(SERVER, "alice", "", token_type, "tok", None);
+            store_token_in_cache(SERVER, "alice", "", token_type, "tok", None).await;
 
             // store: no panic for invalid URL
             store_token_in_cache(
@@ -2574,12 +2633,26 @@ mod tests {
                 "",
                 token_type,
                 "tok",
-                Some(&StubTokenCache::new()),
-            );
+                Some(Arc::new(StubTokenCache::new()) as Arc<dyn TokenCache>),
+            )
+            .await;
 
             // remove evicts token
-            let cache = StubTokenCache::with_token(SERVER, "alice", "", token_type, "to_remove");
-            remove_token_from_cache(SERVER, "alice", "", token_type, Some(&cache));
+            let cache = Arc::new(StubTokenCache::with_token(
+                SERVER,
+                "alice",
+                "",
+                token_type,
+                "to_remove",
+            ));
+            remove_token_from_cache(
+                SERVER,
+                "alice",
+                "",
+                token_type,
+                Some(cache.clone() as Arc<dyn TokenCache>),
+            )
+            .await;
             assert!(
                 cache
                     .get_token(&key_for(SERVER, "alice", "", token_type))
@@ -2588,7 +2661,7 @@ mod tests {
             );
 
             // remove: no panic when no cache
-            remove_token_from_cache(SERVER, "alice", "", token_type, None);
+            remove_token_from_cache(SERVER, "alice", "", token_type, None).await;
 
             // remove: no panic for invalid URL
             remove_token_from_cache(
@@ -2596,18 +2669,19 @@ mod tests {
                 "alice",
                 "",
                 token_type,
-                Some(&StubTokenCache::new()),
-            );
+                Some(Arc::new(StubTokenCache::new()) as Arc<dyn TokenCache>),
+            )
+            .await;
         }
 
-        #[test]
-        fn mfa_token_cache_operations() {
-            assert_get_store_remove_for(TokenType::MfaToken);
+        #[tokio::test]
+        async fn mfa_token_cache_operations() {
+            assert_get_store_remove_for(TokenType::MfaToken).await;
         }
 
-        #[test]
-        fn id_token_cache_operations() {
-            assert_get_store_remove_for(TokenType::IdToken);
+        #[tokio::test]
+        async fn id_token_cache_operations() {
+            assert_get_store_remove_for(TokenType::IdToken).await;
         }
     }
 

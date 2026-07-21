@@ -14,7 +14,7 @@ use crate::logging::LogManager;
 use crate::rest::snowflake::prompt_lock::PromptLockMap;
 use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
-use crate::token_cache::{KeyringTokenCache, TokenCacheError};
+use crate::token_cache::{KeyringTokenCache, TokenCache, TokenCacheError};
 
 /// Which shape the PUT/GET result set should take.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -95,7 +95,7 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     pub(super) results: HandleManager<Mutex<ResultSet>>,
-    token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
+    token_cache: once_cell::sync::OnceCell<Arc<dyn TokenCache>>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
     log_manager: Option<LogManager>,
@@ -187,8 +187,12 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {
-        self.token_cache.get_or_try_init(KeyringTokenCache::new)
+    pub fn token_cache(&self) -> Result<Arc<dyn TokenCache>, TokenCacheError> {
+        self.token_cache
+            .get_or_try_init(|| {
+                KeyringTokenCache::new().map(|c| Arc::new(c) as Arc<dyn TokenCache>)
+            })
+            .map(Arc::clone)
     }
 
     pub fn fs_adapter(&self) -> Arc<dyn FsAdapter> {
@@ -245,7 +249,7 @@ mod tests {
         let first = driver.token_cache().expect("first call failed");
         let second = driver.token_cache().expect("second call failed");
         assert!(
-            std::ptr::eq(first, second),
+            Arc::ptr_eq(&first, &second),
             "token_cache() should return the same instance on repeated calls"
         );
     }

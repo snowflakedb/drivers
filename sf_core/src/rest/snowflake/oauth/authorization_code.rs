@@ -191,7 +191,7 @@ pub(crate) async fn run_oauth_authorization_code(
     // Normalized Snowflake role used to scope the cache key; empty for flows
     // where no role is configured.
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     disable_parallel_user_prompt: bool,
     prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
@@ -240,7 +240,7 @@ async fn run_authorization_code_flow(
     server_url_raw: &str,
     config: &OAuthAuthorizationCodeConfig,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     launch_browser: BrowserLaunchFn,
     disable_parallel_user_prompt: bool,
     prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
@@ -297,7 +297,7 @@ async fn run_authorization_code_flow(
         snowflake_url,
         role,
         config,
-        token_cache,
+        token_cache.clone(),
         deadline,
     )
     .await
@@ -316,8 +316,16 @@ async fn run_authorization_code_flow(
     )
     .await?;
 
-    persist_access_token(config, idp_url, snowflake_url, role, token_cache, &result);
-    persist_refresh_token(config, idp_url, snowflake_url, role, token_cache, &result);
+    persist_access_token(
+        config,
+        idp_url,
+        snowflake_url,
+        role,
+        token_cache.clone(),
+        &result,
+    )
+    .await;
+    persist_refresh_token(config, idp_url, snowflake_url, role, token_cache, &result).await;
     tracing::info!("OAuth authorization code flow completed");
     Ok(result)
 }
@@ -337,14 +345,14 @@ async fn try_cache_short_circuit(
     snowflake_url: &str,
     role: &str,
     config: &OAuthAuthorizationCodeConfig,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     deadline: FlowDeadline,
 ) -> Option<AcquiredOAuthToken> {
     if !config.client_store_temporary_credential {
         tracing::debug!("OAuth token cache disabled; skipping cache lookup");
         return None;
     }
-    let Some(_cache) = token_cache else {
+    let Some(ref _cache) = token_cache else {
         tracing::debug!("No OAuth token cache available; skipping cache lookup");
         return None;
     };
@@ -359,8 +367,9 @@ async fn try_cache_short_circuit(
             snowflake_url,
             &config.username,
             role,
-            token_cache,
+            token_cache.clone(),
         )
+        .await
     {
         // Validate the cached JWK before handing the bundle back to
         // the caller. A corrupt JWK would only surface later when
@@ -386,8 +395,9 @@ async fn try_cache_short_circuit(
                     snowflake_url,
                     &config.username,
                     role,
-                    token_cache,
-                );
+                    token_cache.clone(),
+                )
+                .await;
             }
         }
     }
@@ -397,8 +407,10 @@ async fn try_cache_short_circuit(
         snowflake_url,
         &config.username,
         role,
-        token_cache,
-    ) {
+        token_cache.clone(),
+    )
+    .await
+    {
         tracing::debug!("OAuth access token served from cache");
         return Some(AcquiredOAuthToken {
             access_token: cached,
@@ -413,8 +425,10 @@ async fn try_cache_short_circuit(
         snowflake_url,
         &config.username,
         role,
-        token_cache,
-    ) {
+        token_cache.clone(),
+    )
+    .await
+    {
         tracing::debug!("Cache short-circuit hit on OAuth refresh token; attempting exchange");
         // Drift B.12: when DPoP was negotiated for this connection, we
         // must reuse the same key on the refresh leg so the IdP can
@@ -449,18 +463,20 @@ async fn try_cache_short_circuit(
                     idp_url,
                     snowflake_url,
                     role,
-                    token_cache,
+                    token_cache.clone(),
                     &refreshed,
-                );
+                )
+                .await;
                 if refreshed.refresh_token.is_some() {
                     persist_refresh_token(
                         config,
                         idp_url,
                         snowflake_url,
                         role,
-                        token_cache,
+                        token_cache.clone(),
                         &refreshed,
-                    );
+                    )
+                    .await;
                 } else {
                     // Cross-driver convention (.NET / Node): when the
                     // IdP omits a new refresh token, evict the cached one.
@@ -476,8 +492,9 @@ async fn try_cache_short_circuit(
                         snowflake_url,
                         &config.username,
                         role,
-                        token_cache,
-                    );
+                        token_cache.clone(),
+                    )
+                    .await;
                 }
                 return Some(refreshed);
             }
@@ -491,8 +508,9 @@ async fn try_cache_short_circuit(
                     snowflake_url,
                     &config.username,
                     role,
-                    token_cache,
-                );
+                    token_cache.clone(),
+                )
+                .await;
             }
         }
     } else {
@@ -822,12 +840,12 @@ fn error_type_as_str(err: &BasicErrorResponseType) -> String {
     out
 }
 
-fn persist_access_token(
+async fn persist_access_token(
     config: &OAuthAuthorizationCodeConfig,
     idp_url: &str,
     snowflake_url: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     acquired: &AcquiredOAuthToken,
 ) {
     if !config.client_store_temporary_credential {
@@ -848,7 +866,8 @@ fn persist_access_token(
             acquired.access_token.reveal(),
             jwk_json,
             token_cache,
-        );
+        )
+        .await;
     } else {
         token::store_oauth_access_token(
             idp_url,
@@ -857,16 +876,17 @@ fn persist_access_token(
             role,
             acquired.access_token.reveal(),
             token_cache,
-        );
+        )
+        .await;
     }
 }
 
-fn persist_refresh_token(
+async fn persist_refresh_token(
     config: &OAuthAuthorizationCodeConfig,
     idp_url: &str,
     snowflake_url: &str,
     role: &str,
-    token_cache: Option<&dyn TokenCache>,
+    token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     acquired: &AcquiredOAuthToken,
 ) {
     if !config.client_store_temporary_credential {
@@ -886,7 +906,8 @@ fn persist_refresh_token(
             role,
             refresh.reveal(),
             token_cache,
-        );
+        )
+        .await;
     }
 }
 
@@ -948,6 +969,7 @@ mod tests {
     use crate::token_cache::TokenCacheError;
     use base64::Engine as _;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use std::sync::Mutex;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1133,7 +1155,7 @@ mod tests {
 
     #[tokio::test]
     async fn cached_access_token_short_circuits_full_flow() {
-        let cache = StubTokenCache::new();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
         let token_url = Url::parse("https://idp.example.com/oauth/token").unwrap();
         token::store_oauth_access_token(
             token_url.as_str(),
@@ -1141,8 +1163,9 @@ mod tests {
             "alice",
             "",
             "CACHED-AT",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
 
         let config = cfg_with_token_url(token_url);
         let client = reqwest::Client::new();
@@ -1151,7 +1174,7 @@ mod tests {
             server_url().as_str(),
             &config,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             false,
             None,
         )
@@ -1179,15 +1202,16 @@ mod tests {
             .await;
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
-        let cache = StubTokenCache::new();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
         token::store_oauth_refresh_token(
             token_url.as_str(),
             server_url().as_str(),
             "alice",
             "",
             "RT-OLD",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         let config = cfg_with_token_url(token_url.clone());
 
         let client = reqwest::Client::new();
@@ -1196,7 +1220,7 @@ mod tests {
             server_url().as_str(),
             &config,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             false,
             None,
         )
@@ -1215,8 +1239,9 @@ mod tests {
             server_url().as_str(),
             "alice",
             "",
-            Some(&cache),
+            Some(cache.clone()),
         )
+        .await
         .map(|s| s.reveal().to_string());
         assert_eq!(stored_at.as_deref(), Some("AT-NEW"));
     }
@@ -1234,15 +1259,16 @@ mod tests {
             .await;
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
-        let cache = StubTokenCache::new();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
         token::store_oauth_refresh_token(
             token_url.as_str(),
             server_url().as_str(),
             "alice",
             "",
             "RT-OLD",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
 
         let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async {}));
         let mut config_short =
@@ -1255,7 +1281,7 @@ mod tests {
             server_url().as_str(),
             &config_short,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             launch,
             false,
             None,
@@ -1267,8 +1293,9 @@ mod tests {
             server_url().as_str(),
             "alice",
             "",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         assert!(
             stored_rt.is_none(),
             "expired refresh token must be evicted from the cache"
@@ -1664,15 +1691,16 @@ mod tests {
             .await;
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
-        let cache = StubTokenCache::new();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
         token::store_oauth_refresh_token(
             token_url.as_str(),
             server_url().as_str(),
             "alice",
             "",
             "RT-OLD",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
         let _ = run_oauth_authorization_code(
@@ -1680,7 +1708,7 @@ mod tests {
             server_url().as_str(),
             &config,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             false,
             None,
         )
@@ -1692,8 +1720,9 @@ mod tests {
             server_url().as_str(),
             "alice",
             "",
-            Some(&cache),
+            Some(cache.clone()),
         )
+        .await
         .map(|s| s.reveal().to_string());
         assert_eq!(
             stored_rt.as_deref(),
@@ -1721,15 +1750,16 @@ mod tests {
             .await;
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
-        let cache = StubTokenCache::new();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
         token::store_oauth_refresh_token(
             token_url.as_str(),
             server_url().as_str(),
             "alice",
             "",
             "RT-STALE",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
         let acquired = run_oauth_authorization_code(
@@ -1737,7 +1767,7 @@ mod tests {
             server_url().as_str(),
             &config,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             false,
             None,
         )
@@ -1751,8 +1781,9 @@ mod tests {
             server_url().as_str(),
             "alice",
             "",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         assert!(
             stored_rt.is_none(),
             "stale refresh token must be evicted when the response omits a new one"
@@ -1780,7 +1811,7 @@ mod tests {
             Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
         config.client_store_temporary_credential = true;
 
-        let cache = FaultingTokenCache;
+        let cache: Arc<dyn TokenCache> = Arc::new(FaultingTokenCache);
         let client = reqwest::Client::new();
         let acquired = run_authorization_code_flow(
             &client,
@@ -1788,7 +1819,7 @@ mod tests {
             server_url().as_str(),
             &config,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             loopback_redirect_with("CODE"),
             false,
             None,
@@ -1859,15 +1890,16 @@ mod tests {
             .await;
 
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
-        let cache = StubTokenCache::new();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
         token::store_oauth_refresh_token(
             token_url.as_str(),
             server_url().as_str(),
             "alice",
             "",
             "RT-OLD",
-            Some(&cache),
-        );
+            Some(cache.clone()),
+        )
+        .await;
         let config = cfg_with_token_url(token_url);
         assert!(config.scope.is_none());
         let client = reqwest::Client::new();
@@ -1876,7 +1908,7 @@ mod tests {
             server_url().as_str(),
             &config,
             "",
-            Some(&cache),
+            Some(cache.clone()),
             false,
             None,
         )
