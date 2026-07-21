@@ -171,11 +171,26 @@ pipeline {
                             // Uses --target to persist packages in workspace across container runs
                             steps {
                                 sh '''
+                                    SF_CERT_FILE="${SF_CERT_FILE:-/dev/shm/sfcert.pem}"
+                                    SF_KEY_FILE="${SF_KEY_FILE:-/dev/shm/sfcert.key}"
+                                    if [ ! -f "$SF_CERT_FILE" ] || [ ! -f "$SF_KEY_FILE" ]; then
+                                        if command -v sf >/dev/null 2>&1; then
+                                            eval "$(sf artifact auth generate-cert)"
+                                        fi
+                                    fi
+                                    CERT_ARGS=""
+                                    if [ -f "$SF_CERT_FILE" ] && [ -f "$SF_KEY_FILE" ]; then
+                                        SF_COMBINED_PEM=$(mktemp)
+                                        cat "$SF_CERT_FILE" "$SF_KEY_FILE" > "$SF_COMBINED_PEM"
+                                        CERT_ARGS="-v ${SF_COMBINED_PEM}:/tmp/pip_client_cert.pem:ro -e PIP_CLIENT_CERT=/tmp/pip_client_cert.pem"
+                                    fi
                                     docker run --rm \
                                         -v "$(pwd)":/workspace \
+                                        $CERT_ARGS \
                                         -w /workspace \
                                         rocky-old-odbc-build \
-                                        bash -c 'python3 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple'
+                                        bash -c 'python3 -m pip install --target /workspace/.benchstore_deps pyyaml "benchstore-client-library>=4.0.0,<5.0.0" --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple'
+                                    [ -n "${SF_COMBINED_PEM:-}" ] && rm -f "$SF_COMBINED_PEM"
                                 '''
                             }
                         }
@@ -329,11 +344,26 @@ pipeline {
                             // Uses --target to persist packages in workspace across container runs
                             steps {
                                 sh """
+                                    SF_CERT_FILE="\${SF_CERT_FILE:-/dev/shm/sfcert.pem}"
+                                    SF_KEY_FILE="\${SF_KEY_FILE:-/dev/shm/sfcert.key}"
+                                    if [ ! -f "\$SF_CERT_FILE" ] || [ ! -f "\$SF_KEY_FILE" ]; then
+                                        if command -v sf >/dev/null 2>&1; then
+                                            eval "\$(sf artifact auth generate-cert)"
+                                        fi
+                                    fi
+                                    CERT_ARGS=""
+                                    if [ -f "\$SF_CERT_FILE" ] && [ -f "\$SF_KEY_FILE" ]; then
+                                        SF_COMBINED_PEM=\$(mktemp)
+                                        cat "\$SF_CERT_FILE" "\$SF_KEY_FILE" > "\$SF_COMBINED_PEM"
+                                        CERT_ARGS="-v \${SF_COMBINED_PEM}:/tmp/pip_client_cert.pem:ro -e PIP_CLIENT_CERT=/tmp/pip_client_cert.pem"
+                                    fi
                                     docker run --rm \
                                         -v "\$(pwd)":/workspace \
+                                        \$CERT_ARGS \
                                         -w /workspace \
                                         ${DOCKER_IMAGE} \
-                                        pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple
+                                        pip install --target /workspace/.benchstore_deps pyyaml "benchstore-client-library>=4.0.0,<5.0.0" --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple
+                                    [ -n "\${SF_COMBINED_PEM:-}" ] && rm -f "\$SF_COMBINED_PEM"
                                 """
                             }
                         }
