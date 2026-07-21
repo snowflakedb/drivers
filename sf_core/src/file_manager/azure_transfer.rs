@@ -1,4 +1,5 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
+use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     MaterialDescription, PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json,
@@ -7,9 +8,16 @@ use super::types::{
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::sensitive::SensitiveString;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_ENGINE};
+use bytes::Bytes;
+use futures::StreamExt as _;
+use futures::TryStreamExt as _;
 use reqwest::Method;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
+use std::sync::Arc;
 use std::time::Duration;
+use tempfile::NamedTempFile;
+use tokio_stream::wrappers::ReceiverStream;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -22,12 +30,18 @@ const AZURE_META_MATDESC: &str = "x-ms-meta-matdesc";
 /// "blob exists and overwrite is off" or "blob content matches the local
 /// digest and the caller opted into content-match skipping". HEAD is elided
 /// when neither skip branch can fire, saving a round-trip vs. Python.
-pub async fn upload_to_azure_or_skip(
+///
+/// When the upload does proceed, files whose on-cloud size (ciphertext length
+/// for CSE, source length for SSE) is at or above `multipart.threshold` take
+/// the block-blob multipart path ([`azure_multipart_upload`]: `Put Block` ×N
+/// then `Put Block List`); smaller files take the single `Put Blob` path.
+pub(super) async fn upload_to_azure_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
     skip_upload_on_content_match: bool,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
 ) -> Result<UploadStatus, AzureUploadError> {
     let client = create_azure_client(stage_info)?;
@@ -60,12 +74,12 @@ pub async fn upload_to_azure_or_skip(
         &prepared.digest,
     ) {
         SkipDecision::Existence => {
-            tracing::info!("Blob already exists in Azure: {}", key);
+            tracing::info!("Blob already exists in Azure: {:?}", key);
             return Ok(UploadStatus::Skipped);
         }
         SkipDecision::ContentMatch => {
             tracing::info!(
-                "Blob content matches local digest, skipping upload: {}",
+                "Blob content matches local digest, skipping upload: {:?}",
                 key
             );
             return Ok(UploadStatus::Skipped);
@@ -73,7 +87,23 @@ pub async fn upload_to_azure_or_skip(
         SkipDecision::Upload => {}
     }
 
-    upload_to_azure(&client, &url, sas_token, prepared, policy).await?;
+    let body_len = multipart::upload_body_len(&prepared)
+        .await
+        .context(azure_upload_error::SourceIoSnafu)?;
+    if body_len >= multipart.threshold.bytes() {
+        azure_multipart_upload(
+            &client,
+            &url,
+            sas_token.reveal(),
+            prepared,
+            body_len,
+            multipart.concurrency,
+            policy,
+        )
+        .await?;
+    } else {
+        upload_to_azure(&client, &url, sas_token, prepared, policy).await?;
+    }
     Ok(UploadStatus::Uploaded)
 }
 
@@ -140,30 +170,7 @@ pub async fn download_from_azure(
     .await?;
 
     // Extract metadata from response headers
-    let headers = response.headers();
-    let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
-
-    let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
-        Some(encryption_data_str) => {
-            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
-                .context(azure_download_error::DeserializationSnafu)?;
-
-            let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
-                azure_download_error::MissingMetadataSnafu {
-                    field: AZURE_META_MATDESC,
-                },
-            )?;
-            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
-                .context(azure_download_error::DeserializationSnafu)?;
-
-            Some(EncryptedFileMetadata {
-                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
-                iv: enc_data.content_encryption_iv,
-                material_desc,
-            })
-        }
-        None => None,
-    };
+    let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
 
     let data = response
         .bytes()
@@ -256,29 +263,17 @@ async fn upload_to_azure(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
-    // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
-    // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
-    // gzip-tempfile guard inside `prepared.source` outlives the upload + every
-    // retry. The CSE params (cloud metadata + encryptor) are both present or
-    // both absent — unbundle them once.
+    // `body_for` re-opens the source per retry; `prepared`'s gzip-tempfile guard
+    // (if any) lives inside `prepared.source` and outlives this fn. CSE params
+    // (cloud metadata + encryptor) are both present or both absent.
     let source = prepared.source.byte_source();
     let digest = prepared.digest;
-    let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
-
-    let encryption_data_str = encryption_metadata
-        .as_ref()
-        .map(|enc_meta| {
-            let encryption_data = build_encryption_metadata_json(enc_meta);
-            serde_json::to_string(&encryption_data)
-        })
-        .transpose()
-        .context(azure_upload_error::SerializationSnafu)?;
-
-    let mat_desc_str = encryption_metadata
-        .as_ref()
-        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
-        .transpose()
-        .context(azure_upload_error::SerializationSnafu)?;
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
+    };
+    let (encryption_data_str, mat_desc_str) =
+        azure_encryption_header_strs(encryption_metadata.as_ref())?;
 
     // Content-Length must be set explicitly on every Azure upload: the body is
     // a streaming `reqwest::Body` (a wrapped CSE stream, or a `tokio::fs::File`
@@ -304,7 +299,7 @@ async fn upload_to_azure(
     // token stays a `SensitiveString` and is revealed only inside the closure
     // (per attempt), so the raw secret still never lands in this outer scope.
     let client = client.clone();
-    let url = url.to_string();
+    let url_owned = url.to_string();
     let sas_token = sas_token.clone();
 
     azure_upload_with_retry(
@@ -320,7 +315,7 @@ async fn upload_to_azure(
             // structured-body format) to match the S3 PUT path. Today this relies only
             // on TLS + the GET-time `sfc-digest` (verified over plaintext, on read).
             let mut req = client
-                .put(build_sas_url(&url, sas_token.reveal()))
+                .put(build_sas_url(&url_owned, sas_token.reveal()))
                 .header("x-ms-blob-type", "BlockBlob")
                 .header(AZURE_META_SFC_DIGEST, &digest)
                 .header(reqwest::header::CONTENT_LENGTH, content_length)
@@ -334,12 +329,206 @@ async fn upload_to_azure(
             }
             Ok(req)
         },
+        &Method::PUT,
+        url,
         policy,
     )
     .await?;
 
     tracing::debug!("Azure blob upload successful");
     Ok(())
+}
+
+/// Uploads `prepared` to Azure as a block blob: `Put Block` ×N (up to
+/// `concurrency` concurrent) then a single `Put Block List` commit. Encryption
+/// metadata + digest ride on the commit (Python parity), not the blocks.
+///
+/// There is no abort step: Azure garbage-collects uncommitted blocks on its
+/// own (≈7 days) and never charges for or exposes them, so — like the Python
+/// and JDBC connectors — a failed multipart upload simply leaves the blob
+/// uncommitted rather than requiring an explicit cleanup call.
+async fn azure_multipart_upload(
+    client: &reqwest::Client,
+    url: &str,
+    sas_token: &str,
+    prepared: PreparedUpload,
+    body_len: u64,
+    concurrency: usize,
+    policy: &RetryPolicy,
+) -> Result<(), AzureUploadError> {
+    let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
+        .context(azure_upload_error::FileTooLargeSnafu)?;
+    // CSE params (cloud metadata + encryptor) are both present or both absent;
+    // the metadata + digest ride on the `Put Block List` commit, the encryptor
+    // lazily encrypts each block as the part-reader cuts it.
+    let source = prepared.source.byte_source();
+    let digest = prepared.digest;
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
+    };
+    let (encryption_data_str, mat_desc_str) =
+        azure_encryption_header_strs(encryption_metadata.as_ref())?;
+    let full_url = build_sas_url(url, sas_token);
+    let full_url = full_url.as_str();
+
+    // Blocks read sequentially from the (optionally encrypting) source, staged
+    // concurrently.
+    let parts_rx =
+        multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
+
+    let mut block_numbers: Vec<i32> = ReceiverStream::new(parts_rx)
+        .map(|part| async move {
+            let part = part.context(azure_upload_error::SourceIoSnafu)?;
+            let number = part.number;
+            azure_put_block(client, full_url, part, policy).await?;
+            Ok::<i32, AzureUploadError>(number)
+        })
+        .buffer_unordered(concurrency)
+        .try_collect()
+        .await?;
+
+    // A block blob with zero blocks makes Azure reject `Put Block List` (or
+    // commit an empty blob); surface a clear error instead. Unreachable on the
+    // normal path (multipart requires `body_len >= threshold >= 1`) — this guards
+    // a source truncated to 0 bytes between the size stat and the first read.
+    // Mirrors the S3 empty-parts guard in `s3_transfer.rs`.
+    if block_numbers.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "no blocks produced (source became empty before read)",
+        ))
+        .context(azure_upload_error::SourceIoSnafu);
+    }
+
+    // `Put Block List` must name the blocks in blob order; uploads finished out
+    // of order, so sort by the original part number.
+    block_numbers.sort_unstable();
+
+    azure_put_block_list(
+        client,
+        full_url,
+        &block_numbers,
+        &digest,
+        encryption_data_str.as_deref(),
+        mat_desc_str.as_deref(),
+        policy,
+    )
+    .await?;
+
+    tracing::debug!(
+        "Azure block-blob upload committed ({} blocks)",
+        block_numbers.len()
+    );
+    Ok(())
+}
+
+/// Fixed-width, base64 block id for a 1-based part number. Azure requires every
+/// block id in an upload to be the same length; eight digits covers the 50 000
+/// block ceiling with room to spare.
+fn azure_block_id(number: i32) -> String {
+    BASE64_ENGINE.encode(format!("block{number:08}"))
+}
+
+/// Stages one block via `Put Block` (no metadata; that rides on the commit).
+async fn azure_put_block(
+    client: &reqwest::Client,
+    full_url: &str,
+    part: multipart::UploadPart,
+    policy: &RetryPolicy,
+) -> Result<(), AzureUploadError> {
+    let block_id = azure_block_id(part.number);
+    let body = part.body;
+    let content_length = body.len();
+    // Own everything the per-attempt async closure touches so the future is
+    // self-contained (`'static`), matching `upload_to_azure`. The client clone
+    // is a cheap `Arc` bump; the per-attempt `body.clone()` is O(1).
+    let client = client.clone();
+    let url_owned = full_url.to_string();
+    azure_upload_with_retry(
+        async move || {
+            Ok(client
+                .put(&url_owned)
+                .query(&[("comp", "block"), ("blockid", block_id.as_str())])
+                .header(reqwest::header::CONTENT_LENGTH, content_length)
+                .body(reqwest::Body::from(body.clone())))
+        },
+        &Method::PUT,
+        full_url,
+        policy,
+    )
+    .await
+}
+
+/// Commits the staged blocks with `Put Block List`, attaching the digest and
+/// (for CSE) encryption metadata headers.
+async fn azure_put_block_list(
+    client: &reqwest::Client,
+    full_url: &str,
+    block_numbers: &[i32],
+    digest: &str,
+    encryption_data_str: Option<&str>,
+    mat_desc_str: Option<&str>,
+    policy: &RetryPolicy,
+) -> Result<(), AzureUploadError> {
+    let body = build_block_list_xml(block_numbers);
+    // Own everything the per-attempt async closure touches so the future is
+    // self-contained (`'static`), matching `upload_to_azure`.
+    let client = client.clone();
+    let url_owned = full_url.to_string();
+    let digest = digest.to_string();
+    let encryption_data_str = encryption_data_str.map(str::to_string);
+    let mat_desc_str = mat_desc_str.map(str::to_string);
+    azure_upload_with_retry(
+        async move || {
+            let mut req = client
+                .put(&url_owned)
+                .query(&[("comp", "blocklist")])
+                .header(AZURE_META_SFC_DIGEST, &digest)
+                .body(body.clone());
+            if let Some(enc) = &encryption_data_str {
+                req = req.header(AZURE_META_ENCRYPTIONDATA, enc);
+            }
+            if let Some(md) = &mat_desc_str {
+                req = req.header(AZURE_META_MATDESC, md);
+            }
+            Ok(req)
+        },
+        &Method::PUT,
+        full_url,
+        policy,
+    )
+    .await
+}
+
+/// Builds the `Put Block List` request body naming every block (in order) as
+/// `<Latest>` (i.e. prefer an uncommitted block over any same-id committed one).
+fn build_block_list_xml(block_numbers: &[i32]) -> String {
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<BlockList>");
+    for &number in block_numbers {
+        xml.push_str("<Latest>");
+        xml.push_str(&azure_block_id(number));
+        xml.push_str("</Latest>");
+    }
+    xml.push_str("</BlockList>");
+    xml
+}
+
+/// Serializes the CSE encryption-data and material-description metadata header
+/// values from the (optional) CSE metadata (both `None` for SSE). Shared by the
+/// single `Put Blob` and the multipart `Put Block List` paths.
+fn azure_encryption_header_strs(
+    encryption_metadata: Option<&EncryptedFileMetadata>,
+) -> Result<(Option<String>, Option<String>), AzureUploadError> {
+    let encryption_data_str = encryption_metadata
+        .map(|enc_meta| serde_json::to_string(&build_encryption_metadata_json(enc_meta)))
+        .transpose()
+        .context(azure_upload_error::SerializationSnafu)?;
+    let mat_desc_str = encryption_metadata
+        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
+        .transpose()
+        .context(azure_upload_error::SerializationSnafu)?;
+    Ok((encryption_data_str, mat_desc_str))
 }
 
 // --- Retry logic (delegates to http::retry) ---
@@ -376,6 +565,8 @@ where
     let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
         .await
         .map_err(map_http_error)?;
+
+    tracing::info!(status = response.status().as_u16(), "HTTP response");
 
     if response.status().is_success() {
         return Ok(response);
@@ -442,12 +633,14 @@ impl UploadRetryAdapter for AzureUploadRetry {
 /// reason as `azure_request_with_retry`: tests can supply zero backoff.
 async fn azure_upload_with_retry<F>(
     build_request: F,
+    method: &reqwest::Method,
+    url: &str,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
 {
-    cloud_http::upload_with_retry(policy, &AzureUploadRetry, build_request).await
+    cloud_http::upload_with_retry(policy, &AzureUploadRetry, method, url, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
@@ -583,43 +776,19 @@ fn try_get_header(
     }
 }
 
-/// Downloads a file from Azure, streams the response body without buffering the
-/// full ciphertext in memory, and returns a [`CloudStreamingDownload`] that the
-/// caller uses to read the body via a sync `Read` interface.
-///
-/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
-/// The public `download_from_azure` keeps the old `DownloadResponse` shape for
-/// the integration-test / retry-test surface.
-///
-/// Marked `pub` so the cfg-gated `file_manager::internal` re-export can surface
-/// it to integration tests; the parent module `azure_transfer` is itself private,
-/// so this is not part of the crate's public API.
-pub async fn download_from_azure_streaming(
-    stage_info: &StageInfo,
-    filename: &str,
-    policy: &RetryPolicy,
-) -> Result<CloudStreamingDownload, AzureDownloadError> {
-    let client = create_azure_client(stage_info)?;
-    let key = format!("{}{filename}", stage_info.key_prefix);
-    let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let response = azure_request_with_retry(
-        || client.get(build_sas_url(&url, sas_token.reveal())),
-        Method::GET,
-        policy,
-    )
-    .await?;
-
-    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
-    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
-
-    let headers = response.headers();
+/// Parses the `sfcdigest` and (for CSE) the `encryptiondata` / `matdesc`
+/// metadata headers from an Azure response. All metadata is absent for SSE
+/// stages; when `encryptiondata` is present, `matdesc` must be too. Shared by
+/// every Azure download path (buffered, streaming, ranged).
+fn parse_azure_file_metadata(
+    headers: &reqwest::header::HeaderMap,
+) -> Result<(Option<String>, Option<EncryptedFileMetadata>), AzureDownloadError> {
     let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
 
     let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
             let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
                 .context(azure_download_error::DeserializationSnafu)?;
-
             let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
                 azure_download_error::MissingMetadataSnafu {
                     field: AZURE_META_MATDESC,
@@ -627,7 +796,6 @@ pub async fn download_from_azure_streaming(
             )?;
             let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
                 .context(azure_download_error::DeserializationSnafu)?;
-
             Some(EncryptedFileMetadata {
                 encrypted_key: enc_data.wrapped_content_key.encrypted_key,
                 iv: enc_data.content_encryption_iv,
@@ -636,26 +804,271 @@ pub async fn download_from_azure_streaming(
         }
         None => None,
     };
+    Ok((digest, file_metadata))
+}
 
-    // Git stage objects on Azure carry CSE key-wrap headers but no sfcdigest
-    // (uploaded by Snowflake's git integration, not by this driver). Fall
-    // through to raw bytes rather than failing, matching the S3 behaviour.
+/// Downloads a file from Azure and returns a [`CloudStreamingDownload`] whose
+/// `body` yields the ciphertext via a sync `Read`. A HEAD probe (Python /
+/// JDBC / ODBC parity) yields the blob size + metadata: blobs at or above
+/// `multipart.threshold` are fetched with parallel ranged GETs into a tempfile
+/// (read back through `SpilledReader`); smaller ones stream a single GET straight
+/// off the network. Neither buffers the whole ciphertext in heap.
+///
+/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
+/// The public `download_from_azure` keeps the old `DownloadResponse` shape for
+/// the integration-test / retry-test surface.
+///
+pub async fn download_from_azure_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<CloudStreamingDownload, AzureDownloadError> {
+    let client = create_azure_client(stage_info)?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+    let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
+    let full_url = build_sas_url(&url, sas_token.reveal());
+
+    // HEAD (Get Blob Properties) for size + metadata, to route single vs ranged.
+    let head = azure_request_with_retry(|| client.head(&full_url), Method::HEAD, policy).await?;
+    // Read the size from the Content-Length header rather than reqwest's
+    // `content_length()`, which is unreliable for HEAD responses (no body to
+    // measure). Real Azure always sends Content-Length on Get Blob Properties.
+    let content_length = head
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let (digest, file_metadata) = parse_azure_file_metadata(head.headers())?;
+    // Git-stage objects carry encryption headers but no sfcdigest — treat as non-CSE.
     let cse_info = match (file_metadata, digest) {
         (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
         (Some(_), None) => {
             tracing::debug!(
-                "Azure encryptiondata present but sfcdigest absent; returning raw bytes"
+                "Azure: encryptiondata present but {AZURE_META_SFC_DIGEST} absent \
+                 (git-stage object); treating as non-CSE"
             );
             None
         }
         (None, _) => None,
     };
 
+    // Route on size: parallel ranged GETs into a tempfile above the threshold, a
+    // single streamed GET below. (Byte-count / `cloud_bytes_read` semantics: see
+    // the `CloudStreamingDownload` field docs.)
+    let (body, cloud_bytes_read): (
+        cloud_http::CloudDownloadBody,
+        std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) = if content_length >= multipart.threshold.bytes() {
+        let chunk_size = multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
+            .context(azure_download_error::FileTooLargeSnafu)?;
+        tracing::debug!(
+            "Azure ranged download: content_length={content_length} chunk_size={chunk_size} \
+                 concurrency={}",
+            multipart.concurrency
+        );
+        let spilled = azure_range_download(
+            &client,
+            &full_url,
+            content_length,
+            chunk_size,
+            multipart.concurrency,
+            policy,
+            spill_target,
+        )
+        .await?;
+        // Ranged path: size came from HEAD, so no wire-byte tracking is needed.
+        (
+            cloud_http::CloudDownloadBody::Spilled(spilled),
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        )
+    } else {
+        let response =
+            azure_request_with_retry(|| client.get(&full_url), Method::GET, policy).await?;
+        let reader = cloud_http::spawn_byte_stream_producer(response);
+        let handle = reader.bytes_read_handle();
+        (
+            cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
+            handle,
+        )
+    };
+
     Ok(CloudStreamingDownload {
-        cloud_byte_count,
+        cloud_byte_count: content_length as i64,
         cse_info,
-        reader: cloud_http::spawn_byte_stream_producer(response),
+        cloud_bytes_read,
+        body,
     })
+}
+
+/// Downloads the blob with parallel ranged GETs into a pre-allocated file,
+/// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
+/// Ranges are fetched up to `concurrency` at a time and written at their
+/// absolute offset, so out-of-order completion is fine.
+///
+/// The assembly file is chosen by `target`: a non-encrypted download writes
+/// straight into the caller's `<dst>.part` (one rename from done), while an
+/// encrypted / git-stage download writes into a throwaway temp (its ciphertext
+/// is decrypted into `.part` afterwards).
+///
+/// On failure the range futures are *drained*, not short-circuited: every
+/// in-flight `write_at` finishes and drops its file handle before we return, so
+/// the partially-written assembly file can be removed even on Windows (which
+/// refuses to unlink an open file). A failed download therefore leaves no
+/// leftover; the only way a partial survives is a hard kill (SIGKILL / power
+/// loss), and then it is a self-documenting, self-overwriting `<dst>.part`.
+async fn azure_range_download(
+    client: &reqwest::Client,
+    full_url: &str,
+    content_length: u64,
+    chunk_size: u64,
+    concurrency: usize,
+    policy: &RetryPolicy,
+    target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
+    let mk_temp_err = |e: std::io::Error| {
+        azure_download_error::TempFileSnafu {
+            detail: e.to_string(),
+        }
+        .build()
+    };
+
+    // Create + pre-allocate the assembly file off-thread. spawn_blocking (not
+    // block_in_place): safe on current-thread runtimes; block_in_place panics
+    // on those. Mirrors the S3 arm. Returns the owner (either the caller's
+    // `.part`, referenced by path, or a RAII temp) plus a shared, cloneable
+    // handle for the concurrent positioned writes.
+    enum Assembly {
+        Part(std::path::PathBuf),
+        Temp(NamedTempFile),
+    }
+
+    let owned_target = match target {
+        cloud_http::CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
+        cloud_http::CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
+    };
+    let (assembly, file) = tokio::task::spawn_blocking(move || {
+        let (is_part, path_or_dir) = owned_target;
+        if is_part {
+            let f = std::fs::File::create(&path_or_dir).map_err(mk_temp_err)?;
+            f.set_len(content_length).map_err(mk_temp_err)?;
+            Ok::<_, AzureDownloadError>((Assembly::Part(path_or_dir), Arc::new(f)))
+        } else {
+            let named = NamedTempFile::new_in(&path_or_dir).map_err(mk_temp_err)?;
+            named
+                .as_file()
+                .set_len(content_length)
+                .map_err(mk_temp_err)?;
+            let file = Arc::new(named.as_file().try_clone().map_err(mk_temp_err)?);
+            Ok((Assembly::Temp(named), file))
+        }
+    })
+    .await
+    .map_err(|e| {
+        azure_download_error::TempFileSnafu {
+            detail: format!("join error in tempfile setup: {e}"),
+        }
+        .build()
+    })??;
+
+    let ranges = multipart::plan_ranges(content_length, chunk_size);
+    // Drain, don't short-circuit: `collect` (not `try_collect`) polls EVERY
+    // range future to completion, so all in-flight `write_at` tasks finish and
+    // release their cloned file handles before we return. With no writer holding
+    // the file open, the cleanup below can unlink it even on Windows. The first
+    // error is surfaced after the drain.
+    let results: Vec<Result<(), AzureDownloadError>> = futures::stream::iter(ranges)
+        .map(|range| {
+            let file = Arc::clone(&file);
+            async move {
+                let bytes = azure_get_range(client, full_url, &range, policy).await?;
+                tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
+                    .await
+                    .map_err(|e| {
+                        azure_download_error::TempFileSnafu {
+                            detail: format!("join error writing chunk: {e}"),
+                        }
+                        .build()
+                    })?
+                    .map_err(|e| {
+                        azure_download_error::TempFileSnafu {
+                            detail: e.to_string(),
+                        }
+                        .build()
+                    })
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    // Release our write handle so the only reference left is the one owned by
+    // `assembly` (Temp) or none (Part) — required before unlinking on Windows.
+    drop(file);
+    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
+
+    match assembly {
+        Assembly::Part(path) => match outcome {
+            Ok(_) => Ok(cloud_http::CloudSpilledBody::Part(path)),
+            Err(e) => {
+                // Drained above, so no writer still holds `.part` open; the
+                // best-effort remove succeeds even on Windows.
+                let _ = std::fs::remove_file(&path);
+                Err(e)
+            }
+        },
+        // On success hand out the unlink-on-drop guard; on failure `named` drops
+        // here and NamedTempFile unlinks it (drained, so no open writer).
+        Assembly::Temp(named) => {
+            outcome.map(|_| cloud_http::CloudSpilledBody::Temp(named.into_temp_path()))
+        }
+    }
+}
+
+/// Ranged GET of `[range.start, range.end]`, returning the body bytes.
+async fn azure_get_range(
+    client: &reqwest::Client,
+    full_url: &str,
+    range: &multipart::DownloadRange,
+    policy: &RetryPolicy,
+) -> Result<Bytes, AzureDownloadError> {
+    let range_header = format!("bytes={}-{}", range.start, range.end);
+    let response = azure_request_with_retry(
+        || {
+            client
+                .get(full_url)
+                .header(reqwest::header::RANGE, &range_header)
+        },
+        Method::GET,
+        policy,
+    )
+    .await?;
+    // A body-read failure after a successful response maps to the same
+    // SAS-scrubbed transport error the buffered `download_from_azure` uses.
+    let bytes = response.bytes().await.map_err(|e| {
+        AzureDownloadError::from(AzureRequestError::Http {
+            detail: sanitize_sas(e.to_string()),
+        })
+    })?;
+    // Validate that the endpoint returned exactly the bytes we asked for.
+    // An endpoint that silently truncates a range would cause write_at to
+    // stomp adjacent chunks with zeros rather than surfacing an error.
+    let expected_len = (range.end - range.start + 1) as usize;
+    if bytes.len() != expected_len {
+        return Err(azure_download_error::TempFileSnafu {
+            detail: format!(
+                "ranged GET returned {} bytes, expected {} (range {}-{})",
+                bytes.len(),
+                expected_len,
+                range.start,
+                range.end,
+            ),
+        }
+        .build());
+    }
+    Ok(bytes)
 }
 
 /// Removes SAS token signature values from a string to prevent credential leakage in logs.
@@ -782,6 +1195,13 @@ pub enum AzureUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("File too large for Azure block-blob upload"))]
+    FileTooLarge {
+        #[snafu(source(from(multipart::FileTooLargeError, Box::new)))]
+        source: Box<multipart::FileTooLargeError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -825,6 +1245,19 @@ pub enum AzureDownloadError {
     },
     #[snafu(display("Azure retry exhausted: {detail}"))]
     RetryExhausted {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Object too large to download from Azure"))]
+    FileTooLarge {
+        #[snafu(source(from(multipart::FileTooLargeError, Box::new)))]
+        source: Box<multipart::FileTooLargeError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to stage Azure ranged download to a temp file: {detail}"))]
+    TempFile {
         detail: String,
         #[snafu(implicit)]
         location: Location,
@@ -1207,6 +1640,7 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1240,6 +1674,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1285,6 +1720,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1318,6 +1754,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1348,6 +1785,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1380,6 +1818,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1502,6 +1941,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1558,6 +1998,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await;
@@ -1606,6 +2047,7 @@ mod tests {
             "file.dat",
             true,
             false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1689,6 +2131,7 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1719,6 +2162,7 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await;
@@ -1757,6 +2201,7 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await
@@ -1788,6 +2233,7 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await;
@@ -1824,6 +2270,7 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         )
         .await;
@@ -1836,6 +2283,224 @@ mod tests {
                 })
             ),
             "non-retryable non-404 status + !overwrite must fail-CLOSED with AzureHttp{{401}} on first attempt; got: {result:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Block-blob multipart upload + ranged download (wiremock)
+    // ---------------------------------------------------------------
+
+    use wiremock::Request;
+    use wiremock::matchers::query_param;
+
+    /// `MultipartParams` with a 1-byte threshold so any non-empty body takes
+    /// the block-blob path.
+    fn always_multipart() -> MultipartParams {
+        MultipartParams {
+            threshold: super::super::multipart::MultipartThreshold::from_server(Some(1)),
+            concurrency: 4,
+        }
+    }
+
+    /// A 9 MiB SSE body splits into three Azure blocks (4 + 4 + 1 MiB) at the
+    /// 4 MiB default block size: `Put Block` ×3 then one `Put Block List`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_block_blob_upload_stages_blocks_then_commits() {
+        let mock = MockServer::start().await;
+
+        // Put Block: PUT ?comp=block&blockid=...
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(3)
+            .mount(&mock)
+            .await;
+
+        // Put Block List: PUT ?comp=blocklist — must carry the digest metadata.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                3u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "file.dat",
+            true,
+            false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        )
+        .await
+        .expect("block-blob upload should succeed against the mock");
+
+        let received = mock.received_requests().await.unwrap();
+        let commit = received
+            .iter()
+            .find(|r| {
+                r.url
+                    .query_pairs()
+                    .any(|(k, v)| k == "comp" && v == "blocklist")
+            })
+            .expect("a Put Block List commit must be sent");
+        assert!(
+            commit.headers.get(AZURE_META_SFC_DIGEST).is_some(),
+            "digest metadata must ride on the block-list commit"
+        );
+    }
+
+    /// A blob above the threshold is fetched with a ranged GET into a tempfile
+    /// and re-read byte-for-byte through the returned reader.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_ranged_download_reassembles_blob() {
+        use std::io::Read as _;
+
+        let payload = b"hello ranged azure blob world".to_vec();
+        let mock = MockServer::start().await;
+
+        // HEAD (Get Blob Properties) reports the size via Content-Length; the
+        // body bytes drive that header (production reads the header, not the
+        // body, on HEAD).
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&mock)
+            .await;
+
+        // The single range returns the whole payload.
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+
+        let spill = tempfile::tempdir().unwrap();
+        let dl = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Temp(spill.path()),
+        )
+        .await
+        .expect("ranged download should succeed against the mock");
+
+        assert_eq!(dl.cloud_byte_count, payload.len() as i64);
+        let mut got = Vec::new();
+        dl.body
+            .into_reader()
+            .unwrap()
+            .read_to_end(&mut got)
+            .unwrap();
+        assert_eq!(got, payload, "reassembled blob must match the object");
+    }
+
+    /// A non-encrypted ranged Azure download assembles straight into the caller's
+    /// `.part` file, which the caller renames to the destination on success.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_ranged_download_assembles_into_part_file() {
+        let payload = b"azure ranged straight into dot part".to_vec();
+        let mock = MockServer::start().await;
+
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&mock)
+            .await;
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let part_path = dir.path().join("out.dat.part");
+        let dl = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Part(&part_path),
+        )
+        .await
+        .expect("ranged download should succeed against the mock");
+
+        match dl.body {
+            cloud_http::CloudDownloadBody::Spilled(cloud_http::CloudSpilledBody::Part(p)) => {
+                assert_eq!(p, part_path, "the assembly file must be the caller's .part");
+                assert_eq!(
+                    std::fs::read(&p).unwrap(),
+                    payload,
+                    "the .part must hold the whole reassembled object"
+                );
+            }
+            _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
+        }
+    }
+
+    /// A failed ranged Azure download drains its in-flight writes and removes the
+    /// `.part`, so a failure never leaves a partial file behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_ranged_download_failure_removes_part_file() {
+        let mock = MockServer::start().await;
+
+        // HEAD advertises 32 bytes, but every ranged GET returns a 4-byte body,
+        // tripping the range-length guard and failing the download.
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 32]))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(vec![0u8; 4]))
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let part_path = dir.path().join("out.dat.part");
+        let result = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Part(&part_path),
+        )
+        .await;
+
+        assert!(result.is_err(), "a short ranged GET must fail the download");
+        assert!(
+            !part_path.exists(),
+            "a failed ranged download must not leave a `.part` file behind"
         );
     }
 }

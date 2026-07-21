@@ -350,6 +350,20 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
     });
 
     let (h_digest, h_enc, h_mat) = cloud.meta_headers();
+    let cipher_len = ciphertext.len();
+    // Azure HEADs the blob first (Get Blob Properties) for size + metadata, so
+    // mock it with the metadata headers and a Content-Length-bearing body. GCS
+    // never HEADs, so this mock is harmless on that path.
+    Mock::given(method("HEAD"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(vec![0u8; cipher_len])
+                .insert_header(h_digest, digest.as_str())
+                .insert_header(h_enc, enc_data_json.to_string().as_str())
+                .insert_header(h_mat, mat_desc_json.to_string().as_str()),
+        )
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .respond_with(
             ResponseTemplate::new(200)
@@ -423,12 +437,16 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
             sf_core::file_manager::internal::download_from_azure_streaming(
                 &stage,
                 "azure-blob",
+                MultipartParams::default(),
                 // Success-path roundtrip; no retries exercised, so the default
                 // policy is sufficient.
                 &RetryPolicy {
                     max_attempts: DEFAULT_PUT_GET_MAX_ATTEMPTS,
                     ..RetryPolicy::default()
                 },
+                sf_core::file_manager::internal::CloudSpillTarget::Temp(
+                    std::env::temp_dir().as_path(),
+                ),
             )
             .await
             .expect("Azure streaming download must succeed")
@@ -438,7 +456,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
     let cse = dl
         .cse_info
         .expect("CSE info (metadata + digest) must be present");
-    let reader = dl.reader;
+    let reader = dl.body.into_reader().expect("into_reader");
     let mat_clone = material.clone();
 
     // --- 4. Decrypt in spawn_blocking (mirrors mod.rs) ---
@@ -567,7 +585,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
 
     // Reading the body must error, and there is no retry — the failure
     // propagates straight out of the reader.
-    let reader = dl.reader;
+    let reader = dl.body.into_reader().expect("into_reader");
     let read_result = tokio::time::timeout(
         Duration::from_secs(30),
         tokio::task::spawn_blocking(move || {

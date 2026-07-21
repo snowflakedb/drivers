@@ -1,17 +1,26 @@
 //! Real-account multipart round-trip: a file larger than the server's 200 MiB
-//! PUT/GET threshold, so the upload uses S3 multipart and the download uses
+//! PUT/GET threshold, so the upload uses cloud multipart and the download uses
 //! parallel ranged GETs — the genuinely end-to-end counterpart to the fast,
-//! deterministic wiremock coverage in `integration/http/s3_multipart.rs`.
+//! deterministic wiremock coverage in `integration/http/s3_multipart.rs` and
+//! `integration/http/azure_multipart.rs`.
+//!
+//! Cloud-agnostic by design, not by branching: `connect_with_default_auth`
+//! connects to whichever account each CI `cloud_provider` matrix lane decoded
+//! (see `scripts/decode_secrets.sh` — a distinct dedicated account per cloud),
+//! so this single test exercises S3 multipart on the `aws` lane and Azure
+//! block-blob multipart on the `azure` lane without any per-cloud test code.
+//! CI scopes it to those two lanes today (nightly "Run long-running tests"
+//! step); add `gcp` once the GCS multipart PR lands.
 //!
 //! Gated `#[ignore]`: it generates and round-trips ~210 MiB over the network, so
 //! it does not run in the normal `e2e` lane. Run it explicitly with:
 //!   cargo test -p sf_core --test e2e_tests --features protobuf \
 //!     put_get::put_get_multipart_roundtrip::should_upload_and_download_large_file_via_multipart_roundtrip -- --ignored --nocapture
 //!
-//! The size is forced by the server: this account returns a 200 MiB PUT
-//! threshold and no GET threshold (the driver falls back to 200 MiB), and the
-//! SQL `THRESHOLD=` option is rejected — so a smaller file cannot exercise the
-//! multipart paths through the real PUT/GET command path.
+//! The size is forced by the server: the reference account returns a 200 MiB
+//! PUT threshold and no GET threshold (the driver falls back to 200 MiB), and
+//! the SQL `THRESHOLD=` option is rejected — so a smaller file cannot exercise
+//! the multipart paths through the real PUT/GET command path.
 
 use crate::common::put_get_common::{get_file_from_stage, upload_to_stage_with_options};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
@@ -49,7 +58,7 @@ fn file_digest(path: &Path) -> String {
 }
 
 #[test]
-#[ignore = "~210 MiB real-cloud multipart round-trip; belongs to the `large_` CI category, run with --ignored. Fast coverage: integration::http::s3_multipart"]
+#[ignore = "~210 MiB real-cloud multipart round-trip; belongs to the `large_` CI category, run with --ignored. Fast coverage: integration::http::s3_multipart, integration::http::azure_multipart"]
 fn should_upload_and_download_large_file_via_multipart_roundtrip() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_MULTIPART_LARGE";
