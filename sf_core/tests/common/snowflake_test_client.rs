@@ -366,6 +366,26 @@ impl SnowflakeTestClient {
         stream
     }
 
+    /// Execute a single query with per-statement options (e.g. QUERY_TAG) set
+    /// via the statement-options path, returning the Arrow stream directly.
+    pub fn execute_query_with_statement_params(
+        &self,
+        sql: &str,
+        statement_params: &[(&str, &str)],
+    ) -> ResultSetGetStreamResponse {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        for (key, value) in statement_params {
+            self.set_statement_option(&stmt_handle, key, ConfigSetting::from(*value));
+        }
+        let result = self.execute_statement_query(&stmt_handle);
+        let rs_handle = unwrap_single_rs_handle(&result);
+        let stream = self.result_set_get_stream(&rs_handle);
+        self.result_set_release(&rs_handle);
+        self.release_statement(&stmt_handle);
+        stream
+    }
+
     /// Get an Arrow stream for a query_id by looking it up via the connection,
     /// fetching the stream, and releasing the handle.
     pub fn get_result_set(

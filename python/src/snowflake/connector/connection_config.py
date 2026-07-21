@@ -374,6 +374,11 @@ class ConnectionConfig(ConnectionConfigMixin):
     database: str | None = None
     """Default database to use"""
 
+    query_tag: str | None = None
+    """String label attached to queries and surfaced in QUERY_HISTORY. Settable at the session level (connection option
+    or session override, forwarded as a login session parameter) and overridable per-statement.
+    """
+
     role: str | None = None
     """Default role to use"""
 

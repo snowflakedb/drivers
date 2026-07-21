@@ -298,17 +298,16 @@ impl DatabaseDriverV1 {
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 
-                    // Forward unrecognized settings as session parameters so
-                    // drivers can set arbitrary Snowflake session params
-                    // via regular connection options.
-                    let mut unknown_settings = collect_unknown_settings(&conn.connection_seed);
-                    // `CLIENT_SESSION_KEEP_ALIVE`,
-                    // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY`, and
-                    // `CLIENT_PREFETCH_THREADS` are registered params so they
-                    // don't show up as "unknown"; mirror them into login session
-                    // parameters to match the Python connector.
+                    // Session parameters to send in the login request. Seeded
+                    // with unrecognized connection options (so drivers can set
+                    // arbitrary Snowflake session params via regular connection
+                    // options), then augmented below with registered session
+                    // params that belong in SESSION_PARAMETERS
+                    // (CLIENT_SESSION_KEEP_ALIVE, its heartbeat frequency,
+                    // CLIENT_PREFETCH_THREADS, QUERY_TAG) to match the Python connector.
+                    let mut login_session_params = collect_unknown_settings(&conn.connection_seed);
                     if let Some(v) = resolved.get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE) {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE.as_str().to_string(),
                             v.to_string(),
                         );
@@ -316,7 +315,7 @@ impl DatabaseDriverV1 {
                     if let Some(v) =
                         resolved.get_int(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY)
                     {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY
                                 .as_str()
                                 .to_string(),
@@ -324,7 +323,7 @@ impl DatabaseDriverV1 {
                         );
                     }
                     if let Some(v) = resolved.get_int(param_names::CLIENT_PREFETCH_THREADS) {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             param_names::CLIENT_PREFETCH_THREADS.as_str().to_string(),
                             v.to_string(),
                         );
@@ -333,10 +332,16 @@ impl DatabaseDriverV1 {
                         .get_bool(param_names::VALIDATE_DEFAULT_PARAMETERS)
                         .unwrap_or(false)
                     {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             "CLIENT_VALIDATE_DEFAULT_PARAMETERS".to_string(),
                             "true".to_string(),
                         );
+                    }
+                    // QUERY_TAG is a registered session parameter (also
+                    // statement-overridable), so it isn't "unknown"; mirror a
+                    // connection-level value into the login session parameters.
+                    if let Some(v) = resolved.get_string(param_names::QUERY_TAG) {
+                        login_session_params.insert("QUERY_TAG".to_string(), v);
                     }
                     let init_params = match init_params {
                         Some(explicit) => {
@@ -347,12 +352,12 @@ impl DatabaseDriverV1 {
                                 .map(|(k, v)| (k.to_uppercase(), v))
                                 .collect();
                             // Explicit session params take precedence
-                            for (k, v) in unknown_settings {
+                            for (k, v) in login_session_params {
                                 merged.entry(k).or_insert(v);
                             }
                             Some(merged)
                         }
-                        None if !unknown_settings.is_empty() => Some(unknown_settings),
+                        None if !login_session_params.is_empty() => Some(login_session_params),
                         None => None,
                     };
 
