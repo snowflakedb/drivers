@@ -1777,3 +1777,43 @@ behavior_differences:
       Analogous to the CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY session-parameter forwarding
       difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via
       NEW_DRIVER_ONLY("BD#94") { value == "conn_tag_e2e" } and OLD_DRIVER_ONLY("BD#94") { value == "" }.
+  98:
+    name: "Numeric-to-interval conversion normalizes negative zero to +0 instead of producing negative zero"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a negative fractional numeric value (FLOAT/REAL, DECFLOAT, or NUMBER) truncates to zero for a
+      single-field interval C type (e.g. -0.5 fetched as SQL_C_INTERVAL_YEAR/_MONTH/_DAY), the old driver
+      sets the interval sign to SQL_TRUE, yielding a negative zero interval.
+    new_driver_behavior: |
+      The integer part truncating to zero always yields +0: interval_sign is SQL_FALSE and the field value
+      is 0. There is no negative zero for interval types.
+    description: |
+      Applications reading the interval sign for values that truncate to zero will now always see a positive
+      sign. This is the numeric-source counterpart of BD#55 point 6, which documents the same negative-zero
+      normalization for VARCHAR/character sources; both paths share
+      numeric_helpers::write_single_field_interval. Formerly tracked (incorrectly) under BD#17 (a PUT/GET
+      regression) and BD#16 (a NaN-to-integer difference); relabeled to its own entry.
+  99:
+    name: "FLOAT/REAL-to-interval fractional truncation is not flagged with 01S07 by the old driver"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When a FLOAT/REAL value with a nonzero fractional part is fetched as a single-field interval C type
+      (e.g. 5.7 fetched as SQL_C_INTERVAL_YEAR/_MONTH/_DAY, or a sub-microsecond fraction as
+      SQL_C_INTERVAL_SECOND), the old driver truncates the fraction and returns SQL_SUCCESS with no
+      diagnostic. DECFLOAT and NUMBER sources are unaffected: the old driver flags those with 01S07.
+    new_driver_behavior: |
+      Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07 ("Fractional truncation") for FLOAT/REAL sources,
+      consistent with DECFLOAT and NUMBER sources and with the ODBC spec.
+    description: |
+      Applications relying on the 01S07 warning to detect that a FLOAT-sourced interval lost its fractional
+      part now receive it. Previously tracked (incorrectly) under BD#16 (a NaN-to-integer difference).
+      Related to BD#98, which covers the negative-zero sign normalization on the same FLOAT->interval
+      truncation path.
