@@ -189,6 +189,40 @@ class ConnectionMixin(ErrorHandlerMixin):
         return value
 
     # ------------------------------------------------------------------
+    # Proxy info
+    # ------------------------------------------------------------------
+
+    @property
+    @api_telemetry
+    def proxy_host(self) -> str | None:
+        """The configured HTTP proxy hostname, or ``None`` when no proxy is set."""
+        return cast("str | None", self._connection_info["proxy_host"])
+
+    @property
+    @api_telemetry
+    def proxy_port(self) -> int | None:
+        """The configured HTTP proxy port, or ``None`` when no proxy is set."""
+        return cast("int | None", self._connection_info["proxy_port"])
+
+    @property
+    @api_telemetry
+    def proxy_user(self) -> str | None:
+        """The configured HTTP proxy username for Basic auth, or ``None`` when unset."""
+        return cast("str | None", self._connection_info["proxy_user"])
+
+    @property
+    @api_telemetry
+    def proxy_password(self) -> str | None:
+        """The configured HTTP proxy password for Basic auth, or ``None`` when unset."""
+        return cast("str | None", self._connection_info["proxy_password"])
+
+    @property
+    @api_telemetry
+    def no_proxy(self) -> str | None:
+        """Comma-separated list of hosts that bypass the proxy, or ``None`` when unset."""
+        return cast("str | None", self._connection_info["no_proxy"])
+
+    # ------------------------------------------------------------------
     # Connection properties
     # ------------------------------------------------------------------
 

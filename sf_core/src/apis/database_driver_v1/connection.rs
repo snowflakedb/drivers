@@ -32,6 +32,7 @@ use crate::config::rest_parameters::{
     resolve_log_query_parameters, resolve_log_query_text,
 };
 use crate::config::retry::RetryPolicy;
+use crate::config::settings::Settings;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
@@ -39,6 +40,7 @@ use crate::rest::snowflake::{
     heartbeat, snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
+use crate::tls::config::ProxyConfig;
 
 /// Whether `execute_session_sql` should refresh the connection's local
 /// session-state cache (`session_parameters`, `final_session_names`) from
@@ -1721,6 +1723,16 @@ pub struct ConnectionInfo {
     pub master_token: Option<SensitiveString>,
     /// The User-Agent string built by the core for this client
     pub user_agent: Option<String>,
+    /// The configured HTTP proxy hostname, if any
+    pub proxy_host: Option<String>,
+    /// The configured HTTP proxy port, if any
+    pub proxy_port: Option<i64>,
+    /// The configured HTTP proxy username for Basic auth, if any
+    pub proxy_user: Option<String>,
+    /// The configured HTTP proxy password for Basic auth (redacted in Debug output)
+    pub proxy_password: Option<SensitiveString>,
+    /// Comma-separated list of hosts that bypass the proxy, if configured
+    pub no_proxy: Option<String>,
 }
 
 fn setting_as_display_string(setting: &Setting) -> Option<String> {
@@ -1874,6 +1886,18 @@ impl DatabaseDriverV1 {
                     .as_ref()
                     .map(crate::rest::snowflake::user_agent);
 
+                // Rebuild the effective proxy config from the resolved login
+                // snapshot (falling back to the raw seed before login) so the
+                // legacy `PROXY` URL form is merged with the individual
+                // `proxy_*` fields exactly as the HTTP client sees them. Reuses
+                // the single parser rather than re-reading fields piecemeal.
+                let proxy_settings: &dyn Settings = conn
+                    .resolved_connect
+                    .as_ref()
+                    .map(|s| s as &dyn Settings)
+                    .unwrap_or(&conn.connection_seed);
+                let proxy = ProxyConfig::from_settings(proxy_settings);
+
                 Ok(ConnectionInfo {
                     host,
                     port,
@@ -1888,6 +1912,11 @@ impl DatabaseDriverV1 {
                     warehouse,
                     master_token,
                     user_agent,
+                    proxy_host: proxy.host,
+                    proxy_port: proxy.port,
+                    proxy_user: proxy.user,
+                    proxy_password: proxy.password,
+                    no_proxy: proxy.no_proxy,
                 })
             }
             None => InvalidArgumentSnafu {
@@ -2934,6 +2963,85 @@ mod tests {
         assert_eq!(info.warehouse, None);
         assert!(info.session_token.is_none());
         assert_eq!(info.session_id, None);
+        assert_eq!(info.proxy_host, None);
+        assert_eq!(info.proxy_port, None);
+        assert_eq!(info.proxy_user, None);
+        assert!(info.proxy_password.is_none());
+        assert_eq!(info.no_proxy, None);
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_get_info_returns_proxy_settings() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            "proxy_host".into(),
+            Setting::String("proxy.example.com".into()),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_option(handle, "proxy_port".into(), Setting::Int(8080))
+            .await
+            .unwrap();
+        ds.connection_set_option(handle, "proxy_user".into(), Setting::String("puser".into()))
+            .await
+            .unwrap();
+        ds.connection_set_option(
+            handle,
+            "proxy_password".into(),
+            Setting::String("ppass".into()),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_option(
+            handle,
+            "no_proxy".into(),
+            Setting::String("localhost,127.0.0.1".into()),
+        )
+        .await
+        .unwrap();
+
+        let info = ds.connection_get_info(handle).await.unwrap();
+
+        assert_eq!(info.proxy_host, Some("proxy.example.com".into()));
+        assert_eq!(info.proxy_port, Some(8080));
+        assert_eq!(info.proxy_user, Some("puser".into()));
+        assert_eq!(
+            info.proxy_password.as_ref().map(|p| p.reveal().as_str()),
+            Some("ppass")
+        );
+        assert_eq!(info.no_proxy, Some("localhost,127.0.0.1".into()));
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    /// The legacy ODBC `PROXY` URL form must be parsed and surfaced through
+    /// `connection_get_info` exactly as the HTTP client sees it, since the
+    /// info aggregation reuses `ProxyConfig::from_settings`.
+    #[tokio::test]
+    async fn connection_get_info_parses_legacy_proxy_url() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            "proxy".into(),
+            Setting::String("http://puser:ppass@proxy.example.com:8080".into()),
+        )
+        .await
+        .unwrap();
+
+        let info = ds.connection_get_info(handle).await.unwrap();
+
+        assert_eq!(info.proxy_host, Some("proxy.example.com".into()));
+        assert_eq!(info.proxy_port, Some(8080));
+        assert_eq!(info.proxy_user, Some("puser".into()));
+        assert_eq!(
+            info.proxy_password.as_ref().map(|p| p.reveal().as_str()),
+            Some("ppass")
+        );
 
         ds.connection_release(handle).unwrap();
     }
