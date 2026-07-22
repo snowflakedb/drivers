@@ -1443,84 +1443,6 @@ behavior_differences:
       on the legacy driver so a token cached by the preceding happy-path test cannot mask the
       expected token-exchange failure.
 
-  94:
-    name: "SQLSetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT) after connect returns HY011 instead of SQL_SUCCESS"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      The old driver accepts SQL_ATTR_LOGIN_TIMEOUT set calls after the connection is established,
-      returning SQL_SUCCESS silently. The attribute has no effect post-connect (the login timeout
-      only applies during the connection attempt), so the acceptance is misleading.
-    new_driver_behavior: |
-      The new driver correctly rejects SQL_ATTR_LOGIN_TIMEOUT set calls after connect with
-      SQL_ERROR / HY011 ("attribute cannot be set now"), per the ODBC spec designation of
-      SQL_ATTR_LOGIN_TIMEOUT as a pre-connect-only attribute. Note: some Driver Managers (e.g.
-      Windows DM) manage login timeout state internally and return SQL_SUCCESS without forwarding
-      the call to the driver, so the HY011 is only observable when the DM forwards the call.
-    description: |
-      Applications that set SQL_ATTR_LOGIN_TIMEOUT post-connect and rely on SQL_SUCCESS without
-      error-checking will encounter HY011 on platforms where the DM forwards the call. The change
-      is a spec-compliance fix; the attribute was always a no-op post-connect.
-
-  95:
-    name: "SQLGetConnectAttr with out-of-range attribute identifier returns HY092 instead of accepting silently"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      The old driver does not classify completely out-of-range attribute identifiers (e.g. 99999)
-      as HY092; it may return HY000 or pass through without an error.
-    new_driver_behavior: |
-      The new driver returns SQL_ERROR / HY092 ("invalid attribute/option identifier") for any
-      attribute identifier outside the defined ODBC range, matching the ODBC 3.x specification.
-    description: |
-      Applications querying unknown connection attribute IDs will now receive a well-defined
-      HY092 error instead of an undefined response. No impact on well-formed applications.
-
-  96:
-    name: "SQLSetStmtAttr(SQL_ATTR_CURSOR_TYPE) with unsupported type returns SQL_SUCCESS_WITH_INFO/01S02 and substitutes SQL_CURSOR_FORWARD_ONLY"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      The old driver silently accepts non-forward-only cursor types (SQL_CURSOR_STATIC,
-      SQL_CURSOR_DYNAMIC, SQL_CURSOR_KEYSET_DRIVEN) on SQL_ATTR_CURSOR_TYPE without warning.
-      The stored value reflects whatever was requested, even though Snowflake only supports
-      forward-only cursors.
-    new_driver_behavior: |
-      The new driver substitutes any unsupported cursor type with SQL_CURSOR_FORWARD_ONLY and
-      returns SQL_SUCCESS_WITH_INFO / 01S02 ("option value changed"), per the ODBC spec requirement
-      that drivers substitute unsupported values and report the substitution.
-    description: |
-      Applications that set a scrollable cursor type and then check the return code for exactly
-      SQL_SUCCESS will see SQL_SUCCESS_WITH_INFO instead. Applications that read back
-      SQL_ATTR_CURSOR_TYPE after setting it will see SQL_CURSOR_FORWARD_ONLY regardless of the
-      requested type. This is spec-correct behavior.
-
-  97:
-    name: "SQL_SF_CONN_ATTR_APPLICATION is a Snowflake-custom pre-connect attribute not present in the legacy driver"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      The legacy driver does not expose SQL_SF_CONN_ATTR_APPLICATION. Setting or getting this
-      attribute returns an error on the old driver.
-    new_driver_behavior: |
-      The new driver accepts SQL_SF_CONN_ATTR_APPLICATION before connect, stores the value, and
-      returns it on GET. The attribute is forwarded to the server as the application name.
-    description: |
-      Applications using SQL_SF_CONN_ATTR_APPLICATION require the new driver. The old driver
-      has no equivalent attribute, so tests for this attribute are gated with NEW_DRIVER_ONLY.
-
   86:
     name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
     status: allowed
@@ -1718,65 +1640,84 @@ behavior_differences:
       process kill (SIGKILL / power loss), where at most a single `<dst>.part` can remain —
       self-documenting, and overwritten by the next download of the same file rather than
       accumulating. The contract is cloud-generic (S3, Azure, and GCS).
-  93:
-    name: "SQLSetStmtAttr SQL_ATTR_PARAM_BIND_TYPE misaligned value accepted by new driver on all platforms"
-    status: unknown
+  94:
+    name: "SQLSetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT) after connect returns HY011 instead of SQL_SUCCESS"
+    status: allowed
     type: bugfix
     reviewed: false
-    status_rationale: |
-      The old driver on Linux x86_64 accepts a bind-type value of 10 (not 0 and not a multiple of
-      alignof(SQLLEN)=8), but rejects it with S1000 on Linux aarch64 and macOS. The new driver
-      accepts the misaligned value on all Unix platforms. The Windows DM intercepts the call before
-      reaching the driver on Windows.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The old driver accepts SQL_ATTR_LOGIN_TIMEOUT set calls after the connection is established,
+      returning SQL_SUCCESS silently. The attribute has no effect post-connect (the login timeout
+      only applies during the connection attempt), so the acceptance is misleading.
+    new_driver_behavior: |
+      The new driver correctly rejects SQL_ATTR_LOGIN_TIMEOUT set calls after connect with
+      SQL_ERROR / HY011 ("attribute cannot be set now"), per the ODBC spec designation of
+      SQL_ATTR_LOGIN_TIMEOUT as a pre-connect-only attribute. Note: some Driver Managers (e.g.
+      Windows DM) manage login timeout state internally and return SQL_SUCCESS without forwarding
+      the call to the driver, so the HY011 is only observable when the DM forwards the call.
+    description: |
+      Applications that set SQL_ATTR_LOGIN_TIMEOUT post-connect and rely on SQL_SUCCESS without
+      error-checking will encounter HY011 on platforms where the DM forwards the call. The change
+      is a spec-compliance fix; the attribute was always a no-op post-connect.
 
-      Per the ODBC spec, the new driver is the more compliant side. SQL_ATTR_PARAM_BIND_TYPE is an
-      SQLULEN value: 0 (SQL_PARAM_BIND_BY_COLUMN) selects column-wise binding, and any other value
-      is interpreted as the byte length (stride) of the row-wise parameter-set structure. The spec
-      imposes no alignment constraint on this length — it only advises applications to use
-      sizeof(struct) so the stride lands on the next structure. 10 is therefore a legal stride, and
-      the consequence of a too-small/misaligned value surfaces during SQLExecute address arithmetic
-      (Address = Bound Address + ((Row - 1) * Structure Size) + Offset), not at SQLSetStmtAttr time.
-      A driver that did reject a bad value here would use HY024 ("Invalid attribute value"); the old
-      driver instead returns S1000 ("General error") and does so inconsistently across architectures,
-      making its rejection an over-strict, non-standard implementation detail rather than
-      spec-mandated behaviour. Ref:
-      https://learn.microsoft.com/sql/odbc/reference/syntax/sqlsetstmtattr-function#statement-attributes
+  95:
+    name: "SQLGetConnectAttr with out-of-range attribute identifier returns HY092 instead of accepting silently"
+    status: allowed
+    type: bugfix
+    reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      SQLSetStmtAttr(SQL_ATTR_PARAM_BIND_TYPE, 10) returns SQL_SUCCESS on Linux x86_64 but
-      SQL_ERROR with SQLSTATE S1000 on Linux aarch64 and macOS. This platform-dependent alignment
-      check (value must be 0 or divisible by alignof(SQLLEN)=8) is not required by the ODBC spec,
-      and S1000 is not the documented SQLSTATE for an invalid attribute value (that would be HY024).
+      The old driver does not classify completely out-of-range attribute identifiers (e.g. 99999)
+      as HY092; it may return HY000 or pass through without an error.
     new_driver_behavior: |
-      SQLSetStmtAttr(SQL_ATTR_PARAM_BIND_TYPE, 10) returns SQL_SUCCESS on all Unix platforms, which
-      matches the ODBC spec: any non-zero SQLULEN is a legal row-wise stride and is not validated for
-      alignment at set time. The prepared_exec replay test gates the non-x86_64 assertion with
-      OLD_DRIVER_ONLY/NEW_DRIVER_ONLY("BD#92").
+      The new driver returns SQL_ERROR / HY092 ("invalid attribute/option identifier") for any
+      attribute identifier outside the defined ODBC range, matching the ODBC 3.x specification.
     description: |
-      Applications setting an unaligned bind-type value will no longer receive S1000 on
-      non-x86_64 Unix platforms with the new driver. This is a spec-compliance improvement: the
-      value is a byte-length stride with no alignment requirement, so accepting it at set time is
-      correct; any addressing consequence of a bad stride still surfaces at SQLExecute time.
-  94:
-    name: "Connection-level QUERY_TAG is applied as a session parameter (new driver only)"
+      Applications querying unknown connection attribute IDs will now receive a well-defined
+      HY092 error instead of an undefined response. No impact on well-formed applications.
+
+  96:
+    name: "SQLSetStmtAttr(SQL_ATTR_CURSOR_TYPE) with unsupported type returns SQL_SUCCESS_WITH_INFO/01S02 and substitutes SQL_CURSOR_FORWARD_ONLY"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The old driver silently accepts non-forward-only cursor types (SQL_CURSOR_STATIC,
+      SQL_CURSOR_DYNAMIC, SQL_CURSOR_KEYSET_DRIVEN) on SQL_ATTR_CURSOR_TYPE without warning.
+      The stored value reflects whatever was requested, even though Snowflake only supports
+      forward-only cursors.
+    new_driver_behavior: |
+      The new driver substitutes any unsupported cursor type with SQL_CURSOR_FORWARD_ONLY and
+      returns SQL_SUCCESS_WITH_INFO / 01S02 ("option value changed"), per the ODBC spec requirement
+      that drivers substitute unsupported values and report the substitution.
+    description: |
+      Applications that set a scrollable cursor type and then check the return code for exactly
+      SQL_SUCCESS will see SQL_SUCCESS_WITH_INFO instead. Applications that read back
+      SQL_ATTR_CURSOR_TYPE after setting it will see SQL_CURSOR_FORWARD_ONLY regardless of the
+      requested type. This is spec-correct behavior.
+
+  97:
+    name: "SQL_SF_CONN_ATTR_APPLICATION is a Snowflake-custom pre-connect attribute not present in the legacy driver"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Setting QUERY_TAG in the connection string does not tag the session: after connecting with
-      QUERY_TAG=<value>, SELECT CURRENT_QUERY_TAG() returns an empty string. The old driver does
-      not forward a connection-level QUERY_TAG to the server as a login session parameter.
+      The legacy driver does not expose SQL_SF_CONN_ATTR_APPLICATION. Setting or getting this
+      attribute returns an error on the old driver.
     new_driver_behavior: |
-      The universal driver registers QUERY_TAG as a session parameter and forwards a
-      connection-level value in the login SESSION_PARAMETERS, so CURRENT_QUERY_TAG() returns the
-      configured value and every query in the session is tagged.
+      The new driver accepts SQL_SF_CONN_ATTR_APPLICATION before connect, stores the value, and
+      returns it on GET. The attribute is forwarded to the server as the application name.
     description: |
-      Analogous to the CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY session-parameter forwarding
-      difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via
-      NEW_DRIVER_ONLY("BD#94") { value == "conn_tag_e2e" } and OLD_DRIVER_ONLY("BD#94") { value == "" }.
+      Applications using SQL_SF_CONN_ATTR_APPLICATION require the new driver. The old driver
+      has no equivalent attribute, so tests for this attribute are gated with NEW_DRIVER_ONLY.
+
   98:
     name: "Numeric-to-interval conversion normalizes negative zero to +0 instead of producing negative zero"
     status: unknown
@@ -1817,3 +1758,61 @@ behavior_differences:
       part now receive it. Previously tracked (incorrectly) under BD#16 (a NaN-to-integer difference).
       Related to BD#98, which covers the negative-zero sign normalization on the same FLOAT->interval
       truncation path.
+  100:
+    name: "SQLSetStmtAttr SQL_ATTR_PARAM_BIND_TYPE misaligned value accepted by new driver on all platforms"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver on Linux x86_64 accepts a bind-type value of 10 (not 0 and not a multiple of
+      alignof(SQLLEN)=8), but rejects it with S1000 on Linux aarch64 and macOS. The new driver
+      accepts the misaligned value on all Unix platforms. The Windows DM intercepts the call before
+      reaching the driver on Windows.
+
+      Per the ODBC spec, the new driver is the more compliant side. SQL_ATTR_PARAM_BIND_TYPE is an
+      SQLULEN value: 0 (SQL_PARAM_BIND_BY_COLUMN) selects column-wise binding, and any other value
+      is interpreted as the byte length (stride) of the row-wise parameter-set structure. The spec
+      imposes no alignment constraint on this length — it only advises applications to use
+      sizeof(struct) so the stride lands on the next structure. 10 is therefore a legal stride, and
+      the consequence of a too-small/misaligned value surfaces during SQLExecute address arithmetic
+      (Address = Bound Address + ((Row - 1) * Structure Size) + Offset), not at SQLSetStmtAttr time.
+      A driver that did reject a bad value here would use HY024 ("Invalid attribute value"); the old
+      driver instead returns S1000 ("General error") and does so inconsistently across architectures,
+      making its rejection an over-strict, non-standard implementation detail rather than
+      spec-mandated behaviour. Ref:
+      https://learn.microsoft.com/sql/odbc/reference/syntax/sqlsetstmtattr-function#statement-attributes
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLSetStmtAttr(SQL_ATTR_PARAM_BIND_TYPE, 10) returns SQL_SUCCESS on Linux x86_64 but
+      SQL_ERROR with SQLSTATE S1000 on Linux aarch64 and macOS. This platform-dependent alignment
+      check (value must be 0 or divisible by alignof(SQLLEN)=8) is not required by the ODBC spec,
+      and S1000 is not the documented SQLSTATE for an invalid attribute value (that would be HY024).
+    new_driver_behavior: |
+      SQLSetStmtAttr(SQL_ATTR_PARAM_BIND_TYPE, 10) returns SQL_SUCCESS on all Unix platforms, which
+      matches the ODBC spec: any non-zero SQLULEN is a legal row-wise stride and is not validated for
+      alignment at set time. The prepared_exec replay test gates the non-x86_64 assertion with
+      OLD_DRIVER_ONLY/NEW_DRIVER_ONLY("BD#100").
+    description: |
+      Applications setting an unaligned bind-type value will no longer receive S1000 on
+      non-x86_64 Unix platforms with the new driver. This is a spec-compliance improvement: the
+      value is a byte-length stride with no alignment requirement, so accepting it at set time is
+      correct; any addressing consequence of a bad stride still surfaces at SQLExecute time.
+  101:
+    name: "Connection-level QUERY_TAG is applied as a session parameter (new driver only)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Setting QUERY_TAG in the connection string does not tag the session: after connecting with
+      QUERY_TAG=<value>, SELECT CURRENT_QUERY_TAG() returns an empty string. The old driver does
+      not forward a connection-level QUERY_TAG to the server as a login session parameter.
+    new_driver_behavior: |
+      The universal driver registers QUERY_TAG as a session parameter and forwards a
+      connection-level value in the login SESSION_PARAMETERS, so CURRENT_QUERY_TAG() returns the
+      configured value and every query in the session is tagged.
+    description: |
+      Analogous to the CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY session-parameter forwarding
+      difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via NEW_DRIVER_ONLY("BD#101") and OLD_DRIVER_ONLY("BD#101").
