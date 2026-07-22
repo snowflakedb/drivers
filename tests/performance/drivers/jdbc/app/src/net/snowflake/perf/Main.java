@@ -19,11 +19,10 @@ public final class Main {
       return;
     }
 
-    // Phase 1: universal driver + SELECT only.
-    if (!"universal".equals(config.driverType) || !"select".equals(config.testType)) {
+    // Phase 2: universal + old driver types; SELECT only (PUT/GET arrives in Phase 3).
+    if (!"select".equals(config.testType)) {
       System.out.println(
-          "ERROR: jdbc perf supports only driver_type=universal + test_type=select (got "
-              + config.driverType + "/" + config.testType + ")");
+          "ERROR: jdbc perf supports only test_type=select (got " + config.testType + ")");
       System.exit(1);
     }
 

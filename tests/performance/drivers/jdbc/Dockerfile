@@ -39,6 +39,27 @@ RUN mkdir -p /workdir/app-classes && \
 # Capture the Rust compiler version that built libjdbc_bridge.so (for run metadata).
 RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /workdir/rust_version
 
+# curl + unzip for fetching the old jar and lifting the shaded org.json out of the fat jar. Kept in
+# its own layer after shadowJar so it does not invalidate the (expensive) fat-jar build cache.
+RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
+
+# The `old` comparison driver is the latest published snowflake-jdbc release — a self-contained fat
+# jar that registers jdbc:snowflake:// via net.snowflake.client.jdbc.SnowflakeDriver, so the same
+# compiled perf-app classes run against it unchanged. Unlike our fat jar it bundles NO org.json, so
+# the shaded package the app imports (net.snowflake.client.jdbc.internal.org.json) must be supplied
+# separately on the `old` classpath — we lift the byte-identical classes out of our fat jar below.
+# Fetched from Snowflake's internal Artifactory Maven proxy (not public Maven Central) to avoid a
+# public CI dependency and its rate limits; the version is resolved from Maven metadata at build time.
+RUN REPO=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/development-maven-virtual/net/snowflake/snowflake-jdbc && \
+    VERSION=$(curl -fsSL "${REPO}/maven-metadata.xml" | grep -oP '<release>\K[^<]+') && \
+    echo "Using snowflake-jdbc ${VERSION}" && \
+    curl -fsSL -o /workdir/snowflake-jdbc-old.jar "${REPO}/${VERSION}/snowflake-jdbc-${VERSION}.jar"
+
+RUN mkdir -p /workdir/shaded-json && cd /workdir/shaded-json && \
+    unzip -q /workdir/snowflake-jdbc-v2-standalone.jar \
+      'net/snowflake/client/jdbc/internal/org/json/*' && \
+    jar --create --file /workdir/shaded-json.jar -C /workdir/shaded-json .
+
 # ============================================================================
 # Base runtime image (shared by driver targets)
 # ============================================================================
@@ -67,6 +88,28 @@ ENV DRIVER_TYPE=universal
 # NativeLibraryLoader resolves the JNI transport from CORE_PATH.
 ENV CORE_PATH=/opt/jdbc/libjdbc_bridge.so
 
+CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+    fi && \
+    java ${JDBC_JAVA_OPTS} -cp "${JDBC_CLASSPATH}" net.snowflake.perf.Main
+
+# ============================================================================
+# Old (comparison) driver image — released snowflake-jdbc, no libjdbc_bridge.
+# ============================================================================
+FROM base AS old
+
+COPY --from=jar_builder /workdir/snowflake-jdbc-old.jar /opt/jdbc/snowflake-jdbc-old.jar
+COPY --from=jar_builder /workdir/shaded-json.jar /opt/jdbc/shaded-json.jar
+RUN echo "N/A" > /etc/rust_version
+
+ENV DRIVER_TYPE=old
+# The released jar bundles no org.json; supply the shaded package the app imports alongside it.
+ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-old.jar:/opt/jdbc/shaded-json.jar"
+
+# No CORE_PATH: the released jar carries its own JNI transport. Results.writeRunMetadata already
+# gates build_rust_version on driver_type=universal, so "N/A" here is never emitted to metadata.
 CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
     if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
         CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
