@@ -59,6 +59,7 @@ add_odbc_test(e2e_query_sql_bulk_operations query/sql_bulk_operations.cpp)
 add_odbc_test(e2e_query_attr_error_handling query/attr_error_handling.cpp)
 add_odbc_test(e2e_query_last_query_id query/last_query_id.cpp)
 add_odbc_test(e2e_query_sf_stmt_attrs query/sf_stmt_attrs.cpp)
+add_odbc_test(e2e_query_query_tag query/query_tag.cpp)
 add_odbc_test(e2e_query_async_execution query/async_execution.cpp)
 add_odbc_test(e2e_query_large_bindings query/large_bindings.cpp)
 

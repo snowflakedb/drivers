@@ -1754,3 +1754,22 @@ behavior_differences:
       non-x86_64 Unix platforms with the new driver. This is a spec-compliance improvement: the
       value is a byte-length stride with no alignment requirement, so accepting it at set time is
       correct; any addressing consequence of a bad stride still surfaces at SQLExecute time.
+  94:
+    name: "Connection-level QUERY_TAG is applied as a session parameter (new driver only)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Setting QUERY_TAG in the connection string does not tag the session: after connecting with
+      QUERY_TAG=<value>, SELECT CURRENT_QUERY_TAG() returns an empty string. The old driver does
+      not forward a connection-level QUERY_TAG to the server as a login session parameter.
+    new_driver_behavior: |
+      The universal driver registers QUERY_TAG as a session parameter and forwards a
+      connection-level value in the login SESSION_PARAMETERS, so CURRENT_QUERY_TAG() returns the
+      configured value and every query in the session is tagged.
+    description: |
+      Analogous to the CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY session-parameter forwarding
+      difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via
+      NEW_DRIVER_ONLY("BD#94") { value == "conn_tag_e2e" } and OLD_DRIVER_ONLY("BD#94") { value == "" }.
