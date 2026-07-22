@@ -500,7 +500,6 @@ TEST_CASE_METHOD(ConnSchemaFixture,
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should use stage binding at exact threshold boundary", "[query][large_bindings]") {
-  SKIP_OLD_DRIVER("BD#78", "Old driver does the comparison with > instead of >=");
   // Given Snowflake client is logged in
 
   // And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -517,7 +516,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should use stage binding at exact threshold
   // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
   auto after = list_system_bind_file_count(conn);
   INFO("INSERT query_id: " << qid);
-  CHECK(after > before);
+  // At the exact boundary (20 bound cells == threshold) the new driver uses >= and takes the
+  // stage-binding path (bind file uploaded); the old driver uses > and stays on inline JSON (BD#78).
+  NEW_DRIVER_ONLY("BD#78") { CHECK(after > before); }
+  OLD_DRIVER_ONLY("BD#78") { CHECK(after == before); }
 
   // And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
   auto verify = conn.execute_fetch("SELECT id, name FROM " + table.name() + " WHERE id IN (0, 9) ORDER BY id");

@@ -426,17 +426,17 @@ behavior_differences:
 
   27:
     name: "Unbound parameter marker returns SQL_ERROR (42000) server error instead of SQL_ERROR (07002) COUNT field incorrect"
-    status: allowed
+    status: fixed
     type: enhancement
     reviewed: true
     status_rationale: |
-      Old driver parsed the query locally instead of passing it to the server. We are returning backend error now, as this is the role of the server to process the SQL query with the parser, instead of making the local parser version that may shift from the server's implementation. This change allows better diagnostics by providing the proper error code and description, as old drivers' error code and description was vague.
+      Originally the new driver forwarded unbound-marker execution of a prepared statement to the server, which returned 42000 ("Bind variable ? not set"). Auto-IPD (PR #722) reversed this for prepared statements: the IPD is populated from the server-reported parameter count at SQLPrepare and the APD binding count is validated locally at SQLExecute, so the driver now returns 07002 (COUNT field incorrect) identically to the legacy driver. The old-vs-new delta for the prepared-statement case no longer exists, so this entry is now status: fixed. No BD#27 compatibility marker is needed — the shared behavior is asserted with a plain 07002 check in odbc_tests/tests/e2e/query/sql_bind_parameter.cpp.
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
       After SQL_RESET_PARAMS, executing a prepared statement with unbound parameter markers returns SQL_ERROR with SQLSTATE 07002 (COUNT field incorrect), caught locally by the driver.
     new_driver_behavior: |
-      Sends the query to the server, which returns SQL_ERROR with SQLSTATE 42000 (Syntax error: Bind variable ? not set).
+      Realigned to the legacy driver: after auto-IPD (PR #722) a prepared statement with unbound parameter markers (e.g. after SQL_RESET_PARAMS) returns SQL_ERROR with SQLSTATE 07002 (COUNT field incorrect), validated locally against the IPD. (The server-side 42000 "Bind variable ? not set" now only applies to the direct-execution path, SQLExecDirect, which does not pre-populate the IPD.)
 
   28:
     name: "SQLGetDescField on empty IPD returns SQL_NO_DATA instead of SQL_ERROR"
@@ -486,20 +486,20 @@ behavior_differences:
 
   31:
     name: "SQLExecDirect/SQLExecute return 24000 when cursor is already open"
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     status_rationale: |
-      To be reviewed with Product. This is a big deviation from the ODBC spec, but some customers may explicitly use this behavior in the products.
-    is_breaking_change: true
-    impact: high
+      No delta exists: the reference (old) driver returns SQLSTATE 24000 on a cursor-already-open re-execute, the same as the new driver. Confirmed by the odbc_tests_reference CI job — the sibling cases "SQLExecute returns 24000 when cursor is not closed before re-execute of SELECT", "SQLPrepare with cursor already open returns 24000", and SQLColumns/SQLColumnPrivileges "24000 - Cursor already open" all PASS on the old driver. The original old_driver_behavior recorded below ("silently overwrites and re-executes") was not reproducible against the reference driver and appears to have been described incorrectly. Both drivers are ODBC 3.x compliant on this path, so there is nothing to gate on driver identity; the behavior is asserted with a plain unconditional 24000 check in odbc_tests/tests/odbc-api/submitting_request/exec_direct_tests.cpp (no BD marker, per ud-fixed-bd-must-have-no-test-marker).
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
-      SQLExecDirect and SQLExecute silently overwrite the statement state when called with an open cursor, allowing re-execution without explicitly closing the cursor first.
+      CORRECTION: the reference driver returns SQL_ERROR with SQLSTATE 24000 (Invalid cursor state), the same as the new driver. (The previously recorded claim that SQLExecDirect/SQLExecute silently overwrite the statement state and allow re-execution without closing the cursor first was not reproducible against the reference driver used in CI and is retracted.)
     new_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE 24000 (Invalid cursor state) per the ODBC 3.x specification. Applications must call SQLFreeStmt(SQL_CLOSE) or SQLCloseCursor before re-executing on a statement that already has an open cursor from a previous SELECT or catalog function.
     description: |
       Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function
-      Applications that chain multiple SQLExecDirect calls without closing the cursor between them will receive 24000 errors. Add SQLFreeStmt(SQL_CLOSE) between successive executions.
+      Both the old and new drivers enforce 24000 on cursor-already-open, so applications see no behavior change on this path.
 
   32:
     name: "Async cancel does interrupt in-progress operations instead of waiting for completion"
@@ -517,6 +517,12 @@ behavior_differences:
     description: |
       Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function
       Applications that rely on SQLCancel to abort long-running async queries will not get timely cancellation on the old driver. The query may run to completion despite the cancel request.
+
+      Test coverage note: the async-cancel tests keep SKIP_OLD_DRIVER("BD#32") rather than a paired
+      OLD_DRIVER_ONLY assertion. Because the old driver never interrupts, observing its terminal state
+      would require the long probe query (TIMELIMIT => 30s) to run to natural completion, which collides
+      with the tests' 30s poll ceiling (kMaxPollIterations * kPollInterval) and would be flaky. The old
+      driver simply cannot demonstrate the cancellation this behavior asserts.
 
   33:
     name: "SQL_C_NUMERIC to VARCHAR applies scale from SQL_NUMERIC_STRUCT instead of ignoring it"
