@@ -489,7 +489,6 @@ pub(super) async fn read_batches(
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
-    tracing::debug!("read_batches called {:?}", data);
     match data {
         RowsetData::ArrowSingleChunk { chunk_base64 } => {
             single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadSnafu)
