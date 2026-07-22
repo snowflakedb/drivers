@@ -1,4 +1,4 @@
-@core @python @jdbc
+@core @python @jdbc @odbc
 Feature: Query tag
 
   QUERY_TAG labels queries in Snowflake QUERY_HISTORY. It can be set at the
@@ -6,7 +6,7 @@ Feature: Query tag
   query in the session) or per-statement (tagging only that query without
   mutating session state).
 
-  @core_e2e @python_e2e @jdbc_e2e
+  @core_e2e @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should tag queries when QUERY_TAG is set at connection level
     Given Snowflake client is logged in with connection option QUERY_TAG set to "conn_tag_e2e"
     When Query "SELECT CURRENT_QUERY_TAG()" is executed
