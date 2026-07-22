@@ -18,11 +18,13 @@ import groovy.transform.Field
 @Field def regressionDetected = false
 @Field def pythonRegressionDetected = false
 @Field def odbcRegressionDetected = false
+@Field def jdbcRegressionDetected = false
 
 // Change detection: which drivers need perf testing
 @Field def runCore = false
 @Field def runPython = false
 @Field def runOdbc = false
+@Field def runJdbc = false
 @Field def skipAll = false
 
 def isMergeQueue() {
@@ -151,7 +153,7 @@ def exitCodeLabel(int code) {
     return '❌ FAILED'
 }
 
-def printRegressionSummary(Map python, Map odbc) {
+def printRegressionSummary(Map python, Map odbc, Map jdbc) {
     def sep = '=' * 72
     echo """
 ${sep}
@@ -165,14 +167,18 @@ ${sep}
     if (odbc) {
         echo "  ODBC     ${exitCodeLabel(odbc.exit)}"
     }
+    if (jdbc) {
+        echo "  JDBC     ${exitCodeLabel(jdbc.exit)}"
+    }
     echo """${sep}
   Tests     : ${REGRESSION_FAST_TEST_FILTER}
   Threshold : ${REGRESSION_THRESHOLD}%  |  Rerun iters: ${REGRESSION_RERUN_ITERATIONS_PER_RUN}
 ${sep}"""
 
-    for (driver in ['python', 'odbc']) {
+    for (driver in ['python', 'odbc', 'jdbc']) {
         if (driver == 'python' && !python) continue
         if (driver == 'odbc' && !odbc) continue
+        if (driver == 'jdbc' && !jdbc) continue
         def summaryFile = "results/regression_summary_${driver}.json"
         if (!fileExists(summaryFile)) {
             echo "  [${driver.toUpperCase()}] No regression summary file found (${summaryFile})"
@@ -220,6 +226,7 @@ def detectChanges() {
         runCore = true
         runPython = true
         runOdbc = true
+        runJdbc = true
         return
     }
 
@@ -248,17 +255,22 @@ def detectChanges() {
     // ODBC-specific changes
     def odbcPatterns = ['odbc/', 'odbc_trace_tool/']
 
+    // JDBC-specific changes (the JNI bridge + the perf front-end)
+    def jdbcPatterns = ['jdbc/', 'jdbc_bridge/']
+
     for (file in changedFiles) {
         if (corePatterns.any { file.startsWith(it) }) {
             runCore = true
             runPython = true
             runOdbc = true
+            runJdbc = true
             break
         }
         if (perfPatterns.any { file.startsWith(it) }) {
             runCore = true
             runPython = true
             runOdbc = true
+            runJdbc = true
             break
         }
         if (pythonPatterns.any { file.startsWith(it) }) {
@@ -267,15 +279,19 @@ def detectChanges() {
         if (odbcPatterns.any { file.startsWith(it) }) {
             runOdbc = true
         }
+        if (jdbcPatterns.any { file.startsWith(it) }) {
+            runJdbc = true
+        }
     }
 
-    skipAll = !runCore && !runPython && !runOdbc
+    skipAll = !runCore && !runPython && !runOdbc && !runJdbc
 
     echo ""
     echo "=== Performance Change Detection ==="
     echo "  Run Core:   ${runCore}"
     echo "  Run Python: ${runPython}"
     echo "  Run ODBC:   ${runOdbc}"
+    echo "  Run JDBC:   ${runJdbc}"
     echo "  Skip all:   ${skipAll}"
     echo "====================================="
 }
@@ -427,7 +443,7 @@ pipeline {
                                             } else {
                                                 def python = runRegressionTests('python')
 
-                                                printRegressionSummary(python, null)
+                                                printRegressionSummary(python, null, null)
 
                                                 if (python.exit == REGRESSION_EXIT_CODE) {
                                                     pythonRegressionDetected = true
@@ -503,7 +519,7 @@ pipeline {
                                             } else {
                                                 def odbc = runRegressionTests('odbc')
 
-                                                printRegressionSummary(null, odbc)
+                                                printRegressionSummary(null, odbc, null)
 
                                                 if (odbc.exit == REGRESSION_EXIT_CODE) {
                                                     odbcRegressionDetected = true
@@ -512,6 +528,82 @@ pipeline {
                                                 } else if (odbc.exit != 0) {
                                                     postRegressionStatus('FAILURE', 'ODBC tests failed before regression check could complete')
                                                     error("ODBC tests failed with exit code ${odbc.exit}")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stage('JDBC') {
+                    when {
+                        expression { runJdbc }
+                    }
+                    agent { label 'drivers-perf-regular-memory-node-snowos' }
+                    environment {
+                        JENKINS_NODE_LABEL = 'drivers-perf-regular-memory-node-snowos'
+                    }
+                    stages {
+                        stage('Setup - JDBC') {
+                            steps {
+                                setupVenv()
+                            }
+                        }
+                        stage('Build - JDBC + WireMock') {
+                            steps {
+                                withCredentials([
+                                    usernamePassword(
+                                        credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+                                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                                    )
+                                ]) {
+                                    sh 'tests/performance/drivers/jdbc/build.sh'
+                                    sh 'tests/performance/wiremock/build.sh'
+                                }
+                            }
+                        }
+                        stage('Test - JDBC') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                                ]) {
+                                    sh './scripts/decode_secrets.sh'
+                                }
+                                dir('tests/performance') {
+                                    withCredentials([
+                                        file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                                    ]) {
+                                        script {
+                                            if (isMergeQueue()) {
+                                                echo "Merge queue: running smoke test only (no upload)"
+                                                sh """
+                                                    source .venv/bin/activate
+                                                    export CLOUD=aws
+                                                    python -m hatch run -- python -m pytest \
+                                                        tests/test_select_1M_recorded_http.py \
+                                                        -k "${REGRESSION_FAST_TEST_FILTER}" \
+                                                        --driver=jdbc --driver-type=universal \
+                                                        --iterations=1 --warmup-iterations=0 \
+                                                        -s -v
+                                                """
+                                            } else if (env.CHANGE_ID == null) {
+                                                runBaselineTests('jdbc')
+                                            } else {
+                                                def jdbc = runRegressionTests('jdbc')
+
+                                                printRegressionSummary(null, null, jdbc)
+
+                                                if (jdbc.exit == REGRESSION_EXIT_CODE) {
+                                                    jdbcRegressionDetected = true
+                                                    regressionDetected = true
+                                                    echo "Performance regression detected in JDBC (exit code ${REGRESSION_EXIT_CODE})"
+                                                } else if (jdbc.exit != 0) {
+                                                    postRegressionStatus('FAILURE', 'JDBC tests failed before regression check could complete')
+                                                    error("JDBC tests failed with exit code ${jdbc.exit}")
                                                 }
                                             }
                                         }
@@ -541,6 +633,7 @@ pipeline {
                     def drivers = []
                     if (pythonRegressionDetected) drivers.add('Python')
                     if (odbcRegressionDetected) drivers.add('ODBC')
+                    if (jdbcRegressionDetected) drivers.add('JDBC')
                     def driverList = drivers.join(', ')
 
                     if (accepted) {

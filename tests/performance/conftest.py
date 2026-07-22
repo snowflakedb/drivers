@@ -395,11 +395,6 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None  # Local directory for downloaded files
     ):
-        # JDBC supports SELECT + PUT/GET; recorded-HTTP arrives in Phase 4. Skip it so a full
-        # tests/ run stays green until then.
-        if driver == "jdbc" and test_type == PerfTestType.SELECT_RECORDED_HTTP:
-            pytest.skip(f"jdbc perf does not yet support {test_type.value}")
-
         # Prepare test parameters
         if test_name is None:
             test_name = _derive_test_name(request.node.name)
