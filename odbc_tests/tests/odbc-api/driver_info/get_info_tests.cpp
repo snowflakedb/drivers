@@ -2,6 +2,8 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -98,7 +100,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_BATCH_SUPPORT", "[odbc-a
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_NAME", "[odbc-api][getinfo][driver_info]") {
   // Given a DBC handle connected to the default DSN
-  WINDOWS_ONLY { SKIP_NEW_DRIVER_NOT_IMPLEMENTED(); }  // Implemented by DM on Linux, but not on Windows
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -119,12 +120,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_NAME", "[odb
     OLD_IODBC_ONLY("BD#62") {
       // The old driver answers SQL_DATA_SOURCE_NAME itself with an empty
       //   string (SQL_SUCCESS, nameLen=0) instead of having the DM short-
-      //   circuit; the new driver lets iODBC reject the InfoType, surfacing
-      //   SQL_ERROR.
+      //   circuit.
       REQUIRE(ret == SQL_SUCCESS);
     }
     else {
-      REQUIRE(ret == SQL_ERROR);
+      // The new driver implements this InfoType itself (see `get_info` /
+      //   `InfoType::DataSourceName`), and iODBC forwards the call through
+      //   rather than short-circuiting it, so the result matches the
+      //   NON_IODBC expectation above.
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(nameLen > 0);
+      REQUIRE(std::string(dsnName) == dsn_name());
     }
   }
 
@@ -1091,8 +1097,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_TXN_ISOLATION_OPTION", "
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_USER_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -1103,6 +1107,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_USER_NAME", "[odbc-api][
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(nameLen > 0);
   REQUIRE(!std::string(userName).empty());
+
+  // Pin the contract to the configured login user (UID) rather than merely
+  //   asserting non-empty, so a regression that returns the role or account
+  //   name instead of the login user is caught. Compared case-insensitively
+  //   because Snowflake normalizes unquoted login names to upper case.
+  const std::string expectedUser = expected_user_name();
+  if (!expectedUser.empty()) {
+    const auto to_upper = [](std::string s) {
+      std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+      return s;
+    };
+    REQUIRE(to_upper(std::string(userName)) == to_upper(expectedUser));
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -3768,8 +3785,6 @@ TEST_CASE("SQLGetInfo: SQL_INVALID_HANDLE - NULL connection handle", "[odbc-api]
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Returns SQL_SUCCESS_WITH_INFO when buffer too small",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3778,14 +3793,20 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Returns SQL_SUCCESS_WITH_INF
   ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, smallBuffer, sizeof(smallBuffer), &actualLen);
 
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver writes the *truncated* StringLength (matches the bytes
-    //   actually written, i.e. sizeof(smallBuffer) - 1 for the NUL) following
-    //   the ODBC 2.x convention; the new driver writes the untruncated value
-    //   required by ODBC 3.x so callers can size the buffer for a retry.
+  IODBC_ONLY {
+    // Both drivers report the *truncated* StringLength under iODBC (matches
+    //   the bytes actually written, i.e. sizeof(smallBuffer) - 1 for the
+    //   NUL): iODBC's ANSI entry point does its own narrow<->wide
+    //   marshalling and recomputes StringLength from what actually landed
+    //   in the truncated buffer rather than forwarding the driver's
+    //   untruncated value (BD#61 previously attributed this to the old
+    //   driver alone; it also holds for the new driver under iODBC).
     REQUIRE(actualLen == sizeof(smallBuffer) - 1);
   }
-  else {
+  NON_IODBC {
+    // Under unixODBC / Windows the driver's untruncated StringLength
+    //   (required by ODBC 3.x so callers can size a retry buffer) passes
+    //   through unmodified.
     REQUIRE(actualLen > sizeof(smallBuffer));
   }
 
@@ -3798,8 +3819,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Returns SQL_SUCCESS_WITH_INF
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query with NULL StringLengthPtr",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3814,22 +3833,23 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query with NULL StringLe
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query just the length with NULL InfoValuePtr",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT requiredLen = 0;
   ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, nullptr, 0, &requiredLen);
 
-  OLD_IODBC_ONLY("BD#61") {
-    // The old driver treats "NULL buffer + caller wants the length" as an
-    //   implicit truncation and surfaces SQL_SUCCESS_WITH_INFO + 01004; the
-    //   new driver returns plain SQL_SUCCESS because there's nothing to
-    //   truncate when the caller asked for nothing.
+  IODBC_ONLY {
+    // Both drivers see iODBC's ANSI entry point treat "NULL buffer + caller
+    //   wants the length" as an implicit truncation and surface
+    //   SQL_SUCCESS_WITH_INFO + 01004 (BD#61 previously attributed this to
+    //   the old driver alone; it also holds for the new driver under
+    //   iODBC).
     REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   }
-  else {
+  NON_IODBC {
+    // Under unixODBC / Windows there's nothing to truncate when the caller
+    //   asked for nothing, so the driver's plain SQL_SUCCESS passes through.
     REQUIRE(ret == SQL_SUCCESS);
   }
   REQUIRE(requiredLen > 0);
@@ -3843,15 +3863,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query just the length wi
     REQUIRE(actualLen > 0);
   }
   UNIX_ONLY {
-    OLD_IODBC_ONLY("BD#61") {
-      // The old driver reports the length-only query in wide-byte terms
-      //   (sizeof(SQLWCHAR) * char count, i.e. 4x on iODBC's UTF-32) but
-      //   the with-buffer call reports the narrow-byte write count, so the
-      //   two values disagree by the SQLWCHAR width factor. The new driver
-      //   reports a consistent ANSI byte count in both directions.
+    IODBC_ONLY {
+      // Both drivers see iODBC report the length-only query in wide-byte
+      //   terms (sizeof(SQLWCHAR) * char count, i.e. 4x on iODBC's
+      //   UTF-32) but the with-buffer call reports the narrow-byte write
+      //   count, so the two values disagree by the SQLWCHAR width factor
+      //   (BD#61 previously attributed this to the old driver alone; it
+      //   also holds for the new driver under iODBC).
       REQUIRE(actualLen * static_cast<SQLSMALLINT>(sizeof(SQLWCHAR)) == requiredLen);
     }
-    else {
+    NON_IODBC {
+      // unixODBC reports a consistent ANSI byte count in both directions.
       REQUIRE(actualLen == requiredLen);
     }
   }
@@ -3861,8 +3883,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query just the length wi
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY096/HY000 - Invalid InfoType",
                  "[odbc-api][getinfo][driver_info][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3872,21 +3892,22 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY096/HY000 - Invalid InfoTy
   REQUIRE(ret == SQL_ERROR);
   const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  WINDOWS_ONLY {
-    // Windows DM intercepts invalid info type and returns HY096
-    REQUIRE(std::string(records[0].sqlState) == "HY096");
-  }
+  // The new driver returns the spec-mandated HY096 ("information type out of
+  //   range") for this InfoType, and every DM (Windows, iODBC, unixODBC)
+  //   forwards it through unmodified. The old driver also returns HY096 on
+  //   Windows and under iODBC, but under unixODBC it surfaces a generic HY000
+  //   (BD#62).
+  WINDOWS_ONLY { REQUIRE(std::string(records[0].sqlState) == "HY096"); }
   UNIX_ONLY {
-    OLD_IODBC_ONLY("BD#62") {
-      // The old driver under iODBC actually returns the spec-correct HY096
-      //   ("information type out of range"); when run through unixODBC the
-      //   DM remaps it to HY000, and the new driver propagates HY000 in
-      //   both DMs to stay consistent.
-      REQUIRE(std::string(records[0].sqlState) == "HY096");
-    }
-    else {
-      // Note: Reference driver returns HY000 instead of HY096
-      REQUIRE(std::string(records[0].sqlState) == "HY000");
+    IODBC_ONLY { REQUIRE(std::string(records[0].sqlState) == "HY096"); }
+    NON_IODBC {
+      // Genuine driver difference under unixODBC (BD#62), confirmed by CI:
+      //   the reference/old-driver job returns HY000 for an out-of-range
+      //   InfoType, while the new driver returns the spec-correct HY096. The
+      //   DM forwards each driver's own value unchanged, so this is a driver
+      //   behavior, not a DM artifact.
+      NEW_DRIVER_ONLY("BD#62") { REQUIRE(std::string(records[0].sqlState) == "HY096"); }
+      OLD_DRIVER_ONLY("BD#62") { REQUIRE(std::string(records[0].sqlState) == "HY000"); }
     }
   }
 

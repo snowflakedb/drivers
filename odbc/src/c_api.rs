@@ -1138,16 +1138,23 @@ pub unsafe extern "system" fn SQLGetInfo(
     set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::get_info::<Narrow>(
         connection_handle,
         info_type,
         info_value_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1163,16 +1170,23 @@ pub unsafe extern "system" fn SQLGetInfoW(
     set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::get_info::<Wide>(
         connection_handle,
         info_type,
         info_value_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
