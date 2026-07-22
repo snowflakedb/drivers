@@ -8,6 +8,7 @@ from typing import Any
 from .._internal.decorators import awaitable_context_manager, pep249
 from .connection import Connection, SnowflakeConnection
 from .cursor import DictCursor, SnowflakeCursor
+from .pandas_tools import write_pandas
 
 
 @pep249
@@ -32,4 +33,5 @@ __all__ = [
     "connect",
     "DictCursor",
     "SnowflakeCursor",
+    "write_pandas",
 ]

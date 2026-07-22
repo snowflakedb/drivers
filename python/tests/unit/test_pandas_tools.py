@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import snowflake.connector._internal.write_pandas_operation as _wpo
+import snowflake.connector.aio.pandas_tools as _aio_pt
 
 from snowflake.connector._internal.write_pandas_operation import (
     WritePandasConfig,
@@ -267,27 +268,27 @@ class TestDataFrameInspection:
 class TestBuildCreateStageSql:
     def test_basic(self):
         op: WritePandasOperation = _make_op()
-        sql, params = op._build_create_stage_sql("MY_STAGE")
-        assert "CREATE TEMPORARY STAGE IDENTIFIER(?)" in sql
-        assert "MY_STAGE" not in sql
-        assert params == ("MY_STAGE",)
-        assert "TYPE=PARQUET" in sql
-        assert "COMPRESSION=auto" in sql
+        result = op._build_create_stage_sql("MY_STAGE")
+        assert "CREATE TEMPORARY STAGE IDENTIFIER(?)" in result["operation"]
+        assert "MY_STAGE" not in result["operation"]
+        assert result["parameters"] == ("MY_STAGE",)
+        assert "TYPE=PARQUET" in result["operation"]
+        assert "COMPRESSION=auto" in result["operation"]
 
     def test_snappy(self):
         op: WritePandasOperation = _make_op(compression="snappy")
-        sql, _params = op._build_create_stage_sql("MY_STAGE")
-        assert "COMPRESSION=snappy" in sql
+        result = op._build_create_stage_sql("MY_STAGE")
+        assert "COMPRESSION=snappy" in result["operation"]
 
     def test_with_binary_as_text_false(self):
         op: WritePandasOperation = _make_op(auto_create_table=True)
-        sql, _params = op._build_create_stage_sql("MY_STAGE")
-        assert "BINARY_AS_TEXT=FALSE" in sql
+        result = op._build_create_stage_sql("MY_STAGE")
+        assert "BINARY_AS_TEXT=FALSE" in result["operation"]
 
     def test_without_binary_as_text(self):
         op: WritePandasOperation = _make_op()
-        sql, _params = op._build_create_stage_sql("MY_STAGE")
-        assert "BINARY_AS_TEXT" not in sql
+        result = op._build_create_stage_sql("MY_STAGE")
+        assert "BINARY_AS_TEXT" not in result["operation"]
 
 
 # ---------------------------------------------------------------------------
@@ -298,22 +299,22 @@ class TestBuildCreateStageSql:
 class TestBuildCreateFileFormatSql:
     def test_basic(self):
         op: WritePandasOperation = _make_op()
-        sql, params = op._build_create_file_format_sql("MY_FF")
-        assert "CREATE TEMPORARY FILE FORMAT IDENTIFIER(?)" in sql
-        assert "MY_FF" not in sql
-        assert params == ("MY_FF",)
-        assert "TYPE=PARQUET" in sql
-        assert "COMPRESSION=auto" in sql
+        result = op._build_create_file_format_sql("MY_FF")
+        assert "CREATE TEMPORARY FILE FORMAT IDENTIFIER(?)" in result["operation"]
+        assert "MY_FF" not in result["operation"]
+        assert result["parameters"] == ("MY_FF",)
+        assert "TYPE=PARQUET" in result["operation"]
+        assert "COMPRESSION=auto" in result["operation"]
 
     def test_with_use_logical_type_true(self):
         op: WritePandasOperation = _make_op(use_logical_type=True)
-        sql, _params = op._build_create_file_format_sql("MY_FF")
-        assert "USE_LOGICAL_TYPE=TRUE" in sql
+        result = op._build_create_file_format_sql("MY_FF")
+        assert "USE_LOGICAL_TYPE=TRUE" in result["operation"]
 
     def test_with_use_logical_type_false(self):
         op: WritePandasOperation = _make_op(use_logical_type=False)
-        sql, _params = op._build_create_file_format_sql("MY_FF")
-        assert "USE_LOGICAL_TYPE=FALSE" in sql
+        result = op._build_create_file_format_sql("MY_FF")
+        assert "USE_LOGICAL_TYPE=FALSE" in result["operation"]
 
 
 # ---------------------------------------------------------------------------
@@ -324,49 +325,64 @@ class TestBuildCreateFileFormatSql:
 class TestBuildCopyIntoSql:
     def test_basic_with_quoting(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A", "B"]))
-        sql, params = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
-        assert "COPY INTO IDENTIFIER(?)" in sql
-        assert '$1:"A" AS "A"' in sql
-        assert '$1:"B" AS "B"' in sql
-        assert "TYPE=PARQUET" in sql
-        assert "PURGE=TRUE" in sql
-        assert "ON_ERROR=?" in sql
-        assert params == ("MY_TABLE", "abort_statement")
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert "COPY INTO IDENTIFIER(?)" in result["operation"]
+        assert '$1:"A" AS "A"' in result["operation"]
+        assert '$1:"B" AS "B"' in result["operation"]
+        assert "TYPE=PARQUET" in result["operation"]
+        assert "PURGE=TRUE" in result["operation"]
+        assert "ON_ERROR=?" in result["operation"]
+        assert result["parameters"] == ("MY_TABLE", "abort_statement")
 
     def test_with_column_type_map(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        sql, _params = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", {"A": "NUMBER(38,0)"})
-        assert '$1:"A"::NUMBER(38,0)' in sql
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", {"A": "NUMBER(38,0)"})
+        assert '$1:"A"::NUMBER(38,0)' in result["operation"]
 
     def test_no_quoting(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]), quote_identifiers=False)
-        sql, _params = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
-        assert '$1:"A" AS A' in sql
-        assert '"A" AS "A"' not in sql
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert '$1:"A" AS A' in result["operation"]
+        assert '"A" AS "A"' not in result["operation"]
 
     def test_with_vectorized_scanner(self):
         op: WritePandasOperation = _make_op(use_vectorized_scanner=True)
-        sql, _params = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
-        assert "USE_VECTORIZED_SCANNER=TRUE" in sql
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert "USE_VECTORIZED_SCANNER=TRUE" in result["operation"]
 
     def test_target_location_is_not_interpolated_into_sql(self):
         target = '"mydb"."myschema"."mytable"'
         op: WritePandasOperation = _make_op()
-        sql, params = op._build_copy_into_sql("@MY_STAGE", target, None)
-        assert target not in sql
-        assert params[0] == target
+        result = op._build_copy_into_sql("@MY_STAGE", target, None)
+        assert target not in result["operation"]
+        assert result["parameters"][0] == target
 
     def test_on_error_is_not_interpolated_into_sql(self):
         payload = "CONTINUE ->>\n EXECUTE IMMEDIATE $$DROP TABLE foo$$;--"
         op: WritePandasOperation = _make_op(on_error=payload)
-        sql, params = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
-        assert payload not in sql
-        assert params[1] == payload
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert payload not in result["operation"]
+        assert result["parameters"][1] == payload
 
     def test_params_order_is_target_then_on_error(self):
         op: WritePandasOperation = _make_op(on_error="continue")
-        _sql, params = op._build_copy_into_sql("@MY_STAGE", "MY_TARGET", None)
-        assert params == ("MY_TARGET", "continue")
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TARGET", None)
+        assert result["parameters"] == ("MY_TARGET", "continue")
+
+    def test_full_query_and_parameters(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
+        result = op._build_copy_into_sql("MY_STAGE", "MY_TABLE", None)
+        assert result == {
+            "operation": (
+                'COPY INTO IDENTIFIER(?) ("A") '
+                'FROM (SELECT $1:"A" AS "A" '
+                "FROM '@MY_STAGE') "
+                "FILE_FORMAT = (TYPE=PARQUET COMPRESSION=auto) "
+                "PURGE=TRUE ON_ERROR=?"
+            ),
+            "parameters": ("MY_TABLE", "abort_statement"),
+            "_force_qmark_paramstyle": True,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -376,59 +392,131 @@ class TestBuildCopyIntoSql:
 
 class TestDropObject:
     def test_uses_identifier_binding(self):
-        cursor = MagicMock()
-        from snowflake.connector._internal.write_pandas_operation import _drop_object
-
-        _drop_object(cursor, '"mydb"."myschema"."mytable"', "TABLE")
-        call = cursor.execute.call_args
-        assert "IDENTIFIER(?)" in call.args[0]
-        assert '"mydb"."myschema"."mytable"' not in call.args[0]
-        assert call.kwargs["params"] == ('"mydb"."myschema"."mytable"',)
-        assert call.kwargs["_force_qmark_paramstyle"] is True
+        op: WritePandasOperation = _make_op()
+        result = op._build_drop_object_sql('"mydb"."myschema"."mytable"', "TABLE")
+        assert "IDENTIFIER(?)" in result["operation"]
+        assert '"mydb"."myschema"."mytable"' not in result["operation"]
+        assert result["parameters"] == ('"mydb"."myschema"."mytable"',)
+        assert result["_force_qmark_paramstyle"] is True
 
     def test_object_type_is_literal(self):
-        cursor = MagicMock()
-        from snowflake.connector._internal.write_pandas_operation import _drop_object
-
-        _drop_object(cursor, "MY_TABLE", "STAGE")
-        sql = cursor.execute.call_args.args[0]
-        assert "DROP STAGE IF EXISTS IDENTIFIER(?)" == sql
+        op: WritePandasOperation = _make_op()
+        result = op._build_drop_object_sql("MY_TABLE", "STAGE")
+        assert result["operation"] == "DROP STAGE IF EXISTS IDENTIFIER(?)"
 
 
-class TestTruncateTable:
+class TestBuildTruncateTableSql:
     def test_uses_identifier_binding(self):
-        cursor = MagicMock()
         op: WritePandasOperation = _make_op()
-        op._truncate_table(cursor, '"db"."schema"."tbl"')
-        call = cursor.execute.call_args
-        assert "IDENTIFIER(?)" in call.args[0]
-        assert '"db"."schema"."tbl"' not in call.args[0]
-        assert call.kwargs["params"] == ('"db"."schema"."tbl"',)
-        assert call.kwargs["_force_qmark_paramstyle"] is True
+        result = op._build_truncate_table_sql('"db"."schema"."tbl"')
+        assert result["operation"] == "TRUNCATE TABLE IF EXISTS IDENTIFIER(?)"
+        assert '"db"."schema"."tbl"' not in result["operation"]
+        assert result["parameters"] == ('"db"."schema"."tbl"',)
+        assert result["_force_qmark_paramstyle"] is True
 
 
-class TestCreateTable:
+class TestBuildCreateTableSql:
     def test_target_location_uses_identifier_binding(self):
-        cursor = MagicMock()
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
-        op._create_table(cursor, '"db"."schema"."tbl"', None)
-        call = cursor.execute.call_args
-        assert "IDENTIFIER(?)" in call.args[0]
-        assert '"db"."schema"."tbl"' not in call.args[0]
-        assert call.kwargs["params"] == ('"db"."schema"."tbl"',)
-        assert call.kwargs["_force_qmark_paramstyle"] is True
+        result = op._build_create_table_sql('"db"."schema"."tbl"', None)
+        assert "IDENTIFIER(?)" in result["operation"]
+        assert '"db"."schema"."tbl"' not in result["operation"]
+        assert result["parameters"] == ('"db"."schema"."tbl"',)
+        assert result["_force_qmark_paramstyle"] is True
+
+    def test_column_type_from_map(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
+        result = op._build_create_table_sql("MY_TABLE", {"A": "NUMBER(38,0)"})
+        assert "NUMBER(38,0)" in result["operation"]
+
+    def test_column_type_defaults_to_variant(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]))
+        result = op._build_create_table_sql("MY_TABLE", None)
+        assert "VARIANT" in result["operation"]
+
+    def test_table_type_prefix(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]), table_type="temp")
+        result = op._build_create_table_sql("MY_TABLE", None)
+        assert "TEMP TABLE" in result["operation"]
 
 
-class TestInferColumnTypes:
+class TestBuildInferColumnTypesSql:
     def test_stage_and_format_are_bound_params(self):
-        cursor = MagicMock()
-        cursor.execute.return_value.fetchall.return_value = [("COL_A", "TEXT")]
         op: WritePandasOperation = _make_op()
-        op._infer_column_types(cursor, "MY_STAGE", "MY_FILE_FORMAT")
-        call = cursor.execute.call_args
-        assert call.args[0] == "SELECT * FROM TABLE(INFER_SCHEMA(LOCATION => ?, FILE_FORMAT => ?))"
-        assert call.kwargs["params"] == ("@MY_STAGE", "MY_FILE_FORMAT")
-        assert call.kwargs["_force_qmark_paramstyle"] is True
+        result = op._build_infer_column_types_sql("MY_STAGE", "MY_FILE_FORMAT")
+        assert result["operation"] == "SELECT * FROM TABLE(INFER_SCHEMA(LOCATION => ?, FILE_FORMAT => ?))"
+        assert result["parameters"] == ("@MY_STAGE", "MY_FILE_FORMAT")
+        assert result["_force_qmark_paramstyle"] is True
+
+
+class TestBuildPutFileSql:
+    def test_full_query(self):
+        from pathlib import Path as _Path
+
+        op: WritePandasOperation = _make_op()
+        result = op._build_put_file_sql("MY_STAGE", _Path("/tmp/file0.txt"))
+        assert result == {
+            "operation": (
+                "PUT 'file:///tmp/file0.txt' @MY_STAGE "
+                "PARALLEL=4 AUTO_COMPRESS=FALSE "
+                "SOURCE_COMPRESSION=AUTO_DETECT OVERWRITE=TRUE"
+            )
+        }
+
+    def test_parallel_from_config(self):
+        from pathlib import Path as _Path
+
+        op: WritePandasOperation = _make_op(parallel=8)
+        result = op._build_put_file_sql("MY_STAGE", _Path("/tmp/file0.txt"))
+        assert result == {
+            "operation": (
+                "PUT 'file:///tmp/file0.txt' @MY_STAGE "
+                "PARALLEL=8 AUTO_COMPRESS=FALSE "
+                "SOURCE_COMPRESSION=AUTO_DETECT OVERWRITE=TRUE"
+            )
+        }
+
+    def test_no_bindings_in_dict(self):
+        from pathlib import Path as _Path
+
+        op: WritePandasOperation = _make_op()
+        result = op._build_put_file_sql("MY_STAGE", _Path("/tmp/file0.txt"))
+        assert "parameters" not in result
+        assert "_force_qmark_paramstyle" not in result
+
+
+class TestBuildPutDirectorySql:
+    def test_full_query(self):
+        op: WritePandasOperation = _make_op()
+        result = op._build_put_directory_sql("MY_STAGE", "/tmp/upload_dir")
+        assert result == {
+            "operation": (
+                "PUT 'file:///tmp/upload_dir/*' @MY_STAGE "
+                "PARALLEL=4 AUTO_COMPRESS=FALSE "
+                "SOURCE_COMPRESSION=AUTO_DETECT OVERWRITE=TRUE"
+            )
+        }
+
+    def test_no_bindings_in_dict(self):
+        op: WritePandasOperation = _make_op()
+        result = op._build_put_directory_sql("MY_STAGE", "/tmp/upload_dir")
+        assert "parameters" not in result
+        assert "_force_qmark_paramstyle" not in result
+
+
+class TestBuildRenameTableSql:
+    def test_uses_identifier_bindings(self):
+        op: WritePandasOperation = _make_op(table_name="TARGET", quote_identifiers=False)
+        result = op._build_rename_table_sql('"db"."schema"."tmp_tbl"')
+        assert result["operation"] == "ALTER TABLE IDENTIFIER(?) RENAME TO IDENTIFIER(?)"
+        assert result["parameters"] == ('"db"."schema"."tmp_tbl"', "TARGET")
+        assert result["_force_qmark_paramstyle"] is True
+
+    def test_original_table_not_in_sql(self):
+        op: WritePandasOperation = _make_op(table_name="MY_TABLE", quote_identifiers=False)
+        result = op._build_rename_table_sql("TMP_TABLE")
+        assert "MY_TABLE" not in result["operation"]
+        assert "TMP_TABLE" not in result["operation"]
 
 
 # ---------------------------------------------------------------------------
@@ -639,3 +727,24 @@ class TestMakePdWriter:
         for name in positional:
             with pytest.raises(ProgrammingError, match="cannot be passed to make_pd_writer"):
                 make_pd_writer(**{name: "sentinel"})
+
+
+# ---------------------------------------------------------------------------
+# Sync / async write_pandas signature parity
+# ---------------------------------------------------------------------------
+
+
+class TestWritePandasSignatureParity:
+    def test_sync_and_async_write_pandas_have_identical_signatures(self):
+        """aio.write_pandas must accept exactly the same kwargs as the sync version."""
+        from snowflake.connector.pandas_tools import write_pandas as sync_wp
+
+        sync_params = inspect.signature(sync_wp).parameters
+        async_params = inspect.signature(_aio_pt.write_pandas).parameters
+
+        sync_names = {n for n, p in sync_params.items() if p.kind != inspect.Parameter.VAR_KEYWORD}
+        async_names = {n for n, p in async_params.items() if p.kind != inspect.Parameter.VAR_KEYWORD}
+
+        assert sync_names == async_names, (
+            f"Signature mismatch — sync-only: {sync_names - async_names!r}, async-only: {async_names - sync_names!r}"
+        )
