@@ -33,7 +33,11 @@ Per-entry schema:
     is_breaking_change: true
 
   Rules:
-    - IDs are unique positive integers.
+    - IDs are unique positive integers. Uniqueness is checked against the raw file
+      text (not just the parsed mapping) because ``yaml.safe_load`` silently keeps
+      only the last of any duplicate key, which would otherwise hide the collision.
+    - The raw ID-line count must equal the number of unique parsed entries; a
+      mismatch means a duplicate key silently dropped an entry on load.
     - Only the fields listed above are allowed (no unknown keys).
     - Entries must not be removed vs. HEAD (additions and edits only).
 """
@@ -41,11 +45,16 @@ Per-entry schema:
 from __future__ import annotations
 
 import enum
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+
+# Matches a top-level behavior-difference ID line, e.g. "  42:" nested directly
+# under the "behavior_differences:" mapping (exactly two leading spaces).
+_ID_LINE_RE = re.compile(r"^  (\d+):[ \t]*(?:#.*)?$")
 
 
 class BDStatus(str, enum.Enum):
@@ -134,6 +143,61 @@ def _committed_ids(git_relpath: str) -> set[int]:
         return set()
 
 
+def _raw_id_lines(text: str) -> list[int]:
+    """Return every top-level BD ID as it literally appears in the file, in order.
+
+    Scans raw text rather than the parsed mapping so that duplicate keys — which
+    ``yaml.safe_load`` silently collapses to the last occurrence — are still
+    visible. This is the foundation for the duplicate/count/ordering guards.
+    """
+    ids: list[int] = []
+    for line in text.splitlines():
+        match = _ID_LINE_RE.match(line)
+        if match:
+            ids.append(int(match.group(1)))
+    return ids
+
+
+def _raw_structure_errors(label: str, text: str, parsed_ids: set[int]) -> list[str]:
+    """Guards that operate on the raw file text, catching failure modes that
+    ``yaml.safe_load`` hides:
+
+    1. Duplicate IDs — the same ``N:`` key appearing more than once. PyYAML keeps
+       only the last occurrence, silently dropping the earlier entry, so the
+       parsed-mapping duplicate check in ``validate_file`` never sees it.
+    2. Parse loss — the raw ID-line count not matching the number of unique
+       entries the parser produced. A mismatch means a duplicate key silently
+       merged two blocks on load (belt-and-suspenders alongside guard 1).
+    """
+    errors: list[str] = []
+    raw_ids = _raw_id_lines(text)
+
+    if not raw_ids:
+        # No ID lines found; the structural checks in validate_file will report
+        # the missing/empty mapping. Nothing more to add here.
+        return errors
+
+    # Guard 1: duplicate IDs (order-preserving, report each dup once).
+    seen: set[int] = set()
+    reported: set[int] = set()
+    for bd_id in raw_ids:
+        if bd_id in seen and bd_id not in reported:
+            errors.append(f"{label} BD-{bd_id}: duplicate ID in file (YAML keeps only the last)")
+            reported.add(bd_id)
+        seen.add(bd_id)
+
+    # Guard 2: raw block count must match the parser's unique-entry count. A
+    # mismatch means a duplicate key silently merged two blocks on load.
+    if len(raw_ids) != len(parsed_ids):
+        errors.append(
+            f"{label}: {len(raw_ids)} ID line(s) in file but {len(parsed_ids)} unique "
+            f"entr{'y' if len(parsed_ids) == 1 else 'ies'} after parsing — a duplicate "
+            f"key was silently dropped"
+        )
+
+    return errors
+
+
 def validate_file(git_relpath: str, yaml_path: Path) -> list[str]:
     errors: list[str] = []
     label = git_relpath
@@ -142,8 +206,8 @@ def validate_file(git_relpath: str, yaml_path: Path) -> list[str]:
         errors.append(f"{label}: file not found at {yaml_path}")
         return errors
 
-    with open(yaml_path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    text = yaml_path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
 
     if not isinstance(data, dict) or "behavior_differences" not in data:
         errors.append(f"{label}: missing top-level 'behavior_differences' key")
@@ -242,6 +306,8 @@ def validate_file(git_relpath: str, yaml_path: Path) -> list[str]:
             )
         elif not isinstance(is_breaking, bool):
             errors.append(f"{prefix}: 'is_breaking_change' must be a boolean (true/false)")
+
+    errors.extend(_raw_structure_errors(label, text, seen_ids))
 
     old_ids = _committed_ids(git_relpath)
     removed = old_ids - seen_ids
