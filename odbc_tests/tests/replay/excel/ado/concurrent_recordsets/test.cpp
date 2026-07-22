@@ -410,17 +410,17 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_PARAM_BIND_TYPE, (SQLPOINTER)10, 0);
     WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
     UNIX_ONLY {
-      // BD#92: misaligned bind type (10) behaviour differs by driver and platform.
+      // BD#100: misaligned bind type (10) behaviour differs by driver and platform.
       // Old driver: accepted on Linux x86_64, rejected (S1000) on aarch64/macOS.
       // New driver: accepted on all platforms.
       if (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64) {
         CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
       } else {
-        OLD_DRIVER_ONLY("BD#92") {
+        OLD_DRIVER_ONLY("BD#100") {
           CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
                      OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
         }
-        NEW_DRIVER_ONLY("BD#92") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
+        NEW_DRIVER_ONLY("BD#100") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
       }
     }
   }

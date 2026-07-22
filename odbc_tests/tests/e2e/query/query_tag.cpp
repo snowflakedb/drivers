@@ -18,6 +18,6 @@ TEST_CASE("should tag queries when QUERY_TAG is set at connection level", "[quer
 
   // Then the result should contain value "conn_tag_e2e"
   auto value = get_data<SQL_C_CHAR>(stmt, 1);
-  NEW_DRIVER_ONLY("BD#94") { CHECK(value == "conn_tag_e2e"); }
-  OLD_DRIVER_ONLY("BD#94") { CHECK(value == ""); }
+  NEW_DRIVER_ONLY("BD#101") { CHECK(value == "conn_tag_e2e"); }
+  OLD_DRIVER_ONLY("BD#101") { CHECK(value == ""); }
 }
