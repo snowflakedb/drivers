@@ -42,8 +42,6 @@ fn should_return_inline_chunk_for_simple_distributed_fetch_query() {
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 1);
     assert_eq!(batches[0].num_columns(), 2);
-
-    client.result_set_release(&rs_handle);
 }
 
 #[test]
@@ -84,6 +82,4 @@ fn should_produce_multiple_chunks_for_large_distributed_fetch_result() {
     let batches = read_batches_from_response(response);
     let total_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
     assert_eq!(total_rows, 500000);
-
-    client.result_set_release(&rs_handle);
 }

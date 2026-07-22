@@ -32,6 +32,7 @@ pub struct SnowflakeTestClient {
     private_key_file: Option<PrivateKeyFile>,
     client: DatabaseDriverClient,
     created_statements: Mutex<Vec<StatementHandle>>,
+    created_result_sets: Mutex<Vec<ResultSetHandle>>,
 }
 
 impl SnowflakeTestClient {
@@ -61,6 +62,7 @@ impl SnowflakeTestClient {
             private_key_file: None,
             client,
             created_statements: Mutex::new(Vec::new()),
+            created_result_sets: Mutex::new(Vec::new()),
         };
 
         test_client.set_options_from_parameters();
@@ -158,6 +160,7 @@ impl SnowflakeTestClient {
             private_key_file: None,
             client,
             created_statements: Mutex::new(Vec::new()),
+            created_result_sets: Mutex::new(Vec::new()),
         };
 
         test_client.set_options_from_parameters();
@@ -203,6 +206,22 @@ impl SnowflakeTestClient {
         stmt_handle
     }
 
+    /// Track all ResultSetHandles from an execute query result
+    fn track_result_handles(&self, result: &execute_query_response::Result) {
+        match result {
+            execute_query_response::Result::Single(rs) => {
+                if let Some(handle) = rs.result_set_handle {
+                    self.created_result_sets.lock().unwrap().push(handle);
+                }
+            }
+            execute_query_response::Result::Multi(_) => {
+                // Multi-statement results don't contain handles directly.
+                // They have query_ids, and handles are retrieved later via
+                // connection_get_result_set() which tracks them separately.
+            }
+        }
+    }
+
     pub fn execute_statement_query(
         &self,
         stmt: &StatementHandle,
@@ -234,7 +253,8 @@ impl SnowflakeTestClient {
                 })),
             }
         });
-        self.client
+        let result = self
+            .client
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(*stmt),
                 bindings,
@@ -242,7 +262,9 @@ impl SnowflakeTestClient {
             })
             .unwrap()
             .result
-            .unwrap()
+            .unwrap();
+        self.track_result_handles(&result);
+        result
     }
 
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
@@ -427,12 +449,17 @@ impl SnowflakeTestClient {
 
     /// Get a ResultSetResponse (handle + descriptor) by query_id via the connection.
     pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
-        self.client
+        let response = self
+            .client
             .connection_get_result_set_blocking(ConnectionGetResultSetRequest {
                 conn_handle: Some(self.conn_handle),
                 query_id: query_id.to_string(),
             })
-            .unwrap()
+            .unwrap();
+        if let Some(handle) = response.result_set_handle {
+            self.created_result_sets.lock().unwrap().push(handle);
+        }
+        response
     }
 
     /// Streaming PUT: upload `data` using `sql` (JDBC `uploadStream` / Python
@@ -484,6 +511,10 @@ impl SnowflakeTestClient {
                 result_set_handle: Some(*rs_handle),
             })
             .unwrap();
+        self.created_result_sets
+            .lock()
+            .unwrap()
+            .retain(|h| h != rs_handle);
     }
 
     /// Execute a multistatement query.
@@ -800,7 +831,20 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
-        // Release all unreleased statements first
+        // Release all unreleased result sets first
+        let result_sets = self.created_result_sets.lock().unwrap().clone();
+        for rs in result_sets {
+            if let Err(e) = self
+                .client
+                .result_set_release_blocking(ResultSetReleaseRequest {
+                    result_set_handle: Some(rs),
+                })
+            {
+                tracing::warn!("Failed to release result set in Drop: {e:?}");
+            }
+        }
+
+        // Release all unreleased statements
         let statements = self.created_statements.lock().unwrap().clone();
         for stmt in statements {
             if let Err(e) = self
