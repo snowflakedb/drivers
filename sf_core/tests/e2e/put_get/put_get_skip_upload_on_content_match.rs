@@ -13,9 +13,7 @@ fn run_put_with_kwarg(
     sql: &str,
     skip_match: bool,
 ) -> ResultSetGetStreamResponse {
-    // Release the statement even if a step below panics, matching the
-    // companion integration test's guard.
-    let stmt = scopeguard::guard(client.new_statement(), |s| client.release_statement(&s));
+    let stmt = client.new_statement();
     client.set_sql_query(&stmt, sql);
     if skip_match {
         client.set_statement_option(

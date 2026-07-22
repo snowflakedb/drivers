@@ -46,7 +46,6 @@ fn should_omit_sql_and_bindings_from_logs_when_log_query_text_is_disabled_by_def
     let stmt = client.new_statement();
     client.set_sql_query(&stmt, SENTINEL_SQL);
     client.execute_statement_query_with_bindings(&stmt, Some(&sentinel_binding_json()));
-    client.release_statement(&stmt);
 
     // Then the SQL text must NOT appear in any log line
     let logs = captured_logs(log_buf);
@@ -79,7 +78,6 @@ fn should_include_sql_and_bindings_in_logs_when_log_query_text_and_log_query_par
     let stmt = client.new_statement();
     client.set_sql_query(&stmt, SENTINEL_SQL);
     client.execute_statement_query_with_bindings(&stmt, Some(&sentinel_binding_json()));
-    client.release_statement(&stmt);
 
     // Then the SQL text must appear in at least one log line
     let logs = captured_logs(log_buf);

@@ -27,9 +27,7 @@ fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultH
     let result = client.execute_statement_query(&stmt);
     let query_id = unwrap_single_query_id(&result);
     let rs = client.get_result_set(&stmt, &query_id);
-    let helper = ArrowResultHelper::from_result(rs);
-    client.release_statement(&stmt);
-    helper
+    ArrowResultHelper::from_result(rs)
 }
 
 #[test]
@@ -40,7 +38,6 @@ fn should_handle_null_values_in_json_result_set() {
         let stmt = client.new_statement();
         client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
         client.execute_statement_query(&stmt);
-        client.release_statement(&stmt);
     });
     let stmt = client.new_statement();
 
@@ -112,7 +109,6 @@ fn should_handle_null_values_in_json_result_set() {
         ),
     );
     client.execute_statement_query(&stmt);
-    client.release_statement(&stmt);
 
     let mut helper = execute_json_query(
         &client,
@@ -157,12 +153,10 @@ fn flaky_should_handle_show_schemas_json_result_with_nulls() {
     let stmt = client.new_statement();
     client.set_sql_query(&stmt, &format!("CREATE SCHEMA {schema_name}"));
     client.execute_statement_query(&stmt);
-    client.release_statement(&stmt);
     let _guard = TableCleanupGuard::new(schema_name.clone(), |name| {
         let stmt = client.new_statement();
         client.set_sql_query(&stmt, &format!("DROP SCHEMA IF EXISTS {name}"));
         client.execute_statement_query(&stmt);
-        client.release_statement(&stmt);
     });
 
     // SHOW SCHEMAS returns JSON format with nullable columns like comment, options.
@@ -188,7 +182,6 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
         let stmt = client.new_statement();
         client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
         client.execute_statement_query(&stmt);
-        client.release_statement(&stmt);
     });
     let stmt = client.new_statement();
 
@@ -264,6 +257,4 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
             );
         }
     }
-
-    client.release_statement(&stmt);
 }

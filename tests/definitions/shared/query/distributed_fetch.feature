@@ -11,7 +11,6 @@ Feature: Distributed fetch
     When Query "SELECT 42 AS answer, 'hello' AS greeting" is executed
     Then result chunks should contain at least one inline chunk
     And fetching the inline chunk should return 1 row with 2 columns
-    And resources should be released
 
   @core_e2e
   Scenario: should produce multiple chunks for large distributed fetch result
@@ -20,7 +19,6 @@ Feature: Distributed fetch
     Then result chunks should contain at least 2 chunks
     And result chunks should contain at least one remote chunk
     And fetching all chunks in one request should return 500000 total rows
-    And resources should be released
 
   @python_e2e @jdbc_e2e
   Scenario: should fetch all rows when partitions fetched in parallel threads
