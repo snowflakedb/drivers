@@ -74,7 +74,26 @@ final class Config {
     setIfPresent(props, "protocol", "SNOWFLAKE_TEST_PROTOCOL", "protocol");
 
     applyKeyPairAuth(props);
+    applyWiremockProxy(props);
     return props;
+  }
+
+  /**
+   * Opt the universal driver into HTTP(S)_PROXY env detection for the recorded-HTTP (WireMock) lane.
+   *
+   * <p>The WireMock harness routes traffic via proxy env vars, not explicit proxy properties, and
+   * sf_core ignores those env vars unless {@code use_proxy_env=true} (mirrors the odbc app's
+   * {@code USE_PROXY_ENV=true} and python's {@code _enable_proxy_env_for_wiremock}). No CA/OCSP knob
+   * is needed: the driver's TLS runs in sf_core, which loads the OS CA bundle the Dockerfile appends
+   * the WireMock CA to, and defaults to OCSP FAIL_OPEN.
+   */
+  private void applyWiremockProxy(Properties props) {
+    boolean proxyEnvSet =
+        !isBlank(System.getenv("HTTPS_PROXY")) || !isBlank(System.getenv("HTTP_PROXY"));
+    if (proxyEnvSet) {
+      props.setProperty("use_proxy_env", "true");
+      System.out.println("Universal driver: use_proxy_env=true (WireMock proxy env detected)");
+    }
   }
 
   String jdbcUrl(Properties props) {
@@ -135,5 +154,9 @@ final class Config {
   private static String envOrDefault(String key, String def) {
     String v = System.getenv(key);
     return (v == null || v.isEmpty()) ? def : v;
+  }
+
+  private static boolean isBlank(String s) {
+    return s == null || s.trim().isEmpty();
   }
 }
