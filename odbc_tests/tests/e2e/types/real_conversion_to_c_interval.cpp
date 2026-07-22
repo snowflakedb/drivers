@@ -107,42 +107,83 @@ TEST_CASE("FLOAT to single-field interval types", "[datatype][float][conversion]
 // ============================================================================
 
 TEST_CASE("FLOAT fractional truncation to interval types", "[datatype][float][conversion][c_interval][01S07]") {
-  SKIP_OLD_DRIVER("BD#16", "Old driver does not report 01S07 for FLOAT-to-interval fractional truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Fractional FLOAT values are fetched as non-second interval types
   (void)0;
-  // Then The fractional part is truncated and SQLSTATE 01S07 is returned
+  // Then The fractional part is truncated to the same integer value on both drivers, but BD#99:
+  //      the old driver returns SQL_SUCCESS with no diagnostic, while the new driver returns
+  //      SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07 - so each side is read with its own helper.
   {
     INFO("SQL_C_INTERVAL_YEAR truncates fraction");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(conn.execute_fetch("SELECT 5.7::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.intval.year_month.year == 5);
+    auto stmt = conn.execute_fetch("SELECT 5.7::FLOAT");
+    OLD_DRIVER_ONLY("BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_YEAR);
+      CHECK(interval.intval.year_month.year == 5);
+    }
+    NEW_DRIVER_ONLY("BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_YEAR);
+      CHECK(interval.intval.year_month.year == 5);
+    }
   }
   {
     INFO("SQL_C_INTERVAL_MONTH truncates fraction");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(conn.execute_fetch("SELECT 10.3::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.intval.year_month.month == 10);
+    auto stmt = conn.execute_fetch("SELECT 10.3::FLOAT");
+    OLD_DRIVER_ONLY("BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_MONTH);
+      CHECK(interval.intval.year_month.month == 10);
+    }
+    NEW_DRIVER_ONLY("BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_MONTH);
+      CHECK(interval.intval.year_month.month == 10);
+    }
   }
   {
     INFO("SQL_C_INTERVAL_DAY truncates fraction");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(conn.execute_fetch("SELECT 15.9::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.intval.day_second.day == 15);
+    auto stmt = conn.execute_fetch("SELECT 15.9::FLOAT");
+    OLD_DRIVER_ONLY("BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_DAY);
+      CHECK(interval.intval.day_second.day == 15);
+    }
+    NEW_DRIVER_ONLY("BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_DAY);
+      CHECK(interval.intval.day_second.day == 15);
+    }
   }
   {
     INFO("SQL_C_INTERVAL_HOUR truncates fraction");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_HOUR>(conn.execute_fetch("SELECT 8.5::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_HOUR);
-    CHECK(interval.intval.day_second.hour == 8);
+    auto stmt = conn.execute_fetch("SELECT 8.5::FLOAT");
+    OLD_DRIVER_ONLY("BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_HOUR);
+      CHECK(interval.intval.day_second.hour == 8);
+    }
+    NEW_DRIVER_ONLY("BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_HOUR>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_HOUR);
+      CHECK(interval.intval.day_second.hour == 8);
+    }
   }
   {
     INFO("SQL_C_INTERVAL_MINUTE truncates fraction");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_MINUTE>(conn.execute_fetch("SELECT 30.1::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_MINUTE);
-    CHECK(interval.intval.day_second.minute == 30);
+    auto stmt = conn.execute_fetch("SELECT 30.1::FLOAT");
+    OLD_DRIVER_ONLY("BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_MINUTE);
+      CHECK(interval.intval.day_second.minute == 30);
+    }
+    NEW_DRIVER_ONLY("BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_MINUTE);
+      CHECK(interval.intval.day_second.minute == 30);
+    }
   }
 }
 
@@ -171,20 +212,28 @@ TEST_CASE("FLOAT to multi-field interval returns 22015", "[datatype][float][conv
 // ============================================================================
 
 TEST_CASE("FLOAT sub-microsecond truncation to interval second", "[datatype][float][conversion][c_interval][01S07]") {
-  SKIP_OLD_DRIVER("BD#16", "Old driver does not report 01S07 for FLOAT-to-interval fractional truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
   // When FLOAT values with sub-microsecond precision are fetched as SQL_C_INTERVAL_SECOND
   (void)0;
-  // Then Sub-microsecond digits are truncated and SQLSTATE 01S07 is returned
+  // Then Sub-microsecond digits are truncated to the same value on both drivers, but BD#99: the old
+  //      driver returns SQL_SUCCESS with no diagnostic while the new driver returns 01S07.
   {
     INFO("Sub-microsecond fraction truncated");
-    auto interval =
-        check_fractional_truncation<SQL_C_INTERVAL_SECOND>(conn.execute_fetch("SELECT 45.1234567::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_SECOND);
-    CHECK(interval.intval.day_second.second == 45);
-    CHECK(interval.intval.day_second.fraction == 123456);
+    auto stmt = conn.execute_fetch("SELECT 45.1234567::FLOAT");
+    OLD_DRIVER_ONLY("BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_SECOND);
+      CHECK(interval.intval.day_second.second == 45);
+      CHECK(interval.intval.day_second.fraction == 123456);
+    }
+    NEW_DRIVER_ONLY("BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_SECOND);
+      CHECK(interval.intval.day_second.second == 45);
+      CHECK(interval.intval.day_second.fraction == 123456);
+    }
   }
 }
 
@@ -193,35 +242,67 @@ TEST_CASE("FLOAT sub-microsecond truncation to interval second", "[datatype][flo
 // ============================================================================
 
 TEST_CASE("FLOAT to interval - no negative zero", "[datatype][float][conversion][c_interval][edge]") {
-  SKIP_OLD_DRIVER("BD#16", "Old driver does not report 01S07 for FLOAT-to-interval fractional truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Negative fractional FLOAT values truncate to zero for non-second intervals
   (void)0;
-  // Then Interval sign is positive when the integer part truncates to zero
+  // Then Two independent differences surface, so each side is read with its own helper:
+  //      - BD#98 (sign): the old driver produces a negative zero (SQL_TRUE) while the new driver
+  //        normalizes a zero-magnitude interval to +0 (SQL_FALSE).
+  //      - BD#99 (truncation warning): for FLOAT sources the old driver does not flag the fractional
+  //        truncation, returning SQL_SUCCESS (check_no_truncation) where the new driver returns
+  //        SQL_SUCCESS_WITH_INFO with 01S07 (check_fractional_truncation).
   {
-    INFO("SQL_C_INTERVAL_YEAR -0.5 truncates to +0");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(conn.execute_fetch("SELECT (-0.5)::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.year_month.year == 0);
+    INFO("SQL_C_INTERVAL_YEAR -0.5 truncates to zero");
+    auto stmt = conn.execute_fetch("SELECT (-0.5)::FLOAT");
+    OLD_DRIVER_ONLY("BD#98 / BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_YEAR);
+      CHECK(interval.interval_sign == SQL_TRUE);
+      CHECK(interval.intval.year_month.year == 0);
+    }
+    NEW_DRIVER_ONLY("BD#98 / BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_YEAR);
+      CHECK(interval.interval_sign == SQL_FALSE);
+      CHECK(interval.intval.year_month.year == 0);
+    }
   }
   {
-    INFO("SQL_C_INTERVAL_MONTH -0.3 truncates to +0");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(conn.execute_fetch("SELECT (-0.3)::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.year_month.month == 0);
+    INFO("SQL_C_INTERVAL_MONTH -0.3 truncates to zero");
+    auto stmt = conn.execute_fetch("SELECT (-0.3)::FLOAT");
+    OLD_DRIVER_ONLY("BD#98 / BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_MONTH);
+      CHECK(interval.interval_sign == SQL_TRUE);
+      CHECK(interval.intval.year_month.month == 0);
+    }
+    NEW_DRIVER_ONLY("BD#98 / BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_MONTH);
+      CHECK(interval.interval_sign == SQL_FALSE);
+      CHECK(interval.intval.year_month.month == 0);
+    }
   }
   {
-    INFO("SQL_C_INTERVAL_DAY -0.9 truncates to +0");
-    auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(conn.execute_fetch("SELECT (-0.9)::FLOAT"), 1);
-    CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.day == 0);
+    INFO("SQL_C_INTERVAL_DAY -0.9 truncates to zero");
+    auto stmt = conn.execute_fetch("SELECT (-0.9)::FLOAT");
+    OLD_DRIVER_ONLY("BD#98 / BD#99") {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_DAY);
+      CHECK(interval.interval_sign == SQL_TRUE);
+      CHECK(interval.intval.day_second.day == 0);
+    }
+    NEW_DRIVER_ONLY("BD#98 / BD#99") {
+      auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_DAY);
+      CHECK(interval.interval_sign == SQL_FALSE);
+      CHECK(interval.intval.day_second.day == 0);
+    }
   }
   {
+    // -0.5 seconds is a real negative value (fraction is nonzero), so both drivers agree: SQL_TRUE.
     INFO("SQL_C_INTERVAL_SECOND -0.5 keeps negative (fraction nonzero)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(conn.execute_fetch("SELECT (-0.5)::FLOAT"), 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
