@@ -22,7 +22,6 @@ fn should_execute_multiple_select_statements() {
         let rs = client.connection_get_result_set(query_id);
         let rs_handle = rs.result_set_handle.unwrap();
         let stream = client.result_set_get_stream(&rs_handle);
-        client.result_set_release(&rs_handle);
         let mut helper = ArrowResultHelper::from_result(stream);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows.len(), 1, "Result set {i} should have 1 row");
@@ -80,7 +79,6 @@ fn should_execute_mixed_statement_types() {
     let select_rs = client.connection_get_result_set(&multi.query_ids[3]);
     let rs_handle = select_rs.result_set_handle.unwrap();
     let stream = client.result_set_get_stream(&rs_handle);
-    client.result_set_release(&rs_handle);
     let mut helper = ArrowResultHelper::from_result(stream);
     let rows = helper.transform_into_array::<String>().unwrap();
     assert_eq!(rows.len(), 1, "SELECT should return 1 row");
@@ -149,7 +147,6 @@ fn should_not_persist_num_statements_across_executes() {
         let rs = client.connection_get_result_set(query_id);
         let rs_handle = rs.result_set_handle.unwrap();
         let stream = client.result_set_get_stream(&rs_handle);
-        client.result_set_release(&rs_handle);
         let mut helper = ArrowResultHelper::from_result(stream);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows.len(), 1, "Child {i}: expected 1 row");
