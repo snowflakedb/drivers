@@ -33,3 +33,15 @@ docker build -f tests/performance/drivers/jdbc/Dockerfile \
 
 echo ""
 echo "✓ Built: jdbc-perf-driver-universal:latest"
+echo ""
+
+# Step 3: Build old driver image (last released snowflake-jdbc, for UD-vs-old comparison)
+echo "→ Building old driver image..."
+docker build -f tests/performance/drivers/jdbc/Dockerfile \
+  --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \
+  --build-arg JENKINS_HOME="${JENKINS_HOME:-}" \
+  --target old \
+  -t jdbc-perf-driver-old:latest .
+
+echo ""
+echo "✓ Built: jdbc-perf-driver-old:latest"

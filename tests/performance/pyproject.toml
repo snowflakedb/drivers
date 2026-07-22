@@ -69,8 +69,10 @@ python-both-local = ["build-python", "build-wiremock", "PERF_LOCAL_COMPARE=1 pyt
 odbc-universal-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=universal --preserve-mappings -s -v"]
 odbc-old-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=old --preserve-mappings -s -v"]
 odbc-both-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=both --preserve-mappings -s -v"]
-# JDBC (Phase 1: universal + SELECT). old/both and PUT-GET/recorded-HTTP arrive in later phases.
+# JDBC (universal + old SELECT). PUT-GET/recorded-HTTP arrive in later phases.
 jdbc-universal-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=universal --preserve-mappings -s -v"]
+jdbc-old-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=old --preserve-mappings -s -v"]
+jdbc-both-local = ["build-jdbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=jdbc --driver-type=both --preserve-mappings -s -v"]
 
 # CI
 core = "python -m pytest {args:tests/} --driver=core --upload-to-benchstore -s -v"
@@ -81,6 +83,8 @@ odbc-universal = "python -m pytest {args:tests/} --driver=odbc --driver-type=uni
 odbc-old = "python -m pytest {args:tests/} --driver=odbc --driver-type=old --upload-to-benchstore -s -v"
 odbc-both = "python -m pytest {args:tests/} --driver=odbc --driver-type=both --upload-to-benchstore -s -v"
 jdbc-universal = "python -m pytest {args:tests/} --driver=jdbc --driver-type=universal --upload-to-benchstore -s -v"
+jdbc-old = "python -m pytest {args:tests/} --driver=jdbc --driver-type=old --upload-to-benchstore -s -v"
+jdbc-both = "python -m pytest {args:tests/} --driver=jdbc --driver-type=both --upload-to-benchstore -s -v"
 
 # Clean all generated files and results
 clean = """python -c '
