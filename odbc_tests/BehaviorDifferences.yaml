@@ -982,9 +982,10 @@ behavior_differences:
         - StringLength on SUCCESS_WITH_INFO + 01004 truncations reports the *truncated* length (ODBC 2.x convention) instead of the *untruncated* length the caller needs to size a retry buffer (ODBC 3.x). Affected calls: SQLGetDescField (string truncation), SQLGetDescRec (Name truncation), SQLGetInfo (e.g. SQL_DRIVER_NAME with a small buffer). Additionally, SQLGetInfo's length-only query (NULL InfoValuePtr) reports the wide-byte count (sizeof(SQLWCHAR) * char_count, i.e. 4x on iODBC's UTF-32) while the with-buffer call reports the narrow-byte write count, so the two values disagree by the SQLWCHAR width factor.
         - SQLNativeSql ignores an explicit TextLength1=0 and treats the input as NUL-terminated, copying the input string verbatim into the output (so a "SELECT 1" input with TextLength1=0 produces "SELECT 1" / outLen=8 instead of "" / outLen=0). The new driver honours the explicit zero length.
     new_driver_behavior: |
-      On both DMs: SQLExecDirect / SQLExecute return SQL_NO_DATA for zero-row DML; length-only queries return plain SQL_SUCCESS; SUCCESS_WITH_INFO / HY012 paths post the spec-mandated 01004 / 01S00 / HY012 diagnostic record; truncated SQLGetInfo / SQLGetDescField / SQLGetDescRec calls report the untruncated StringLength; SQLNativeSql honours explicit TextLength1.
+      On both DMs: SQLExecDirect / SQLExecute return SQL_NO_DATA for zero-row DML; length-only queries (SQLGetDescRec, SQLGetCursorName, SQLNativeSql) return plain SQL_SUCCESS; SUCCESS_WITH_INFO / HY012 paths post the spec-mandated 01004 / 01S00 / HY012 diagnostic record; truncated SQLGetDescField / SQLGetDescRec calls report the untruncated StringLength; SQLNativeSql honours explicit TextLength1.
+      SQLGetInfo exception under iODBC only: SQLGetInfo (e.g. SQL_DRIVER_NAME) is fixed under unixODBC / Windows (plain SQL_SUCCESS on the length-only NULL-buffer probe, untruncated StringLength on a too-small buffer) but NOT under iODBC. Under iODBC its own ANSI entry point re-marshals the driver's response: it recomputes StringLength from the truncated write and reports the length-only NULL-buffer probe as an implicit SQL_SUCCESS_WITH_INFO truncation in wide-byte units (sizeof(SQLWCHAR) * char_count). This is an iODBC DM artifact, not a driver behavior: it holds identically for both the old and the new driver under iODBC (confirmed — the old-driver reference iODBC job and the new-driver iODBC job produce the same truncated-length / SUCCESS_WITH_INFO values), so it is not gated on driver identity.
     description: |
-      Applications running against the old driver under iODBC see SQL_SUCCESS where the spec mandates SQL_NO_DATA on zero-row DML, SQL_SUCCESS_WITH_INFO where the spec mandates SQL_SUCCESS on length-only queries, an empty diagnostic stack on SUCCESS_WITH_INFO / HY012 returns, a truncated StringLength that cannot be used to size a retry buffer, and ignored explicit zero-length SQLNativeSql inputs. The new driver returns spec values.
+      Applications running against the old driver under iODBC see SQL_SUCCESS where the spec mandates SQL_NO_DATA on zero-row DML, SQL_SUCCESS_WITH_INFO where the spec mandates SQL_SUCCESS on length-only queries, an empty diagnostic stack on SUCCESS_WITH_INFO / HY012 returns, a truncated StringLength that cannot be used to size a retry buffer, and ignored explicit zero-length SQLNativeSql inputs. The new driver returns spec values for all of these EXCEPT SQLGetInfo's length-only / truncated-buffer semantics under iODBC, which remain governed by iODBC's own marshalling (identical for both drivers, see the SQLGetInfo tests' plain IODBC_ONLY branches) rather than by the driver.
   62:
     name: "iODBC's DM dispatches the new driver and the old driver along different paths (driver-cap dependent), so identical calls return different return codes / SQLSTATEs under iODBC"
     status: allowed
@@ -999,15 +1000,18 @@ behavior_differences:
         - SQLColumnPrivileges with a NULL TableName is forwarded to the old driver, which submits the call to the backend and surfaces SQL_ERROR from the backend diagnostic.
         - SQLGetInfo(SQL_DATA_SOURCE_NAME) is answered by the old driver with an empty string + SQL_SUCCESS (nameLen=0).
         - SQLGetFunctions(FunctionId=<out-of-range>) is answered by the old driver from its static function table with SQL_SUCCESS + supported=SQL_FALSE (no range check).
-        - SQLGetInfo with an invalid InfoType returns HY096 (the spec-correct "information type out of range") from the old driver.
         - SQLGetData on a cursor positioned past the end of the result set surfaces SQL_ERROR with SQLSTATE 24000 (matching the unixODBC contract) because the old driver bypasses the iODBC DM's cursor-past-end short-circuit.
     new_driver_behavior: |
       Under iODBC the DM takes the following paths for the new driver:
-        - SQLGetInfo(SQL_DATA_SOURCE_NAME) is rejected by the DM with SQL_ERROR (the InfoType is on the DM's blocklist).
-        - SQLGetInfo with an invalid InfoType returns HY000 (the new driver follows the unixODBC reference-driver convention of mapping the invalid InfoType to the generic SQLSTATE rather than HY096).
+        - SQLGetInfo(SQL_DATA_SOURCE_NAME) is now implemented by the new driver itself (it reads
+          the DSN name captured at connect time), and iODBC forwards the call through rather than
+          short-circuiting it, so the call succeeds with the actual DSN name (matching the
+          unixODBC/Windows behavior) instead of the SQL_ERROR the new driver previously surfaced
+          while the InfoType was unimplemented.
         - SQLGetData on a cursor positioned past the end of the result set returns SQL_NO_DATA without consulting the driver layer (iODBC DM short-circuits the post-end fetch per its own convention).
     description: |
       Applications receive different return codes / SQLSTATEs for identical calls depending on driver, even though the underlying state of the connection / statement / cursor is the same. The new driver follows what iODBC's DM mandates; the old driver bypasses several of the DM intercepts.
+      Note on SQLGetInfo with an invalid (out-of-range) InfoType: the new driver returns the spec-mandated HY096 on every DM (Windows, iODBC, and unixODBC all forward the driver's SQLSTATE unchanged — confirmed by CI). The old driver returns HY096 under iODBC and Windows but a generic HY000 under unixODBC (confirmed by the reference/old-driver CI job). This is therefore a genuine driver behavior difference under unixODBC (new = spec-correct HY096, old = HY000), not a DM interception artifact. See `odbc/src/api/error.rs`'s `UnknownInfoType` mapping and the `SQLGetInfo: HY096/HY000 - Invalid InfoType` test's driver-gated unixODBC branch.
   63:
     name: "SQLBrowseConnect short-circuits with SQL_ERROR under iODBC instead of returning SQL_NEED_DATA for the iterative protocol"
     status: todo

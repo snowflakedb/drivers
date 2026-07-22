@@ -893,7 +893,13 @@ impl OdbcError {
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
-            OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
+            // HY096 "information type out of range" per spec. Every DM
+            // (Windows, iODBC, unixODBC) forwards this SQLSTATE through
+            // unmodified, so callers see HY096 on all platforms (confirmed by
+            // CI). The old reference driver differs only under unixODBC, where
+            // it surfaces a generic HY000 instead — a driver-side behavior we
+            // intentionally do not replicate (see BD#62).
+            OdbcError::UnknownInfoType { .. } => SqlState::InvalidInformationType,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
             OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,

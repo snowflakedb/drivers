@@ -191,6 +191,8 @@ pub enum InfoType {
     /// `SQL_ACTIVE_STATEMENTS` (1) — maximum number of active statements (`SQLUSMALLINT`).
     /// Alias of `SQL_MAX_CONCURRENT_ACTIVITIES`.
     ActiveStatements = 1,
+    /// `SQL_DATA_SOURCE_NAME` (2) — DSN used to open the connection (string).
+    DataSourceName = 2,
     /// `SQL_DRIVER_NAME` (6) — name of the driver shared library (string).
     DriverName = 6,
     /// `SQL_DRIVER_VER` (7) — driver release version (string).
@@ -265,6 +267,8 @@ pub enum InfoType {
     TableTerm = 45,
     /// `SQL_TXN_CAPABLE` (46) — transaction support level (`SQLUSMALLINT`).
     TxnCapable = 46,
+    /// `SQL_USER_NAME` (47) — login user name used for this connection (string).
+    UserName = 47,
     /// `SQL_PROCEDURE_TERM` (40) — DBMS term for procedure (string).
     ProcedureTerm = 40,
     /// `SQL_CONVERT_FUNCTIONS` (48) — supported `CAST`/`CONVERT` function bitmask.
@@ -544,6 +548,7 @@ impl TryFrom<u16> for InfoType {
         match value {
             0 => Ok(InfoType::MaxDriverConnections),
             1 => Ok(InfoType::ActiveStatements),
+            2 => Ok(InfoType::DataSourceName),
             6 => Ok(InfoType::DriverName),
             7 => Ok(InfoType::DriverVer),
             8 => Ok(InfoType::FetchDirection),
@@ -582,6 +587,7 @@ impl TryFrom<u16> for InfoType {
             44 => Ok(InfoType::ScrollOptions),
             45 => Ok(InfoType::TableTerm),
             46 => Ok(InfoType::TxnCapable),
+            47 => Ok(InfoType::UserName),
             48 => Ok(InfoType::ConvertFunctions),
             49 => Ok(InfoType::NumericFunctions),
             50 => Ok(InfoType::StringFunctions),
@@ -2504,6 +2510,7 @@ mod tests {
     #[test]
     fn info_type_try_from_round_trip() {
         let cases: &[(u16, InfoType)] = &[
+            (2, InfoType::DataSourceName),
             (6, InfoType::DriverName),
             (7, InfoType::DriverVer),
             (14, InfoType::SearchPatternEscape),
@@ -2516,6 +2523,7 @@ mod tests {
             (39, InfoType::SchemaTerm),
             (41, InfoType::CatalogNameSeparator),
             (42, InfoType::CatalogTerm),
+            (47, InfoType::UserName),
             (48, InfoType::ConvertFunctions),
             (49, InfoType::NumericFunctions),
             (50, InfoType::StringFunctions),

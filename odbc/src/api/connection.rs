@@ -1524,18 +1524,24 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 /// Write an ODBC string value into the `SQLGetInfo` output buffers.
 /// Both pointers are individually null-guarded — the Driver Manager passes
 /// null for either side when it only wants the other.
+///
+/// `warnings` is only consulted when a truncation actually occurs (i.e. when
+/// `info_value_ptr` is non-null — see the `write_str` closure in
+/// [`get_info`], which omits it entirely for a NULL-buffer length probe so
+/// that case stays plain `SQL_SUCCESS` rather than `SQL_SUCCESS_WITH_INFO`).
 fn write_get_info_string<E: OdbcEncoding>(
     value: &str,
     info_value_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
+    warnings: Option<&mut Warnings>,
 ) {
     write_string_bytes::<E>(
         value,
         info_value_ptr as *mut E::Char,
         buffer_length,
         string_length_ptr,
-        None,
+        warnings,
     );
 }
 
@@ -1627,6 +1633,7 @@ pub fn get_info<E: OdbcEncoding>(
     info_value_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
@@ -1636,13 +1643,35 @@ pub fn get_info<E: OdbcEncoding>(
     tracing::debug!("get_info: info_type={info_type:?}");
 
     // Local aliases to keep each match arm a single readable line.
-    let write_str =
-        |s: &str| write_get_info_string::<E>(s, info_value_ptr, buffer_length, string_length_ptr);
+    //
+    // `write_str` only forwards `warnings` when `info_value_ptr` is non-null:
+    // a NULL-buffer call is a pure length probe with nothing to truncate, so
+    // it must stay plain `SQL_SUCCESS` rather than surfacing a spurious
+    // `SQL_SUCCESS_WITH_INFO` / 01004.
+    let mut write_str = |s: &str| {
+        let w = if info_value_ptr.is_null() {
+            None
+        } else {
+            Some(&mut *warnings)
+        };
+        write_get_info_string::<E>(s, info_value_ptr, buffer_length, string_length_ptr, w);
+    };
     let write_u16 = |v: u16| write_get_info_u16(v, info_value_ptr, string_length_ptr);
     let write_u32 = |v: u32| write_get_info_u32(v, info_value_ptr, string_length_ptr);
 
     match info_type {
         // ----- Strings -----------------------------------------------------
+        InfoType::DataSourceName => {
+            // Per ODBC spec, "the data source name used during connection".
+            // We captured this at connect time from `SQLConnect`'s server-name
+            // argument or `SQLDriverConnect`'s `DSN=...` (see `dsn_name`,
+            // also read by `SQL_DRIVER_NAME` above). On most platforms the
+            // Driver Manager intercepts this InfoType and answers it itself
+            // without ever calling into the driver, but Windows does not, so
+            // the driver must answer with the DSN it was handed.
+            let dsn_name = dbc.connection.lock().dsn_name.clone();
+            write_str(dsn_name.as_deref().unwrap_or(""));
+        }
         InfoType::DriverName => {
             // Per ODBC spec, `SQL_DRIVER_NAME` returns "a character string
             // with the file name of the driver used to access the data
@@ -1695,6 +1724,35 @@ pub fn get_info<E: OdbcEncoding>(
                 None => None,
             };
             write_str(version.as_deref().unwrap_or(""));
+        }
+        InfoType::UserName => {
+            // Login user for this connection. Sourced from the same
+            // connection-seed `USER` setting the legacy driver uses for
+            // `DSI_CONN_USER_NAME` — not a server round trip — via
+            // `connection_get_info`'s in-process session-state read (see
+            // `current_database` above for the same aggregation call).
+            //
+            // Before the connection is established there is no session to
+            // read; return an empty string rather than erroring so callers
+            // that probe this attribute pre-`SQLConnect` still succeed.
+            let conn_handle = match dbc.connection.lock().state {
+                ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            let user = match conn_handle {
+                Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                    let info = c
+                        .connection_get_info(ConnectionGetInfoRequest {
+                            conn_handle: Some(handle),
+                            info_codes: vec![],
+                            include_master_token: false,
+                        })
+                        .await?;
+                    Ok::<Option<String>, crate::api::OdbcError>(info.user)
+                })?,
+                None => None,
+            };
+            write_str(user.as_deref().unwrap_or(""));
         }
         InfoType::DriverOdbcVer => {
             // ODBC 3.80 — matches the level the legacy Snowflake ODBC

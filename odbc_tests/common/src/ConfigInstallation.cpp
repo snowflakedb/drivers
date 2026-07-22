@@ -46,6 +46,15 @@ std::string BaseConfigInstallation::connection_string(size_t index) const {
   return data_sources_[index].connection_string();
 }
 
+std::string BaseConfigInstallation::user_name(size_t index) const {
+  if (index >= data_sources_.size()) {
+    throw std::out_of_range("Data source index out of range");
+  }
+  const auto& params = data_sources_[index].parameters();
+  const auto it = params.find("UID");
+  return it != params.end() ? it->second : "";
+}
+
 void BaseConfigInstallation::collect_driver_configs() {
   for (const auto& ds : data_sources_) {
     if (auto dc = ds.driver_config()) {
