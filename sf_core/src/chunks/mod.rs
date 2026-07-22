@@ -8,13 +8,12 @@ pub mod prefetch;
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::io::Cursor;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::query_types::RowType;
 use crate::rest::snowflake::query_response::Chunk;
-use arrow::array::{RecordBatchIterator, RecordBatchReader};
+use arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -22,7 +21,9 @@ pub use error::ChunkError;
 use error::*;
 pub(crate) use error::{ArrowIpcEncodeSnafu, ChunkReadSnafu};
 pub use json_parser::convert_string_rowset_to_arrow_reader;
-use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, PrefetchChunkReader};
+use prefetch::{
+    ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, ParseChunk, PrefetchChunkReader,
+};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{OptionExt, ResultExt, ensure};
@@ -113,8 +114,14 @@ pub async fn arrow_prefetch_reader(
     config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let initial_reader =
-        get_initial_chunk_reader(initial_base64_opt, &mut chunk_download_data, &client).await?;
+    let initial_reader = get_initial_chunk_reader(
+        initial_base64_opt,
+        &mut chunk_download_data,
+        &client,
+        ChunkFormatKind::ArrowIpc,
+        &[],
+    )
+    .await?;
     let downloader = HttpChunkDownloader { client };
     let parser = ArrowChunkParser;
     let reader = PrefetchChunkReader::reader(
@@ -128,23 +135,54 @@ pub async fn arrow_prefetch_reader(
     Ok(maybe_inject_nullable(reader, nullable_flags))
 }
 
+/// Builds the initial reader from either the inline base64 chunk (always Arrow
+/// IPC) or by popping and fetching the first remote chunk. Remote chunks are
+/// parsed according to `remote_format`: Arrow IPC goes through `StreamReader`,
+/// JSON goes through `JsonChunkParser`.
 async fn get_initial_chunk_reader(
     initial_base64_opt: Option<&str>,
     chunk_download_data: &mut VecDeque<ChunkDownloadData>,
     client: &Client,
-) -> Result<StreamReader<Cursor<Vec<u8>>>, ChunkError> {
-    Ok(if let Some(initial_base64) = initial_base64_opt {
+    remote_format: ChunkFormatKind,
+    row_types: &[RowType],
+) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
+    if let Some(initial_base64) = initial_base64_opt {
         let bytes = BASE64.decode(initial_base64).context(Base64DecodeSnafu)?;
         let cursor = io::Cursor::new(bytes);
-        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
+        Ok(Box::new(
+            StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?,
+        ))
     } else {
         let first = chunk_download_data
             .pop_front()
             .context(MissingInitialChunkSnafu)?;
         let bytes = get_chunk_data(client.clone(), first).await?;
-        let cursor = io::Cursor::new(bytes);
-        StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?
-    })
+        match remote_format {
+            ChunkFormatKind::ArrowIpc => {
+                let cursor = io::Cursor::new(bytes);
+                Ok(Box::new(
+                    StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?,
+                ))
+            }
+            ChunkFormatKind::Json => {
+                let parser = JsonChunkParser {
+                    row_types: row_types.to_vec(),
+                };
+                let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
+                    .await
+                    .context(SpawnBlockingSnafu)?
+                    .context(ChunkReadSnafu)?;
+                let schema = batches
+                    .first()
+                    .map(RecordBatch::schema)
+                    .unwrap_or_else(|| Arc::new(Schema::new(Fields::empty())));
+                Ok(Box::new(RecordBatchIterator::new(
+                    batches.into_iter().map(Ok::<_, arrow::error::ArrowError>),
+                    schema,
+                )))
+            }
+        }
+    }
 }
 
 pub fn single_chunk_reader(
@@ -286,10 +324,12 @@ pub async fn fetch_chunks_reader(
                 initial_base64_opt.as_deref(),
                 &mut remote_chunks,
                 &client,
+                ChunkFormatKind::Json,
+                &row_types,
             )
             .await?;
             json_chunks_reader(
-                Box::new(initial_chunk_reader),
+                initial_chunk_reader,
                 row_types,
                 Vec::from(remote_chunks),
                 client,
@@ -426,7 +466,368 @@ fn maybe_decompress_gzip(data: Vec<u8>) -> Result<Vec<u8>, ChunkError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use arrow::array::{Array, ArrayRef, Int64Array, RecordBatch, StringArray};
+    use arrow::datatypes::DataType;
+    use arrow::ipc::writer::StreamWriter;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::query_types::RowType;
+
     use super::*;
+
+    fn encode_arrow_ipc_base64(schema: SchemaRef, batches: &[RecordBatch]) -> String {
+        let mut buf = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buf, schema.as_ref())
+                .expect("StreamWriter should accept schema");
+            for batch in batches {
+                writer
+                    .write(batch)
+                    .expect("StreamWriter should accept batch");
+            }
+            writer.finish().expect("StreamWriter should finish");
+        }
+        BASE64.encode(buf)
+    }
+
+    fn gzip_compress(data: &[u8]) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(data)
+            .expect("gzip encoder should accept input");
+        encoder.finish().expect("gzip encoder should finish")
+    }
+
+    fn drain_reader(reader: Box<dyn RecordBatchReader + Send>) -> Vec<RecordBatch> {
+        reader
+            .collect::<Result<Vec<_>, _>>()
+            .expect("draining reader should succeed")
+    }
+
+    #[test]
+    fn prefetch_config_from_session_params_uses_defaults_when_missing() {
+        let config = PrefetchConfig::from_session_params(&HashMap::new());
+        assert_eq!(config.prefetch_threads, DEFAULT_PREFETCH_THREADS);
+        assert_eq!(config.memory_limit_mb, DEFAULT_MEMORY_LIMIT_MB);
+    }
+
+    #[test]
+    fn prefetch_config_from_session_params_parses_valid_values() {
+        let mut params = HashMap::new();
+        params.insert("CLIENT_PREFETCH_THREADS".to_string(), "8".to_string());
+        params.insert("CLIENT_MEMORY_LIMIT".to_string(), "2048".to_string());
+
+        let config = PrefetchConfig::from_session_params(&params);
+        assert_eq!(config.prefetch_threads, 8);
+        assert_eq!(config.memory_limit_mb, 2048);
+    }
+
+    #[test]
+    fn prefetch_config_from_session_params_falls_back_on_invalid_values() {
+        let mut params = HashMap::new();
+        params.insert(
+            "CLIENT_PREFETCH_THREADS".to_string(),
+            "not-a-number".to_string(),
+        );
+        params.insert("CLIENT_MEMORY_LIMIT".to_string(), "-1".to_string());
+
+        let config = PrefetchConfig::from_session_params(&params);
+        assert_eq!(config.prefetch_threads, DEFAULT_PREFETCH_THREADS);
+        assert_eq!(config.memory_limit_mb, DEFAULT_MEMORY_LIMIT_MB);
+    }
+
+    #[test]
+    fn chunk_download_data_estimated_memory_mb_applies_overhead() {
+        let chunk = ChunkDownloadData {
+            url: String::new(),
+            row_count: 1,
+            uncompressed_size: 2 * 1024 * 1024,
+            compressed_size: 0,
+            headers: HashMap::new(),
+        };
+        assert_eq!(chunk.estimated_memory_mb(), 3);
+    }
+
+    #[test]
+    fn chunk_download_data_estimated_memory_mb_minimum_one() {
+        let chunk = ChunkDownloadData {
+            url: String::new(),
+            row_count: 0,
+            uncompressed_size: 0,
+            compressed_size: 0,
+            headers: HashMap::new(),
+        };
+        assert_eq!(chunk.estimated_memory_mb(), 1);
+    }
+
+    #[test]
+    fn maybe_decompress_gzip_leaves_plain_bytes_unchanged() {
+        let plain = b"plain chunk body".to_vec();
+        let decompressed = maybe_decompress_gzip(plain.clone()).expect("plain bytes should pass");
+        assert_eq!(decompressed, plain);
+    }
+
+    #[test]
+    fn maybe_decompress_gzip_inflates_gzip_payload() {
+        let plain = b"[ \"1\" ], [ \"2\" ]";
+        let compressed = gzip_compress(plain);
+        let decompressed =
+            maybe_decompress_gzip(compressed).expect("gzip payload should decompress");
+        assert_eq!(decompressed, plain);
+    }
+
+    #[test]
+    fn empty_reader_returns_empty_schema_and_no_batches() {
+        let mut reader = empty_reader();
+        assert_eq!(reader.schema().fields().len(), 0);
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn schema_only_reader_builds_schema_without_rows() {
+        let row_types = vec![
+            RowType::fixed("id", false, 10, 0),
+            RowType::text("name", true, 64, 256),
+        ];
+        let reader = schema_only_reader(&row_types).expect("schema-only reader should build");
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 2);
+        assert_eq!(schema.field(0).name(), "id");
+        assert_eq!(schema.field(0).data_type(), &DataType::Int64);
+        assert_eq!(schema.field(1).name(), "name");
+        assert_eq!(schema.field(1).data_type(), &DataType::Utf8);
+        let batches = drain_reader(reader);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 0);
+        assert_eq!(batches[0].schema().fields().len(), 2);
+    }
+
+    #[test]
+    fn single_chunk_reader_decodes_arrow_ipc_batch() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![10, 20])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("a"), None])) as ArrayRef,
+            ],
+        )
+        .expect("RecordBatch should build");
+        let base64 = encode_arrow_ipc_base64(schema, &[batch]);
+
+        let reader = single_chunk_reader(&base64, None).expect("arrow chunk should decode");
+        let batches = drain_reader(reader);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 2);
+
+        let ids = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("id column should be Int64");
+        assert_eq!(ids.value(0), 10);
+        assert_eq!(ids.value(1), 20);
+    }
+
+    #[test]
+    fn single_chunk_reader_injects_nullable_metadata() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("nullable_col", DataType::Utf8, true),
+            Field::new("required_col", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::new_empty(schema.clone());
+        let base64 = encode_arrow_ipc_base64(schema, &[batch]);
+
+        let reader =
+            single_chunk_reader(&base64, Some(&[true, false])).expect("arrow chunk should decode");
+        let schema = reader.schema();
+        assert_eq!(
+            schema.field(0).metadata().get("nullable"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            schema.field(1).metadata().get("nullable"),
+            Some(&"false".to_string())
+        );
+    }
+
+    #[test]
+    fn single_chunk_reader_rejects_invalid_base64() {
+        let result = single_chunk_reader("!!!not-base64!!!", None);
+        assert!(matches!(result, Err(ChunkError::Base64Decode { .. })));
+    }
+
+    #[tokio::test]
+    async fn json_prefetch_reader_reads_initial_rowset() {
+        let initial_rowset = vec![vec![Some("1".to_string())], vec![Some("2".to_string())]];
+        let row_types = vec![RowType::fixed("id", false, 10, 0)];
+
+        let reader = json_prefetch_reader(
+            &initial_rowset,
+            row_types,
+            vec![],
+            Client::new(),
+            &PrefetchConfig::default(),
+        )
+        .await
+        .expect("initial JSON rowset should convert");
+
+        let batches = tokio::task::spawn_blocking(move || drain_reader(reader))
+            .await
+            .expect("spawn_blocking should join");
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_chunks_reader_parses_inline_arrow_chunk() {
+        let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![42])) as ArrayRef],
+        )
+        .expect("RecordBatch should build");
+        let inline = encode_arrow_ipc_base64(schema, &[batch]);
+
+        let reader = fetch_chunks_reader(
+            vec![FetchChunkInput::Inline(inline)],
+            ChunkFormatKind::ArrowIpc,
+            vec![],
+            &[false],
+            Client::new(),
+            &PrefetchConfig::default(),
+        )
+        .await
+        .expect("inline Arrow chunk should decode");
+
+        let batches = tokio::task::spawn_blocking(move || drain_reader(reader))
+            .await
+            .expect("spawn_blocking should join");
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 1);
+        let ids = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("n column should be Int64");
+        assert_eq!(ids.value(0), 42);
+    }
+
+    #[tokio::test]
+    async fn fetch_chunks_reader_parses_remote_only_arrow_chunks() {
+        let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![7, 8])) as ArrayRef],
+        )
+        .expect("RecordBatch should build");
+        let arrow_body = {
+            let mut buf = Vec::new();
+            {
+                let mut writer = StreamWriter::try_new(&mut buf, schema.as_ref())
+                    .expect("StreamWriter should accept schema");
+                writer
+                    .write(&batch)
+                    .expect("StreamWriter should accept batch");
+                writer.finish().expect("StreamWriter should finish");
+            }
+            buf
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(arrow_body))
+            .mount(&server)
+            .await;
+
+        let chunks = vec![FetchChunkInput::Remote(ChunkDownloadData {
+            url: server.uri(),
+            row_count: 2,
+            uncompressed_size: 64,
+            compressed_size: 64,
+            headers: HashMap::new(),
+        })];
+
+        let reader = fetch_chunks_reader(
+            chunks,
+            ChunkFormatKind::ArrowIpc,
+            vec![],
+            &[false],
+            Client::new(),
+            &PrefetchConfig::default(),
+        )
+        .await
+        .expect("remote-only Arrow fetch should succeed");
+
+        let batches = tokio::task::spawn_blocking(move || drain_reader(reader))
+            .await
+            .expect("spawn_blocking should join");
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_chunks_reader_parses_remote_only_json_chunks() {
+        let server = MockServer::start().await;
+        let json_body = br#"[ "1" ], [ "2" ]"#;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(json_body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let row_types = vec![RowType::fixed("id", false, 10, 0)];
+        let chunks = vec![FetchChunkInput::Remote(ChunkDownloadData {
+            url: server.uri(),
+            row_count: 2,
+            uncompressed_size: json_body.len() as i64,
+            compressed_size: json_body.len() as i64,
+            headers: HashMap::new(),
+        })];
+
+        let reader = fetch_chunks_reader(
+            chunks,
+            ChunkFormatKind::Json,
+            row_types,
+            &[false],
+            Client::new(),
+            &PrefetchConfig::default(),
+        )
+        .await
+        .expect("remote-only JSON fetch should succeed");
+
+        let batches = tokio::task::spawn_blocking(move || {
+            reader
+                .collect::<Result<Vec<_>, _>>()
+                .expect("draining reader should succeed")
+        })
+        .await
+        .expect("spawn_blocking should join");
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
+        let data_batch = batches
+            .iter()
+            .find(|batch| batch.num_rows() > 0)
+            .expect("expected a non-empty batch");
+        let ids = data_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("id column should be Int64");
+        assert_eq!(ids.value(0), 1);
+        assert_eq!(ids.value(1), 2);
+    }
 
     #[tokio::test]
     async fn fetch_chunks_reader_rejects_multiple_inline_chunks() {
