@@ -33,6 +33,22 @@ final class Results {
     return file;
   }
 
+  static Path writePutGetCsvResults(
+      List<PutExecution.IterationResult> results, String testName, String driverType)
+      throws IOException {
+    Path dir = testDir(testName, driverType);
+    Files.createDirectories(dir);
+    Path file = dir.resolve(testName + "_jdbc_" + driverType + "_" + epochSeconds() + ".csv");
+    try (Writer w = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+      w.write("timestamp_ms,query_s,cpu_time_s,peak_rss_mb\n");
+      for (PutExecution.IterationResult r : results) {
+        w.write(String.format("%d,%.6f,%.6f,%.1f%n",
+            r.timestampMs, r.queryTimeS, r.cpuTimeS, r.peakRssMb));
+      }
+    }
+    return file;
+  }
+
   static Path writeMemoryTimeline(
       List<ResourceMonitor.Sample> timeline, String testName, String driverType)
       throws IOException {
