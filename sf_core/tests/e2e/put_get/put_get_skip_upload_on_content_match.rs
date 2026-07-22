@@ -24,9 +24,7 @@ fn run_put_with_kwarg(
     }
     let result = client.execute_statement_query(&stmt);
     let rs_handle = unwrap_single_rs_handle(&result);
-    let stream = client.result_set_get_stream(&rs_handle);
-    client.result_set_release(&rs_handle);
-    stream
+    client.result_set_get_stream(&rs_handle)
 }
 
 fn build_put_sql(stage: &str, file_path: &Path, overwrite: bool) -> String {

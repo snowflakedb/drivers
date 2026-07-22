@@ -8,4 +8,4 @@ Bug fixes:
 
 Test improvements:
 
-- `SnowflakeTestClient` now automatically releases statement handles via Drop, eliminating manual `release_statement()` calls in tests and preventing resource leaks when tests panic.
+- `SnowflakeTestClient` now automatically releases statement handles and result set handles via Drop, eliminating manual `release_statement()` and `result_set_release()` calls in tests and preventing resource leaks when tests panic.
