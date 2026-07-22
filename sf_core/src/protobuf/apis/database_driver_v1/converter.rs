@@ -485,6 +485,11 @@ impl ConnectionGetInfoResponse {
                 None
             },
             user_agent: info.user_agent,
+            proxy_host: info.proxy_host,
+            proxy_port: info.proxy_port,
+            proxy_user: info.proxy_user,
+            proxy_password: info.proxy_password.map(|p| p.reveal().to_string()),
+            no_proxy: info.no_proxy,
         }
     }
 }

@@ -549,6 +549,11 @@ class TestConnectionInfoProperties:
             schema="PUBLIC",
             warehouse="COMPUTE_WH",
             session_id=12345678,
+            proxy_host="proxy.example.com",
+            proxy_port=8080,
+            proxy_user="puser",
+            proxy_password="ppass",
+            no_proxy="localhost,127.0.0.1",
         )
         return connection
 
@@ -578,6 +583,21 @@ class TestConnectionInfoProperties:
 
     def test_session_id_returns_value(self, conn_with_info):
         assert conn_with_info.session_id == 12345678
+
+    def test_proxy_host_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_host == "proxy.example.com"
+
+    def test_proxy_port_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_port == 8080
+
+    def test_proxy_user_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_user == "puser"
+
+    def test_proxy_password_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_password == "ppass"
+
+    def test_no_proxy_returns_value(self, conn_with_info):
+        assert conn_with_info.no_proxy == "localhost,127.0.0.1"
 
 
 class TestConnectionInfoPropertiesUnset:
@@ -616,6 +636,21 @@ class TestConnectionInfoPropertiesUnset:
     def test_session_id_raises_when_unset(self, conn_empty_info):
         with pytest.raises(InterfaceError, match="Session ID is not available"):
             _ = conn_empty_info.session_id
+
+    def test_proxy_host_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_host is None
+
+    def test_proxy_port_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_port is None
+
+    def test_proxy_user_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_user is None
+
+    def test_proxy_password_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_password is None
+
+    def test_no_proxy_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.no_proxy is None
 
 
 class TestConnectionInfoDelegation:

@@ -351,6 +351,11 @@ message ConnectionGetInfoResponse {
   optional string warehouse = 11;
   optional string master_token = 12;
   optional string user_agent = 13;
+  optional string proxy_host = 14;
+  optional int64 proxy_port = 15;
+  optional string proxy_user = 16;
+  optional string proxy_password = 17;
+  optional string no_proxy = 18;
 }
 
 message ConnectionGetObjectsRequest {
