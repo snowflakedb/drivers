@@ -51,6 +51,7 @@
    hatch run build-python
    hatch run build-core
    hatch run build-odbc
+   hatch run build-jdbc
    ```
 
 #### Platform Architecture
@@ -75,8 +76,17 @@ hatch run python-both-local
 hatch run odbc-universal-local
 hatch run odbc-old-local
 hatch run odbc-both-local
+hatch run jdbc-universal-local
 hatch run core-local-no-docker
 ```
+
+> **JDBC** is currently in Phase 1: the universal driver and `SELECT` tests only. The
+> `old`/`both` comparison, PUT/GET, and recorded-HTTP variants land in later phases —
+> those definitions are automatically skipped when running with `--driver=jdbc`, so a
+> full `tests/` run stays green. JDBC emits the base per-iteration columns
+> (`timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb`);
+> the `perf_timing` core-instrumentation columns are not available because `jdbc_bridge`
+> exposes no perf FFI over JNI.
 
 #### CI Testing (With Benchstore Upload)
 
@@ -88,6 +98,7 @@ hatch run python-both
 hatch run odbc-universal
 hatch run odbc-old
 hatch run odbc-both
+hatch run jdbc-universal
 ```
 
 ### Cloud Provider Selection
@@ -680,6 +691,7 @@ How `DRIVER_VERSION` is determined for each driver:
 | **Core** | Uses compile-time `CARGO_PKG_VERSION` macro from `Cargo.toml` (`0.1.0`) | N/A (no old implementation) |
 | **Python** | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package (`0.1.0`) | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package |
 | **ODBC** | `"UNKNOWN"` (SQLGetInfo not yet implemented) | Retrieved via `SQLGetInfo(SQL_DRIVER_VER)` from installed driver |
+| **JDBC** | `DatabaseMetaData.getDriverVersion()` from the connected driver | N/A (Phase 1: universal only) |
 
 ---
 
@@ -698,10 +710,17 @@ For ODBC and Python drivers, a shared base image is built first using `Dockerfil
 This creates an intermediate image containing Core libraries:
 - `libsf_core.so` - Core Snowflake driver library
 - `libsfodbc.so` - ODBC wrapper around `sf_core`
+- `libjdbc_bridge.so` - JNI transport around `sf_core` (loaded by the JDBC driver)
 
 These libraries are copied into the final driver images:
 - **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
+- **JDBC**: Copies `libjdbc_bridge.so` → Loaded by `NativeLibraryLoader` via `CORE_PATH`. The
+  universal JDBC fat jar (`snowflake-jdbc-v2-standalone.jar`) is assembled by the jar stage of
+  `drivers/jdbc/Dockerfile`, which extends `sf-core-builder` and adds a JDK. It extends the
+  builder (rather than using a plain JDK image) because `gradlew shadowJar` runs
+  `generateProtobuf`, which shells out to the Rust `proto_generator` against the workspace's
+  `.proto` — the committed `protobuf_gen` sources are a regenerated placeholder.
 
 ---
 

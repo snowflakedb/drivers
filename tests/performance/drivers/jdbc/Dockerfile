@@ -1,0 +1,75 @@
+# Build with: cd tests/performance && hatch run build-jdbc
+#
+# The jar stage extends sf-core-builder (not a plain JDK image) because gradlew shadowJar runs
+# generateProtobuf, which shells out to the Rust proto_generator in the workspace. The builder
+# also carries the prebuilt libjdbc_bridge.so.
+ARG BUILDPLATFORM=linux/amd64
+
+# ============================================================================
+# Stage: assemble the universal JDBC fat jar + compile the perf app
+# ============================================================================
+FROM --platform=${BUILDPLATFORM} sf-core-builder:latest AS jar_builder
+
+# shadowJar needs JDK 11+; the driver still targets bytecode 1.8. sf-core-builder is Debian
+# trixie, whose default JDK is 21 (matches the CI assembly JDK and the JRE 21 runtime below).
+RUN apt-get update && apt-get install -y openjdk-21-jdk-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+# JDBC project must sit in the workspace root so generateProtobuf resolves ../Cargo.toml.
+COPY jdbc/ /workdir/jdbc/
+
+# jdbc's settings.gradle + build.gradle resolve through Snowflake's Artifactory Maven proxy (instead
+# of public Maven Central / the Gradle Plugin Portal, which rate-limit CI) only when JENKINS_HOME is
+# set. A Docker build does not inherit the agent's env, so propagate it explicitly (build.sh passes
+# the agent's JENKINS_HOME; empty on local dev, where the public repos are fine).
+ARG JENKINS_HOME=
+ENV JENKINS_HOME=${JENKINS_HOME}
+
+RUN cd /workdir/jdbc && \
+    ./gradlew --no-daemon --console=plain shadowJar && \
+    cp build/libs/snowflake-jdbc-v2-standalone-*.jar /workdir/snowflake-jdbc-v2-standalone.jar
+
+# Compile the perf app against the fat jar (which also supplies the shaded org.json it uses).
+COPY tests/performance/drivers/jdbc/app/ /workdir/app/
+RUN mkdir -p /workdir/app-classes && \
+    javac -cp "/workdir/snowflake-jdbc-v2-standalone.jar" \
+      -d /workdir/app-classes \
+      $(find /workdir/app/src -name '*.java')
+
+# Capture the Rust compiler version that built libjdbc_bridge.so (for run metadata).
+RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /workdir/rust_version
+
+# ============================================================================
+# Base runtime image (shared by driver targets)
+# ============================================================================
+FROM --platform=${BUILDPLATFORM} eclipse-temurin:21-jre AS base
+
+WORKDIR /opt/jdbc
+
+RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
+
+COPY --from=jar_builder /workdir/snowflake-jdbc-v2-standalone.jar /opt/jdbc/snowflake-jdbc-v2-standalone.jar
+COPY --from=jar_builder /workdir/app-classes/ /opt/jdbc/app/
+
+# Arrow requires nio access and native access on modern JDKs (mirrors the JDBC test task).
+ENV JDBC_JAVA_OPTS="--add-opens=java.base/java.nio=ALL-UNNAMED --enable-native-access=ALL-UNNAMED"
+ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-v2-standalone.jar"
+
+# ============================================================================
+# Universal driver image
+# ============================================================================
+FROM base AS universal
+
+COPY --from=jar_builder /workdir/libjdbc_bridge.so /opt/jdbc/libjdbc_bridge.so
+COPY --from=jar_builder /workdir/rust_version /etc/rust_version
+
+ENV DRIVER_TYPE=universal
+# NativeLibraryLoader resolves the JNI transport from CORE_PATH.
+ENV CORE_PATH=/opt/jdbc/libjdbc_bridge.so
+
+CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+    fi && \
+    java ${JDBC_JAVA_OPTS} -cp "${JDBC_CLASSPATH}" net.snowflake.perf.Main
