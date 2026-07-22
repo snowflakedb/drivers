@@ -2,9 +2,10 @@ package net.snowflake.perf;
 
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.util.List;
 import java.util.Properties;
 
-/** Runs the configured SELECT test against Snowflake and writes CSV/JSON metrics to /results. */
+/** Runs the configured SELECT or PUT/GET test against Snowflake and writes metrics to /results. */
 public final class Main {
 
   private Main() {}
@@ -19,10 +20,10 @@ public final class Main {
       return;
     }
 
-    // Phase 2: universal + old driver types; SELECT only (PUT/GET arrives in Phase 3).
-    if (!"select".equals(config.testType)) {
+    // Phase 3: select + put_get. recorded-HTTP (select_recorded_http) reuses the select path.
+    if (!"select".equals(config.testType) && !"put_get".equals(config.testType)) {
       System.out.println(
-          "ERROR: jdbc perf supports only test_type=select (got " + config.testType + ")");
+          "ERROR: jdbc perf supports test_type=select or put_get (got " + config.testType + ")");
       System.exit(1);
     }
 
@@ -35,9 +36,21 @@ public final class Main {
       String driverVersion = ConnectionFactory.driverVersion(conn);
       ConnectionFactory.executeSetupQueries(conn, config.setupQueries());
 
-      QueryExecution.FetchTestOutput output =
-          QueryExecution.executeFetchTest(
-              conn, config.sqlCommand, config.warmupIterations, config.iterations);
+      Path csv;
+      List<ResourceMonitor.Sample> memoryTimeline;
+      if ("put_get".equals(config.testType)) {
+        PutExecution.PutTestOutput output =
+            PutExecution.execute(
+                conn, config.sqlCommand, config.warmupIterations, config.iterations);
+        csv = Results.writePutGetCsvResults(output.results, config.testName, config.driverType);
+        memoryTimeline = output.memoryTimeline;
+      } else {
+        QueryExecution.FetchTestOutput output =
+            QueryExecution.executeFetchTest(
+                conn, config.sqlCommand, config.warmupIterations, config.iterations);
+        csv = Results.writeCsvResults(output.results, config.testName, config.driverType);
+        memoryTimeline = output.memoryTimeline;
+      }
 
       String serverVersion =
           "true".equals(System.getenv("WIREMOCK_REPLAY"))
@@ -45,8 +58,7 @@ public final class Main {
               : ConnectionFactory.serverVersion(conn);
       Results.writeRunMetadata(config.driverType, driverVersion, serverVersion);
 
-      Path csv = Results.writeCsvResults(output.results, config.testName, config.driverType);
-      Results.writeMemoryTimeline(output.memoryTimeline, config.testName, config.driverType);
+      Results.writeMemoryTimeline(memoryTimeline, config.testName, config.driverType);
       System.out.println("Complete: " + csv);
     } catch (Exception e) {
       System.out.println("Test failed: " + e.getMessage());
