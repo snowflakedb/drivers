@@ -6,6 +6,7 @@ use sf_core::protobuf::apis::database_driver_v1::{
     database_driver_client_with,
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
+use std::sync::Mutex;
 
 use super::arrow_result_helper::ArrowResultHelper;
 use super::config::{Parameters, get_parameters, setup_logging};
@@ -30,6 +31,7 @@ pub struct SnowflakeTestClient {
     pub parameters: Parameters,
     private_key_file: Option<PrivateKeyFile>,
     client: DatabaseDriverClient,
+    created_statements: Mutex<Vec<StatementHandle>>,
 }
 
 impl SnowflakeTestClient {
@@ -58,6 +60,7 @@ impl SnowflakeTestClient {
             parameters,
             private_key_file: None,
             client,
+            created_statements: Mutex::new(Vec::new()),
         };
 
         test_client.set_options_from_parameters();
@@ -154,6 +157,7 @@ impl SnowflakeTestClient {
             parameters: test_parameters,
             private_key_file: None,
             client,
+            created_statements: Mutex::new(Vec::new()),
         };
 
         test_client.set_options_from_parameters();
@@ -194,7 +198,9 @@ impl SnowflakeTestClient {
                 conn_handle: Some(self.conn_handle),
             })
             .unwrap();
-        response.stmt_handle.unwrap()
+        let stmt_handle = response.stmt_handle.unwrap();
+        self.created_statements.lock().unwrap().push(stmt_handle);
+        stmt_handle
     }
 
     pub fn execute_statement_query(
@@ -295,6 +301,10 @@ impl SnowflakeTestClient {
                 stmt_handle: Some(*stmt),
             })
             .unwrap();
+        self.created_statements
+            .lock()
+            .unwrap()
+            .retain(|s| s != stmt);
     }
 
     /// Executes a SQL statement, ignoring the result. Use for DDL/side-effect queries.
@@ -790,6 +800,19 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
+        // Release all unreleased statements first
+        let statements = self.created_statements.lock().unwrap().clone();
+        for stmt in statements {
+            if let Err(e) = self
+                .client
+                .statement_release_blocking(StatementReleaseRequest {
+                    stmt_handle: Some(stmt),
+                })
+            {
+                tracing::warn!("Failed to release statement in Drop: {e:?}");
+            }
+        }
+
         // Release the connection when the client is dropped
         if let Err(e) = self
             .client

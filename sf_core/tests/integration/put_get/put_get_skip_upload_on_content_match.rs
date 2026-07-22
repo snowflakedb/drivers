@@ -25,7 +25,7 @@ fn run_put_with_kwarg(
     sql: &str,
     skip_upload_on_content_match: bool,
 ) -> ResultSetGetStreamResponse {
-    let stmt = scopeguard::guard(client.new_statement(), |s| client.release_statement(&s));
+    let stmt = client.new_statement();
     client.set_sql_query(&stmt, sql);
     client.set_statement_option(
         &stmt,

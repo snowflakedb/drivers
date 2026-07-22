@@ -16,7 +16,6 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
         let stmt = client.new_statement();
         client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
         client.execute_statement_query(&stmt);
-        client.release_statement(&stmt);
     });
     let stmt = client.new_statement();
 
@@ -142,8 +141,6 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
             "Column '{field_name}' should have exactly 1500 nulls"
         );
     }
-
-    client.release_statement(&stmt);
 }
 
 fn collect_all_batches(helper: &mut ArrowResultHelper) -> RecordBatch {

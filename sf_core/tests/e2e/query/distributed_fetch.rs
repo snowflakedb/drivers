@@ -43,9 +43,7 @@ fn should_return_inline_chunk_for_simple_distributed_fetch_query() {
     assert_eq!(total_rows, 1);
     assert_eq!(batches[0].num_columns(), 2);
 
-    // And resources should be released
     client.result_set_release(&rs_handle);
-    client.release_statement(&stmt);
 }
 
 #[test]
@@ -87,7 +85,5 @@ fn should_produce_multiple_chunks_for_large_distributed_fetch_result() {
     let total_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
     assert_eq!(total_rows, 500000);
 
-    // And resources should be released
     client.result_set_release(&rs_handle);
-    client.release_statement(&stmt);
 }
