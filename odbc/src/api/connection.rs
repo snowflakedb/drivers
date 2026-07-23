@@ -315,6 +315,29 @@ fn serialize_connection_string(params: &HashMap<String, String>) -> String {
     parts.join(";")
 }
 
+/// Read, parse, and connect from a raw connection string — the pipeline shared
+/// by `SQLDriverConnect` and `SQLBrowseConnect`. On success the caller-supplied
+/// connection string is returned so it can be echoed into the output buffer.
+fn resolve_and_connect<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    in_connection_string: *const E::Char,
+    in_string_length: sql::SmallInt,
+) -> OdbcResult<String> {
+    let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
+    let params = parse_connection_string(&connection_string)?;
+    // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
+    // they get normalised away — they are needed later to resolve the
+    // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+    let driver_section = params.get("DRIVER").cloned();
+    let dsn_name = params.get("DSN").cloned();
+    // Expand any DSN-stored attributes (account, host, user, credentials)
+    // underneath the caller-supplied connection-string params so that a bare
+    // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
+    let params = merge_dsn_config(params, dsn_name.as_deref())?;
+    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
+    Ok(connection_string)
+}
+
 /// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
 ///
 /// On success the completed connection string is written back to
@@ -369,6 +392,59 @@ pub fn driver_connect<E: OdbcEncoding>(
         Some(warnings),
     );
     Ok(())
+}
+
+/// Outcome of a successful [`browse_connect`] call.
+///
+/// Snowflake does not implement iterative attribute discovery, so a completed
+/// connection is either fully established (`Complete`) or the output buffer was
+/// too small to receive the connection string (`NeedData`). The FFI shim maps
+/// `NeedData` to `SQL_NEED_DATA`.
+pub enum BrowseOutcome {
+    Complete,
+    NeedData,
+}
+
+/// Connect using connection string (SQLBrowseConnect / SQLBrowseConnectW).
+///
+/// Behaves like [`driver_connect`] — Snowflake requires a complete connection
+/// string up front and does not iteratively prompt for attributes — with one
+/// spec-mandated difference: when the output buffer is too small to hold the
+/// connection string (including `buffer_length == 0`), it returns
+/// `SQL_NEED_DATA` (via [`BrowseOutcome::NeedData`]) rather than the `01004`
+/// truncation warning `SQLDriverConnect` uses. `*string_length_ptr` always
+/// receives the full required length. An incomplete string, bad credentials, or
+/// an unknown DSN surface as the usual connect errors (`SQL_ERROR` / `28000` /
+/// `IM002`).
+///
+/// Note: on `NeedData` the connection has already been established (Snowflake
+/// connects in a single round-trip); a subsequent call on the same handle would
+/// therefore be rejected with `08002`.
+pub fn browse_connect<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    in_connection_string: *const E::Char,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> OdbcResult<BrowseOutcome> {
+    let connection_string =
+        resolve_and_connect::<E>(connection_handle, in_connection_string, in_string_length)?;
+
+    // `None` warnings: SQLBrowseConnect signals a short buffer via SQL_NEED_DATA,
+    // not a `01004` warning. `*string_length_ptr` still receives the full length.
+    let truncated = write_string_chars::<E>(
+        &connection_string,
+        out_connection_string,
+        buffer_length,
+        string_length_ptr,
+        None,
+    );
+    if truncated {
+        Ok(BrowseOutcome::NeedData)
+    } else {
+        Ok(BrowseOutcome::Complete)
+    }
 }
 
 /// Core connection logic shared by `driver_connect` and `connect`.

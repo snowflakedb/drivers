@@ -855,13 +855,18 @@ fn looks_like_narrow_buffer(value_ptr: sql::Pointer, string_length: sql::Integer
 /// **DM-side code units** (characters) as `sql::SmallInt`.
 ///
 /// Used by: `SQLGetDiagRec`, `SQLDescribeCol`.
+///
+/// Returns whether the value was truncated. Callers that report truncation as a
+/// `01004` warning pass `Some(warnings)`; callers that need to act on truncation
+/// differently (e.g. `SQLBrowseConnect`, which returns `SQL_NEED_DATA`) pass
+/// `None` and use the returned flag.
 pub(crate) fn write_string_chars<E: OdbcEncoding>(
     string: &str,
     buffer: *mut E::Char,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
     warnings: Option<&mut Warnings>,
-) {
+) -> bool {
     let buf_units = if buffer_length < 0 {
         0
     } else {
@@ -874,6 +879,7 @@ pub(crate) fn write_string_chars<E: OdbcEncoding>(
     if truncated && let Some(w) = warnings {
         w.push(Warning::StringDataTruncated);
     }
+    truncated
 }
 
 /// Write a string where `buffer_length` and `*string_length_ptr` count
