@@ -373,10 +373,10 @@ pub fn set_diag_info_from_warnings(
     }
 }
 
-pub fn set_diag_info_from_result(
+pub fn set_diag_info_from_result<T>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
-    result: &OdbcResult<()>,
+    result: &OdbcResult<T>,
 ) {
     if handle.is_null() {
         return;

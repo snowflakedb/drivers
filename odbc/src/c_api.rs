@@ -1477,6 +1477,76 @@ pub unsafe extern "system" fn SQLDriverConnectW(
     result.to_sql_code_with_warnings(&warnings)
 }
 
+/// Map a `browse_connect` outcome to the SQLBrowseConnect return code.
+///
+/// `SQLBrowseConnect` uses `SQL_NEED_DATA` where `SQLDriverConnect` would report
+/// `01004` truncation, so the `NeedData` outcome cannot flow through the shared
+/// `to_sql_code` pipeline (which only yields SUCCESS/ERROR/…). Errors map the
+/// same way as any other connect error.
+fn browse_connect_ret_code(
+    result: api::OdbcResult<api::connection::BrowseOutcome>,
+) -> sql::RetCode {
+    match result {
+        Ok(api::connection::BrowseOutcome::Complete) => sql::SqlReturn::SUCCESS.0,
+        Ok(api::connection::BrowseOutcome::NeedData) => sql::SqlReturn::NEED_DATA.0,
+        Err(err) => Err::<(), _>(err).to_sql_code(),
+    }
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLBrowseConnect(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::Char,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::browse_connect::<Narrow>(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    record_api!(sql::HandleType::Dbc, connection_handle, "SQLBrowseConnect");
+    record_err!(sql::HandleType::Dbc, connection_handle, result);
+    browse_connect_ret_code(result)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLBrowseConnectW(
+    connection_handle: sql::Handle,
+    in_connection_string: *const WideChar,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut WideChar,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::browse_connect::<Wide>(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    record_api!(sql::HandleType::Dbc, connection_handle, "SQLBrowseConnect");
+    record_err!(sql::HandleType::Dbc, connection_handle, result);
+    browse_connect_ret_code(result)
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
