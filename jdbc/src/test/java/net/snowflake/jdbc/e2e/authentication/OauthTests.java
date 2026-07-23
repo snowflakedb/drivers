@@ -12,6 +12,7 @@ import net.snowflake.jdbc.utils.RequiresBrowser;
 import net.snowflake.jdbc.utils.TestParameters;
 import net.snowflake.jdbc.utils.WithConnect;
 import net.snowflake.jdbc.utils.WithQueryUtils;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -74,6 +75,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
     }
 
     @Test
+    @Disabled("Bad-secret tests cause pipeline flakiness by blocking the test account")
     void oauthShouldFailLegacyAuthenticationWithInvalidToken() {
       // Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
       Properties props = loadDefaultConnectionProperties();
@@ -146,6 +148,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
     }
 
     @Test
+    @Disabled("Bad-secret tests cause pipeline flakiness by blocking the test account")
     void oauthShouldFailAuthorizationCodeFlowWithBadClientSecret() {
       // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id but a
       // deliberately invalid client secret. The IdP token-exchange step must reject the credentials
@@ -213,6 +216,7 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
     }
 
     @Test
+    @Disabled("Bad-secret tests cause pipeline flakiness by blocking the test account")
     void oauthShouldFailClientCredentialsFlowWithBadClientSecret() {
       // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id, an invalid
       // client secret and a valid token_request_url
