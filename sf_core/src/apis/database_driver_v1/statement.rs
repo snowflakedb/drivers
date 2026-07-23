@@ -21,7 +21,7 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
+    AbortOutcome, QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
     snowflake_query_with_client,
 };
 
@@ -632,7 +632,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         query_id: String,
-    ) -> Result<(), ApiError> {
+    ) -> Result<AbortOutcome, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
             let conn_ptr =

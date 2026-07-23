@@ -39,6 +39,7 @@ from ..._internal.errorcode import ER_INVALID_VALUE
 from ..._internal.extras import pandas, pyarrow, requires_dependency
 from ..._internal.logging import get_logger
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ABORT_QUERY_OUTCOME_ABORTED,
     ExecuteQueryResponse,
     MultiStatementResult,
     PrepareResult,
@@ -922,4 +923,4 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        return response.success
+        return response.outcome == ABORT_QUERY_OUTCOME_ABORTED
