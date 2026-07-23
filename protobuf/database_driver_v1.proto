@@ -558,6 +558,17 @@ message ConnectionGetResultSetRequest {
   string query_id = 2;
 }
 
+// Outcome of a ConnectionAbortQuery call. Genuine failures (invalid handle,
+// transport errors, ...) are reported as an RPC error, not through this enum.
+enum AbortQueryOutcome {
+  ABORT_QUERY_OUTCOME_UNSPECIFIED = 0;
+  // The query was running and the abort was acknowledged.
+  ABORT_QUERY_OUTCOME_ABORTED = 1;
+  // The query was not running (e.g. already completed, or never started),
+  // so there was nothing to abort.
+  ABORT_QUERY_OUTCOME_NOT_RUNNING = 2;
+}
+
 // Abort a running query by its Snowflake Query ID.
 message ConnectionAbortQueryRequest {
   ConnectionHandle conn_handle = 1;
@@ -565,7 +576,7 @@ message ConnectionAbortQueryRequest {
 }
 
 message ConnectionAbortQueryResponse {
-  bool success = 1;
+  AbortQueryOutcome outcome = 1;
 }
 
 // Streaming PUT: upload an in-memory byte buffer using a PUT SQL statement.

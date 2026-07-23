@@ -267,6 +267,20 @@ impl SnowflakeTestClient {
         result
     }
 
+    /// Submit a statement without waiting for it to complete, returning its
+    /// query id immediately. Unlike `execute_statement_query`, this does not
+    /// poll the server for a result, so the query is typically still running
+    /// when this call returns.
+    pub fn execute_statement_async(&self, stmt: &StatementHandle) -> String {
+        self.client
+            .statement_execute_async_blocking(StatementExecuteAsyncRequest {
+                stmt_handle: Some(*stmt),
+                bindings: None,
+            })
+            .unwrap()
+            .query_id
+    }
+
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
         self.client
             .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
@@ -460,6 +474,41 @@ impl SnowflakeTestClient {
             self.created_result_sets.lock().unwrap().push(handle);
         }
         response
+    }
+
+    /// Abort a running query by its Snowflake Query ID. Returns the server's
+    /// outcome (`NotRunning` if the query was not running — e.g. already
+    /// completed, or never started). Panics on a genuine RPC error (bad
+    /// handle, transport failure).
+    pub fn abort_query(&self, query_id: &str) -> AbortQueryOutcome {
+        let outcome = self.abort_query_no_unwrap(query_id).unwrap().outcome;
+        AbortQueryOutcome::try_from(outcome).unwrap_or(AbortQueryOutcome::Unspecified)
+    }
+
+    /// Like [`Self::abort_query`], but surfaces a genuine RPC error instead
+    /// of panicking — for tests asserting on the error path itself.
+    pub fn abort_query_no_unwrap(
+        &self,
+        query_id: &str,
+    ) -> Result<ConnectionAbortQueryResponse, String> {
+        self.client
+            .connection_abort_query_blocking(ConnectionAbortQueryRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    /// Fetch the current status name (e.g. "RUNNING", "ABORTED") of a query
+    /// by its Snowflake Query ID via `ConnectionGetQueryStatus`.
+    pub fn get_query_status(&self, query_id: &str) -> String {
+        self.client
+            .connection_get_query_status_blocking(ConnectionGetQueryStatusRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .unwrap()
+            .status_name
     }
 
     /// Streaming PUT: upload `data` using `sql` (JDBC `uploadStream` / Python

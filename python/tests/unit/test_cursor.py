@@ -20,6 +20,8 @@ from snowflake.connector._internal.extras import (
     check_dependency as _real_check_dependency,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ABORT_QUERY_OUTCOME_ABORTED,
+    ABORT_QUERY_OUTCOME_NOT_RUNNING,
     ConnectionHandle,
     ResultSetHandle,
     StatementHandle,
@@ -2056,7 +2058,7 @@ class TestAbortQuery:
 
     def test_abort_query_returns_true_on_success(self, cursor, mock_core_client):
         """abort_query sends correct RPC args and returns True on success."""
-        mock_core_client.connection_abort_query.return_value.success = True
+        mock_core_client.connection_abort_query.return_value.outcome = ABORT_QUERY_OUTCOME_ABORTED
 
         result = cursor.abort_query("01234567-abcd-ef01-0000-000000000001")
 
@@ -2067,7 +2069,7 @@ class TestAbortQuery:
 
     def test_abort_query_returns_false_on_failure(self, cursor, mock_core_client):
         """abort_query returns False when the server reports failure."""
-        mock_core_client.connection_abort_query.return_value.success = False
+        mock_core_client.connection_abort_query.return_value.outcome = ABORT_QUERY_OUTCOME_NOT_RUNNING
 
         result = cursor.abort_query("some-qid")
 
@@ -2075,7 +2077,7 @@ class TestAbortQuery:
 
     def test_abort_query_does_not_mutate_cursor_state(self, cursor, mock_core_client):
         """abort_query does not modify description, rowcount, or execute_result."""
-        mock_core_client.connection_abort_query.return_value.success = True
+        mock_core_client.connection_abort_query.return_value.outcome = ABORT_QUERY_OUTCOME_ABORTED
 
         cursor.abort_query("some-qid")
 

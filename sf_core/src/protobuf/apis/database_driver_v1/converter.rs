@@ -22,6 +22,7 @@ use crate::chunks::{
 use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
+use crate::rest::snowflake::AbortOutcome;
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::array::RecordBatchReader;
@@ -187,6 +188,19 @@ pub(super) fn proto_chunk_format_to_kind(value: i32) -> Option<ChunkFormatKind> 
         ChunkFormat::ArrowIpc => Some(ChunkFormatKind::ArrowIpc),
         ChunkFormat::Json => Some(ChunkFormatKind::Json),
         ChunkFormat::Unspecified => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Abort-query outcome conversion (native ↔ proto)
+// ---------------------------------------------------------------------------
+
+impl From<AbortOutcome> for AbortQueryOutcome {
+    fn from(value: AbortOutcome) -> Self {
+        match value {
+            AbortOutcome::Aborted => AbortQueryOutcome::Aborted,
+            AbortOutcome::NotRunning => AbortQueryOutcome::NotRunning,
+        }
     }
 }
 

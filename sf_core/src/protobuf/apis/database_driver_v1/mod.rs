@@ -674,16 +674,15 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionAbortQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let success = match self
+        let outcome = self
             .driver
             .connection_abort_query(conn_handle.into(), input.query_id)
             .await
-        {
-            Ok(()) => true,
-            Err(_) => false,
-        };
+            .to_protobuf()?;
 
-        Ok(ConnectionAbortQueryResponse { success })
+        Ok(ConnectionAbortQueryResponse {
+            outcome: AbortQueryOutcome::from(outcome) as i32,
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_send_http", skip(self, input))]
@@ -1199,6 +1198,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementExecuteQueryRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
+    fn statement_execute_async_blocking(
+        &self,
+        input: StatementExecuteAsyncRequest,
+    ) -> BlockingProtoResult<StatementExecuteAsyncResponse>;
     fn statement_set_sql_query_blocking(
         &self,
         input: StatementSetSqlQueryRequest,
@@ -1279,6 +1282,14 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionDownloadStreamRequest,
     ) -> BlockingProtoResult<ConnectionDownloadStreamResponse>;
+    fn connection_abort_query_blocking(
+        &self,
+        input: ConnectionAbortQueryRequest,
+    ) -> BlockingProtoResult<ConnectionAbortQueryResponse>;
+    fn connection_get_query_status_blocking(
+        &self,
+        input: ConnectionGetQueryStatusRequest,
+    ) -> BlockingProtoResult<ConnectionGetQueryStatusResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1330,6 +1341,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementExecuteQueryRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
         block_on_client_call(self.statement_execute_query(input))
+    }
+
+    fn statement_execute_async_blocking(
+        &self,
+        input: StatementExecuteAsyncRequest,
+    ) -> BlockingProtoResult<StatementExecuteAsyncResponse> {
+        block_on_client_call(self.statement_execute_async(input))
     }
 
     fn statement_set_sql_query_blocking(
@@ -1470,5 +1488,19 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionDownloadStreamRequest,
     ) -> BlockingProtoResult<ConnectionDownloadStreamResponse> {
         block_on_client_call(self.connection_download_stream(input))
+    }
+
+    fn connection_abort_query_blocking(
+        &self,
+        input: ConnectionAbortQueryRequest,
+    ) -> BlockingProtoResult<ConnectionAbortQueryResponse> {
+        block_on_client_call(self.connection_abort_query(input))
+    }
+
+    fn connection_get_query_status_blocking(
+        &self,
+        input: ConnectionGetQueryStatusRequest,
+    ) -> BlockingProtoResult<ConnectionGetQueryStatusResponse> {
+        block_on_client_call(self.connection_get_query_status(input))
     }
 }

@@ -2088,18 +2088,34 @@ where
     }
 }
 
+/// Outcome of a [`snowflake_abort_query`] call. A server-declined abort
+/// (the query was not running — e.g. already completed, or never started) is
+/// an expected outcome, not an error — only genuine failures (bad handle,
+/// transport, session) propagate as `Err`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbortOutcome {
+    /// The query was running and the abort was acknowledged.
+    Aborted,
+    /// The query was not running (e.g. already completed, or never
+    /// started); nothing to abort.
+    NotRunning,
+}
+
 /// Abort a running query by its Snowflake Query ID.
 ///
 /// Issues `POST /queries/{query_id}/abort-request` with an empty JSON body.
-/// Returns `Ok(())` when the server acknowledges the abort (`success: true`),
-/// or `RestError::QueryFailed` when `success: false`.
+/// Returns `Ok(AbortOutcome::Aborted)` when the server acknowledges the abort
+/// (`success: true`), or `Ok(AbortOutcome::NotRunning)` when it declines
+/// (the query was not running — e.g. already completed, or never started) —
+/// this is a normal outcome, not an error. Transport, parse, and
+/// session-token errors still propagate as `Err`.
 #[tracing::instrument(skip(client, query_parameters, session_token))]
 pub async fn snowflake_abort_query(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     query_id: &str,
-) -> Result<(), RestError> {
+) -> Result<AbortOutcome, RestError> {
     let abort_url = format!(
         "{}/queries/{}/abort-request",
         query_parameters.server_url, query_id
@@ -2120,23 +2136,15 @@ pub async fn snowflake_abort_query(
         context: "Failed to execute abort query request",
     })?;
 
-    let abort_response = read_response_json::<serde_json::Value>(response)
+    let abort_response: query_response::AbortQueryResponse = read_response_json(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
-    if !abort_response.success {
-        return QueryFailedSnafu {
-            message: abort_response
-                .message
-                .unwrap_or_else(|| "Abort query failed".to_owned()),
-            query_id: query_id.to_owned(),
-            code: Option::<i32>::None,
-            sql_state: Option::<String>::None,
-        }
-        .fail();
-    }
-
-    Ok(())
+    Ok(if abort_response.success {
+        AbortOutcome::Aborted
+    } else {
+        AbortOutcome::NotRunning
+    })
 }
 
 /// Standard Snowflake JSON response envelope: `{success, code, message, data: T}`.
@@ -3077,6 +3085,134 @@ mod tests {
                 3,
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
+            );
+        }
+    }
+
+    mod snowflake_abort_query_tests {
+        use super::*;
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn query_parameters(server_url: String) -> QueryParameters {
+            QueryParameters {
+                server_url,
+                client_info: test_client_info(),
+                log_max_query_length: 1024,
+                log_query_text: false,
+                log_query_parameters: false,
+            }
+        }
+
+        #[tokio::test]
+        async fn success_true_returns_ok_aborted() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/.*/abort-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_abort_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "01abcdef-0000-0000-0000-000000000000",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Ok(AbortOutcome::Aborted)),
+                "expected Ok(Aborted), got {result:?}"
+            );
+        }
+
+        /// Server declining the abort (query not running — e.g. already
+        /// completed, code `000605`) is a normal outcome — `Ok(NotRunning)`,
+        /// not an error, and no retry.
+        #[tokio::test]
+        async fn success_false_returns_ok_not_running_without_retry() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/.*/abort-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "000605",
+                    "message": "Query is not currently executing",
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_abort_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "01abcdef-0000-0000-0000-000000000000",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Ok(AbortOutcome::NotRunning)),
+                "expected Ok(NotRunning), got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn non_2xx_response_returns_err() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/.*/abort-request"))
+                .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_abort_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "01abcdef-0000-0000-0000-000000000000",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(RestError::InvalidSnowflakeResponse { .. })),
+                "expected InvalidSnowflakeResponse error, got {result:?}"
+            );
+        }
+
+        /// `success:false` with body code `390112` (session token expired) still
+        /// routes through the existing `SessionExpired` mapping in
+        /// `read_response_json`, surfaced here as `InvalidSnowflakeResponse`.
+        #[tokio::test]
+        async fn session_expired_code_returns_err() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/.*/abort-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "390112",
+                    "message": "Session token expired",
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_abort_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "01abcdef-0000-0000-0000-000000000000",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(RestError::InvalidSnowflakeResponse { .. })),
+                "expected InvalidSnowflakeResponse(SessionExpired), got {result:?}"
             );
         }
     }

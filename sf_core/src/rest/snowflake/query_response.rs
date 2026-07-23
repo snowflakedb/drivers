@@ -20,7 +20,8 @@ const DEFAULT_TEXT_LENGTH: u64 = 16_777_216;
 /// See: https://docs.snowflake.com/en/developer-guide/sql-api/reference
 const DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER: u64 = 1;
 
-/// Response from the `POST /queries/{qid}/abort-request` endpoint.
+/// Response from the `POST /queries/{qid}/abort-request` endpoint, used by
+/// [`crate::rest::snowflake::snowflake_abort_query`].
 ///
 /// The endpoint carries no payload beyond the standard envelope, so we use
 /// `serde_json::Value` for `T`. `#[serde(default)]` on the envelope makes the
