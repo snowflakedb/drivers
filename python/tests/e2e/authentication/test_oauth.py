@@ -68,6 +68,7 @@ class TestLegacyOAuthAccessToken:
         with connection:
             verify_simple_query_execution(connection)
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_legacy_authentication_with_invalid_token(self, connection_factory, legacy_oauth_params):
         # Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
         connect_params = {
@@ -184,6 +185,7 @@ class TestOAuthAuthorizationCode:
         with connection:
             verify_simple_query_execution(connection)
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_authorization_code_flow_with_bad_client_secret(
         self, connection_factory, authorization_code_params
     ):
@@ -297,6 +299,7 @@ class TestOAuthClientCredentials:
         with connection:
             verify_simple_query_execution(connection)
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_client_credentials_flow_with_bad_client_secret(
         self, connection_factory, client_credentials_params
     ):
