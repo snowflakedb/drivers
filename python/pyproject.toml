@@ -24,7 +24,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "cryptography>=44.0.1",
+    "cryptography>=46.0.5",
     "protobuf>=6.32.1",
     "pytz",
     "tomlkit>=0.13",
@@ -235,7 +235,7 @@ dependencies = [
     # Runtime deps mypy needs to resolve imports in snowflake.connector.
     # Keep in sync with `[project].dependencies` plus numpy (referenced by
     # arrow_context.py type hints).
-    "cryptography>=44.0.1",
+    "cryptography>=46.0.5",
     "protobuf>=6.32.1",
     "pytz",
     "tomlkit>=0.13",
