@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -11,17 +12,34 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class BinaryTests extends SnowflakeIntegrationTestBase {
+public class BinaryTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final String BINARY_TYPE = "BINARY";
   private static final int LARGE_RESULT_SET_SIZE = 30_000;
   private static final int SEQUENTIAL_BINARY_TEXT_WIDTH = 10;
+  // Unbounded BINARY reports max length as 8 MB in bits (matching driver display/precision).
+  private static final int BINARY_MAX_LENGTH = 8 * 1024 * 1024 * 8;
+  private static final ColumnExpectation BINARY_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.BINARY,
+          "BINARY",
+          byte[].class.getName(),
+          BINARY_MAX_LENGTH,
+          0,
+          BINARY_MAX_LENGTH,
+          false,
+          false,
+          columnNoNulls);
 
   @Test
   public void shouldCastBinaryValuesToAppropriateType() throws Exception {
@@ -45,6 +63,15 @@ public class BinaryTests extends SnowflakeIntegrationTestBase {
           // And the result should contain binary values:
           assertBinaryRowEquals(
               row, Arrays.asList(bytesFromHex("48656C6C6F"), bytesFromHex("576F726C64")));
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  BINARY_COLUMN.withColumnName("TO_BINARY('48656C6C6F', 'HEX')::BINARY"),
+                  BINARY_COLUMN.withColumnName("TO_BINARY('V29YBGQ=', 'BASE64')::BINARY")));
         });
   }
 
