@@ -105,7 +105,7 @@ call site.
 
 The flow mirrors Python across JNI instead of the C FFI:
 
-1. `CoreLogger` gates on its SLF4J logger (`isInfoEnabled`, …) and formats +
+1. `CoreLogger` gates on its delivery logger (`isInfoEnabled`, …) and formats +
    masks the message before crossing JNI.
 2. It calls `CoreLoggingBridge.logEvent` (JNI), carrying `level`, the formatted
    `message`, and `logger_name` (the originating Java logger, e.g.
@@ -115,14 +115,19 @@ The flow mirrors Python across JNI instead of the C FFI:
    `wrapper_event!` macro the C FFI uses), so every core layer sees it.
 4. The JNI `SFLoggerLayer` hands it back. Wrapper round-trip events carry a
    `logger_name`, so it delivers through `SFLoggerFactory.getDeliveryLogger` —
-   which returns a *plain* SLF4J logger, never a `CoreLogger`, so a delivered
+   which returns a *plain* JUL or SLF4J logger (never a `CoreLogger`), so a delivered
    record cannot re-enter the round-trip and loop. Core-originated events leave
    `logger_name` empty and land on `net.snowflake.client.CoreLogger`.
+
+**Delivery backend.** `net.snowflake.jdbc.loggerImpl` selects the delivery logger,
+defaulting to JUL (`net.snowflake.client.log.JDK14Logger`) for legacy driver
+compatibility. Set to `net.snowflake.client.log.SLF4JLogger` to route delivery
+through SLF4J instead.
 
 **Initialization / fallback.** `logEvent` returns `0` when accepted and
 non-zero when the pipeline is not live yet (before `JNI_OnLoad`); on any non-zero
 result — or if the native call throws because the lib is genuinely unavailable —
-`CoreLogger` emits straight onto its SLF4J logger, so records are never lost. A
+`CoreLogger` emits straight onto its delivery logger, so records are never lost. A
 throw latches the fallback per logger, since a failed native load never recovers
 in-process.
 
@@ -192,7 +197,7 @@ Level filtering is **per output**, not a single global gate. The core owns the
 
 - The core invokes the wrapper callback for each tracing event that reaches this layer.
 - The **wrapper** applies its own level and routing rules before anything reaches the host
-  application (Python `isEnabledFor`, JDBC SLF4J config).
+  application (Python `isEnabledFor`, JDBC JUL/SLF4J config).
 
 These filters are independent: tightening the file-layer level does not reduce what the
 wrapper sink receives, and wrapper log config does not affect core file output.

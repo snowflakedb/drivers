@@ -11,11 +11,11 @@ import org.slf4j.helpers.FormattingTuple;
 import org.slf4j.helpers.MessageFormatter;
 
 /**
- * Shared message formatting and secret masking for the SLF4J-backed loggers.
+ * Shared message formatting and secret masking for JDBC loggers.
  *
- * <p>Extracted so {@link SLF4JLogger} (which emits straight to SLF4J) and {@link CoreLogger} (which
- * ships the formatted string across JNI to core before it round-trips back) produce identical,
- * masked output instead of each re-implementing SLF4J placeholder handling.
+ * <p>Extracted so {@link SLF4JLogger}, {@link JDK14Logger}, and {@link CoreLogger} (which ships the
+ * formatted string across JNI to core before it round-trips back) produce identical, masked output
+ * instead of each re-implementing SLF4J placeholder handling.
  */
 @UtilityClass
 class LogFormatter {
