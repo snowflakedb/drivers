@@ -44,7 +44,8 @@ interface WithScalarResultSetMetadataAssertions {
         () -> assertFalse(sfMeta.getQueryID().isEmpty(), "query id"));
 
     for (int column = 1; column <= columns.size(); column++) {
-      assertScalarColumnMetadata(meta, sfMeta, column, columns.get(column - 1));
+      assertScalarColumnMetadata(
+          meta, sfMeta, column, columns.get(column - 1), expectedColumnNames);
     }
   }
 
@@ -52,7 +53,8 @@ interface WithScalarResultSetMetadataAssertions {
       ResultSetMetaData meta,
       SnowflakeResultSetMetaData sfMeta,
       int column,
-      ColumnExpectation expected)
+      ColumnExpectation expected,
+      List<String> expectedColumnNames)
       throws Exception {
     String columnName = expected.getColumnName();
     assertAll(
@@ -90,7 +92,11 @@ interface WithScalarResultSetMetadataAssertions {
                 expected.getJdbcType(),
                 sfMeta.getInternalColumnType(column),
                 "internal column type"),
-        () -> assertEquals(column - 1, sfMeta.getColumnIndex(columnName), "column index"),
+        () ->
+            assertEquals(
+                expectedColumnNames.indexOf(columnName),
+                sfMeta.getColumnIndex(columnName),
+                "column index"),
         () -> assertEquals(0, sfMeta.getVectorDimension(column), "vector dimension"),
         () -> assertEquals(0, sfMeta.getVectorDimension(columnName), "vector dimension by name"));
   }

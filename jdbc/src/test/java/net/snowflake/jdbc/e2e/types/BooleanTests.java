@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNullable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,17 +10,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class BooleanTests extends SnowflakeIntegrationTestBase {
+public class BooleanTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final String BOOLEAN_TYPE = "BOOLEAN";
   private static final int LARGE_HALF_COUNT = 500_000;
   private static final int LARGE_RESULT_SET_SIZE = LARGE_HALF_COUNT * 2;
+  private static final ColumnExpectation BOOLEAN_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.BOOLEAN,
+          "BOOLEAN",
+          Boolean.class.getName(),
+          0,
+          0,
+          5,
+          false,
+          false,
+          columnNullable);
 
   @Test
   public void shouldCastBooleanValuesToAppropriateType() throws Exception {
@@ -39,6 +55,16 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
 
           // And Values should match [TRUE, FALSE, TRUE]
           assertEquals(Arrays.asList(true, false, true), row);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  BOOLEAN_COLUMN.withColumnName("TRUE::BOOLEAN"),
+                  BOOLEAN_COLUMN.withColumnName("FALSE::BOOLEAN"),
+                  BOOLEAN_COLUMN.withColumnName("TRUE::BOOLEAN")));
         });
   }
 
