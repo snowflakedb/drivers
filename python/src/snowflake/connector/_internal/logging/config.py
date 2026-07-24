@@ -1,4 +1,4 @@
-"""Stdlib logger configuration for snowflake.connector."""
+"""Logging configuration for snowflake.connector."""
 
 from __future__ import annotations
 
@@ -112,3 +112,31 @@ def _get_sf_core_stdlib_logger() -> logging.Logger:
     Wrapper code should use :func:`logging.get_logger` instead.
     """
     return _sf_core_logger
+
+
+class LoggingConfiguration:
+    """Process-wide logging knobs — currently just troubleshooting mode."""
+
+    _instance: LoggingConfiguration | None = None
+
+    def __init__(self, *, troubleshooting_enabled: bool) -> None:
+        self._troubleshooting_enabled = troubleshooting_enabled
+
+    @classmethod
+    def initialize(cls, *, troubleshooting_enabled: bool) -> LoggingConfiguration:
+        """Create the process-wide instance. Call once after ``sf_core_init``."""
+        if cls._instance is None:
+            cls._instance = cls(troubleshooting_enabled=troubleshooting_enabled)
+        return cls._instance
+
+    @classmethod
+    def get(cls) -> LoggingConfiguration:
+        """Return the initialized instance."""
+        if cls._instance is None:
+            msg = "logging is not initialized; sf_core_init has not run yet"
+            raise RuntimeError(msg)
+        return cls._instance
+
+    def is_troubleshooting_enabled(self) -> bool:
+        """Return whether wrapper logs should bypass the ``CoreLogger`` pre-filter."""
+        return self._troubleshooting_enabled

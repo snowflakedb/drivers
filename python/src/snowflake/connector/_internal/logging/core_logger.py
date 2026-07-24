@@ -22,6 +22,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 from ..api_client.c_api._init import sf_core_log_event
+from .config import LoggingConfiguration
 
 
 if TYPE_CHECKING:
@@ -47,7 +48,9 @@ class CoreLogger:
     through sf_core.
 
     The wrapped stdlib logger remains the single source of truth for levels:
-    :meth:`is_enabled_for` gates every FFI call, so a filtered message costs nothing.
+    :meth:`is_enabled_for` gates every FFI call, so a filtered message costs
+    nothing.  When troubleshooting mode is active the pre-filter is bypassed
+    and all events reach the core pipeline regardless of the stdlib level.
     """
 
     def __init__(self, name: str) -> None:
@@ -59,7 +62,11 @@ class CoreLogger:
         return self._name
 
     def is_enabled_for(self, level: int) -> bool:
-        return self._py_logger.isEnabledFor(level)
+        return self._is_level_enabled(level)
+
+    def _is_level_enabled(self, py_level: int) -> bool:
+        cfg = LoggingConfiguration._instance
+        return (cfg is not None and cfg.is_troubleshooting_enabled()) or self._py_logger.isEnabledFor(py_level)
 
     def _format_message(self, msg: str, args: tuple[object, ...], exc_info: Any) -> str:
         try:
@@ -93,7 +100,7 @@ class CoreLogger:
         Used by the public ``debug``/``info``/… methods, where the call site is
         a Python stack frame.
         """
-        if not self._py_logger.isEnabledFor(py_level):
+        if not self._is_level_enabled(py_level):
             return
         # frame 0 is _emit, frame 1 is the public CoreLogger method (info/log/...)
         # stacklevel counts frames above that method
@@ -122,7 +129,7 @@ class CoreLogger:
         Used by native extensions, which pass explicit C++ file/function/line
         instead of a resolvable Python stack frame.
         """
-        if not self._py_logger.isEnabledFor(py_level):
+        if not self._is_level_enabled(py_level):
             return
         self._dispatch(py_level, self._format_message(msg, args, exc_info), file, line, function)
 

@@ -24,6 +24,10 @@ impl RustTransport {
             driver: DatabaseDriverImpl::new_with(providers),
         }
     }
+
+    pub fn is_troubleshooting(&self) -> bool {
+        self.driver.is_troubleshooting()
+    }
 }
 
 impl Transport for RustTransport {

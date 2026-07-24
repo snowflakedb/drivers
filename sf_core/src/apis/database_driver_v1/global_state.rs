@@ -211,6 +211,22 @@ impl DatabaseDriverV1 {
             .and_then(|lm| lm.os_details().as_ref())
     }
 
+    /// Whether troubleshooting mode is currently active. Delegates to the
+    /// `LogManager` if one was injected; returns `false` otherwise.
+    pub fn is_troubleshooting(&self) -> bool {
+        self.log_manager
+            .as_ref()
+            .is_some_and(|lm| lm.is_troubleshooting())
+    }
+
+    /// Resolved troubleshooting log directory when troubleshooting is active.
+    /// Used as a fallback for `DiagnosticConfig::log_path`.
+    pub(crate) fn troubleshooting_path(&self) -> Option<std::path::PathBuf> {
+        self.log_manager
+            .as_ref()
+            .and_then(|lm| lm.troubleshooting_path())
+    }
+
     /// Process-wide default for `log_query_text`, sourced from the
     /// `LogManager` if one was injected (e.g. parsed from `sf.odbc.ini` or the
     /// `[log]` TOML section). `None` means "no global default; let the param

@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ...logging import _get_sf_core_stdlib_logger
+from ...logging.config import LoggingConfiguration
 from ._common import core
 
 
@@ -23,8 +24,17 @@ LOGGER_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_char_p,
     ctypes.c_char_p,
 )
+
+
+class SfCoreInitResult(ctypes.Structure):
+    _fields_ = [
+        ("status", ctypes.c_uint32),
+        ("troubleshooting_enabled", ctypes.c_uint32),
+    ]
+
+
 core.sf_core_init.argtypes = [LOGGER_CALLBACK]
-core.sf_core_init.restype = ctypes.c_uint32
+core.sf_core_init.restype = SfCoreInitResult
 
 core.sf_core_log_event.argtypes = [
     ctypes.c_uint32,
@@ -37,8 +47,8 @@ core.sf_core_log_event.argtypes = [
 core.sf_core_log_event.restype = ctypes.c_uint32
 
 
-def sf_core_init(callback: Any) -> int:
-    return int(core.sf_core_init(callback))
+def sf_core_init(callback: Any) -> SfCoreInitResult:
+    return core.sf_core_init(callback)  # type: ignore[no-any-return]
 
 
 def sf_core_log_event(
@@ -126,4 +136,9 @@ c_logger_callback = LOGGER_CALLBACK(logger_callback)
 
 def register_default_logger_callback() -> None:
     """Register the default logger callback with the core API."""
-    sf_core_init(c_logger_callback)
+    result = sf_core_init(c_logger_callback)
+    if result.status != 0:
+        msg = f"sf_core_init failed (status={result.status})"
+        raise RuntimeError(msg)
+
+    LoggingConfiguration.initialize(troubleshooting_enabled=bool(result.troubleshooting_enabled))

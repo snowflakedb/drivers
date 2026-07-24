@@ -394,12 +394,28 @@ impl DatabaseDriverV1 {
                 );
 
                 // ---- Diagnostics: pre-connect -----------------------------------
-                let mut diag_runner = if let DiagnosticConfig::Enabled { .. } = config.diagnostic {
+                // Run diagnostics when explicitly enabled OR when troubleshooting
+                // is active (SNOWFLAKE_TROUBLESHOOTING_ENABLED=true implies diagnostics).
+                let ts_path = self.troubleshooting_path();
+                let effective_diag = match config.diagnostic {
+                    DiagnosticConfig::Enabled {
+                        ref log_path,
+                        ref allowlist_path,
+                    } => Some(DiagnosticConfig::Enabled {
+                        log_path: log_path.clone().or_else(|| ts_path.clone()),
+                        allowlist_path: allowlist_path.clone(),
+                    }),
+                    DiagnosticConfig::Disabled if ts_path.is_some() => {
+                        Some(DiagnosticConfig::Enabled {
+                            log_path: ts_path,
+                            allowlist_path: None,
+                        })
+                    }
+                    _ => None,
+                };
+                let mut diag_runner = if let Some(diag_cfg) = effective_diag {
                     let account = config.server.account.clone();
-                    // resolve_options() already ran derive_host_from_account, so host
-                    // is Some whenever account is set; the empty-string fallback is unreachable.
                     let host_str = host.clone().unwrap_or_default();
-                    let diag_cfg = config.diagnostic.clone();
                     tokio::task::spawn_blocking(move || {
                         let mut runner = DiagnosticRunner::new(&account, &host_str, diag_cfg);
                         runner.run_pre_connect();

@@ -123,7 +123,7 @@ public class CoreLoggerTest {
   public void shouldSendFormattedEventToCoreWhenPipelineLive() {
     RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
     RecordingDelegate delegate = new RecordingDelegate();
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink);
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
 
     logger.info("round trip {}", "payload");
 
@@ -138,7 +138,7 @@ public class CoreLoggerTest {
   public void shouldFallBackToDelegateWhenPipelineNotLive() {
     RecordingSink sink = new RecordingSink(1);
     RecordingDelegate delegate = new RecordingDelegate();
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink);
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
 
     logger.warn("early message");
 
@@ -153,7 +153,7 @@ public class CoreLoggerTest {
     RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
     sink.toThrow = new UnsatisfiedLinkError("bridge not loaded");
     RecordingDelegate delegate = new RecordingDelegate();
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink);
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
 
     logger.error("first");
     assertEquals(WIRE_ERROR, delegate.fallbackLevel);
@@ -169,7 +169,7 @@ public class CoreLoggerTest {
     RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
     RecordingDelegate delegate = new RecordingDelegate();
     delegate.enabled = false;
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink);
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
 
     logger.debug("filtered out {}", "x");
 
@@ -181,11 +181,25 @@ public class CoreLoggerTest {
   public void shouldMaskSecretsBeforeSendingToCore() {
     RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
     RecordingDelegate delegate = new RecordingDelegate();
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink);
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
 
     logger.error("password=TopSecret123", true);
 
     assertTrue(sink.message.contains("password=****"));
     assertFalse(sink.message.contains("TopSecret123"));
+  }
+
+  @Test
+  public void shouldBypassPreFilterWhenTroubleshootingEnabled() {
+    RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
+    RecordingDelegate delegate = new RecordingDelegate();
+    delegate.enabled = false;
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> true);
+
+    logger.debug("troubleshooting captures this {}", "event");
+
+    assertEquals(1, sink.calls.get());
+    assertEquals(WIRE_DEBUG, sink.level);
+    assertEquals("troubleshooting captures this event", sink.message);
   }
 }
