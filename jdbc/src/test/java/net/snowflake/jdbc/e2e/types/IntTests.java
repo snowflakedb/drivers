@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -10,21 +11,37 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class IntTests extends SnowflakeIntegrationTestBase {
+public class IntTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final String INT_TYPE = "INT";
   private static final String SMALL_INT = "-99999999999999999999999999999999999999";
   private static final String LARGE_INT = "99999999999999999999999999999999999999";
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
+  private static final ColumnExpectation INT_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.BIGINT,
+          "NUMBER",
+          Long.class.getName(),
+          38,
+          0,
+          39,
+          true,
+          false,
+          columnNoNulls);
 
   @Test
   public void shouldCastIntegerValuesToAppropriateTypeForIntAndSynonyms() throws Exception {
@@ -46,6 +63,17 @@ public class IntTests extends SnowflakeIntegrationTestBase {
               resultSet, 2, 1_000_000L, "Column 2 mismatch for " + INT_TYPE);
           assertAllIntegerGettersInRange(
               resultSet, 3, Long.MAX_VALUE, "Column 3 mismatch for " + INT_TYPE);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  INT_COLUMN.withColumnName("0::INT"),
+                  INT_COLUMN.withColumnName("1000000::INT"),
+                  INT_COLUMN.withColumnName("9223372036854775807::INT")));
+
           assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
         });
   }
