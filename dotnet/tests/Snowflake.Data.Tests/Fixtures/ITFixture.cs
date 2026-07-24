@@ -77,7 +77,7 @@ public sealed class ITFixture
 
     public ITFixture()
     {
-        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var suffix = Guid.NewGuid().ToString("N").Substring(0, 8);
         _schemaName = $"{_baseSchema}_DOTNET_{suffix}";
 
         try

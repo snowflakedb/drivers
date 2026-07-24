@@ -41,7 +41,7 @@ public class SnowflakeMessageBus : IMessageBus
 
     public int SkippedCount { get; private set; }
 
-    private static readonly TestPerformanceRecorder s_performanceRecorder = new();
+    private static readonly TestPerformanceRecorder PerformanceRecorder = new();
 
     public SnowflakeMessageBus(IMessageBus messageBusImplementation, int retriesCount)
     {
@@ -50,10 +50,7 @@ public class SnowflakeMessageBus : IMessageBus
         _isMessageProcessingDelayed = retriesCount > 0;
     }
 
-    public void Dispose()
-    {
-        _messageBusImplementation.Dispose();
-    }
+    public void Dispose() => _messageBusImplementation.Dispose();
 
     public bool QueueMessage(IMessageSinkMessage message)
     {
@@ -68,7 +65,7 @@ public class SnowflakeMessageBus : IMessageBus
                 _messageBusImplementation.QueueMessage(delayedMessage);
             }
 
-            s_performanceRecorder.AddEntry((ITestResultMessage)message);
+            PerformanceRecorder.AddEntry((ITestResultMessage)message);
         }
 
         if (message is not ITestFailed testFailed)
@@ -96,7 +93,7 @@ public class SnowflakeMessageBus : IMessageBus
         var result = DelayQueueMessage(message);
 
         if (_retriesCountRemaining == 0)
-            s_performanceRecorder.AddEntry(testFailed);
+            PerformanceRecorder.AddEntry(testFailed);
 
         if (_retriesCountRemaining-- <= 0)
             _isMessageProcessingDelayed = false;

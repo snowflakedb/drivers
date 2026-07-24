@@ -65,7 +65,7 @@ public sealed class TestPerformanceRecorder : IDisposable
         WriteToFile(toWrite);
     }
 #else
-    public void AddEntry(Xunit.Sdk.ITestResultMessage testResult)
+    public void AddEntry(ITestResultMessage testResult)
     {
         if (!Enabled)
             return;
