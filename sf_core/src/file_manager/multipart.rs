@@ -102,7 +102,6 @@ impl MultipartConfig {
     /// this.
     /// Object size: <https://cloud.google.com/storage/quotas>
     /// 256-KiB rule: <https://cloud.google.com/storage/docs/performing-resumable-uploads>
-    #[allow(dead_code)] // wired up by the GCS multipart PR stacked on this one.
     pub(super) const GCS: Self = Self {
         cloud: "GCS",
         default_part: 8 * MIB,
@@ -207,6 +206,14 @@ impl MultipartParams {
             threshold: MultipartThreshold::from_server(threshold),
             concurrency: resolve_part_concurrency(parallel),
         }
+    }
+
+    /// True when a `body_len`-byte transfer should take the multipart/chunked
+    /// path rather than a single PUT/GET (i.e. it is at or above the resolved
+    /// threshold). Hides the `threshold` accessor so call sites don't reach
+    /// through to the raw byte count.
+    pub(super) fn should_chunk(self, body_len: u64) -> bool {
+        body_len >= self.threshold.bytes()
     }
 }
 

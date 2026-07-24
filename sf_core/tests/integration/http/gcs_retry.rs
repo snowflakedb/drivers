@@ -1336,6 +1336,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         &stage,
         "file.csv",
         true,
+        MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1424,6 +1425,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         &stage,
         "file.csv",
         true,
+        MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1503,6 +1505,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         &stage,
         "part-01.csv.gz",
         true,
+        MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1576,6 +1579,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         &stage,
         "file.csv",
         true,
+        MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1889,6 +1893,7 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         &gcs_stage_with_token(&server.uri()),
         "file.bin",
         true,
+        MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
