@@ -35,7 +35,8 @@ public class BooleanTests extends SnowflakeIntegrationTestBase
           5,
           false,
           false,
-          columnNullable);
+          columnNullable,
+          null);
 
   @Test
   public void shouldCastBooleanValuesToAppropriateType() throws Exception {

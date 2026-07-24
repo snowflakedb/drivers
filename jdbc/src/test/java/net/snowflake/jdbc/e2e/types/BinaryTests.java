@@ -39,7 +39,8 @@ public class BinaryTests extends SnowflakeIntegrationTestBase
           BINARY_MAX_LENGTH,
           false,
           false,
-          columnNoNulls);
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastBinaryValuesToAppropriateType() throws Exception {

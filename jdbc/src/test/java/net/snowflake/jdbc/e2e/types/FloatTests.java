@@ -41,7 +41,8 @@ public class FloatTests extends SnowflakeIntegrationTestBase
           24,
           true,
           false,
-          columnNoNulls);
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastFloatValuesToAppropriateTypeForFloatAndSynonyms() throws Exception {

@@ -44,7 +44,8 @@ public class NumberTests extends SnowflakeIntegrationTestBase
           11,
           true,
           false,
-          columnNoNulls);
+          columnNoNulls,
+          null);
   private static final ColumnExpectation NUMBER_SCALE_TWO =
       new ColumnExpectation(
           null,
@@ -56,7 +57,8 @@ public class NumberTests extends SnowflakeIntegrationTestBase
           12,
           true,
           false,
-          columnNoNulls);
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastNumberValuesToAppropriateTypeForNumberAndSynonyms() throws Exception {
