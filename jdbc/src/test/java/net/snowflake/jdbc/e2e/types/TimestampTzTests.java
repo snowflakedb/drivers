@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
@@ -21,10 +23,13 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.List;
 import java.util.TimeZone;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.jdbc.SnowflakeTimestampWithTimezone;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 /**
  * End-to-end coverage for {@code TIMESTAMP_TZ}, mirroring the {@code @jdbc_e2e} scenarios in {@code
@@ -40,9 +45,24 @@ import org.junit.jupiter.api.Test;
  * <p>The session timezone is explicitly set to a non-UTC zone ({@value #SESSION_TIMEZONE}) so the
  * tests prove offset preservation is independent of the session timezone.
  */
-public class TimestampTzTests extends SnowflakeIntegrationTestBase {
+@Isolated("pins JVM default timezone for stable TZ metadata")
+public class TimestampTzTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions, WithPinnedTemporalMetadataTimeZone {
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
   private static final Instant SEQUENCE_START = Instant.parse("2024-01-01T00:00:00Z");
+  private static final ColumnExpectation TIMESTAMP_TZ_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.TIMESTAMP_WITH_TIMEZONE,
+          "TIMESTAMPTZ",
+          Timestamp.class.getName(),
+          29,
+          9,
+          29,
+          false,
+          false,
+          columnNoNulls,
+          SnowflakeType.EXTRA_TYPES_TIMESTAMP_TZ);
 
   /** A deliberately non-UTC session timezone; see the class-level note. */
   private static final String SESSION_TIMEZONE = "America/New_York";
@@ -67,6 +87,16 @@ public class TimestampTzTests extends SnowflakeIntegrationTestBase {
           assertTz(resultSet, 1, offset("2024-01-15T10:30:00", "+05:00"));
           // And Values should have timezone info
           assertHasTimezoneInfo(resultSet, 1);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  TIMESTAMP_TZ_COLUMN.withColumnName(
+                      "'2024-01-15 10:30:00 +05:00'::TIMESTAMP_TZ")));
+
           assertFalse(resultSet.next());
         });
   }

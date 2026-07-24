@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -8,14 +9,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 /**
  * End-to-end coverage for {@code TIMESTAMP_LTZ}, mirroring the {@code @jdbc_e2e} scenarios in
@@ -26,9 +31,24 @@ import org.junit.jupiter.api.Test;
  * against the corresponding UTC {@link Instant}. Binding a {@link Timestamp} to a {@code
  * TIMESTAMP_LTZ} round-trips the instant unchanged, so bind tests need no special session timezone.
  */
-public class TimestampLtzTests extends SnowflakeIntegrationTestBase {
+@Isolated("pins JVM default timezone for stable LTZ metadata")
+public class TimestampLtzTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions, WithPinnedTemporalMetadataTimeZone {
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
   private static final Instant SEQUENCE_START = Instant.parse("2024-01-01T00:00:00Z");
+  private static final ColumnExpectation TIMESTAMP_LTZ_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.TIMESTAMP,
+          "TIMESTAMPLTZ",
+          Timestamp.class.getName(),
+          29,
+          9,
+          29,
+          false,
+          false,
+          columnNoNulls,
+          SnowflakeType.EXTRA_TYPES_TIMESTAMP_LTZ);
 
   @Test
   public void shouldCastTimestampLtzValuesToAppropriateType() throws Exception {
@@ -44,9 +64,15 @@ public class TimestampLtzTests extends SnowflakeIntegrationTestBase {
           // Then All values should be returned as appropriate type
           assertLtz(resultSet, 1, Instant.parse("2024-01-15T10:30:00Z"));
           // And Values should have timezone info
-          assertTrue(
-              resultSet.getMetaData().getColumnTypeName(1).toUpperCase().contains("LTZ"),
-              "TIMESTAMP_LTZ column should report a zoned type name");
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  TIMESTAMP_LTZ_COLUMN.withColumnName(
+                      "'2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ")));
+
           assertFalse(resultSet.next());
         });
   }

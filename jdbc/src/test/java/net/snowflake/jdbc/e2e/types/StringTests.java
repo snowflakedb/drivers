@@ -41,7 +41,8 @@ public class StringTests extends SnowflakeIntegrationTestBase
           VARCHAR_MAX_LENGTH,
           false,
           true,
-          columnNoNulls);
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastStringValuesToAppropriateTypeForStringAndSynonyms() throws Exception {

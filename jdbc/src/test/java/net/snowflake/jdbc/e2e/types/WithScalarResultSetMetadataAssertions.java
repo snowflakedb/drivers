@@ -3,9 +3,11 @@ package net.snowflake.jdbc.e2e.types;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.ResultSetMetaData;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
@@ -29,6 +31,11 @@ interface WithScalarResultSetMetadataAssertions {
     boolean signed;
     boolean caseSensitive;
     int nullable;
+    /**
+     * When null, {@link #getJdbcType()} is used for {@link
+     * SnowflakeResultSetMetaData#getInternalColumnType(int)}.
+     */
+    Integer internalColumnType;
   }
 
   default void assertScalarResultSetMetadata(
@@ -54,9 +61,12 @@ interface WithScalarResultSetMetadataAssertions {
       SnowflakeResultSetMetaData sfMeta,
       int column,
       ColumnExpectation expected,
-      List<String> expectedColumnNames)
-      throws Exception {
+      List<String> expectedColumnNames) {
     String columnName = expected.getColumnName();
+    int internalColumnType =
+        expected.getInternalColumnType() != null
+            ? expected.getInternalColumnType()
+            : expected.getJdbcType();
     assertAll(
         "column " + column + " metadata",
         () -> assertEquals(columnName, meta.getColumnName(column), "column name"),
@@ -65,9 +75,17 @@ interface WithScalarResultSetMetadataAssertions {
         () ->
             assertEquals(
                 expected.getTypeName(), meta.getColumnTypeName(column), "column type name"),
-        () ->
+        () -> {
+          if (expected.getClassName() == null) {
+            assertThrows(
+                SQLFeatureNotSupportedException.class,
+                () -> meta.getColumnClassName(column),
+                "column class name");
+          } else {
             assertEquals(
-                expected.getClassName(), meta.getColumnClassName(column), "column class name"),
+                expected.getClassName(), meta.getColumnClassName(column), "column class name");
+          }
+        },
         () -> assertEquals(expected.getPrecision(), meta.getPrecision(column), "precision"),
         () -> assertEquals(expected.getScale(), meta.getScale(column), "scale"),
         () ->
@@ -89,9 +107,7 @@ interface WithScalarResultSetMetadataAssertions {
         () -> assertEquals("", meta.getTableName(column), "table name"),
         () ->
             assertEquals(
-                expected.getJdbcType(),
-                sfMeta.getInternalColumnType(column),
-                "internal column type"),
+                internalColumnType, sfMeta.getInternalColumnType(column), "internal column type"),
         () ->
             assertEquals(
                 expectedColumnNames.indexOf(columnName),

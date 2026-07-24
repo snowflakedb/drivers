@@ -41,7 +41,8 @@ public class IntTests extends SnowflakeIntegrationTestBase
           39,
           true,
           false,
-          columnNoNulls);
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastIntegerValuesToAppropriateTypeForIntAndSynonyms() throws Exception {

@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,12 +10,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.TimeZone;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.client.internal.jdbc.SnowflakeTimestampWithTimezone;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
@@ -30,9 +36,24 @@ import org.junit.jupiter.api.Test;
  * Timestamp} sends an instant that Snowflake re-anchors to the session timezone when casting to
  * {@code TIMESTAMP_NTZ}.
  */
-public class TimestampNtzTests extends SnowflakeIntegrationTestBase {
+public class TimestampNtzTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
   private static final Instant SEQUENCE_START = Instant.parse("2024-01-01T00:00:00Z");
+  private static final Calendar UTC_CALENDAR = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+  private static final ColumnExpectation TIMESTAMP_NTZ_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.TIMESTAMP,
+          "TIMESTAMPNTZ",
+          Timestamp.class.getName(),
+          23,
+          9,
+          23,
+          false,
+          false,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastTimestampNtzValuesToAppropriateType() throws Exception {
@@ -49,6 +70,15 @@ public class TimestampNtzTests extends SnowflakeIntegrationTestBase {
           assertNtz(resultSet, 1, LocalDateTime.of(2024, 1, 15, 10, 30, 0));
           // And Values should not have timezone info
           assertNoTimezoneInfo(resultSet, 1);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  TIMESTAMP_NTZ_COLUMN.withColumnName("'2024-01-15 10:30:00'::TIMESTAMP_NTZ")));
+
           assertFalse(resultSet.next());
         });
   }
@@ -412,7 +442,7 @@ public class TimestampNtzTests extends SnowflakeIntegrationTestBase {
    */
   private static void assertNtz(ResultSet rs, int col, LocalDateTime expectedWallClock)
       throws Exception {
-    Timestamp ts = rs.getTimestamp(col);
+    Timestamp ts = rs.getTimestamp(col, UTC_CALENDAR);
     assertFalse(rs.wasNull(), "column " + col + " should not be NULL");
     assertEquals(
         expectedWallClock.toInstant(ZoneOffset.UTC),

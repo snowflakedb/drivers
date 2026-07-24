@@ -38,7 +38,8 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase
           40,
           true,
           false,
-          columnNoNulls);
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastDecfloatValuesToAppropriateType() throws Exception {
