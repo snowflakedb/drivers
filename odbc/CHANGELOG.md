@@ -2,6 +2,10 @@
 
 ## Upcoming Release
 
+Bug fixes:
+
+- Fixed server-side SQL errors (e.g. Snowflake code 002003 "object does not exist") surfacing as the opaque "Received core protobuf error" with native code 0. The driver now forwards the server's original message, numeric error code (`vendor_code`), and SQLSTATE to `SQLGetDiagRec`. (snowflake-eng/universal-driver#773)
+
 New features:
 
 - Added `SQLColumns` and `SQLColumnsW` support for querying column metadata via ODBC catalog functions. (snowflakedb/universal-driver#369)

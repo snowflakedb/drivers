@@ -826,7 +826,7 @@ impl OdbcError {
     fn structured_message(&self) -> Option<String> {
         match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
-                CoreProtobufError::Application { error, .. } => match error.as_ref() {
+                CoreProtobufError::Application { error, message, .. } => match error.as_ref() {
                     ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
                         explanation: Some(explanation),
                         ..
@@ -834,7 +834,13 @@ impl OdbcError {
                     ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
                         Some(format!("Missing required parameter: {parameter}"))
                     }
-                    _ => None,
+                    _ => {
+                        // Surface the server message directly so `SQLGetDiagRec`
+                        // sees the original server text (e.g. "SQL compilation
+                        // error: Object 'X' does not exist or not authorized")
+                        // instead of the generic "Received core protobuf error".
+                        Some(message.clone()).filter(|m| !m.is_empty())
+                    }
                 },
                 _ => None,
             },
@@ -1068,10 +1074,17 @@ impl OdbcError {
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
             OdbcError::CoreError { source, .. } => match source.as_ref() {
-                CoreProtobufError::Application { error, .. } => match error.as_ref() {
-                    ErrorType::LoginError(login_error) => login_error.code,
-                    _ => 0,
-                },
+                CoreProtobufError::Application {
+                    error, vendor_code, ..
+                } => {
+                    if let Some(code) = vendor_code {
+                        return *code;
+                    }
+                    match error.as_ref() {
+                        ErrorType::LoginError(login_error) => login_error.code,
+                        _ => 0,
+                    }
+                }
                 CoreProtobufError::Transport { .. } => 0,
             },
             _ => 0,
@@ -1116,6 +1129,7 @@ impl OdbcError {
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
                 query_id: driver_exception.query_id,
+                vendor_code: driver_exception.vendor_code,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
@@ -1146,6 +1160,9 @@ pub enum CoreProtobufError {
         sql_state: Option<String>,
         /// Snowflake Query ID from the failed query, if available.
         query_id: Option<String>,
+        /// Snowflake server-side numeric error code (e.g. 2003 for "object does
+        /// not exist"), forwarded from `DriverException.vendor_code` on the wire.
+        vendor_code: Option<i32>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -1308,6 +1325,7 @@ mod tests {
                     error_trace: vec![],
                     sql_state: None,
                     query_id: None,
+                    vendor_code: None,
                     location: loc(),
                 }),
                 location: loc(),
@@ -1372,6 +1390,7 @@ mod tests {
                 error_trace: vec![],
                 sql_state: None,
                 query_id: None,
+                vendor_code: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1404,6 +1423,7 @@ mod tests {
                     error_trace: vec![],
                     sql_state: None,
                     query_id: None,
+                    vendor_code: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1433,6 +1453,7 @@ mod tests {
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
                 query_id: None,
+                vendor_code: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1470,6 +1491,7 @@ mod tests {
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
                     query_id: None,
+                    vendor_code: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1529,6 +1551,7 @@ mod tests {
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
                 query_id: None,
+                vendor_code: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1632,6 +1655,117 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::DatetimeFieldOverflow);
+    }
+
+    #[test]
+    fn server_query_error_native_code_is_forwarded() {
+        let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
+            message:
+                "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
+                    .to_string(),
+            status_code: 0,
+            error: Some(
+                sf_core::protobuf::generated::database_driver_v1::DriverError {
+                    error_type: Some(ErrorType::InternalError(
+                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
+                    )),
+                },
+            ),
+            error_trace: vec![],
+            vendor_code: Some(2003),
+            sql_state: Some("42S02".to_string()),
+            query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            root_cause: None,
+        }));
+
+        assert_eq!(
+            err.to_native_error(),
+            2003,
+            "vendor_code from DriverException must be the ODBC native error code"
+        );
+    }
+
+    #[test]
+    fn server_query_error_message_is_forwarded() {
+        let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
+            message:
+                "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
+                    .to_string(),
+            status_code: 0,
+            error: Some(
+                sf_core::protobuf::generated::database_driver_v1::DriverError {
+                    error_type: Some(ErrorType::InternalError(
+                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
+                    )),
+                },
+            ),
+            error_trace: vec![],
+            vendor_code: Some(2003),
+            sql_state: Some("42S02".to_string()),
+            query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            root_cause: None,
+        }));
+
+        assert!(
+            err.message_text()
+                .contains("does not exist or not authorized"),
+            "message_text() must contain the server's original error text, got: {:?}",
+            err.message_text()
+        );
+    }
+
+    #[test]
+    fn server_query_error_sql_state_is_forwarded() {
+        let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
+            message:
+                "SQL compilation error: Object 'MISSING_TABLE' does not exist or not authorized."
+                    .to_string(),
+            status_code: 0,
+            error: Some(
+                sf_core::protobuf::generated::database_driver_v1::DriverError {
+                    error_type: Some(ErrorType::InternalError(
+                        sf_core::protobuf::generated::database_driver_v1::InternalError {},
+                    )),
+                },
+            ),
+            error_trace: vec![],
+            vendor_code: Some(2003),
+            sql_state: Some("42S02".to_string()),
+            query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            root_cause: None,
+        }));
+
+        assert_eq!(
+            err.to_sql_state().as_str(),
+            "42S02",
+            "server-supplied SQLSTATE must be forwarded verbatim"
+        );
+    }
+
+    #[test]
+    fn server_query_error_without_vendor_code_has_zero_native_error() {
+        let err = OdbcError::from_protobuf_error(ProtoError::Application(ProtoDriverException {
+            message: "Generic server error".to_string(),
+            status_code: 0,
+            error: Some(
+                sf_core::protobuf::generated::database_driver_v1::DriverError {
+                    error_type: Some(ErrorType::GenericError(
+                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                    )),
+                },
+            ),
+            error_trace: vec![],
+            vendor_code: None,
+            sql_state: None,
+            query_id: None,
+            root_cause: None,
+        }));
+
+        assert_eq!(
+            err.to_native_error(),
+            0,
+            "absence of vendor_code must yield native_error=0"
+        );
     }
 
     /// SNOW-3235557: the attribute get paths classify unknown identifiers into
