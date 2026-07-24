@@ -29,6 +29,39 @@ public final class CoreLoggingBridge {
   }
 
   /**
+   * Cached troubleshooting flag — resolved from native on first access. {@code -1} = unresolved,
+   * {@code 0} = false, {@code 1} = true.
+   */
+  private static volatile int troubleshootingState = -1;
+
+  /**
+   * Returns {@code true} when troubleshooting mode is active. The state is resolved from native on
+   * first call and cached; subsequent calls are a volatile read.
+   *
+   * <p>{@link CoreLogger} uses this to open its pre-filter gate so all wrapper logs reach the
+   * diagnostic file layer.
+   */
+  public static boolean isTroubleshooting() {
+    int s = troubleshootingState;
+    if (s < 0) {
+      s = resolveTroubleshootingFromNative();
+    }
+    return s != 0;
+  }
+
+  private static int resolveTroubleshootingFromNative() {
+    try {
+      NativeLibraryLoader.init();
+      int val = nativeIsTroubleshooting() != 0 ? 1 : 0;
+      troubleshootingState = val;
+      return val;
+    } catch (Exception | UnsatisfiedLinkError e) {
+      troubleshootingState = 0;
+      return 0;
+    }
+  }
+
+  /**
    * Emit a wrapper log event through core.
    *
    * @param level wire level (0=ERROR, 1=WARN, 2=INFO, 3+=DEBUG)
@@ -41,4 +74,6 @@ public final class CoreLoggingBridge {
    */
   static native int nativeLogEvent(
       int level, String message, String file, int line, String function, String loggerName);
+
+  static native int nativeIsTroubleshooting();
 }

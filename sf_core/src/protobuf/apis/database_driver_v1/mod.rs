@@ -57,6 +57,10 @@ impl DatabaseDriverImpl {
             driver: DatabaseDriverV1::with_providers(providers),
         }
     }
+
+    pub fn is_troubleshooting(&self) -> bool {
+        self.driver.is_troubleshooting()
+    }
 }
 
 impl DatabaseDriver for DatabaseDriverImpl {

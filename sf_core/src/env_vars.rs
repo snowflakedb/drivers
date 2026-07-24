@@ -46,3 +46,11 @@ pub const SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION: &str =
 /// Test-only override for the browser opener used during external-browser auth.
 /// Set to `"noop"` to suppress actual browser launches in tests.
 pub const SF_TEST_BROWSER_OPENER: &str = "SF_TEST_BROWSER_OPENER";
+
+/// Enable diagnostic file logging (layer-file) with no level filter.
+/// When `"true"`, all log events (core and wrapper) are written to a file.
+pub const SNOWFLAKE_TROUBLESHOOTING_ENABLED: &str = "SNOWFLAKE_TROUBLESHOOTING_ENABLED";
+
+/// Directory for diagnostic log files when troubleshooting is enabled.
+/// Defaults to the current working directory if unset.
+pub const SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH: &str = "SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH";

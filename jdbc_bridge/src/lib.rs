@@ -113,6 +113,7 @@ pub extern "system" fn JNI_OnUnload(_jvm: *mut jni::sys::JavaVM, _: *mut u8) -> 
 /// # Safety
 /// Called from Java, so we need to be careful with the pointer.
 #[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICoreTransport_nativeHandleMessage(
     mut env: JNIEnv,
     _class: JClass,
@@ -201,6 +202,15 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
     };
 
     response_obj.into_raw()
+}
+
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_net_snowflake_client_internal_unicore_CoreLoggingBridge_nativeIsTroubleshooting(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    i32::from(JDBC_BRIDGE.transport.is_troubleshooting())
 }
 
 #[unsafe(no_mangle)]

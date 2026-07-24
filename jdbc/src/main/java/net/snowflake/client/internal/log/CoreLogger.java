@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.log;
 
+import java.util.function.BooleanSupplier;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.internal.unicore.CoreLoggingBridge;
@@ -24,9 +25,14 @@ public class CoreLogger extends AbstractSFLogger {
   private final String name;
   private final SFLogger delegate;
   private final CoreLogEventSink sink;
+  private final BooleanSupplier troubleshooting;
 
   public CoreLogger(String name) {
-    this(name, SFLoggerFactory.createDeliveryLogger(name), DEFAULT_SINK);
+    this(
+        name,
+        SFLoggerFactory.createDeliveryLogger(name),
+        DEFAULT_SINK,
+        CoreLoggingBridge::isTroubleshooting);
   }
 
   public CoreLogger(Class<?> clazz) {
@@ -35,6 +41,9 @@ public class CoreLogger extends AbstractSFLogger {
 
   @Override
   protected boolean isLevelEnabled(LogLevel level) {
+    if (troubleshooting.getAsBoolean()) {
+      return true;
+    }
     switch (level) {
       case ERROR:
         return delegate.isErrorEnabled();
