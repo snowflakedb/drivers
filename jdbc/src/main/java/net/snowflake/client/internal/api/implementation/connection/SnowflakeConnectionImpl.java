@@ -13,6 +13,7 @@ import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_CLOSED;
 import static net.snowflake.client.api.exception.ErrorCode.FEATURE_UNSUPPORTED;
 import static net.snowflake.client.api.exception.ErrorCode.INVALID_PARAMETER_VALUE;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Array;
 import java.sql.Blob;
@@ -53,6 +54,7 @@ import net.snowflake.client.internal.api.implementation.resultset.ResultSetFacto
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.log.Jdk14LoggerBootstrap;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
@@ -99,6 +101,12 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
       throws SQLException {
+    try {
+      Jdk14LoggerBootstrap.initFromConnectionIfConfigured(url, properties);
+    } catch (IOException e) {
+      throw new SQLException("Failed to initialize JDBC logging", e);
+    }
+
     this.coreDriverApi = coreDriverApi;
 
     DatabaseHandle dbHandle = null;

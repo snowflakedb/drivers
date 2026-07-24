@@ -80,7 +80,7 @@ where
                 return;
             }
         };
-        // Delivery must use a plain SLF4J logger, not a CoreLogger, or the record
+        // Delivery must use a plain logger (JUL or SLF4J), not a CoreLogger, or the record
         // would round-trip through core again and loop forever.
         let logger = match env
             .call_static_method(
