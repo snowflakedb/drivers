@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Xunit;
 
 namespace Snowflake.Data.Tests.Utilities;
 
@@ -7,6 +6,9 @@ public static class ParametersReader
 {
     private static readonly Lazy<Dictionary<string, string>> Parameters = new(LoadParameters);
     private const int MaxDirLevels = 10;
+    private static ITestOutputHelper? _testOutputHelper;
+
+    public static void Init(ITestOutputHelper? testOutputHelper) => _testOutputHelper = testOutputHelper;
 
     public static string? Get(string key)
     {
@@ -26,10 +28,10 @@ public static class ParametersReader
             for (; ; )
             {
                 var candidate = Path.Combine(dir, "parameters.json");
-                TestContext.Current.TestOutputHelper?.WriteLine($"Looking for {candidate}..");
+                _testOutputHelper?.WriteLine($"Looking for {candidate}..");
                 if (File.Exists(candidate))
                 {
-                    TestContext.Current.TestOutputHelper?.WriteLine($"Found parameters at {dir}!");
+                    _testOutputHelper?.WriteLine($"Found parameters at {dir}!");
                     parameterPath = candidate;
                     break;
                 }

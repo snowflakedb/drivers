@@ -1,18 +1,9 @@
-// TODO intended for future use
-global using LockObject =
-#if NET10_0_OR_GREATER
-System.Threading.Lock;
-#else
-    object;
-#endif
-
+#if NET7_0_OR_GREATER
 using System.Runtime.InteropServices;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Interop;
 
-/// <summary>
-/// Raw P/Invoke declarations for the sf_core native library.
-/// </summary>
+//  TODO this is PoC, will be subject to refactoring in the future
 internal static unsafe partial class NativeMethods
 {
     private const string LibName = "sf_core";
@@ -26,3 +17,4 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(LibName, EntryPoint = "sf_core_free_buffer")]
     public static partial void sf_core_free_buffer(byte* buffer, nuint len);
 }
+#endif

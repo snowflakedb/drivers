@@ -1,7 +1,8 @@
+#if !NETFRAMEWORK
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Interop;
 
 /// <summary>
 /// Registers a custom DLL import resolver that locates the sf_core native library.
@@ -10,6 +11,7 @@ namespace Snowflake.Data;
 ///   2. Assembly output directory
 ///   3. Default OS search (LD_LIBRARY_PATH, DYLD_LIBRARY_PATH, PATH, etc.)
 /// </summary>
+///  TODO this is PoC, will be subject to refactoring in the future
 internal static class NativeLibraryLoader
 {
     private const string SFCore = "sf_core";
@@ -86,3 +88,4 @@ internal static class NativeLibraryLoader
         throw new PlatformNotSupportedException("Unknown platform!");
     }
 }
+#endif
