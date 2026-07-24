@@ -1,16 +1,22 @@
 using System.Data.Common;
-using Xunit;
 
 namespace Snowflake.Data.Tests;
 
-// TODO threse tests are just PoC and will undergo heavy refactoring.
+// TODO these tests are just PoC and will undergo heavy refactoring.
 [Trait("Category", "E2E")]
-public sealed class DataReaderTests
+public sealed class DataReaderTests : IClassFixture<ITFixture>
 {
-    [Fact]
+    private readonly ITestOutputHelper _testOutputHelper;
+
+    public DataReaderTests(ITestOutputHelper testOutputHelper)
+    {
+        _testOutputHelper = testOutputHelper;
+    }
+
+    [SnowflakeFact]
     public void ExecuteReader_ArrowFormat_ReadsValueCorrectly()
     {
-        using var connection = TestConnectionFactory.Create();
+        using var connection = TestConnectionFactory.Create(_testOutputHelper);
         connection.Open();
 
         ExecuteNonQuery(connection, "alter session set DOTNET_QUERY_RESULT_FORMAT = ARROW");
@@ -44,10 +50,10 @@ public sealed class DataReaderTests
         }
     }
 
-    [Fact]
+    [SnowflakeFact]
     public void ExecuteReader_JsonFormat_ReadsValueCorrectly()
     {
-        using var connection = TestConnectionFactory.Create();
+        using var connection = TestConnectionFactory.Create(_testOutputHelper);
         connection.Open();
 
         ExecuteNonQuery(connection, "alter session set DOTNET_QUERY_RESULT_FORMAT = JSON");

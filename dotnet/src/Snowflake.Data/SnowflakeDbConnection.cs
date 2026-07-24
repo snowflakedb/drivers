@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
 namespace Snowflake.Data;
@@ -12,11 +13,6 @@ public sealed class SnowflakeDbConnection : DbConnection
     private ConnectionState _state = ConnectionState.Closed;
     private DatabaseHandle? _dbHandle;
     private ConnectionHandle? _connHandle;
-
-    internal IDatabaseDriverService Driver => _driver;
-
-    internal ConnectionHandle ConnHandle =>
-        _connHandle ?? throw new InvalidOperationException("Connection is not open.");
 
     internal SnowflakeDbConnection(ICoreTransport transport)
     {
@@ -54,6 +50,11 @@ public sealed class SnowflakeDbConnection : DbConnection
     public override string ServerVersion => string.Empty;
 
     public override ConnectionState State => _state;
+
+    internal IDatabaseDriverService Driver => _driver;
+
+    internal DatabaseHandle? DbHandle => _dbHandle;
+    internal ConnectionHandle? ConnHandle => _connHandle;
 
     public override void ChangeDatabase(string databaseName) =>
         throw new NotSupportedException();

@@ -1,24 +1,29 @@
-using System.Data;
-using Xunit;
 #pragma warning disable CS0162 // Unreachable code detected
 
 namespace Snowflake.Data.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class ConnectionTests
+public sealed class ConnectionTests : IClassFixture<ITFixture>
 {
-    [Fact]
+    private readonly ITestOutputHelper _testOutputHelper;
+
+    public ConnectionTests(ITestOutputHelper testOutputHelper)
+    {
+        _testOutputHelper = testOutputHelper;
+    }
+
+    [SnowflakeFact]
     public void ConnectsWithValidCredentials()
     {
-        using var connection = TestConnectionFactory.Create();
+        using var connection = TestConnectionFactory.Create(_testOutputHelper);
         connection.Open();
         Assert.Equal(ConnectionState.Open, connection.State);
     }
 
-    [Fact]
+    [SnowflakeFact]
     public void CloseTransitionsToClosedState()
     {
-        using var connection = TestConnectionFactory.Create();
+        using var connection = TestConnectionFactory.Create(_testOutputHelper);
         connection.Open();
         connection.Close();
         Assert.Equal(ConnectionState.Closed, connection.State);

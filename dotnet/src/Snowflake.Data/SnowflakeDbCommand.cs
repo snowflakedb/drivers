@@ -177,14 +177,13 @@ public sealed class SnowflakeDbCommand : DbCommand
     private (IDatabaseDriverService Driver, ConnectionHandle ConnHandle) GetDriverAndConnection()
     {
         if (DbConnection is not SnowflakeDbConnection conn)
-        {
             throw new InvalidOperationException("Command is not associated with a SnowflakeDbConnection.");
-        }
 
         if (conn.State != ConnectionState.Open)
-        {
             throw new InvalidOperationException("Connection is not open.");
-        }
+
+        if (conn.ConnHandle is null)
+            throw new InvalidOperationException("Connection handle is not available.");
 
         return (conn.Driver, conn.ConnHandle);
     }

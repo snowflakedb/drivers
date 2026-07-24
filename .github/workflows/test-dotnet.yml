@@ -77,7 +77,7 @@ jobs:
         run: cargo build --package sf_core
 
       - name: Run tests (new driver)
-        run: dotnet run --no-build
+        run: dotnet run --no-build --framework net10.0 #TODO will be handled properly in next milestone
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
            PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -140,7 +140,7 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Run e2e tests (old driver reference)
-        run: dotnet run --no-build
+        run: dotnet run --no-build --framework net10.0
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
