@@ -794,17 +794,11 @@ pub(super) struct S3Download {
     pub(super) cloud_byte_count: i64,
 }
 
-// TODO(SNOW-3406377): once this PR stack (S3+Azure multipart) is merged, migrate
-// to the shared cloud_http types (CloudSpillTarget, CloudSpilledBody, CloudDownloadBody)
-// that Azure already uses. Steps:
-//   1. Replace S3DownloadBody / SpilledBody / SpillTarget with the cloud_http equivalents.
-//   2. Extract the assembly loop in s3_range_download into a shared
-//      cloud_http::assemble_ranged_download helper (signature: content_length,
-//      chunk_size, concurrency, target, get_range closure → CloudSpilledBody).
-//      azure_range_download reduces to the same call; see PR 281 review notes.
-//   3. Move the spawn_blocking file-setup from s3_range_download into the shared
-//      helper to close the Azure gap where File::create/set_len runs on the runtime
-//      thread without spawn_blocking.
+// TODO(SNOW-3406377): the ranged-download assembly loop is duplicated across S3,
+// Azure, and GCS. It is extracted into a shared cloud_http::assemble_ranged_download
+// helper — and S3's SpilledBody / SpillTarget migrated onto the cloud_http types
+// (CloudSpillTarget, CloudSpilledBody) that Azure and GCS already use — in a
+// dedicated follow-up PR stacked on this one. See that PR for the extraction.
 
 /// Where the downloaded ciphertext lives. `into_reader` yields a uniform
 /// blocking `Read` over either shape for the decrypt/copy step.

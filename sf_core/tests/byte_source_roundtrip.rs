@@ -409,7 +409,11 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     DEFAULT_PUT_GET_MAX_ATTEMPTS,
                 ),
                 0,
+                MultipartParams::default(),
                 &mut None,
+                sf_core::file_manager::internal::CloudSpillTarget::Temp(
+                    std::env::temp_dir().as_path(),
+                ),
             )
             .await
             .expect("GCS streaming download must succeed")
@@ -576,7 +580,9 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             0,
+            MultipartParams::default(),
             &mut None,
+            sf_core::file_manager::internal::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
         ),
     )
     .await

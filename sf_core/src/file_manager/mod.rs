@@ -250,6 +250,9 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.multipart,
+            // Build the policy here, where `using_presigned_url` is known, and
+            // pass it by reference so the test seam can inject zero backoff.
             &gcs_retry_policy(data.stage_info.presigned_url.is_some(), policy),
             refresher,
         )
@@ -839,11 +842,25 @@ pub async fn download_single_file(
         }
 
         LocationType::Gcs => {
-            // TODO(SNOW-3406377): GCS/Azure download arms below are ~70 lines each
-            // and differ only in the streaming-download fn called and the error
-            // context constructor — extract a shared helper, and fold the
-            // `cloud_byte_count_hint > 0 ? hint : cloud_bytes_read` fallback onto
-            // `CloudStreamingDownload`. Deferred from this PR to keep diff scoped.
+            // Spill ranged downloads next to the destination (see the S3 arm) so
+            // an SSE finalize is a same-filesystem rename, not a cross-device copy.
+            // unwrap_or_else uses "." (current dir) rather than temp_dir so the
+            // spill stays on the same filesystem as the destination, keeping the
+            // subsequent rename cross-device-safe. parent() is only None when
+            // output_path has no directory component (a bare filename).
+            let spill_dir = output_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            // A non-encrypted ranged download assembles straight into `.part`
+            // (one rename to publish); an encrypted (or git-stage) download has
+            // `encryption_material`, so its ciphertext goes to a temp in
+            // `spill_dir` and is decrypted into `.part` below. Mirrors the S3 arm.
+            let spill_target = if enc_material.is_some() {
+                CloudSpillTarget::Temp(&spill_dir)
+            } else {
+                CloudSpillTarget::Part(&partial_path)
+            };
             let dl = download_from_gcs_streaming(
                 &data.stage_info,
                 data.src_location.as_str(),
@@ -856,7 +873,9 @@ pub async fn download_single_file(
                     policy,
                 ),
                 per_file_index,
+                data.multipart,
                 refresher,
+                spill_target,
             )
             .await
             .context(GcsDownloadSnafu)?;
@@ -1061,30 +1080,6 @@ fn warn_remove_partial(partial_path: &Path) {
             partial_path.display(),
             rm_err
         );
-    }
-}
-
-/// Finalizes a download that wrote into `output_file`: on success renames
-/// `partial` → `output` (the atomic `.part` publish); on failure removes the
-/// partial. Collapses the identical Ok/Err tail repeated across the download
-/// arms. (The `Spilled`-SSE path renames the tempfile directly and has no
-/// `output_file`, so it doesn't use this.)
-fn finalize_or_cleanup(
-    output_file: File,
-    partial: &Path,
-    output: &Path,
-    write_result: Result<i64, FileManagerError>,
-) -> Result<i64, FileManagerError> {
-    drop(output_file);
-    match write_result {
-        Ok(n) => {
-            finalize_rename(partial, output).context(IoSnafu)?;
-            Ok(n)
-        }
-        Err(e) => {
-            warn_remove_partial(partial);
-            Err(e)
-        }
     }
 }
 
@@ -1337,6 +1332,12 @@ impl FileManagerError {
             } | FileManagerError::S3Download {
                 source: DownloadFileError::FileTooLarge { .. },
                 ..
+            } | FileManagerError::GcsUpload {
+                source: GcsUploadError::FileTooLarge { .. },
+                ..
+            } | FileManagerError::GcsDownload {
+                source: GcsDownloadError::FileTooLarge { .. },
+                ..
             }
         )
     }
@@ -1460,6 +1461,31 @@ mod tests {
         let download = FileManagerError::S3Download {
             source: DownloadFileError::FileTooLarge {
                 source: inner(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(download.is_file_too_large());
+    }
+
+    #[test]
+    fn is_file_too_large_true_for_gcs_over_ceiling_upload_and_download() {
+        // The GCS `FileTooLarge` variants carry a `detail: String` (not a boxed
+        // source like S3), so build them directly. The routing that depends on
+        // this — GCS file-too-large → `InvalidArgument`, not `InternalError` —
+        // is what these arms exist to make correct.
+        let upload = FileManagerError::GcsUpload {
+            source: GcsUploadError::FileTooLarge {
+                detail: "object exceeds GCS max object size".to_string(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(upload.is_file_too_large());
+
+        let download = FileManagerError::GcsDownload {
+            source: GcsDownloadError::FileTooLarge {
+                detail: "object exceeds GCS max object size".to_string(),
                 location: Location::new(file!(), line!(), 0),
             },
             location: Location::new(file!(), line!(), 0),
