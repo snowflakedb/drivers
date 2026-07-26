@@ -2,12 +2,13 @@ use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
-// Shared zero-backoff Azure test policy, derived from the production
-// `azure_retry_policy` (no drift). Aliased so call sites read `test_policy(..)`.
+// Shared zero-backoff Azure test policy (the base put/get policy; the per-attempt
+// policy is derived from it via `azure_403_fastfail_policy`). Aliased so call
+// sites read `test_policy(..)`.
 use sf_core::file_manager::internal::azure_test_retry_policy as test_policy;
 use sf_core::file_manager::{
-    CloudCredentials, DownloadData, EncryptionMaterial, LocationType, MultipartParams, StageInfo,
-    download_files,
+    AzureDownloadError, CloudCredentials, DownloadData, EncryptionMaterial, LocationType,
+    MultipartParams, StageInfo, download_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -80,6 +81,7 @@ async fn azure_download_success_returns_data_and_metadata() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -101,24 +103,21 @@ async fn azure_download_success_returns_data_and_metadata() {
 }
 
 // ---------------------------------------------------------------
-// 403 is retryable for Azure (SAS token clock skew / replication)
-// (matches JDBC/ODBC behavior)
+// 403 fast-fails on GET (same as PUT) — not inline-retried
+// A 403 surfaces immediately as AzureHttp{403} so the refresh layer
+// or caller can act on it rather than burning the retry budget.
 // ---------------------------------------------------------------
 
 #[tokio::test]
-async fn azure_download_403_is_retried_then_succeeds() {
+async fn azure_download_403_is_not_inline_retried() {
     let server = MockServer::start().await;
     let attempt = Arc::new(AtomicU32::new(0));
 
     let attempt_clone = attempt.clone();
     Mock::given(method("GET"))
         .respond_with(move |_: &Request| {
-            let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
-            if n == 0 {
-                ResponseTemplate::new(403).set_body_string("Forbidden")
-            } else {
-                azure_response_headers()
-            }
+            attempt_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(403).set_body_string("Forbidden")
         })
         .mount(&server)
         .await;
@@ -128,14 +127,25 @@ async fn azure_download_403_is_retried_then_succeeds() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
-    assert!(result.is_ok(), "403 should be retried and succeed");
+    let err = result.expect_err("403 must surface as an error");
+    assert!(
+        matches!(
+            &err,
+            AzureDownloadError::AzureHttp {
+                status_code: 403,
+                ..
+            }
+        ),
+        "must be AzureHttp 403, not RetryExhausted (no inline retry of 403); got: {err:?}"
+    );
     assert_eq!(
         attempt.load(Ordering::SeqCst),
-        2,
-        "should have retried once"
+        1,
+        "exactly one GET attempt — 403 must NOT be inline-retried"
     );
 }
 
@@ -162,6 +172,7 @@ async fn azure_download_404_is_not_retried() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -197,6 +208,7 @@ async fn azure_download_503_is_retried_then_succeeds() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -231,6 +243,7 @@ async fn azure_error_response_redacts_sas_token() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -281,6 +294,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -314,6 +328,7 @@ async fn azure_download_with_wrong_creds_type_fails() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -337,6 +352,7 @@ async fn azure_download_with_missing_storage_account_fails() {
         &stage,
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
     )
     .await;
 
@@ -345,6 +361,49 @@ async fn azure_download_with_missing_storage_account_fails() {
     assert!(
         err_str.contains("storage_account"),
         "Should report missing storage_account, got: {err_str}"
+    );
+}
+
+// ---------------------------------------------------------------
+// Persistent 403 with no refresher terminates without recovery
+// (JDBC null-session analog: no credential source → terminal on first 403,
+// symmetric with PUT which never inline-retried 403 either)
+// ---------------------------------------------------------------
+
+#[tokio::test]
+async fn azure_download_persistent_403_with_no_refresher_terminates() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .respond_with(|_: &Request| {
+            ResponseTemplate::new(403).set_body_string(
+                "<?xml version=\"1.0\"?><Error><Code>AuthenticationFailed</Code>\
+                 <Message>Server failed to authenticate the request.</Message></Error>",
+            )
+        })
+        .mount(&server)
+        .await;
+
+    let stage = azure_stage(&server.uri());
+    // No refresher: the driver has no credential source to recover with.
+    let result = sf_core::file_manager::download_from_azure(
+        &stage,
+        "file.csv",
+        &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+        &mut None,
+    )
+    .await;
+
+    let err = result.expect_err("persistent 403 with no refresher must be a terminal error");
+    assert!(
+        matches!(
+            &err,
+            AzureDownloadError::AzureHttp {
+                status_code: 403,
+                ..
+            }
+        ),
+        "terminal error must be AzureHttp 403 (no recovery loop, no inline retry, no panic); got: {err:?}"
     );
 }
 

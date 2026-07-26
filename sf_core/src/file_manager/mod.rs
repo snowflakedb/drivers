@@ -21,6 +21,14 @@ pub mod internal {
     pub use super::gcs_transfer::download_from_gcs_streaming;
     pub use crate::compression::compress_to_tempfile;
 
+    use super::{
+        CloudCredentials, RefreshFuture, StageInfoCache, StageInfoRefreshError, StageInfoRefresher,
+        StageInfoSnapshot,
+    };
+    use crate::utils::sync::MutexRecoverExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
+
     /// Builds a base put/get retry policy with the given `max_attempts`
     /// (zero backoff for instant test runs).
     fn base_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
@@ -36,9 +44,11 @@ pub mod internal {
         p
     }
 
-    /// Zero-backoff variant of the production Azure retry policy, for tests.
+    /// Zero-backoff base put/get policy for Azure transfer tests. The per-attempt
+    /// policy is derived from this via `azure_403_fastfail_policy` (which removes
+    /// 403 from the retryable set); tests pass this as the transfer `base`.
     pub fn azure_test_retry_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
-        super::azure_transfer::azure_retry_policy(&base_policy(max_attempts))
+        base_policy(max_attempts)
     }
 
     /// Zero-backoff variant of the production GCS retry policy, for tests.
@@ -60,10 +70,91 @@ pub mod internal {
         );
         params
     }
+
+    /// Configurable in-memory [`StageInfoRefresher`] fake for cloud
+    /// file-transfer refresh-on-error tests. Wraps a real [`StageInfoCache`]
+    /// (production type), counts `refresh()` calls, optionally rotates the
+    /// cached credential on the next refresh, and can be armed to fail.
+    ///
+    /// `Arc`-backed, so a `clone()` shares the cache and counter across
+    /// concurrent tasks — mirroring production's `Arc<RwLock<StageInfoCache>>`.
+    /// This is the single shared refresher fake for the file-transfer tests;
+    /// prefer it over hand-rolling a per-cloud copy.
+    ///
+    /// It does NOT model the production coalescing window in
+    /// `SnowflakeStageInfoRefresher` (a real `Instant` gate) — unit-test that
+    /// against the real type, not this fake.
+    #[derive(Clone)]
+    pub struct FakeStageInfoRefresher {
+        cache: StageInfoCache,
+        refresh_calls: Arc<AtomicU32>,
+        next_creds: Arc<Mutex<Option<CloudCredentials>>>,
+        fail_msg: Arc<Mutex<Option<String>>>,
+    }
+
+    impl FakeStageInfoRefresher {
+        /// Seeds the fake with `initial` credentials, no pending rotation or failure.
+        pub fn new(initial: CloudCredentials) -> Self {
+            Self {
+                cache: StageInfoCache::new_with_creds(initial),
+                refresh_calls: Arc::new(AtomicU32::new(0)),
+                next_creds: Arc::new(Mutex::new(None)),
+                fail_msg: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        /// Arms the next `refresh()` to rotate the cache to `creds`. Left
+        /// unarmed, `refresh()` stores nothing (simulates a coalesced peer).
+        pub fn arm_rotation(&self, creds: CloudCredentials) {
+            *self.next_creds.lock_recover() = Some(creds);
+        }
+
+        /// Arms the next `refresh()` to fail with `ServerRejected`.
+        pub fn arm_failure(&self, msg: &str) {
+            *self.fail_msg.lock_recover() = Some(msg.to_string());
+        }
+
+        /// Number of times `refresh()` has been invoked.
+        pub fn refresh_call_count(&self) -> u32 {
+            self.refresh_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl StageInfoRefresher for FakeStageInfoRefresher {
+        fn refresh(&mut self) -> RefreshFuture<'_> {
+            let calls = self.refresh_calls.clone();
+            let next = self.next_creds.clone();
+            let fail = self.fail_msg.clone();
+            let cache = self.cache.clone();
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                if let Some(msg) = fail.lock_recover().take() {
+                    return Err(StageInfoRefreshError::ServerRejected {
+                        message: msg,
+                        location: snafu::Location::default(),
+                    });
+                }
+                if let Some(c) = next.lock_recover().take() {
+                    cache.store(StageInfoSnapshot::creds_only(c));
+                }
+                Ok(())
+            })
+        }
+
+        fn refresh_url(&mut self) -> RefreshFuture<'_> {
+            // Creds live in the cache, not per-file presigned URLs, on the paths
+            // these fakes cover; refresh_url is never exercised.
+            Box::pin(async { Ok(()) })
+        }
+
+        fn cache(&self) -> &StageInfoCache {
+            &self.cache
+        }
+    }
 }
 
 pub use self::types::*;
-pub use azure_transfer::download_from_azure;
+pub use azure_transfer::{AzureDownloadError, AzureUploadError, download_from_azure};
 pub use gcs_transfer::{
     GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
 };
@@ -73,10 +164,7 @@ use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
-use azure_transfer::{
-    AzureDownloadError, AzureUploadError, azure_retry_policy, download_from_azure_streaming,
-    upload_to_azure_or_skip,
-};
+use azure_transfer::{download_from_azure_streaming, upload_to_azure_or_skip};
 use cloud_http::{CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo};
 use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
@@ -178,7 +266,8 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
 ///   (`s3_transfer::upload_to_s3_or_skip`).
 /// - GCS stages: 401 triggers a creds refresh; 400 in presigned-mode
 ///   triggers a URL refresh (`gcs_transfer::upload_to_gcs_or_skip`).
-/// - Azure stages: SAS URL refresh is out of scope for the current gap stack.
+/// - Azure stages: any 403 triggers a SAS refresh via a fresh PUT/GET query
+///   (`azure_transfer::upload_to_azure_or_skip`, `download_from_azure`).
 ///
 /// Refreshed snapshots are stored in the refresher's `StageInfoCache` rather
 /// than returned here.
@@ -265,7 +354,8 @@ async fn upload_prepared_source(
             data.overwrite,
             data.skip_upload_on_content_match,
             data.multipart,
-            &azure_retry_policy(policy),
+            policy,
+            refresher,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -969,8 +1059,9 @@ pub async fn download_single_file(
                 &data.stage_info,
                 data.src_location.as_str(),
                 data.multipart,
-                &azure_retry_policy(policy),
+                policy,
                 spill_target,
+                refresher,
             )
             .await
             .context(AzureDownloadSnafu)?;
