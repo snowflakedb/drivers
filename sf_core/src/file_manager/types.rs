@@ -9,6 +9,7 @@ use snafu::{Location, Snafu};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tempfile::TempPath;
 
 use super::encryption::Encryptor;
@@ -560,13 +561,22 @@ impl StageInfoSnapshot {
 /// ignore the GCS-only URL fields.
 #[derive(Debug, Clone)]
 pub struct StageInfoCache {
-    inner: Arc<RwLock<StageInfoSnapshot>>,
+    /// The snapshot and its monotonic store marker live under ONE lock
+    /// (threading the marker through the cache's *existing* `Arc<RwLock>`), so a
+    /// reader can never observe the marker and the creds disagreeing. The
+    /// `Instant` advances on every `store()`; a coalesced refresh stores nothing,
+    /// leaving it unchanged. Shared across cache clones via `Arc`, so every
+    /// holder sees the same snapshot + marker. A refresher compares the marker it
+    /// started with against the current one to tell a real re-fetch (marker
+    /// moved) from a coalesced no-op — WITHOUT putting the SAS into an equality
+    /// or log path.
+    inner: Arc<RwLock<(StageInfoSnapshot, Instant)>>,
 }
 
 impl StageInfoCache {
     pub fn new(snapshot: StageInfoSnapshot) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(snapshot)),
+            inner: Arc::new(RwLock::new((snapshot, Instant::now()))),
         }
     }
 
@@ -578,13 +588,26 @@ impl StageInfoCache {
 
     /// Returns a clone of the current snapshot.
     pub fn snapshot(&self) -> StageInfoSnapshot {
-        self.inner.read_recover().clone()
+        self.inner.read_recover().0.clone()
     }
 
-    /// Replaces the full snapshot. Called by `StageInfoRefresher::refresh`
-    /// and `refresh_url` after a successful PUT/GET re-issue.
+    /// Replaces the full snapshot, advancing the store marker atomically (same
+    /// lock) so a refresher can detect that a new snapshot landed. Called by
+    /// `StageInfoRefresher::refresh` and `refresh_url` after a PUT/GET re-issue.
     pub fn store(&self, new: StageInfoSnapshot) {
-        *self.inner.write_recover() = new;
+        *self.inner.write_recover() = (new, Instant::now());
+    }
+
+    /// The monotonic store marker. Lets a refresher tell "a new snapshot was
+    /// stored since I last looked" (marker advanced) from "the refresh coalesced
+    /// / stored nothing" (marker unchanged), without comparing the credential
+    /// value itself.
+    ///
+    /// Uses `read_recover()` (utils::sync, #651): a poisoned lock is recovered
+    /// and logged rather than propagated or `.expect()`-panicked, so the read
+    /// never fails.
+    pub fn cached_at(&self) -> Instant {
+        self.inner.read_recover().1
     }
 }
 

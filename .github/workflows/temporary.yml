@@ -24,6 +24,10 @@ name: temporary put get
 # JDBC has no put/get tests in the test tree today, so it is intentionally
 # omitted; add a JDBC job here when those tests land.
 
+env:
+  UV_DEFAULT_INDEX: "https://pypi.org/simple"
+  UV_HTTP_RETRIES: "6"
+
 on:
   pull_request:
     # `labeled` lets the run trigger when the label is first applied;

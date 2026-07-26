@@ -451,6 +451,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 sf_core::file_manager::internal::CloudSpillTarget::Temp(
                     std::env::temp_dir().as_path(),
                 ),
+                &mut None,
             )
             .await
             .expect("Azure streaming download must succeed")
