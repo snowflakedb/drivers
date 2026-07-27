@@ -1,0 +1,1336 @@
+bugs:
+- key: SNOW-2984
+  commit_date: 2014-03
+  summary: Disable PUT from UI
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-4273
+  commit_date: 2014-07
+  summary: 'java.lang.IllegalArgumentException: missing access creds at com.google.common.base.Preconditions.checkArgument(Preconditions.java:92)...'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-4172
+  commit_date: 2014-07
+  summary: java.lang.NullPointerException at com.snowflake.sql.compiler.parser.SqlParser.generateParseTreeDescribe(SqlParser.java:3349)...
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-4952
+  commit_date: 2014-09
+  summary: One of the worker was stuck in sf::AsyncActionQueue::announceFailed
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-6360
+  commit_date: 2014-11
+  summary: Hang a query if ROWS_PER_RESULTSET is set to smaller value and 4 server
+    warehouse.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-6333
+  commit_date: 2014-11
+  summary: CURLerror (curl_easy_perform() failed) - code=60 msg='Peer certificate
+    cannot be authenticated with given CA certificates'.
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-4799
+  commit_date: 2015-01
+  summary: Retry get-result in JDBC/ODBC upon network timeout
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-8548
+  commit_date: 2015-02
+  summary: Unable to Retrieve Warehouse Catalog in MicroStrategy
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-7615
+  commit_date: 2015-02
+  summary: Unable to see database under non-PUBLIC schema
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-8883
+  commit_date: 2015-03
+  summary: Apparent memory leak on Linux odbc driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-8699
+  commit_date: 2015-03
+  summary: Unable to "Update Structure" in MicroStrategy Developer
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-10305
+  commit_date: 2015-04
+  summary: 'ODBC Returns "Invalid date, time, timestamp value" '
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-7463
+  commit_date: 2015-05
+  summary: ''
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-11788
+  commit_date: 2015-07
+  summary: PUT command in UI returns internal error
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-13158
+  commit_date: 2015-08
+  summary: ' Issues with date data type (Dates prior to Jan 1, 1970) using ODBC on
+    Windows.  '
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-13563
+  commit_date: 2015-09
+  summary: Clients should not time out by default when retrying get result
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-13561
+  commit_date: 2015-09
+  summary: ODBC driver fails to detect DDL if a carriage return exists before the
+    start of command
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-13249
+  commit_date: 2015-09
+  summary: Qlik is running into ODBC errors fetching large data sets > 45 million
+    rows
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-12425
+  commit_date: 2015-09
+  summary: Client (JDBC) Version History
+  status: Done
+  priority: Low
+  analysis_status: not_analyzed
+- key: SNOW-14254
+  commit_date: 2015-10
+  summary: Tableau is erroneously flagging functions as unsupported in Snowflake
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-13997
+  commit_date: 2015-10
+  summary: t_odbc test failure in RT-AWS
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-15125
+  commit_date: 2015-11
+  summary: 'ODBC Scalar Function CURRENT_TIMESTAMP failed intermittently '
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-14896
+  commit_date: 2015-11
+  summary: ODBC SQLGetInfo return the wrong info about whether specific scalar function
+    is supported or not
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-14774
+  commit_date: 2015-11
+  summary: Fix TIMESTAMP_NTZ result with getTimestamp() in JDBC and ODBC
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-14765
+  commit_date: 2015-11
+  summary: JDBC (and probably other) clients send login requests to GS without username
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-14634
+  commit_date: 2015-11
+  summary: 'ASK.com: Problem publishing viz to a Tableau Server without embedding
+    password at publishing time'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-15621
+  commit_date: 2015-12
+  summary: ODBC Driver on windows give a json_type_mismatch error when Calling SQLTables
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-14282
+  commit_date: 2016-01
+  summary: ODBC SQLColumns did not support name with white space
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-13875
+  commit_date: 2016-01
+  summary: ODBC API SQLDriverConnect Failed
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-16589
+  commit_date: 2016-01
+  summary: 'Mac/ODBC: $HOME/ODBC should not be owned by root'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-16286
+  commit_date: 2016-01
+  summary: odbcapi large_result_test.sh failed due to AWS S3 connection error
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-15724
+  commit_date: 2016-01
+  summary: ODBC on MAC - Pre-populate keys within the ODBC manager
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-17816
+  commit_date: 2016-02
+  summary: ODBC core dump when server returns 500 error
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-17720
+  commit_date: 2016-02
+  summary: missing dependencies for libSnowflake.so
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-18057
+  commit_date: 2016-03
+  summary: 'NIELSEN: Gigantic single SQL query not compiling (possibly not making
+    it through NGINX)'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-18055
+  commit_date: 2016-03
+  summary: Support any order column retrieval
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-18800
+  commit_date: 2016-03
+  summary: Fix SQLGetInfo returns wrong value in ODBC
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-14285
+  commit_date: 2016-04
+  summary: ODBC SQLColumns did not return the default value
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-20291
+  commit_date: 2016-05
+  summary: snowflake 32-bit odbc driver v2.12.70 crashes when executing .net code
+    with invalid SQL
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-20138
+  commit_date: 2016-05
+  summary: ODBC getting intermittent 403 when fetching large result
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-19661
+  commit_date: 2016-05
+  summary: '  REST request for URL https://researchnow.snowflakecomputing.com:443/queries/v1/query-request?requestId=ca0e447c-9c9d-4fb4-85cb-25472ab82136
+    failed: CURLerror (curl_easy_perform() failed) - code=18 msg=''Transferred a partial
+    file''.     '
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-18728
+  commit_date: 2016-05
+  summary: Quering information_schema through ODBC is significantly slow
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-20584
+  commit_date: 2016-06
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform/RestRequest.cpp:httpPerform:557...'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-20947
+  commit_date: 2016-07
+  summary: 'ODBC: Formatted Message at Platform/Statement.cpp:executeQuery:158...'
+  status: Done
+  priority: Low
+  analysis_status: not_analyzed
+- key: SNOW-22432
+  commit_date: 2016-08
+  summary: ODBC Large Results failed when using result scan
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-21961
+  commit_date: 2016-08
+  summary: Performance Regression of ODBC
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-21726
+  commit_date: 2016-08
+  summary: 'ODBC support common table expression - WITH clause '
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-21651
+  commit_date: 2016-08
+  summary: ODBC problem on year '0'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-23864
+  commit_date: 2016-09
+  summary: Nexus https endpoint hanging. All build pipelines are blocked
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-22535
+  commit_date: 2016-09
+  summary: Snowflake ODBC Driver hangs process when exiting
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-21795
+  commit_date: 2016-09
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform/RestRequest.cpp:httpPerform:571...'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-21178
+  commit_date: 2016-09
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform/ResultChunkDownloader.cpp:getNextChunkToConsume:547...'
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-11970
+  commit_date: 2016-10
+  summary: Improve ODBC to retry parsing error when parsing error is caused by malformed
+    result as a result of potential network issues.
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-24278
+  commit_date: 2016-10
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform/ResultJsonParser.cpp:parseNextRow:137...'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-23906
+  commit_date: 2016-10
+  summary: 'ODBC: testTypeConversionFunctions'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-24777
+  commit_date: 2016-10
+  summary: ODBC fails to decode  nulls
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-24671
+  commit_date: 2016-10
+  summary: Dead lock in ODBC
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-24502
+  commit_date: 2016-10
+  summary: ODBC parses timestamp_tz incorrectly
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-24366
+  commit_date: 2016-10
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform/RestRequest.cpp:httpPerform:588...'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-30243
+  commit_date: 2017-05
+  summary: java.lang.NullPointerException at com.snowflake.sql.execution.ExecRsoHashJoinProbe.<init>(ExecRsoHashJoinProbe.java:NNNN)...
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31211
+  commit_date: 2017-06
+  summary: 'Windows: ODBC returns 1969-12-31 23:59:59.000 for timestamp older than
+    1970.'
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-31045
+  commit_date: 2017-06
+  summary: Force Physical Type Check on Cloned Transitive Predicates
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-30433
+  commit_date: 2017-06
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform\ResultChunkDownloader.cpp:sf::ResultChunkDownloader::getNextChunkToConsume:631...'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31847
+  commit_date: 2017-07
+  summary: MultiFetchResultBulk is failing
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31447
+  commit_date: 2017-07
+  summary: 'Mac: binding prior to 1600 year is not supported'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31396
+  commit_date: 2017-07
+  summary: 'Python Test: test_put_get_large_files_s3 fails intermittently'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-31377
+  commit_date: 2017-07
+  summary: 'Windows: ODBC Date object has the same limitation as TIMESTAMP.'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31350
+  commit_date: 2017-07
+  summary: Prior to epoch timestamp with fraction will lose 1 second in bind
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-31346
+  commit_date: 2017-07
+  summary: ODBC testBindOldTimestamp fails with TZ=America/Los_Angeles
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-30511
+  commit_date: 2017-10
+  summary: SQL Workbench/J Okta connection fails when navigating to secondary workspace
+    tabs after successful connection
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-39305
+  commit_date: 2018-01
+  summary: TimestampBindingViaString failed.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-39883
+  commit_date: 2018-02
+  summary: 'ODBC SIGSEGV: caused by NULL pointer reference in base64 encoding'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-26395
+  commit_date: 2018-03
+  summary: 'ODBC: Simba::Support::DIAG_GENERAL_ERROR at Platform\ResultChunkDownloader.cpp:sf::ResultChunkDownloader::getNextChunkToConsume:632...'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-40625
+  commit_date: 2018-03
+  summary: pychrodome 3.5.0 is broken on Mac
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-40353
+  commit_date: 2018-03
+  summary: m_sfSettings.m_tracingLevel is not initialized
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-48553
+  commit_date: 2018-06
+  summary: WCHAR test is failing on MacOSX
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-44911
+  commit_date: 2018-06
+  summary: Still non-ascii character/Swedish characters cannot be handled correctly
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-50516
+  commit_date: 2018-07
+  summary: No session toke renewal happens in ODBC
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-50475
+  commit_date: 2018-07
+  summary: Tableau Desktop - Authentication Token Error when using new SSO File Cache
+    feature (ODBC)
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-50088
+  commit_date: 2018-07
+  summary: 'BPTP Failure: t_federated::basic_login_odbc.sh'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-49860
+  commit_date: 2018-07
+  summary: No longer able to connect via Tableau Desktop with ODBC 2.16.4
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-51988
+  commit_date: 2018-08
+  summary: ODBC test fails due to indeterministic result order
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-54635
+  commit_date: 2018-09
+  summary: ODBC needs to retry more rest end points including connect request
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-60207
+  commit_date: 2018-11
+  summary: Warehouse settings in ODBC DSN not taken into account and getting error
+    on execution "No Warehouse is selected"
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-58976
+  commit_date: 2018-11
+  summary: ODBC windows build would fail due to incorrect .vcxproj setup
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-62077
+  commit_date: 2018-12
+  summary: ODBC driver does not catch HTTP Errors reported in the HTTP Response during
+    OCSP Cache Download
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-63031
+  commit_date: 2018-12
+  summary: 'ODBC: Invalidate outdated OCSP response when checking cache hit'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-65850
+  commit_date: 2019-01
+  summary: testBindDate() invokes sprintf() providing insufficient buffer
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-60376
+  commit_date: 2019-02
+  summary: 'ODBC on Windows: cannot change installation location'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-82846
+  commit_date: 2019-08
+  summary: Inserting a TIMESTAMP into a STRING data type field via Parameterized insert
+    left trims the month and day and time using MS ODBC TEST Tool (odbcte32.exe).
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-119090
+  commit_date: 2020-02
+  summary: Segmentation fault reading 9 million records when customer upgrades beyond
+    the 2.12.76 ODBC Driver
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-148261
+  commit_date: 2020-03
+  summary: ODBC driver returning HTTP 404  -  HTTP request being built incorrectly
+    due to heartbeatSync
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-152049
+  commit_date: 2020-04
+  summary: 'Test Failure: BindCatchTest.global.TIMESTAMP_LTZ/Perform Test (from BindCatchTest)'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-151721
+  commit_date: 2020-04
+  summary: make arrow fails on the centos6 docker container
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-158539
+  commit_date: 2020-05
+  summary: ArrowBulkFetch test fails
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-178660
+  commit_date: 2020-07
+  summary: 'BPTP Failure: CancelTest.global::basic SQLCancel()'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-172556
+  commit_date: 2020-07
+  summary: 'OOB Telemetry: ODBC Driver version 2.21.6 and 2.21.7 put the wrong version
+    number in out-of-band client-telemetry log'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-197364
+  commit_date: 2020-09
+  summary: GH action for Issue doesn't set the assignee
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-183943
+  commit_date: 2020-10
+  summary: Flaky Test - CancelTest.global::basic SQLCancel() in BPTP mainline runs
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-204142
+  commit_date: 2020-10
+  summary: ODBC SQL_DESC_TYPE_NAME will be GEOGRAPHY only when default output is GeoJSON
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-201816
+  commit_date: 2020-10
+  summary: Unable to un-set Proxy details once it is set on the ODBC driver.
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-194077
+  commit_date: 2020-10
+  summary: 'QA1 Test failure: t_odbc::testnewjsonparser.sql'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-215421
+  commit_date: 2020-10
+  summary: 'BPTP Test failure: ConnectionTest.global::Clean Previous Proxy'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-213639
+  commit_date: 2020-10
+  summary: ODBC bulk array binding errors in parsing data of DATE format
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-210112
+  commit_date: 2020-10
+  summary: Fix GH to Jira comments
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-209045
+  commit_date: 2020-10
+  summary: Connecting from Wherescape RED to Snowflake generates at random crashdumps
+    in WslSched.exe
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-225928
+  commit_date: 2020-11
+  summary: Duplicate INSERT Statement with ODBC Driver after 4.39.2 release.
+  status: Done
+  priority: Blocker
+  analysis_status: not_analyzed
+- key: SNOW-218027
+  commit_date: 2020-11
+  summary: Artifact conflict on s3 location for codecov and non-codecov ODBC jenkins
+    job runs
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-213444
+  commit_date: 2020-11
+  summary: Add Unit Test case to cover Heartbeat
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-231762
+  commit_date: 2020-12
+  summary: 'BPTP Test failure: GSRetryTest.global::GSRetryTest'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-278585
+  commit_date: 2021-02
+  summary: 'Preprod Test failure: t_odbc::snow-21651.sql'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-274791
+  commit_date: 2021-02
+  summary: 'ODBC: Metadata API call leads to overscoped Show Command'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-355132
+  commit_date: 2021-06
+  summary: HVR jobs w/TCP keep alive enabled are failing intermittently due to the
+    following application error 'An attempt was made to write to a datastream which
+    is closed for writing'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-471585
+  commit_date: 2021-10
+  summary: 'BPTP Test failure: ArrowLatestTest.global::SELECT VARCHARS'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-464077
+  commit_date: 2021-10
+  summary: Snowflake ODBC driver returning unexpected results for TIMESTAMP_NTZ column
+    upon query, is also OS-dependant
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-372033
+  commit_date: 2021-12
+  summary: Hundreds of JWT token expiration via ODBC driver
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-514869
+  commit_date: 2022-01
+  summary: 'Snowflake ODBC driver - OCSP File cache error: Failed to parse cache file
+    content in JSON format'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-540489
+  commit_date: 2022-02
+  summary: 'ODBC 2.24.5 query run in 3rd party application WPS is delayed with error:
+    Status code: 11 and curl errorcode 91'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-591613
+  commit_date: 2022-05
+  summary: 'Test failure: IncidentTest.global::Test incident send as inband telemetry'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-630301
+  commit_date: 2022-09
+  summary: ''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-720480
+  commit_date: 2023-01
+  summary: ODBC - Core dump (Segfault) in Snowflake ODBC driver v2.24.6 and v2.25.7
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-719822
+  commit_date: 2023-01
+  summary: 'Error: "This session does not have a current schema" for array binding
+    query from version 2.25.4 ODBC driver'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-701481
+  commit_date: 2023-01
+  summary: SIGPIPE signal sent from Snowflake ODBC driver to customer application
+    after session is idle for approx 120 seconds, similar to previous case 00327089
+    but further clarification required as configuring CURLOPT_MAXAGE_CONN is not working
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-718714
+  commit_date: 2023-02
+  summary: After upgrading ODBC driver from 2.21.8 to 2.25.4, the Tableau Extract
+    job returns NULL value and its performance is slow too.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-747647
+  commit_date: 2023-03
+  summary: Incorrect CABundleFile location on ODBC v2.25.8 with Mac ARM64 architecture
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-734926
+  commit_date: 2023-03
+  summary: '[Simba] Client Ecosystem ODBC Driver Code Coverage'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-832603
+  commit_date: 2023-06
+  summary: 'Test failure: net.snowflake.client.jdbc.ResultSetJsonVsArrowIT::testStructuredTypes[format=Arrow]'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-827477
+  commit_date: 2023-06
+  summary: ODBC 2.25.12 is not getting built on Linux Aarch64 and we are seeing this
+    failure.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-892559
+  commit_date: 2023-08
+  summary: SimbaEngine SDK 10.2.4.1021 Release
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-892551
+  commit_date: 2023-08
+  summary: '[ODBC]Remove references to sfcdev'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-892528
+  commit_date: 2023-08
+  summary: CodeCoverage text file
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-880365
+  commit_date: 2023-08
+  summary: Invalid OCSP response
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-873608
+  commit_date: 2023-08
+  summary: allow setting path of dependencies for building through environment variable
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-918847
+  commit_date: 2023-09
+  summary: ODBC driver keep retry on chunk downloading when the query is canceled
+    by application
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-917177
+  commit_date: 2023-09
+  summary: performance issue with latest Snowflake ODBC Driver 3.1.0 as compared to
+    the old ODBC version 2.24.0.
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-905675
+  commit_date: 2023-09
+  summary: please consider updating `cacerts.pem` for the ODBC driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-897001
+  commit_date: 2023-09
+  summary: SF_OCSP_RESPONSE_CACHE_SERVER_URL Pointing To ocsp.snowflakecomputing.com
+    and Not Privatelink Host
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-891434
+  commit_date: 2023-09
+  summary: 'ERROR [HY000] [Snowflake][Snowflake] (40)  Error encountered when executing
+    file transfer: Unknown exception thrown by FileTransferAgent'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-872773
+  commit_date: 2023-09
+  summary: ODBC Driver Does not retry Entire OCSP URL
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-909181
+  commit_date: 2023-10
+  summary: '[snowflake-odbc] LastQueryID support for failed statements'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-878080
+  commit_date: 2023-10
+  summary: Retry Strategy for ODBC
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-935778
+  commit_date: 2023-11
+  summary: Japanese messy code
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-847343
+  commit_date: 2023-11
+  summary: Add timeout for authentication in external browser (if not supported)
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-945786
+  commit_date: 2023-12
+  summary: 'Dmp failure: Volume::getJobStageVolume():SnowflakeAssert check expected
+    valid primary stage volume for this account'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-839796
+  commit_date: 2023-12
+  summary: '(Windows 64bit ODBC): ComposeCtl.exe crashed due to issue with SnowflakeDSII.dll'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1018338
+  commit_date: 2024-01
+  summary: ODBC test failure seems due to server change on SQL Procedure
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1011702
+  commit_date: 2024-01
+  summary: ODBC Release Testing 3.2.0
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-937196
+  commit_date: 2024-01
+  summary: ODBC 3.1.1:ODBC driver upgrade leads to performance issues
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-916932
+  commit_date: 2024-01
+  summary: 'ODBC: Correct Native Okta Auth HTTP 429 retry logic for sso/saml endpoint'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-914452
+  commit_date: 2024-01
+  summary: '[snowflake-odbc] Linux installer can reference a non-existing ODBC .so
+    file in certain OS'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-910807
+  commit_date: 2024-01
+  summary: Reuse query context cache implementation from libsnowflakeclient in ODBC
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-983106
+  commit_date: 2024-02
+  summary: libsnowflakeclient - possible resource leak due to exit call
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-983100
+  commit_date: 2024-02
+  summary: ''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1232955
+  commit_date: 2024-03
+  summary: Snowflake ODBC Driver not showing the stored procedures when the return
+    type is set to table and when no column arguments and types are defined
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-983104
+  commit_date: 2024-03
+  summary: ODBC - additional compile flags and VS2022 upgrade for driver and dependencies
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-983096
+  commit_date: 2024-03
+  summary: ODBC - upgrade AWS SDK 1.11.207 or latest
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-892708
+  commit_date: 2024-03
+  summary: Avoid Manual copies for SimbaEngine SDK on windows nodes.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-856225
+  commit_date: 2024-03
+  summary: Implement Easy Logging using a config file
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1319983
+  commit_date: 2024-04
+  summary: ''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-983098
+  commit_date: 2024-04
+  summary: ODBC - upgrade Arrow to v14.0.1
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1358860
+  commit_date: 2024-05
+  summary: total_result_size/number of chunks logged for chunked result sets do not
+    match server-side values
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1489015
+  commit_date: 2024-06
+  summary: Problem with ArrowLatestTest
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1466182
+  commit_date: 2024-06
+  summary: Query with scripting doesn't return data correctly
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1461903
+  commit_date: 2024-06
+  summary: SQLColAttribute doesn't return custom data types
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-819208
+  commit_date: 2024-06
+  summary: ApiTest::testForeignKeys failure on Mac
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1511525
+  commit_date: 2024-07
+  summary: '"Assertion failure: json_type_mismatch" returned by ODBC when a value
+    of null is returned from SP'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1502213
+  commit_date: 2024-07
+  summary: Snowflake is not working fine when the script contains more than 1 USE
+    statement
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1489877
+  commit_date: 2024-07
+  summary: Connecting with SQL_SF_CONN_ATTR_PRIV_KEY set causes driver to crash
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1487510
+  commit_date: 2024-07
+  summary: 'Priority Support: Populate changelog and contact info in ODBC .rpm packaging'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1482765
+  commit_date: 2024-07
+  summary: ODBC - error with boolean types in PowerBI
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1480689
+  commit_date: 2024-07
+  summary: memory leak detected by `AddressSanitizer` on the code part where we connect
+    to Snowflake and config reader, ODBC 3.3.1
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1435405
+  commit_date: 2024-07
+  summary: 'simba_abort() called from SplitFilenameExt() at PlatformAbstraction/FileSystemUtils.cpp:246
+    for reason: Assertion Failed: SIMBA_NPOS == when attempting to connect to Snowflake'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1542074
+  commit_date: 2024-07
+  summary: Job ODBC-Macaarch64-Github-Test is failing
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1637718
+  commit_date: 2024-08
+  summary: libsnowflakeclient (and thus the ODBC driver) unnecessarily reaches out
+    to AWS EC2 metadata service upon storage client creation, introducing delays
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1617299
+  commit_date: 2024-08
+  summary: Data corruption when binding null values on INSERT via System.Data.Odbc
+    (>=3.0.1)
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1568197
+  commit_date: 2024-08
+  summary: ODBC jenkins test failure on Mac
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-802529
+  commit_date: 2024-08
+  summary: Implement better error message for ODBC Driver aborting connection due
+    to proxy/firewall signing SSL certificate
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1656693
+  commit_date: 2024-10
+  summary: 'RHEL 8 on ARM cannot use ODBC driver: `/usr/lib64/snowflake/odbc/lib/libSnowflake.so:
+    /lib64/libm.so.6: version `GLIBC_2.29'' not found`'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-731501
+  commit_date: 2024-10
+  summary: Implement "Collect Snowflake Connectivity Diagnostics" for ODBC
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1759693
+  commit_date: 2024-11
+  summary: Fix "ConnectionLatestTest.global.secondary roles" test
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1644730
+  commit_date: 2025-01
+  summary: ODBC 3.3.1 performance perceived as worse than 2.24.1 (used with Qlik),
+    review/advice needed
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1886239
+  commit_date: 2025-01
+  summary: Fix MacOS Secure Storage helper in ODBC driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1821506
+  commit_date: 2025-02
+  summary: '[ODBC] Initialal OCSP deprecation plan steps'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1818505
+  commit_date: 2025-02
+  summary: '[Developer Platform: Drivers] ODBC lowercases Okta URL authenticator strings'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1892746
+  commit_date: 2025-02
+  summary: 'PERF REGRESSION: 84.98% in odbc-time-seconds-testsFetchNumberOn50MRowArrow
+    (median) benchmark: ODBC_PERF_TESTS and 3 others'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1761062
+  commit_date: 2025-03
+  summary: ''
+  status: Done
+  priority: Low
+  analysis_status: not_analyzed
+- key: SNOW-2012199
+  commit_date: 2025-03
+  summary: 'Test failure: OCSPCatchTest.global::Fail Open Revoked Test'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-2004104
+  commit_date: 2025-03
+  summary: Uninitialized variable in external browser authentication
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1991254
+  commit_date: 2025-03
+  summary: ''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1980270
+  commit_date: 2025-03
+  summary: 'Test failure: ApiCatchLatestTest.global::Configurable default varchar/binary
+    size'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1922145
+  commit_date: 2025-03
+  summary: Simba SDK version update with some perf improvements caused performance
+    regression in ODBC driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1908907
+  commit_date: 2025-03
+  summary: '[ODBC] The whole query is visible in the logs with INFO level'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2030183
+  commit_date: 2025-04
+  summary: 'Test failure: UnitAuthenticatorTest.global::unit_experimental_authenticator_t/unit_experimental_authenticator_t'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-2026002
+  commit_date: 2025-04
+  summary: Connectivity Diagnostic check connecting to "ireallyshouldnotexistatallanywhere.com"
+    returns 200 response
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-1942313
+  commit_date: 2025-04
+  summary: ODBC fails on Win32 on 128MB LOBs
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2083178
+  commit_date: 2025-05
+  summary: 'Test failure: ApiCatchLatestTest.global::Test SQLProcedures and SQLProcedureColumns'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1993348
+  commit_date: 2025-06
+  summary: ''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2150365
+  commit_date: 2025-06
+  summary: ODBC/libsnowflakeclient doesn't work with virtual URLs
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2144007
+  commit_date: 2025-06
+  summary: 'Test failure: StageOperationLatestTest.global::PUT GET Large 2GB Command/GCP'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-2133572
+  commit_date: 2025-06
+  summary: Permission denied error for "/root/sf_client_config.json" when executing
+    background PHP script via Apache
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1005336
+  commit_date: 2025-07
+  summary: Okta authentication unnecessarily using snowflake headers for SSO URL
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2231436
+  commit_date: 2025-07
+  summary: '[9.23 Test Failure] InbandTelemetryTest.global::sf sql incident test'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2402540
+  commit_date: 2025-10
+  summary: Simba investigation of data discrepancies
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2402525
+  commit_date: 2025-12
+  summary: enable test case for decfloat on all platforms when it's released
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2635654
+  commit_date: 2025-12
+  summary: Introduce comprehensive Arrow numeric concurrency tests in the ODBC driver
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-798893
+  commit_date: 2026-01
+  summary: Add query timeout test case in ODBC driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2456095
+  commit_date: 2026-02
+  summary: 'ODBC: OAuth listener always uses 127.0.0.1 instead of the host in the
+    redirect URI'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2440272
+  commit_date: 2026-02
+  summary: Implement boundary check of m_wordCount in SimbaSDK
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-3127864
+  commit_date: 2026-03
+  summary: SQLGetData with SQL_C_BINARY on DECIMAL/NUMERIC columns returns raw internal
+    struct instead of SQL_NUMERIC_STRUCT
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-3120035
+  commit_date: 2026-03
+  summary: Conversion of the numeric type into char returns incorrect result
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-3063498
+  commit_date: 2026-04
+  summary: '[ODBC] Client not handling QueryContext for failed queries'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-3411927
+  commit_date: 2026-04
+  summary: Segfault during MSR in Linux ODBC driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-767762
+  commit_date: 2026-05
+  summary: Binary base64 format not supported in ODBC driver
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
