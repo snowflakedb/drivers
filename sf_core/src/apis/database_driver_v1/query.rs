@@ -10,8 +10,8 @@ use crate::chunks::{
 use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::{
-    DownloadResult, StageInfoCache, StageInfoRefreshError, StageInfoSnapshot, UploadResult,
-    download_files, upload_files,
+    ByteSource, DownloadResult, SingleUploadData, StageInfoCache, StageInfoRefreshError,
+    StageInfoSnapshot, UploadResult, download_files, upload_files, upload_in_memory_file,
 };
 use crate::query_types::RowType;
 use crate::rest;
@@ -84,7 +84,9 @@ pub(super) async fn perform_put_get_transfer(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
+    unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
+    crl_worker: crate::crl::worker::SharedCrlWorker,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -108,6 +110,7 @@ pub(super) async fn perform_put_get_transfer(
                 )
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
+            file_upload_data.stage_info.crl_worker = crl_worker.clone();
             let upload_results = upload_files(&file_upload_data, retry_policy, refresher_handle)
                 .await
                 .context(FileUploadSnafu)?;
@@ -118,6 +121,7 @@ pub(super) async fn perform_put_get_transfer(
                 .to_file_download_data(
                     &wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url_session_param,
+                    unsafe_file_write,
                 )
                 .map_err(|e| {
                     if e.to_string().contains("source locations") {
@@ -127,6 +131,7 @@ pub(super) async fn perform_put_get_transfer(
                     }
                 })?;
             file_download_data.stage_info.tls_config = tls_config;
+            file_download_data.stage_info.crl_worker = crl_worker;
             let download_results =
                 download_files(file_download_data, retry_policy, refresher_handle)
                     .await
@@ -138,6 +143,88 @@ pub(super) async fn perform_put_get_transfer(
         }
         .fail(),
     }
+}
+
+/// Uploads `bytes` (already drained from the caller's stream) to the stage
+/// described by a GS PUT response, returning a single-row `RowsetData::Upload`.
+/// Mirrors the UPLOAD arm of [`perform_put_get_transfer`] but sources the data
+/// from memory instead of expanding a local glob — backs
+/// `connection_upload_stream` (JDBC `uploadStream`, Python `file_stream`).
+///
+/// The destination filename is the basename of the PUT command's `file://`
+/// token (echoed back by GS as `src_location_pattern`); auto-compress,
+/// overwrite, and encryption all follow the GS response, exactly as a normal
+/// file-path PUT.
+pub(super) async fn perform_stream_upload(
+    data: &query_response::Data,
+    wrapper_presets: &WrapperPresets,
+    stage_info_refresh_context: Option<StageInfoRefreshContext>,
+    use_s3_regional_url_session_param: bool,
+    put_get_policy: &RetryPolicy,
+    bytes: Vec<u8>,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    let upload_data = data
+        .to_file_upload_data(
+            wrapper_presets.put_get_resultset_flavor.clone(),
+            wrapper_presets.legacy_odbc_compression_autodetect,
+            // In-memory stream PUT never skips on content match: the API has no
+            // cursor kwarg to opt into it and always uploads the supplied bytes.
+            false,
+            use_s3_regional_url_session_param,
+        )
+        .context(FileTransferPreparationSnafu)?;
+
+    let filename = std::path::Path::new(&upload_data.src_location_pattern)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&upload_data.src_location_pattern)
+        .to_string();
+
+    // Seed the refresher with the initial snapshot so a mid-upload cred/URL
+    // expiry can re-issue the PUT SQL — identical machinery to the file path.
+    let initial_snapshot = data
+        .stage_info_snapshot()
+        .context(FileTransferPreparationSnafu)?;
+    let mut refresher = stage_info_refresh_context
+        .zip(initial_snapshot)
+        .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
+    let mut refresher_handle = refresher
+        .as_mut()
+        .map(|r| r as &mut dyn file_manager::StageInfoRefresher);
+
+    let single = SingleUploadData {
+        // `upload_in_memory_file` overrides `source` with `bytes` below; this
+        // placeholder only satisfies the struct (the result's `source` column
+        // is derived from `filename` for in-memory uploads).
+        source: ByteSource::Bytes(bytes::Bytes::new()),
+        filename,
+        stage_info: upload_data.stage_info,
+        encryption_material: upload_data.encryption_material,
+        auto_compress: upload_data.auto_compress,
+        source_compression: upload_data.source_compression,
+        overwrite: upload_data.overwrite,
+        flavor: upload_data.flavor,
+        legacy_odbc_compression_autodetect: upload_data.legacy_odbc_compression_autodetect,
+        skip_upload_on_content_match: upload_data.skip_upload_on_content_match,
+        multipart: upload_data.multipart,
+    };
+
+    let result = upload_in_memory_file(bytes, single, put_get_policy, &mut refresher_handle)
+        .await
+        .context(FileUploadSnafu)?;
+
+    Ok(RowsetData::Upload(vec![result]))
+}
+
+/// Builds the stage-info refresher used by `connection_download_stream`.
+/// Exposed so `stream_transfer.rs` can drive a streaming GET with the same
+/// cred/URL-refresh machinery as the file-path path, without re-exposing the
+/// private `SnowflakeStageInfoRefresher` type.
+pub(super) fn stream_stage_info_refresher(
+    ctx: StageInfoRefreshContext,
+    initial: StageInfoSnapshot,
+) -> impl file_manager::StageInfoRefresher {
+    SnowflakeStageInfoRefresher::new(ctx, initial)
 }
 
 /// Window during which repeated `refresh()` calls return without hitting GS.
@@ -359,12 +446,12 @@ async fn fetch_fresh_stage_info_with_sql(
         .context(QueryFailedSnafu)?;
 
     if !response.success {
-        return Err(ServerRejectedSnafu {
+        return ServerRejectedSnafu {
             message: response
                 .message
                 .unwrap_or_else(|| "Unknown error".to_string()),
         }
-        .build());
+        .fail();
     }
 
     // The re-issued PUT/GET carries the fresh stageInfo on the response.
@@ -392,7 +479,7 @@ pub(super) async fn build_reader_from_rowset_data(
             .context(DownloadResultsConversionSnafu),
         _ => read_batches(data, http_client, prefetch_config, nullable_flags)
             .await
-            .context(BatchReadingSnafu),
+            .context(BatchReadSnafu),
     }
 }
 
@@ -402,10 +489,9 @@ pub(super) async fn read_batches(
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
-    tracing::debug!("read_batches called {:?}", data);
     match data {
         RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadingSnafu)
+            single_chunk_reader(chunk_base64, nullable_flags).context(ChunkReadSnafu)
         }
         RowsetData::ArrowMultiChunk {
             initial_base64_opt,
@@ -418,10 +504,10 @@ pub(super) async fn read_batches(
             nullable_flags,
         )
         .await
-        .context(ChunkReadingSnafu),
+        .context(ChunkReadSnafu),
         RowsetData::SchemaOnly { rowtype } => {
             let row_types = parse_row_types(rowtype)?;
-            schema_only_reader(&row_types).context(ChunkReadingSnafu)
+            schema_only_reader(&row_types).context(ChunkReadSnafu)
         }
         RowsetData::JsonRowset { rowset, rowtype } => {
             let row_types = parse_row_types(rowtype)?;
@@ -434,7 +520,7 @@ pub(super) async fn read_batches(
                 prefetch_config,
             )
             .await
-            .context(ChunkReadingSnafu)
+            .context(ChunkReadSnafu)
         }
         RowsetData::JsonMultiChunk {
             rowset,
@@ -452,7 +538,7 @@ pub(super) async fn read_batches(
                 prefetch_config,
             )
             .await
-            .context(ChunkReadingSnafu)
+            .context(ChunkReadSnafu)
         }
         RowsetData::NoData | RowsetData::Upload(_) | RowsetData::Download(_) => Ok(empty_reader()),
     }
@@ -463,15 +549,15 @@ fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, 
         .iter()
         .map(|rt| rt.try_into())
         .collect::<Result<Vec<_>, _>>()
-        .context(RowTypeParsingSnafu)
+        .context(RowTypeParseSnafu)
 }
 
 fn validate_column_count(
     rowset: &[Vec<Option<String>>],
     row_types: &[RowType],
 ) -> Result<(), ReadBatchesError> {
-    if !rowset.is_empty() {
-        let num_columns_rowset = rowset.first().unwrap().len();
+    if let Some(first_row) = rowset.first() {
+        let num_columns_rowset = first_row.len();
         let num_columns_rowtype = row_types.len();
         if num_columns_rowset != num_columns_rowtype {
             return ColumnCountMismatchSnafu {
@@ -697,7 +783,7 @@ pub enum QueryResponseProcessingError {
         location: Location,
     },
     #[snafu(display("Failed to read batches from query response"))]
-    BatchReading {
+    BatchRead {
         source: ReadBatchesError,
         #[snafu(implicit)]
         location: Location,
@@ -738,19 +824,19 @@ pub enum ReadBatchesError {
         location: Location,
     },
     #[snafu(display("Failed to parse rowtype"))]
-    RowTypeParsing {
+    RowTypeParse {
         source: QueryResponseError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to decode base64 rowset"))]
-    Base64Decoding {
+    Base64Decode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to read chunks"))]
-    ChunkReading {
+    ChunkRead {
         source: ChunkError,
         #[snafu(implicit)]
         location: Location,

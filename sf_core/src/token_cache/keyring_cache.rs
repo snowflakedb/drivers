@@ -6,8 +6,8 @@ use tracing::{debug, info, warn};
 use crate::token_cache::file_cache::FileTokenCache;
 
 use super::{
-    KeystoreAccessSnafu, TokenCache, TokenCacheError, TokenRemovalSnafu, TokenRetrievalSnafu,
-    TokenStorageSnafu, TokenType, build_cache_key, validate_key_components,
+    CacheKey, KeystoreAccessSnafu, TokenCache, TokenCacheError, TokenRemovalSnafu,
+    TokenRetrievalSnafu, TokenStorageSnafu, build_cache_key, validate_key_components,
 };
 
 const KEYRING_SERVICE_NAME: &str = "snowflake_credential_cache";
@@ -45,18 +45,16 @@ impl KeyringTokenCache {
         Ok(Self { cache })
     }
 
-    /// Creates a keyring entry for the given key components.
-    fn create_entry(
-        &self,
-        host: &str,
-        username: &str,
-        token_type: TokenType,
-    ) -> Result<keyring::Entry, TokenCacheError> {
-        validate_key_components(host, username)?;
-        debug!("Creating secret for {token_type:?}");
-        let key = build_cache_key(host, username, token_type);
+    /// Creates a keyring entry for the given cache key.
+    ///
+    /// Validates the key and uses the output of [`build_cache_key`] verbatim
+    /// as the credential name in the OS store.
+    fn create_entry(&self, key: &CacheKey) -> Result<keyring::Entry, TokenCacheError> {
+        validate_key_components(key)?;
+        debug!("Creating secret for {:?}", key.token_type);
+        let built_key = build_cache_key(key);
         self.cache
-            .build(None, KEYRING_SERVICE_NAME, &key)
+            .build(None, KEYRING_SERVICE_NAME, &built_key)
             .map(Entry::new_with_credential)
             .boxed()
             .context(KeystoreAccessSnafu)
@@ -64,33 +62,19 @@ impl KeyringTokenCache {
 }
 
 impl TokenCache for KeyringTokenCache {
-    fn add_token(
-        &self,
-        host: &str,
-        username: &str,
-        token_type: TokenType,
-        token_value: &str,
-    ) -> Result<(), TokenCacheError> {
-        validate_key_components(host, username)?;
-        info!("Saving secret for {token_type:?}");
-
-        let entry = self.create_entry(host, username, token_type)?;
+    fn add_token(&self, key: &CacheKey, token_value: &str) -> Result<(), TokenCacheError> {
+        info!("Saving secret for {:?}", key.token_type);
+        let entry = self.create_entry(key)?;
         entry
             .set_password(token_value)
             .boxed()
             .context(TokenStorageSnafu)
     }
 
-    fn remove_token(
-        &self,
-        host: &str,
-        username: &str,
-        token_type: TokenType,
-    ) -> Result<(), TokenCacheError> {
-        validate_key_components(host, username)?;
-        debug!("Removing secret for {token_type:?}");
-        let key = build_cache_key(host, username, token_type);
-        let entry = self.create_entry(host, username, token_type)?;
+    fn remove_token(&self, key: &CacheKey) -> Result<(), TokenCacheError> {
+        debug!("Removing secret for {:?}", key.token_type);
+        let built_key = build_cache_key(key);
+        let entry = self.create_entry(key)?;
         // TODO: SNOW-3552507
         // TEMP DIAGNOSTIC (SNOW-2314157, Windows x86 eviction regression):
         // Distinguish "actually deleted" from "backend reported NoEntry"
@@ -104,34 +88,37 @@ impl TokenCache for KeyringTokenCache {
         let delete_result = entry.delete_credential();
         match &delete_result {
             Ok(()) => info!(
-                cache_key = %key,
-                "delete_credential returned Ok for {token_type:?}"
+                cache_key = %built_key,
+                "delete_credential returned Ok for {:?}", key.token_type
             ),
             Err(keyring::Error::NoEntry) => warn!(
-                cache_key = %key,
-                "delete_credential returned NoEntry for {token_type:?}; \
-                 treating as success but credential may still be present"
+                cache_key = %built_key,
+                "delete_credential returned NoEntry for {:?}; \
+                 treating as success but credential may still be present",
+                key.token_type
             ),
             Err(_) => {}
         }
         match delete_result {
             Ok(()) | Err(keyring::Error::NoEntry) => {
-                let verify_entry = self.create_entry(host, username, token_type)?;
+                let verify_entry = self.create_entry(key)?;
                 match verify_entry.get_password() {
                     Ok(value) => warn!(
-                        cache_key = %key,
+                        cache_key = %built_key,
                         leaked_byte_len = value.len(),
-                        "post-delete verify-read FOUND credential for {token_type:?}; \
-                         keyring backend reported success but credential persists"
+                        "post-delete verify-read FOUND credential for {:?}; \
+                         keyring backend reported success but credential persists",
+                        key.token_type
                     ),
                     Err(keyring::Error::NoEntry) => info!(
-                        cache_key = %key,
-                        "post-delete verify-read confirms credential gone for {token_type:?}"
+                        cache_key = %built_key,
+                        "post-delete verify-read confirms credential gone for {:?}",
+                        key.token_type
                     ),
                     Err(e) => warn!(
-                        cache_key = %key,
+                        cache_key = %built_key,
                         error = %e,
-                        "post-delete verify-read errored for {token_type:?}"
+                        "post-delete verify-read errored for {:?}", key.token_type
                     ),
                 }
                 Ok(())
@@ -140,16 +127,9 @@ impl TokenCache for KeyringTokenCache {
         }
     }
 
-    fn get_token(
-        &self,
-        host: &str,
-        username: &str,
-        token_type: TokenType,
-    ) -> Result<Option<String>, TokenCacheError> {
-        validate_key_components(host, username)?;
-        debug!("Retrieving secret for {token_type:?}");
-
-        let entry = self.create_entry(host, username, token_type)?;
+    fn get_token(&self, key: &CacheKey) -> Result<Option<String>, TokenCacheError> {
+        debug!("Retrieving secret for {:?}", key.token_type);
+        let entry = self.create_entry(key)?;
         match entry.get_password() {
             Ok(password) => Ok(Some(password)),
             Err(keyring::Error::NoEntry) => Ok(None),

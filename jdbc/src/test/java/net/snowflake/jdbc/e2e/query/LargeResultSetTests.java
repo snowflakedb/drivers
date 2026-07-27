@@ -26,6 +26,12 @@ public class LargeResultSetTests extends SnowflakeIntegrationTestBase {
         final long row = expectedValue;
         assertEquals(expectedValue, resultSet.getLong(1), () -> "Unexpected value at row " + row);
         assertFalse(resultSet.wasNull(), () -> "Sequential value should not be NULL at row " + row);
+        // isLast() is true only on the final row, exercising the total-row-count logic across
+        // chunk boundaries
+        assertEquals(
+            expectedValue == 999_999L,
+            resultSet.isLast(),
+            () -> "Unexpected isLast() at row " + row);
         expectedValue++;
       }
       assertEquals(1_000_000L, expectedValue, "Unexpected number of sequential rows");

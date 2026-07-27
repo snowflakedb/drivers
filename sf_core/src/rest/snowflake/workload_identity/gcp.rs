@@ -46,7 +46,7 @@ pub enum GcpAttestationError {
         location: Location,
     },
     #[snafu(display("{context} failed"))]
-    RequestFailed {
+    Request {
         context: &'static str,
         source: reqwest::Error,
         #[snafu(implicit)]
@@ -61,14 +61,14 @@ pub enum GcpAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to read {context} response body"))]
-    ResponseBodyReadFailed {
+    ResponseBodyRead {
         context: &'static str,
         source: reqwest::Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to parse {context} response"))]
-    ResponseParseFailed {
+    ResponseParse {
         context: &'static str,
         source: serde_json::Error,
         #[snafu(implicit)]
@@ -120,7 +120,7 @@ async fn get_access_token_from_metadata(
         format!("{GCE_METADATA_HOST}/computeMetadata/v1/instance/service-accounts/default/token");
     let body = metadata_get(client, &url, CTX).await?;
     let parsed: TokenResponse =
-        serde_json::from_str(&body).context(ResponseParseFailedSnafu { context: CTX })?;
+        serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
     Ok(parsed.access_token)
 }
 
@@ -176,13 +176,13 @@ async fn generate_identity_token(
     )
     .await
     .context(RequestTimedOutSnafu { context: CTX })?
-    .context(RequestFailedSnafu { context: CTX })?;
+    .context(RequestSnafu { context: CTX })?;
 
     let status = resp.status();
     let text = resp
         .text()
         .await
-        .context(ResponseBodyReadFailedSnafu { context: CTX })?;
+        .context(ResponseBodyReadSnafu { context: CTX })?;
     if !status.is_success() {
         return UnexpectedHttpStatusSnafu {
             context: CTX,
@@ -192,7 +192,7 @@ async fn generate_identity_token(
         .fail();
     }
     let parsed: IdTokenResponse =
-        serde_json::from_str(&text).context(ResponseParseFailedSnafu { context: CTX })?;
+        serde_json::from_str(&text).context(ResponseParseSnafu { context: CTX })?;
     Ok(parsed.token)
 }
 
@@ -211,13 +211,13 @@ async fn metadata_get(
     )
     .await
     .context(RequestTimedOutSnafu { context })?
-    .context(RequestFailedSnafu { context })?;
+    .context(RequestSnafu { context })?;
 
     let status = resp.status();
     let text = resp
         .text()
         .await
-        .context(ResponseBodyReadFailedSnafu { context })?;
+        .context(ResponseBodyReadSnafu { context })?;
     if !status.is_success() {
         return UnexpectedHttpStatusSnafu {
             context,

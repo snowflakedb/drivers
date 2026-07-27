@@ -6,6 +6,8 @@ Marker contract:
         Test needs the headless browser Docker container (Chromium + Playwright).
         - Outside the container (SF_TEST_HEADLESS_BROWSER not set): test is SKIPPED.
         - Inside the container with missing credentials: test FAILS.
+    @pytest.mark.requires_no_mfa
+        Uses parameters_aws_local.json. Skipped unless SF_TEST_NO_MFA=true.
 """
 
 import os
@@ -20,9 +22,15 @@ def is_browser_env():
     return os.environ.get("SF_TEST_HEADLESS_BROWSER") == "true"
 
 
+def is_no_mfa_env():
+    return os.environ.get("SF_TEST_NO_MFA") == "true"
+
+
 def pytest_runtest_setup(item):
     if item.get_closest_marker("requires_browser") and not is_browser_env():
         pytest.skip("Requires headless browser container (SF_TEST_HEADLESS_BROWSER=true)")
+    if item.get_closest_marker("requires_no_mfa") and not is_no_mfa_env():
+        pytest.skip("Requires parameters_aws_local.json (SF_TEST_NO_MFA=true)")
 
 
 @pytest.fixture(autouse=True)

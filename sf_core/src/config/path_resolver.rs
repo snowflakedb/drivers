@@ -1,4 +1,6 @@
 use super::{ConfigDirNotFoundSnafu, ConfigError};
+use crate::env_vars;
+use snafu::OptionExt;
 use std::env;
 use std::path::PathBuf;
 
@@ -25,7 +27,7 @@ const DEFAULT_SNOWFLAKE_HOME_SUFFIX: &str = ".snowflake";
 ///   2. Expand `~` to the user's home directory.
 ///   3. Return `Some(path)` only if the directory exists on disk.
 pub fn get_snowflake_home() -> Option<PathBuf> {
-    let raw = env::var("SNOWFLAKE_HOME").ok();
+    let raw = env::var(env_vars::SNOWFLAKE_HOME).ok();
     resolve_snowflake_home(raw, dirs::home_dir())
 }
 
@@ -101,7 +103,7 @@ fn platform_config_dir() -> Result<PathBuf, ConfigError> {
     let base = dirs::config_dir();
 
     base.map(|d| d.join("snowflake"))
-        .ok_or_else(|| ConfigDirNotFoundSnafu.build())
+        .with_context(|| ConfigDirNotFoundSnafu)
 }
 
 #[cfg(test)]

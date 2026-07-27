@@ -10,9 +10,9 @@ import pytest
 from snowflake.connector._internal.logging import (
     CONNECTOR_LOGGER_NAME,
     SF_CORE_LOGGER_NAME,
+    _get_connector_stdlib_logger,
+    _get_sf_core_stdlib_logger,
     _needs_handler,
-    get_connector_logger,
-    get_sf_core_logger,
     setup_logging,
 )
 
@@ -29,31 +29,31 @@ class TestLoggerConstants:
         assert SF_CORE_LOGGER_NAME == "snowflake.connector._core"
 
 
-class TestGetLoggers:
-    """Test logger getter functions."""
+class TestStdlibLoggerAccessors:
+    """Test internal stdlib logger accessor functions."""
 
-    def test_get_connector_logger_returns_logger(self):
-        """Test that get_connector_logger returns a Logger instance."""
-        logger = get_connector_logger()
+    def test_connector_stdlib_logger_returns_logger(self):
+        """_get_connector_stdlib_logger returns the package Logger instance."""
+        logger = _get_connector_stdlib_logger()
         assert isinstance(logger, logging.Logger)
         assert logger.name == CONNECTOR_LOGGER_NAME
 
-    def test_get_sf_core_logger_returns_logger(self):
-        """Test that get_sf_core_logger returns a Logger instance."""
-        logger = get_sf_core_logger()
+    def test_sf_core_stdlib_logger_returns_logger(self):
+        """_get_sf_core_stdlib_logger returns the sf_core callback Logger instance."""
+        logger = _get_sf_core_stdlib_logger()
         assert isinstance(logger, logging.Logger)
         assert logger.name == SF_CORE_LOGGER_NAME
 
-    def test_get_connector_logger_same_instance(self):
-        """Test that get_connector_logger returns the same instance each time."""
-        logger1 = get_connector_logger()
-        logger2 = get_connector_logger()
+    def test_connector_stdlib_logger_same_instance(self):
+        """_get_connector_stdlib_logger returns the same instance each time."""
+        logger1 = _get_connector_stdlib_logger()
+        logger2 = _get_connector_stdlib_logger()
         assert logger1 is logger2
 
-    def test_get_sf_core_logger_same_instance(self):
-        """Test that get_sf_core_logger returns the same instance each time."""
-        logger1 = get_sf_core_logger()
-        logger2 = get_sf_core_logger()
+    def test_sf_core_stdlib_logger_same_instance(self):
+        """_get_sf_core_stdlib_logger returns the same instance each time."""
+        logger1 = _get_sf_core_stdlib_logger()
+        logger2 = _get_sf_core_stdlib_logger()
         assert logger1 is logger2
 
 
@@ -62,23 +62,23 @@ class TestLoggerConfiguration:
 
     def test_sf_core_logger_propagate_enabled(self):
         """Test that sf_core logger propagates by default (before setup_logging)."""
-        logger = get_sf_core_logger()
+        logger = _get_sf_core_stdlib_logger()
         assert logger.propagate is True
 
     def test_connector_logger_propagate_enabled(self):
         """Test that connector logger propagates by default (before setup_logging)."""
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         assert logger.propagate is True
 
     def test_sf_core_logger_has_null_handler(self):
         """Test that sf_core logger has a NullHandler."""
-        logger = get_sf_core_logger()
+        logger = _get_sf_core_stdlib_logger()
         null_handlers = [h for h in logger.handlers if isinstance(h, logging.NullHandler)]
         assert len(null_handlers) >= 1
 
     def test_connector_logger_has_null_handler(self):
         """Test that connector logger has a NullHandler."""
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         null_handlers = [h for h in logger.handlers if isinstance(h, logging.NullHandler)]
         assert len(null_handlers) >= 1
 
@@ -89,8 +89,8 @@ class TestSetupLogging:
     @pytest.fixture(autouse=True)
     def cleanup_handlers(self):
         """Clean up handlers added during tests."""
-        connector_logger = get_connector_logger()
-        sf_core_logger = get_sf_core_logger()
+        connector_logger = _get_connector_stdlib_logger()
+        sf_core_logger = _get_sf_core_stdlib_logger()
 
         # Store original state
         original_connector_handlers = list(connector_logger.handlers)
@@ -113,34 +113,34 @@ class TestSetupLogging:
     def test_setup_logging_sets_connector_level(self):
         """Test that setup_logging sets the connector logger level."""
         setup_logging(level=logging.DEBUG)
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         assert logger.level == logging.DEBUG
 
     def test_setup_logging_sets_sf_core_level(self):
         """Test that setup_logging sets the sf_core logger level."""
         setup_logging(sf_core_level=logging.WARNING)
-        logger = get_sf_core_logger()
+        logger = _get_sf_core_stdlib_logger()
         assert logger.level == logging.WARNING
 
     def test_setup_logging_default_levels(self):
         """Test that setup_logging uses INFO as default level."""
         setup_logging()
-        connector_logger = get_connector_logger()
-        sf_core_logger = get_sf_core_logger()
+        connector_logger = _get_connector_stdlib_logger()
+        sf_core_logger = _get_sf_core_stdlib_logger()
         assert connector_logger.level == logging.INFO
         assert sf_core_logger.level == logging.INFO
 
     def test_setup_logging_adds_stream_handler_to_connector(self):
         """Test that setup_logging adds a StreamHandler to connector logger."""
         setup_logging()
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
         assert len(stream_handlers) >= 1
 
     def test_setup_logging_adds_stream_handler_to_sf_core(self):
         """Test that setup_logging adds a StreamHandler to sf_core logger."""
         setup_logging()
-        logger = get_sf_core_logger()
+        logger = _get_sf_core_stdlib_logger()
         stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
         assert len(stream_handlers) >= 1
 
@@ -149,7 +149,7 @@ class TestSetupLogging:
         stream = io.StringIO()
         setup_logging(stream=stream)
 
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         logger.info("test message")
 
         output = stream.getvalue()
@@ -161,7 +161,7 @@ class TestSetupLogging:
         custom_format = "CUSTOM: %(message)s"
         setup_logging(format_string=custom_format, stream=stream)
 
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         logger.info("test message")
 
         output = stream.getvalue()
@@ -172,7 +172,7 @@ class TestSetupLogging:
         stream = io.StringIO()
         setup_logging(stream=stream)
 
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         logger.info("test message")
 
         output = stream.getvalue()
@@ -186,7 +186,7 @@ class TestSetupLogging:
         stream = io.StringIO()
         setup_logging(stream=stream, sf_core_level=logging.DEBUG)
 
-        logger = get_sf_core_logger()
+        logger = _get_sf_core_stdlib_logger()
         logger.debug("sf_core test message")
 
         output = stream.getvalue()
@@ -197,7 +197,7 @@ class TestSetupLogging:
         stream = io.StringIO()
         setup_logging(level=logging.WARNING, stream=stream)
 
-        logger = get_connector_logger()
+        logger = _get_connector_stdlib_logger()
         logger.debug("debug message")
         logger.info("info message")
         logger.warning("warning message")
@@ -213,12 +213,12 @@ class TestSetupLogging:
 
         # Call setup_logging multiple times
         setup_logging(stream=stream)
-        connector_handlers_after_first = len(get_connector_logger().handlers)
-        sf_core_handlers_after_first = len(get_sf_core_logger().handlers)
+        connector_handlers_after_first = len(_get_connector_stdlib_logger().handlers)
+        sf_core_handlers_after_first = len(_get_sf_core_stdlib_logger().handlers)
 
         setup_logging(stream=stream)
-        connector_handlers_after_second = len(get_connector_logger().handlers)
-        sf_core_handlers_after_second = len(get_sf_core_logger().handlers)
+        connector_handlers_after_second = len(_get_connector_stdlib_logger().handlers)
+        sf_core_handlers_after_second = len(_get_sf_core_stdlib_logger().handlers)
 
         # Handler count should not increase after the second call
         assert connector_handlers_after_second == connector_handlers_after_first
@@ -226,8 +226,8 @@ class TestSetupLogging:
 
     def test_setup_logging_disables_propagation(self):
         """Test that setup_logging disables propagation to prevent duplicates."""
-        connector_logger = get_connector_logger()
-        sf_core_logger = get_sf_core_logger()
+        connector_logger = _get_connector_stdlib_logger()
+        sf_core_logger = _get_sf_core_stdlib_logger()
 
         assert connector_logger.propagate is True
         assert sf_core_logger.propagate is True
@@ -239,7 +239,7 @@ class TestSetupLogging:
 
     def test_setup_logging_skips_handler_if_non_null_handler_exists(self):
         """Test that setup_logging skips adding handler if a non-NullHandler already exists."""
-        connector_logger = get_connector_logger()
+        connector_logger = _get_connector_stdlib_logger()
 
         # Add a custom handler first
         custom_handler = logging.StreamHandler(io.StringIO())

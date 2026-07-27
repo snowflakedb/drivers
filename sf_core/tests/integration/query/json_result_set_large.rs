@@ -16,7 +16,6 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
         let stmt = client.new_statement();
         client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
         client.execute_statement_query(&stmt);
-        client.release_statement(&stmt);
     });
     let stmt = client.new_statement();
 
@@ -93,7 +92,6 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
     let arrow_result = client.execute_statement_query(&stmt);
     let arrow_rs_handle = unwrap_single_rs_handle(&arrow_result);
     let arrow_rs = client.result_set_get_stream(&arrow_rs_handle);
-    client.result_set_release(&arrow_rs_handle);
 
     client.set_sql_query(
         &stmt,
@@ -106,15 +104,14 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, &select_query);
     let json_result = client.execute_statement_query(&stmt);
     let json_rs_handle = unwrap_single_rs_handle(&json_result);
     let json_rs = client.result_set_get_stream(&json_rs_handle);
-    client.result_set_release(&json_rs_handle);
 
     let mut arrow_helper = ArrowResultHelper::from_result(arrow_rs);
     let mut json_helper = ArrowResultHelper::from_result(json_rs);
@@ -142,8 +139,6 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
             "Column '{field_name}' should have exactly 1500 nulls"
         );
     }
-
-    client.release_statement(&stmt);
 }
 
 fn collect_all_batches(helper: &mut ArrowResultHelper) -> RecordBatch {

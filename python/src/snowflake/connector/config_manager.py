@@ -9,7 +9,6 @@ All file I/O, TOML parsing, and permission checks are performed by sf_core.
 from __future__ import annotations
 
 import json
-import logging
 import os
 
 from collections.abc import Callable, Iterable
@@ -19,6 +18,7 @@ from typing import Any, Literal, NamedTuple, TypeVar
 import tomlkit
 
 from ._internal.api_client.client_api import core_driver
+from ._internal.logging import get_logger
 from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
 from .errors import ConfigManagerError, ConfigSourceError, MissingConfigOptionError
 from .errors import Error as DriverError
@@ -26,7 +26,7 @@ from .errors import Error as DriverError
 
 _T = TypeVar("_T")
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 
 class ConfigSliceOptions(NamedTuple):

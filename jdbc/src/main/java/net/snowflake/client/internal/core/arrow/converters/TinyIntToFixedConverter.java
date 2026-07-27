@@ -87,6 +87,9 @@ public class TinyIntToFixedConverter extends AbstractArrowVectorConverter {
     if (isNull(index)) {
       return null;
     }
+    if (!shouldTreatDecimalAsInt()) {
+      return toBigDecimal(index);
+    }
     return (long) getByte(index);
   }
 

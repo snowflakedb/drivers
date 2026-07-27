@@ -18,6 +18,23 @@
                         "command": "sf ai __hook --ide claude --hook-type post-tool-use --detect implicit-skill > /dev/null"
                     }
                 ]
+            },
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "if": "Bash(git checkout*)",
+                        "command": "git pull --ff-only 2>/dev/null || true",
+                        "statusMessage": "Syncing with remote after checkout..."
+                    },
+                    {
+                        "type": "command",
+                        "if": "Bash(git switch*)",
+                        "command": "git pull --ff-only 2>/dev/null || true",
+                        "statusMessage": "Syncing with remote after switch..."
+                    }
+                ]
             }
         ]
     }

@@ -415,6 +415,85 @@ pub unsafe extern "system" fn SQLProceduresW(
     result.to_sql_code()
 }
 
+/// ODBC catalog function: list the input parameters, return value, and
+/// result-set columns of stored procedures matching the pattern arguments.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "system" fn SQLProcedureColumns(
+    statement_handle: sql::Handle,
+    catalog_name: *const sql::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const sql::Char,
+    name_length2: sql::SmallInt,
+    proc_name: *const sql::Char,
+    name_length3: sql::SmallInt,
+    column_name: *const sql::Char,
+    name_length4: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLProcedureColumns"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::procedure_columns::<Narrow>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        proc_name,
+        name_length3,
+        column_name,
+        name_length4,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "system" fn SQLProcedureColumnsW(
+    statement_handle: sql::Handle,
+    catalog_name: *const WideChar,
+    name_length1: sql::SmallInt,
+    schema_name: *const WideChar,
+    name_length2: sql::SmallInt,
+    proc_name: *const WideChar,
+    name_length3: sql::SmallInt,
+    column_name: *const WideChar,
+    name_length4: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLProcedureColumns"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::catalog::procedure_columns::<Wide>(
+        statement_handle,
+        catalog_name,
+        name_length1,
+        schema_name,
+        name_length2,
+        proc_name,
+        name_length3,
+        column_name,
+        name_length4,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
 /// ODBC catalog function: list columns matching pattern arguments.
 ///
 /// # Safety
@@ -1059,16 +1138,23 @@ pub unsafe extern "system" fn SQLGetInfo(
     set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::get_info::<Narrow>(
         connection_handle,
         info_type,
         info_value_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1084,16 +1170,23 @@ pub unsafe extern "system" fn SQLGetInfoW(
     set_dispatch!();
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLGetInfo");
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::get_info::<Wide>(
         connection_handle,
         info_type,
         info_value_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1319,23 +1412,33 @@ pub unsafe extern "system" fn SQLDriverConnect(
     _window_handle: sql::Handle,
     in_connection_string: *const sql::Char,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut sql::Char,
-    _buffer_length: sql::SmallInt,
-    _out_string_length: *mut sql::SmallInt,
+    out_connection_string: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::driver_connect::<Narrow>(
         connection_handle,
         in_connection_string,
         in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     // Record AFTER the call: same rationale as SQLConnect.
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDriverConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -1346,22 +1449,102 @@ pub unsafe extern "system" fn SQLDriverConnectW(
     _window_handle: sql::Handle,
     in_connection_string: *const WideChar,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut WideChar,
-    _buffer_length: sql::SmallInt,
-    _out_string_length: *mut sql::SmallInt,
+    out_connection_string: *mut WideChar,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::driver_connect::<Wide>(
         connection_handle,
         in_connection_string,
         in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+        &mut warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDriverConnect");
     record_err!(sql::HandleType::Dbc, connection_handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// Map a `browse_connect` outcome to the SQLBrowseConnect return code.
+///
+/// `SQLBrowseConnect` uses `SQL_NEED_DATA` where `SQLDriverConnect` would report
+/// `01004` truncation, so the `NeedData` outcome cannot flow through the shared
+/// `to_sql_code` pipeline (which only yields SUCCESS/ERROR/…). Errors map the
+/// same way as any other connect error.
+fn browse_connect_ret_code(
+    result: api::OdbcResult<api::connection::BrowseOutcome>,
+) -> sql::RetCode {
+    match result {
+        Ok(api::connection::BrowseOutcome::Complete) => sql::SqlReturn::SUCCESS.0,
+        Ok(api::connection::BrowseOutcome::NeedData) => sql::SqlReturn::NEED_DATA.0,
+        Err(err) => Err::<(), _>(err).to_sql_code(),
+    }
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLBrowseConnect(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::Char,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::browse_connect::<Narrow>(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    record_api!(sql::HandleType::Dbc, connection_handle, "SQLBrowseConnect");
+    record_err!(sql::HandleType::Dbc, connection_handle, result);
+    browse_connect_ret_code(result)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLBrowseConnectW(
+    connection_handle: sql::Handle,
+    in_connection_string: *const WideChar,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut WideChar,
+    buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::browse_connect::<Wide>(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+        out_connection_string,
+        buffer_length,
+        out_string_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    record_api!(sql::HandleType::Dbc, connection_handle, "SQLBrowseConnect");
+    record_err!(sql::HandleType::Dbc, connection_handle, result);
+    browse_connect_ret_code(result)
 }
 
 /// # Safety

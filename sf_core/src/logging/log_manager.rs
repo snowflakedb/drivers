@@ -8,6 +8,7 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{Layer, Registry};
 
+use crate::env_vars;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::telemetry::os_details::detect_os_details;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
@@ -121,6 +122,12 @@ pub struct LogManager {
     /// [`Self::log_query_text`].
     log_query_parameters: Option<bool>,
     error_trace_enabled: bool,
+    /// Whether troubleshooting mode is active. Resolved once at init from
+    /// `SNOWFLAKE_TROUBLESHOOTING_ENABLED` env var; immutable thereafter.
+    troubleshooting: bool,
+    /// Resolved once at construction so all consumers (file layer, diagnostic
+    /// runner) agree on the directory even if the env var changes mid-process.
+    troubleshooting_log_dir: std::path::PathBuf,
 }
 
 impl LogManager {
@@ -166,6 +173,23 @@ impl LogManager {
         self.error_trace_enabled
     }
 
+    /// Whether troubleshooting mode is active (resolved at init from
+    /// `SNOWFLAKE_TROUBLESHOOTING_ENABLED` env var).
+    pub fn is_troubleshooting(&self) -> bool {
+        self.troubleshooting
+    }
+
+    /// Returns the resolved troubleshooting log path when troubleshooting is
+    /// active, `None` otherwise.  Used as a fallback by `DiagnosticRunner`
+    /// so the SnowCD report lands in the same directory as troubleshooting logs.
+    pub fn troubleshooting_path(&self) -> Option<std::path::PathBuf> {
+        if self.troubleshooting {
+            Some(self.troubleshooting_log_dir.clone())
+        } else {
+            None
+        }
+    }
+
     /// The [`tracing::dispatcher::Dispatch`] wrapping the configured
     /// subscriber. Consumers install this per-thread via
     /// [`tracing::dispatcher::set_default`] or propagate it to spawned
@@ -192,6 +216,8 @@ impl LogManager {
             log_query_text: None,
             log_query_parameters: None,
             error_trace_enabled: LoggingConfig::default().error_trace_enabled,
+            troubleshooting: false,
+            troubleshooting_log_dir: Self::resolve_troubleshooting_log_path(),
         }
     }
 
@@ -218,9 +244,16 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
-        let (dispatch, flusher) =
-            Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?;
-        Ok(Self {
+        let troubleshooting_log_dir = Self::resolve_troubleshooting_log_path();
+        let troubleshooting = Self::resolve_troubleshooting();
+        let (dispatch, flusher) = Self::try_init(
+            config,
+            None::<EmptyLayer>,
+            Some(sessions.clone()),
+            troubleshooting,
+            &troubleshooting_log_dir,
+        )?;
+        let lm = Self {
             dispatch,
             telemetry_sessions: sessions,
             session_flusher: flusher,
@@ -229,7 +262,10 @@ impl LogManager {
             log_query_text,
             log_query_parameters,
             error_trace_enabled,
-        })
+            troubleshooting,
+            troubleshooting_log_dir,
+        };
+        Ok(lm)
     }
 
     /// Initialise logging with an application-provided sink (e.g.
@@ -246,8 +282,16 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
-        let (dispatch, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
-        Ok(Self {
+        let troubleshooting_log_dir = Self::resolve_troubleshooting_log_path();
+        let troubleshooting = Self::resolve_troubleshooting();
+        let (dispatch, flusher) = Self::try_init(
+            config,
+            Some(app_sink),
+            Some(registry.clone()),
+            troubleshooting,
+            &troubleshooting_log_dir,
+        )?;
+        let lm = Self {
             dispatch,
             telemetry_sessions: registry,
             session_flusher: flusher,
@@ -256,7 +300,10 @@ impl LogManager {
             log_query_text,
             log_query_parameters,
             error_trace_enabled,
-        })
+            troubleshooting,
+            troubleshooting_log_dir,
+        };
+        Ok(lm)
     }
 
     /// Factory: derive a [`LoggingConfig`] from the process-wide INI
@@ -320,10 +367,24 @@ impl LogManager {
         }
     }
 
+    fn resolve_troubleshooting() -> bool {
+        std::env::var(env_vars::SNOWFLAKE_TROUBLESHOOTING_ENABLED)
+            .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes" | "on"))
+            .unwrap_or(false)
+    }
+
+    fn resolve_troubleshooting_log_path() -> std::path::PathBuf {
+        std::env::var(env_vars::SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()))
+    }
+
     fn try_init<L>(
         config: LoggingConfig,
         app_sink: Option<L>,
         registry: Option<SessionRegistry>,
+        troubleshooting: bool,
+        troubleshooting_log_dir: &std::path::Path,
     ) -> Result<(tracing::dispatcher::Dispatch, Option<SessionFlushHandle>), LogError>
     where
         L: Layer<Registry> + Send + Sync + 'static,
@@ -331,6 +392,10 @@ impl LogManager {
         let mut layers: Vec<BoxedLayer> = Vec::new();
 
         layers.push(Self::build_core_layer(&config)?);
+
+        if troubleshooting {
+            layers.push(Self::build_troubleshooting_layer(troubleshooting_log_dir)?);
+        }
 
         if let Some(sink) = app_sink {
             layers.push(sink.boxed());
@@ -389,6 +454,33 @@ impl LogManager {
             tracing::dispatcher::Dispatch::new(driver_subscriber),
             flush_handle,
         ))
+    }
+
+    fn build_troubleshooting_layer(log_path: &std::path::Path) -> Result<BoxedLayer, LogError> {
+        if let Err(e) = std::fs::create_dir_all(log_path) {
+            eprintln!(
+                "SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH: failed to create log directory {}: {e}",
+                log_path.display()
+            );
+            return Ok(EmptyLayer.boxed());
+        }
+        // Rotation::NEVER → single file, no date/sequence suffix appended.
+        let appender = tracing_appender::rolling::RollingFileAppender::builder()
+            .rotation(tracing_appender::rolling::Rotation::NEVER)
+            .filename_prefix("sf_driver_troubleshooting.log")
+            .build(log_path)
+            .map_err(|e| {
+                InitSnafu {
+                    message: format!("Failed to create troubleshooting log appender: {e}"),
+                }
+                .build()
+            })?;
+
+        let layer = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(appender);
+
+        Ok(layer.boxed())
     }
 
     fn build_core_layer(config: &LoggingConfig) -> Result<BoxedLayer, LogError> {

@@ -2,37 +2,27 @@ import pytest
 
 from snowflake.connector.errors import DatabaseError
 
-from ...config import get_test_parameters
 from .auth_helpers import verify_simple_query_execution
-
-
-MFA_ENFORCED_MESSAGE = "multi-factor authentication is required"
+from .conftest import require_auth_params
 
 
 def get_password_auth_params():
     """Build connection params for plain password auth, overriding the default JWT."""
-    test_params = get_test_parameters()
-    password = test_params.get("SNOWFLAKE_TEST_PASSWORD")
-    if not password:
-        pytest.skip("SNOWFLAKE_TEST_PASSWORD not configured (JWT-only environment)")
+    creds = require_auth_params("SNOWFLAKE_TEST_PASSWORD")
     return {
         "authenticator": "snowflake",
-        "password": password,
+        "password": creds["SNOWFLAKE_TEST_PASSWORD"],
     }
 
 
+@pytest.mark.requires_no_mfa
 class TestUserPasswordAuthentication:
     def test_should_authenticate_using_username_and_password(self, connection_factory):
         # Given Authentication is set to default (snowflake) with valid username and password
         params = get_password_auth_params()
 
         # When Trying to Connect
-        try:
-            connection = connection_factory(**params)
-        except DatabaseError as e:
-            if MFA_ENFORCED_MESSAGE in str(e).lower():
-                pytest.skip("Account has MFA enforcement enabled — plain password auth is not possible")
-            raise
+        connection = connection_factory(**params)
 
         # Then Login is successful and simple query can be executed
         with connection:

@@ -19,8 +19,9 @@ use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
     FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
     SQL_CONCUR_READ_ONLY, SQL_CONCUR_VALUES, SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF,
-    SQL_NOSCAN_ON, SQL_RD_OFF, SQL_RD_ON, SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType,
-    StatementInner, StatementState, stmt_from_handle,
+    SQL_NOSCAN_ON, SQL_PARAM_IGNORE, SQL_PARAM_SUCCESS, SQL_PARAM_UNUSED, SQL_RD_OFF, SQL_RD_ON,
+    SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner, StatementState,
+    stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::{odbc_bindings_to_csv, odbc_bindings_to_json};
@@ -260,19 +261,31 @@ fn finalize_execute_response(
     let param_set_size = inner.with_effective_apd(|apd| apd.array_size);
     let rows_processed_ptr = inner.ipd.rows_processed_ptr;
     let param_status_ptr = inner.ipd.array_status_ptr;
+    // Read from the effective APD (implicit or explicit SQL_ATTR_APP_PARAM_DESC)
+    // so the PARAM_STATUS write-back agrees with the sets the binding path
+    // actually skipped.
+    let param_operation_ptr = inner.with_effective_apd(|apd| apd.array_status_ptr);
 
     let result = apply_execute_response(inner, conn_handle, response, origin);
     inner.rows_returned = 0;
 
     // Write PARAMS_PROCESSED and PARAM_STATUS regardless of result so the
-    // application always gets feedback for the rows that were sent.
+    // application always gets feedback for the rows that were sent. Parameter
+    // sets marked SQL_PARAM_IGNORE (via SQL_ATTR_PARAM_OPERATION_PTR) were not
+    // sent, so they are reported as SQL_PARAM_UNUSED rather than success.
     unsafe {
         if !rows_processed_ptr.is_null() {
             *rows_processed_ptr = param_set_size as sql::ULen;
         }
         if !param_status_ptr.is_null() {
             for i in 0..param_set_size {
-                *param_status_ptr.add(i) = 0u16; // SQL_PARAM_SUCCESS
+                let ignored = !param_operation_ptr.is_null()
+                    && *param_operation_ptr.add(i) == SQL_PARAM_IGNORE;
+                *param_status_ptr.add(i) = if ignored {
+                    SQL_PARAM_UNUSED
+                } else {
+                    SQL_PARAM_SUCCESS
+                };
             }
         }
     }
@@ -1359,11 +1372,8 @@ fn apply_parameter_bindings(
     mode: BindingMode,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     let effective_count: u16 = if prepared {
-        prepared_param_count.ok_or_else(|| {
-            crate::api::error::CountFieldIncorrectSnafu {
-                reason: "prepared statement is missing prepared_param_count".to_string(),
-            }
-            .build()
+        prepared_param_count.with_context(|| crate::api::error::CountFieldIncorrectSnafu {
+            reason: "prepared statement is missing prepared_param_count".to_string(),
         })?
     } else {
         apd.desc_count().max(ipd.desc_count())
@@ -1794,12 +1804,12 @@ pub fn describe_param(
     if !allowed {
         return StatementNotExecutedSnafu.fail();
     }
-    let ipd_rec = inner.ipd.records.get(&parameter_number).ok_or_else(|| {
+    let ipd_rec = inner.ipd.records.get(&parameter_number).with_context(|| {
         tracing::error!(
             "describe_param: parameter #{} not found in IPD",
             parameter_number
         );
-        InvalidParameterNumberSnafu.build()
+        InvalidParameterNumberSnafu
     })?;
 
     if !data_type_ptr.is_null() {
@@ -1918,7 +1928,7 @@ fn lookup_explicit_desc(
                 .iter()
                 .find(|(id, _)| *id == desc_id)
                 .map(|(_, a)| a.clone())
-                .ok_or_else(|| InvalidHandleSnafu.build())
+                .with_context(|| InvalidHandleSnafu)
         }
         _ => InvalidAttributeValueSnafu {
             attribute,
@@ -2032,13 +2042,24 @@ pub fn set_stmt_attr(
         StmtAttr::ParamBindType => {
             let raw = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: ParamBindType (raw) = {}", raw);
-            inner.with_effective_apd_header_mut(|_, bind_type, _| *bind_type = raw);
+            inner.with_effective_apd_header_mut(|_, bind_type, _, _| *bind_type = raw);
             Ok(())
         }
         StmtAttr::ParamBindOffsetPtr => {
             let ptr = value_ptr as *mut sql::Len;
             tracing::debug!("set_stmt_attr: ParamBindOffsetPtr = {:?}", ptr);
-            inner.with_effective_apd_header_mut(|_, _, bind_offset_ptr| *bind_offset_ptr = ptr);
+            inner.with_effective_apd_header_mut(|_, _, bind_offset_ptr, _| *bind_offset_ptr = ptr);
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            // SQL_DESC_ARRAY_STATUS_PTR on the APD: per-set SQL_PARAM_PROCEED/
+            // SQL_PARAM_IGNORE array consulted during array execution. Routed to
+            // the *effective* APD so an explicit SQL_ATTR_APP_PARAM_DESC is
+            // honored, consistent with ParamBindType / ParamBindOffsetPtr.
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamOperationPtr = {:?}", ptr);
+            inner
+                .with_effective_apd_header_mut(|_, _, _, array_status_ptr| *array_status_ptr = ptr);
             Ok(())
         }
         StmtAttr::ParamStatusPtr => {
@@ -2062,7 +2083,7 @@ pub fn set_stmt_attr(
             } else {
                 size
             };
-            inner.with_effective_apd_header_mut(|array_size, _, _| *array_size = coerced);
+            inner.with_effective_apd_header_mut(|array_size, _, _, _| *array_size = coerced);
             Ok(())
         }
         StmtAttr::MetadataId => {
@@ -2472,6 +2493,13 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             Ok(())
         }
+        StmtAttr::ParamOperationPtr => {
+            let array_status_ptr = inner.with_effective_apd(|apd| apd.array_status_ptr);
+            unsafe {
+                *(value_ptr as *mut *mut u16) = array_status_ptr;
+            }
+            Ok(())
+        }
         StmtAttr::ParamStatusPtr => {
             unsafe {
                 *(value_ptr as *mut *mut u16) = inner.ipd.array_status_ptr;
@@ -2862,11 +2890,10 @@ fn accumulate_put_data(
     str_len_or_ind: sql::Len,
     c_type: CDataType,
 ) -> OdbcResult<()> {
-    let entry = ctx.pushed_data.get_mut(&param_num).ok_or_else(|| {
+    let entry = ctx.pushed_data.get_mut(&param_num).with_context(|| {
         crate::api::error::CountFieldIncorrectSnafu {
             reason: format!("DAE param {param_num} not found in pushed_data"),
         }
-        .build()
     })?;
 
     // HY020: cannot mix SQL_NULL_DATA with previously sent data chunks
@@ -3021,7 +3048,7 @@ where
         let join_handle = g.spawn(async move {
             tokio::select! {
                 biased;
-                _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
+                _ = token_clone.cancelled() => OperationCanceledSnafu.fail(),
                 result = future => result,
             }
         });
@@ -3034,7 +3061,7 @@ where
     let result = g.block_on(async move |_c| {
         tokio::select! {
             biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            _ = token.cancelled() => OperationCanceledSnafu.fail(),
             result = future => result,
         }
     })?;
@@ -3050,7 +3077,9 @@ fn mark_apd_record_null(
     null_indicators.push(sql::NULL_DATA);
     if let Some(rec) = apd.records.get_mut(&param_num) {
         rec.data_ptr = std::ptr::null_mut();
-        rec.str_len_or_ind_ptr = null_indicators.last_mut().unwrap();
+        rec.str_len_or_ind_ptr = null_indicators
+            .last_mut()
+            .expect("NULL_DATA was just pushed above");
     }
 }
 
@@ -3118,11 +3147,15 @@ fn execute_dae(
                 let concatenated: Vec<u8> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
                 len_indicators.push(concatenated.len() as sql::Len);
                 dae_buffers.push(concatenated);
-                let buf = dae_buffers.last().unwrap();
+                let buf = dae_buffers
+                    .last()
+                    .expect("concatenated buffer was just pushed above");
                 if let Some(rec) = temp_apd.records.get_mut(&param_num) {
                     rec.data_ptr = buf.as_ptr() as sql::Pointer;
                     rec.buffer_length = buf.len() as sql::Len;
-                    rec.str_len_or_ind_ptr = len_indicators.last_mut().unwrap();
+                    rec.str_len_or_ind_ptr = len_indicators
+                        .last_mut()
+                        .expect("length indicator was just pushed above");
                 }
             }
         }
@@ -3180,7 +3213,7 @@ fn execute_dae(
     let response = globals.block_on(async |c| {
         tokio::select! {
             biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            _ = token.cancelled() => OperationCanceledSnafu.fail(),
             result = async {
                 if let Some(query) = deferred_query {
                     c.statement_set_sql_query(StatementSetSqlQueryRequest {

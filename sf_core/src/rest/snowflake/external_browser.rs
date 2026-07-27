@@ -1,5 +1,6 @@
 use crate::config::rest_parameters::LoginParameters;
 use crate::config::retry::RetryPolicy;
+use crate::env_vars;
 use crate::http::retry::{HttpContext, HttpError};
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
 use crate::sensitive::SensitiveString;
@@ -46,7 +47,7 @@ pub(crate) struct DefaultBrowserOpener;
 
 impl BrowserOpener for DefaultBrowserOpener {
     fn open(&self, url: &str) -> Result<(), String> {
-        if std::env::var("SF_TEST_BROWSER_OPENER").as_deref() == Ok("noop") {
+        if std::env::var(env_vars::SF_TEST_BROWSER_OPENER).as_deref() == Ok("noop") {
             tracing::info!(
                 url,
                 "Browser open suppressed by SF_TEST_BROWSER_OPENER=noop"
@@ -205,7 +206,7 @@ pub(crate) async fn external_browser_authenticate(
         "External browser authentication completed successfully"
     );
     Ok(ExternalBrowserAuthResult {
-        token: callback.token.into(),
+        token: callback.token,
         proof_key: proof_key.into(),
         consent_cache_id_token: callback.consent_cache_id_token,
     })
@@ -303,10 +304,9 @@ async fn request_authenticator(
 
 // ─── Callback listener ───────────────────────────────────────────────────────
 
-/// Internal callback result. Intentionally not `Debug` to avoid leaking
-/// the raw token (a plain `String`) into log output.
+#[derive(Debug)]
 struct TokenFromCallback {
-    token: String,
+    token: SensitiveString,
     consent_cache_id_token: Option<bool>,
 }
 
@@ -461,7 +461,7 @@ fn extract_token_from_get(first_line: &str) -> Option<TokenFromCallback> {
     let query = path.split_once('?').map(|(_, q)| q)?;
     let token = extract_nonempty_query_param(query, "token")?;
     Some(TokenFromCallback {
-        token,
+        token: SensitiveString::from(token),
         consent_cache_id_token: None,
     })
 }
@@ -477,7 +477,7 @@ fn extract_token_from_post(request: &str) -> Option<TokenFromCallback> {
     }
     let token = extract_nonempty_query_param(body, "token")?;
     Some(TokenFromCallback {
-        token,
+        token: SensitiveString::from(token),
         consent_cache_id_token: None,
     })
 }
@@ -493,7 +493,7 @@ fn extract_token_from_json(body: &str) -> Option<TokenFromCallback> {
         return None;
     }
     Some(TokenFromCallback {
-        token: payload.token,
+        token: SensitiveString::from(payload.token),
         consent_cache_id_token: payload.consent,
     })
 }
@@ -547,19 +547,19 @@ mod tests {
     #[test]
     fn extract_token_get_basic() {
         let cb = extract_token_from_get("GET /?token=abc123 HTTP/1.1").unwrap();
-        assert_eq!(cb.token, "abc123");
+        assert_eq!(cb.token.reveal(), "abc123");
     }
 
     #[test]
     fn extract_token_get_url_encoded() {
         let cb = extract_token_from_get("GET /?token=abc%20123%3D HTTP/1.1").unwrap();
-        assert_eq!(cb.token, "abc 123=");
+        assert_eq!(cb.token.reveal(), "abc 123=");
     }
 
     #[test]
     fn extract_token_get_with_extra_params() {
         let cb = extract_token_from_get("GET /?foo=bar&token=mytoken&baz=qux HTTP/1.1").unwrap();
-        assert_eq!(cb.token, "mytoken");
+        assert_eq!(cb.token.reveal(), "mytoken");
         assert!(cb.consent_cache_id_token.is_none());
     }
 
@@ -587,7 +587,7 @@ mod tests {
     fn extract_token_post_json_with_consent() {
         let request = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n\r\n{\"token\":\"json_token\",\"consent\":true}";
         let cb = extract_token_from_post(request).unwrap();
-        assert_eq!(cb.token, "json_token");
+        assert_eq!(cb.token.reveal(), "json_token");
         assert_eq!(cb.consent_cache_id_token, Some(true));
     }
 
@@ -595,7 +595,7 @@ mod tests {
     fn extract_token_post_json_consent_false() {
         let request = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n\r\n{\"token\":\"tk\",\"consent\":false}";
         let cb = extract_token_from_post(request).unwrap();
-        assert_eq!(cb.token, "tk");
+        assert_eq!(cb.token.reveal(), "tk");
         assert_eq!(cb.consent_cache_id_token, Some(false));
     }
 
@@ -604,7 +604,7 @@ mod tests {
         let request =
             "POST / HTTP/1.1\r\nContent-Type: application/json\r\n\r\n{\"token\":\"tk2\"}";
         let cb = extract_token_from_post(request).unwrap();
-        assert_eq!(cb.token, "tk2");
+        assert_eq!(cb.token.reveal(), "tk2");
         assert_eq!(cb.consent_cache_id_token, None);
     }
 
@@ -623,7 +623,7 @@ mod tests {
     fn extract_token_post_form_encoded() {
         let request = "POST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\ntoken=form_token&extra=val";
         let cb = extract_token_from_post(request).unwrap();
-        assert_eq!(cb.token, "form_token");
+        assert_eq!(cb.token.reveal(), "form_token");
         assert!(cb.consent_cache_id_token.is_none());
     }
 
@@ -671,7 +671,7 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
 
         let cb = server.await.unwrap().unwrap();
-        assert_eq!(cb.token, "test_token_value");
+        assert_eq!(cb.token.reveal(), "test_token_value");
         assert!(cb.consent_cache_id_token.is_none());
         assert!(String::from_utf8_lossy(&response).contains("Your identity was confirmed"));
     }
@@ -697,7 +697,7 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
 
         let cb = server.await.unwrap().unwrap();
-        assert_eq!(cb.token, "post_json_token");
+        assert_eq!(cb.token.reveal(), "post_json_token");
         assert_eq!(cb.consent_cache_id_token, Some(false));
     }
 
@@ -729,7 +729,7 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
 
         let cb = server.await.unwrap().unwrap();
-        assert_eq!(cb.token, "real_token");
+        assert_eq!(cb.token.reveal(), "real_token");
     }
 
     #[tokio::test]
@@ -774,7 +774,7 @@ mod tests {
         assert!(post_str.contains(r#""consent":true"#));
 
         let cb = server.await.unwrap().unwrap();
-        assert_eq!(cb.token, "after_options");
+        assert_eq!(cb.token.reveal(), "after_options");
         assert_eq!(cb.consent_cache_id_token, Some(true));
     }
 

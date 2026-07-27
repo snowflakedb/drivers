@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 // Small helpers to centralize dual x509 crate usage
 use crate::crl::error::{
-    CertificateParseSnafu, CrlError, CrlListParseSnafu, CrlParsingSnafu, CrlToDerSnafu,
+    CertificateParseSnafu, CrlDataParseSnafu, CrlError, CrlListParseSnafu, CrlToDerSnafu,
 };
 use const_oid::ObjectIdentifier;
 use num_traits::cast::ToPrimitive;
@@ -306,7 +306,7 @@ fn crl_preflight_checks(crl_der: &[u8]) -> Result<(), CrlError> {
     use x509_parser::extensions::ParsedExtension;
     let (_, parsed_crl) =
         x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
-            .context(CrlParsingSnafu)?;
+            .context(CrlDataParseSnafu)?;
     let oid_akid = x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
     let oid_idp = x509_parser::oid_registry::OID_X509_EXT_ISSUER_DISTRIBUTION_POINT;
     let oid_crl_number = x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
@@ -435,17 +435,17 @@ pub fn crl_times(
 > {
     use x509_parser::prelude::FromDer;
     let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
-        .context(CrlParsingSnafu)?;
+        .context(CrlDataParseSnafu)?;
     let this_dt =
         crate::crl::certificate_parser::asn1_time_to_datetime(&crl.tbs_cert_list.this_update)
-            .ok_or_else(|| CrlError::CrlParsing {
+            .ok_or_else(|| CrlError::CrlDataParse {
                 source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
                 location: snafu::Location::new(file!(), line!(), 0),
             })?;
     let next_dt_opt = match crl.tbs_cert_list.next_update {
         Some(ref n) => Some(
             crate::crl::certificate_parser::asn1_time_to_datetime(n).ok_or_else(|| {
-                CrlError::CrlParsing {
+                CrlError::CrlDataParse {
                     source: x509_parser::nom::Err::Failure(
                         x509_parser::error::X509Error::InvalidDate,
                     ),
@@ -589,7 +589,16 @@ where
             return;
         }
 
-        let last = path.last().unwrap();
+        let Some(last) = path.last() else {
+            // Unreachable: `dfs_with_filter` is always entered with a non-empty
+            // path (the caller pushes the leaf before recursing). Log and bail
+            // if that invariant is ever broken rather than silently returning.
+            tracing::error!(
+                target: "sf_core::tls",
+                "dfs_with_filter reached with an empty path (unexpected); skipping"
+            );
+            return;
+        };
         let mut nexts: Vec<Vec<u8>> = Vec::new();
         if let Some(issuer_key) = issuer_der_hash(last)
             && let Some(v) = by_subject.get(&issuer_key)

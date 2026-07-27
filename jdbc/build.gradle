@@ -9,19 +9,28 @@ plugins {
     id 'com.diffplug.spotless' version '6.13.0' // latest version supporting Java 8
     id 'com.adarshr.test-logger' version '4.0.0'
     id 'org.gradle.test-retry' version '1.6.2'
+    // Fat jar (shadowJar). Needs JDK 11+, so CI assembles on JDK 21 (bytecode stays 1.8).
+    id 'com.gradleup.shadow' version '8.3.6'
 }
 
 // ====================
 // Project metadata
 // ====================
 def oldJdbcVersion = '4.3.1'
-def slf4jVersion = '2.0.9'
-def lombokVersion = '1.18.42'
+def slf4jVersion = '2.0.18'
+def lombokVersion = '1.18.46'
+// Override arrow's transitive 2.17.x (backward-compatible). Stays on 2.x (Java 8); 3.x needs Java 17.
+def jacksonVersion = '2.22.1'
+// jackson-annotations dropped its patch segment at 2.20, so it trails core/databind.
+def jacksonAnnotationsVersion = '2.22'
 
-group = 'com.snowflake'
-version = '4.0.0'
+group = 'net.snowflake'
+version = '0.0.1'
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
+
+// Base publication artifactId: thin uses it as-is, fat appends "-all".
+def artifactBaseName = 'snowflake-jdbc-native'
 
 // ====================
 // Dependency resolution
@@ -43,27 +52,41 @@ configurations {
 }
 
 dependencies {
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testImplementation 'org.mockito:mockito-core:4.11.0'
-    testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.4.4'
-    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.84'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.14.4'  // 5.x = last Java 8 line; 6.x needs Java 17
+    // Pin the launcher to match junit-platform-engine 1.14.x. The `test` task auto-provisions a
+    // matching launcher, but `referenceTest` sets its own classpath, so it inherits nothing and
+    // would otherwise get Gradle's stale bundled launcher (no OutputDirectoryCreator → discovery crash).
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.14.4'
+    testImplementation 'org.mockito:mockito-core:4.11.0'         // last 4.x; mockito 5.x needs Java 11
+    testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.6.2'
+    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.85'
+    testImplementation 'com.zaxxer:HikariCP:4.0.3'              // last 4.x; HikariCP 5.x+ needs Java 11
+    testImplementation 'com.mchange:c3p0:0.14.1'
+    testImplementation 'commons-dbcp:commons-dbcp:1.4'          // successor commons-dbcp2 is a separate artifact
+    testImplementation 'commons-pool:commons-pool:1.6'          // successor commons-pool2 is a separate artifact
     testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
     testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+    testRuntimeOnly "org.slf4j:slf4j-simple:${slf4jVersion}"
 
-    implementation 'org.json:json:20251224'
+    implementation 'org.json:json:20260719'
+    // API facade only — never ship a backend, or consumers get forced/conflicting bindings.
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
-    implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
-    implementation 'javax.annotation:javax.annotation-api:1.3.2'
+    // Compile-time-only annotations; kept out of the published deps.
+    compileOnly 'javax.annotation:javax.annotation-api:1.3.2'
     implementation 'org.apache.arrow:arrow-vector:17.0.0'
+    // All three pinned so the POM overrides arrow-vector's transitive 2.17.x (databind alone isn't enough).
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonAnnotationsVersion}"
     implementation 'org.apache.arrow:arrow-memory-core:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
     implementation 'org.apache.arrow:arrow-c-data:17.0.0'
-    implementation 'com.google.protobuf:protobuf-java:4.33.2'
+    implementation 'com.google.protobuf:protobuf-java:4.35.1'
     compileOnly "org.projectlombok:lombok:${lombokVersion}"
     annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 
     referenceTestsOldDriver "net.snowflake:snowflake-jdbc:${oldJdbcVersion}"
-    referenceTestsOldDriver 'org.json:json:20251224'
+    referenceTestsOldDriver 'org.json:json:20260719'
     // Old JDBC reference run needs SLF4J at runtime, but it is not guaranteed by old artifact metadata.
     referenceTestsOldDriver "org.slf4j:slf4j-api:${slf4jVersion}"
     referenceTestsOldDriver "org.slf4j:slf4j-simple:${slf4jVersion}"
@@ -160,61 +183,443 @@ tasks.named('compileJava') {
 // ====================
 // Packaging and publishing
 // ====================
-jar {
+// Maven Central requires -sources/-javadoc jars for a release.
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+// sources/javadoc consume generated sources — run after the generators.
+tasks.named('sourcesJar') {
+    dependsOn('generateProtobuf', 'generateDriverVersion')
+}
+tasks.named('javadoc') {
+    dependsOn('generateProtobuf', 'generateDriverVersion')
+}
+
+// Don't fail the release on javadoc lint (generated sources, missing doc comments).
+tasks.withType(Javadoc).configureEach {
+    exclude '**/protobuf_gen/**'
+    exclude '**/DriverVersion.java'
+    options.addStringOption('Xdoclint:none', '-quiet')
+    failOnError = false
+}
+
+// Per-task archive base names — each jar is named for its published coordinate:
+//   plain jar → snowflake-jdbc-native            (thin, unshaded, native-free)
+//   shadowJar → snowflake-jdbc-native-all (fat, shaded + natives)
+// sources/javadoc reuse the fat name; Maven renames by artifactId at publish time.
+tasks.named('jar')        { archiveBaseName = 'snowflake-jdbc-native' }
+tasks.named('shadowJar')  { archiveBaseName = 'snowflake-jdbc-native-all' }
+tasks.named('sourcesJar') { archiveBaseName = 'snowflake-jdbc-native-all' }
+tasks.named('javadocJar') { archiveBaseName = 'snowflake-jdbc-native-all' }
+
+// ====================
+// Self-contained fat jar (shadow)
+// ====================
+// Bundle every runtime dep and relocate third-party packages under
+// net.snowflake.client.jdbc.internal.** (legacy parity) to avoid classpath clashes.
+//
+// org.apache.arrow.c.** is NOT relocated: arrow_cdata_jni resolves those classes by
+// hardcoded name, so relocating breaks native FindClass (references still get rewritten).
+shadowJar {
+    // Replace the thin jar as the main artifact (no "-all" classifier).
+    archiveClassifier = ''
+
     manifest {
         attributes(
             'Implementation-Title': 'Snowflake JDBC Driver',
             'Implementation-Version': project.version,
             'Implementation-Vendor': 'Snowflake Inc.',
-            'Main-Class': 'com.snowflake.jdbc.SnowflakeDriver'
+            // Jackson's META-INF/versions/* classes are only honored on a multi-release jar.
+            'Multi-Release': 'true'
+            // No Main-Class/Add-Opens: library jar; consumers pass Arrow --add-opens themselves.
         )
+    }
+
+    // Exclude compile-only annotations + the slf4j binding (consumer's choice).
+    dependencies {
+        exclude(dependency('org.slf4j:slf4j-simple:.*'))
+        exclude(dependency('com.google.code.findbugs:jsr305:.*'))
+        exclude(dependency('javax.annotation:javax.annotation-api:.*'))
+    }
+
+    def internal = 'net.snowflake.client.jdbc.internal'
+    relocate('org.apache.arrow', "${internal}.apache.arrow") {
+        exclude 'org.apache.arrow.c.**'
+    }
+    relocate 'com.google.protobuf', "${internal}.com.google.protobuf"
+    relocate 'com.google.flatbuffers', "${internal}.com.google.flatbuffers"
+    relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
+    relocate 'io.netty', "${internal}.io.netty"
+    relocate 'org.json', "${internal}.org.json"
+    relocate 'org.apache.commons.codec', "${internal}.org.apache.commons.codec"
+    // slf4j NOT relocated: ship slf4j-api, consumer binds a backend.
+
+    mergeServiceFiles()
+
+    // Drop stale signatures + module descriptors.
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude '**/module-info.class'
+}
+
+// Self-verify the shaded jar (shadowJar finalizer). The leak check iterates shadowJar's own
+// relocators so it can't drift from the config above; the rest are invariants not derivable
+// from relocate(): Arrow C Data carve-out, un-relocated slf4j-api, the java.sql.Driver
+// service file, and (with -PnativeLibsDir) all five platform libs.
+def verifyShadowJar = tasks.register('verifyShadowJar') {
+    dependsOn 'shadowJar'
+    def shadowJarTask = tasks.named('shadowJar')
+    def jarProvider = shadowJarTask.flatMap { it.archiveFile }
+    def hasNativeLibsDir = project.hasProperty('nativeLibsDir')
+    doLast {
+        def jarFile = jarProvider.get().asFile
+        def entries = new java.util.zip.ZipFile(jarFile).withCloseable { zf ->
+            zf.entries().collect { it.name }
+        }
+        def problems = []
+        def want = { String p -> if (!entries.any { it.startsWith(p) }) problems << "expected present but missing: ${p}" }
+        def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
+
+        // Leak check: nothing a relocator moves may survive at its original root (dir entries
+        // ignored — a carve-out leaves its parent dir behind, not a leak).
+        def relocators = shadowJarTask.get().relocators.findAll { it.metaClass.respondsTo(it, 'getPathPattern') }
+        relocators.each { r ->
+            def leaked = entries.findAll {
+                !it.endsWith('/') && it.startsWith("${r.pathPattern}/") && r.canRelocatePath(it)
+            }
+            if (!leaked.isEmpty()) {
+                problems << "un-relocated ${r.pathPattern}/** leaked (expected under ${r.shadedPathPattern}/): ${leaked.take(3)}"
+            }
+        }
+        // Sanity: relocation actually ran (guards a mis-wired thin-producing shadowJar).
+        if (!entries.any { it.startsWith('net/snowflake/client/jdbc/internal/') }) {
+            problems << "no relocated classes under net/snowflake/client/jdbc/internal/ — relocation did not run"
+        }
+
+        // Non-derivable invariants.
+        // Arrow C Data + its JNI resource stay at the original path.
+        want 'org/apache/arrow/c/Data.class'
+        want 'org/apache/arrow/c/jni/JniWrapper.class'
+        want 'arrow_cdata_jni/'
+        // slf4j API deliberately un-relocated; slf4j-simple binding not bundled.
+        want 'org/slf4j/Logger.class'
+        absent 'org/slf4j/simple/'
+        // JDBC auto-registration service must survive shading.
+        want 'META-INF/services/java.sql.Driver'
+
+        // Every native staged under -PnativeLibsDir must survive into the fat jar. Derived from the
+        // staged tree, not a hardcoded list, so the per-libc Linux subdirs are checked automatically.
+        def stagedLibCount = 0
+        if (hasNativeLibsDir) {
+            def nativeRoot = 'net/snowflake/client/internal/unicore/native'
+            def stagedRoot = file(project.property('nativeLibsDir'))
+            def staged = fileTree(stagedRoot) {
+                include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+            }.files
+            stagedLibCount = staged.size()
+            if (staged.isEmpty()) {
+                problems << "no native libs found under -PnativeLibsDir=${stagedRoot}"
+            }
+            staged.each { f ->
+                def rel = stagedRoot.toPath().relativize(f.toPath()).toString().replace(File.separator, '/')
+                // .toString(): List<String>.contains(GString) is always false, so coerce the "${..}".
+                if (!entries.contains("${nativeRoot}/${rel}".toString())) {
+                    problems << "missing native lib in fat jar: ${rel}"
+                }
+            }
+        }
+
+        if (!problems.isEmpty()) {
+            throw new GradleException("Fat jar verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("verifyShadowJar: OK — ${relocators.size()} relocations clean, carve-outs intact${hasNativeLibsDir ? ", all ${stagedLibCount} staged platform libs present" : ' (platform check skipped: no -PnativeLibsDir)'}.")
+    }
+}
+tasks.named('shadowJar') { finalizedBy verifyShadowJar }
+
+
+// Bundle the cargo-built native lib(s) into the fat jar under
+// .../unicore/native/<os>-<arch>/<lib> for NativeLibraryLoader to extract at runtime. Only the
+// fat jar carries natives; the plain jar is native-free (thin resolves it from a separate
+// artifact). Release/CI passes -PnativeLibsDir (staged multi-arch tree); dev bundles the host
+// lib from ../target/{release,debug}. Tests use CORE_PATH, not these resources.
+//
+// SYNC CONTRACT: hostOsToken/hostArchToken must match NativeLibraryLoader.osToken()/archToken().
+def hostOsToken = {
+    def os = System.getProperty('os.name', '').toLowerCase()
+    if (os.contains('mac') || os.contains('darwin')) return 'darwin'
+    if (os.contains('windows')) return 'windows'
+    return 'linux'
+}()
+def hostArchToken = {
+    def arch = System.getProperty('os.arch', '').toLowerCase()
+    if (arch == 'aarch64' || arch == 'arm64') return 'aarch64'
+    if (arch == 'amd64' || arch == 'x86_64') return 'x86_64'
+    return arch
+}()
+// Host libc (glibc/musl) for the dev bundle path only; CI (-PnativeLibsDir) stages libc-qualified
+// dirs directly. Dev is ~always glibc; override with -PhostLibc=musl. Same {gnu,musl} tokens and
+// gnu default as NativeLibraryLoader.libcToken() (which does fuller ldd/getconf detection at
+// runtime); this build-time path only checks for the ld-musl loader.
+def hostLibcToken = {
+    if (hostOsToken != 'linux') return null
+    def override = project.findProperty('hostLibc')
+    if (override) return override.toString()
+    def hasMusl = ['/lib', '/usr/lib', '/lib64'].any { d ->
+        def dir = new File(d)
+        dir.isDirectory() &&
+            (dir.listFiles({ f, n -> n.startsWith('ld-musl-') && n.endsWith('.so.1') } as FilenameFilter)?.length ?: 0) > 0
+    }
+    return hasMusl ? 'musl' : 'gnu'
+}()
+// Host resource subdir: linux-<arch>-<libc> on Linux, <os>-<arch> elsewhere. Declared here because
+// the shadowJar dev-bundle closure captures it.
+def hostDir = (hostLibcToken
+    ? "${hostOsToken}-${hostArchToken}-${hostLibcToken}"
+    : "${hostOsToken}-${hostArchToken}").toString()
+def nativeResourcePath = 'net/snowflake/client/internal/unicore/native'
+
+tasks.named('shadowJar') {
+    if (project.hasProperty('nativeLibsDir')) {
+        // Release/CI: bundle the staged <os>-<arch>/<lib> tree verbatim.
+        from(project.property('nativeLibsDir')) {
+            include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+            into nativeResourcePath
+        }
+    } else {
+        // Local/dev: bundle only the host lib into its <os>-<arch>[-<libc>] subdir.
+        def hostLibDir = file('../target/release').exists() ? '../target/release' : '../target/debug'
+        from(hostLibDir) {
+            include 'libjdbc_bridge.so', 'libjdbc_bridge.dylib', 'jdbc_bridge.dll'
+            into "${nativeResourcePath}/${hostDir}"
+        }
     }
 }
 
-// Copy the cargo-built native lib into the JAR's resources so JNICoreTransport
-// can extract it at runtime (no CORE_PATH env var required for end users).
-// Path inside the JAR: net/snowflake/client/internal/unicore/native/.
-// The actual filenames produced by `cargo build --package jdbc_bridge`:
-//   - linux:   libjdbc_bridge.so
-//   - macos:   libjdbc_bridge.dylib
-//   - windows: jdbc_bridge.dll
-def copyNativeLib = tasks.register('copyNativeLib', Copy) {
-    from '../target/release'
-    include 'libjdbc_bridge.*', 'jdbc_bridge.dll'
-    into 'build/resources/main/net/snowflake/client/internal/unicore/native'
+// Shared POM metadata for every published coordinate. Takes the MavenPom delegate so each
+// publication adds only what differs (e.g. dep stripping).
+def configureCommonPom = { pom ->
+    pom.name = 'Snowflake JDBC Driver'
+    pom.description = 'JDBC driver for Snowflake database'
+    pom.url = 'https://github.com/snowflakedb/universal-driver/tree/main/jdbc'
+    pom.licenses {
+        license {
+            name = 'The Apache License, Version 2.0'
+            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+        }
+    }
+    pom.developers {
+        developer {
+            name = 'Snowflake Support Team'
+            email = 'snowflake-java@snowflake.net'
+            organization = 'Snowflake Computing'
+            organizationUrl = 'https://www.snowflake.net'
+        }
+    }
+    // SCM points at the repo root; driver sources live in jdbc/ (the project url).
+    pom.scm {
+        connection = 'scm:git:https://github.com/snowflakedb/universal-driver.git'
+        developerConnection = 'scm:git:git@github.com:snowflakedb/universal-driver.git'
+        url = 'https://github.com/snowflakedb/universal-driver'
+    }
 }
 
-tasks.named('processResources') {
-    dependsOn(copyNativeLib)
+// ====================
+// Per-platform thin jars (net.snowflake:snowflake-jdbc-native:<classifier>)
+// ====================
+// One self-contained jar per platform = full thin Java + that platform's native, published as
+// classifiers on snowflake-jdbc-native. `classifier` is the os-maven-plugin name; `dirs` are the
+// resource subdir(s) it carries and MUST match NativeLibraryLoader.osArchDir(). Linux lists both
+// libc variants under one classifier (osdetector has no musl classifier); the loader picks at run.
+def nativePlatforms = [
+    [classifier: 'linux-x86_64',   lib: 'libjdbc_bridge.so',    dirs: ['linux-x86_64-gnu', 'linux-x86_64-musl']],
+    [classifier: 'linux-aarch_64', lib: 'libjdbc_bridge.so',    dirs: ['linux-aarch64-gnu', 'linux-aarch64-musl']],
+    [classifier: 'osx-x86_64',     lib: 'libjdbc_bridge.dylib', dirs: ['darwin-x86_64']],
+    [classifier: 'osx-aarch_64',   lib: 'libjdbc_bridge.dylib', dirs: ['darwin-aarch64']],
+    [classifier: 'windows-x86_64', lib: 'jdbc_bridge.dll',      dirs: ['windows-x86_64']],
+]
+
+def hostPlatform = nativePlatforms.find { it.dirs.contains(hostDir) }
+
+// Only bundle libc subdirs actually present in the staged tree, so a not-yet-wired variant degrades
+// to shipping what exists rather than failing the release; a platform with none is caught by verify.
+def stagedDirs = { p ->
+    def root = project.property('nativeLibsDir')
+    p.dirs.findAll { file("${root}/${it}/${p.lib}").exists() }
+}
+
+// CI (-PnativeLibsDir) bundles every platform's lib from the staged tree; local dev has only the
+// host lib (../target/{release,debug}), so non-host jars build native-free and aren't published.
+def thinPlatformJars = nativePlatforms.collectEntries { p ->
+    def t = tasks.register("thinJar-${p.classifier}", Jar) {
+        dependsOn 'jar'
+        archiveBaseName = 'snowflake-jdbc-native'
+        archiveClassifier = p.classifier
+        from(zipTree(tasks.named('jar').flatMap { it.archiveFile }))
+        if (project.hasProperty('nativeLibsDir')) {
+            // Bundle every libc variant this platform ships (Linux: gnu + musl).
+            stagedDirs(p).each { d ->
+                from("${project.property('nativeLibsDir')}/${d}") {
+                    include p.lib
+                    into "${nativeResourcePath}/${d}"
+                }
+            }
+        } else if (p.dirs.contains(hostDir)) {
+            def hostLibDir = file('../target/release').exists() ? '../target/release' : '../target/debug'
+            from(hostLibDir) {
+                include p.lib
+                into "${nativeResourcePath}/${hostDir}"
+            }
+        }
+    }
+    [(p.classifier): t]
+}
+
+// Drop shadowJar from the `java` component so the thin publication emits only the plain jar
+// (the fat publication attaches shadowJar explicitly).
+components.java.withVariantsFromConfiguration(configurations.shadowRuntimeElements) {
+    skip()
 }
 
 publishing {
+    repositories {
+        // Stage each publication into a local Maven repo so CI uploads a bundle named by
+        // artifactId (build/libs is named for the fat coordinate only). Sign + deploy downstream.
+        maven {
+            name = 'staging'
+            url = layout.buildDirectory.dir('staging-deploy')
+        }
+    }
     publications {
-        maven(MavenPublication) {
+        // Thin: `from components.java` gives the native-free main jar + real deps POM +
+        // sources/javadoc; then attach the runnable per-platform classifier jars (host only
+        // in dev, all under CI via -PnativeLibsDir).
+        thin(MavenPublication) {
             from components.java
+            artifactId = artifactBaseName
+            // hostPlatform is null on an unlisted host (e.g. windows-aarch64) — guard the deref.
+            def attach = project.hasProperty('nativeLibsDir') ?
+                thinPlatformJars.values() :
+                [hostPlatform ? thinPlatformJars[hostPlatform.classifier] : null].findAll { it != null }
+            attach.each { artifact(it) }
+            pom { configureCommonPom(delegate) }
+        }
+        // Fat (snowflake-jdbc-native-all): shaded jar with natives bundled; deps inlined, so stripped from POM.
+        maven(MavenPublication) {
+            artifact tasks.named('shadowJar')
+            artifact tasks.named('sourcesJar')
+            artifact tasks.named('javadocJar')
+
+            artifactId = artifactBaseName + '-all'
 
             pom {
-                name = 'Snowflake JDBC Driver'
-                description = 'JDBC driver for Snowflake database'
-                url = 'https://github.com/snowflake/universal-driver'
+                configureCommonPom(delegate)
 
-                licenses {
-                    license {
-                        name = 'The Apache License, Version 2.0'
-                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
-                    }
-                }
-
-                developers {
-                    developer {
-                        id = 'snowflake'
-                        name = 'Snowflake Inc.'
-                        email = 'support@snowflake.com'
-                    }
+                // Deps inlined — strip from POM (else consumers pull dupes).
+                withXml {
+                    def deps = asNode().dependencies
+                    if (deps) { deps.each { it.replaceNode {} } }
                 }
             }
         }
     }
+}
+
+// Self-verify the thin jar: unshaded, native-free, real driver, real-deps POM.
+def verifyThinJar = tasks.register('verifyThinJar') {
+    dependsOn 'jar', 'generatePomFileForThinPublication'
+    def jarProvider = tasks.named('jar').flatMap { it.archiveFile }
+    def pomProvider = layout.buildDirectory.file('publications/thin/pom-default.xml')
+    doLast {
+        def entries = new java.util.zip.ZipFile(jarProvider.get().asFile).withCloseable { zf ->
+            zf.entries().collect { it.name }
+        }
+        def problems = []
+        def present = { String p -> if (!entries.contains(p)) problems << "expected present but missing: ${p}" }
+        def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
+
+        // Not shaded (relocation namespace only exists post-shadowJar).
+        absent 'net/snowflake/client/jdbc/internal/'
+        // No bundled deps — resolved from Maven at consume time.
+        ['org/apache/arrow/', 'com/google/protobuf/', 'com/google/flatbuffers/',
+         'io/netty/', 'org/json/', 'org/slf4j/'].each { absent it }
+        // No bundled native — that ships in the per-platform classifier jars (verified below).
+        absent 'net/snowflake/client/internal/unicore/native/'
+        // Real driver + JDBC auto-registration service must be present.
+        present 'net/snowflake/client/api/driver/SnowflakeDriver.class'
+        present 'META-INF/services/java.sql.Driver'
+
+        // POM invariant: real deps declared (inverse of the fat POM's dep-strip).
+        def deps = new XmlSlurper().parse(pomProvider.get().asFile)
+            .dependencies.dependency.collect { "${it.groupId}:${it.artifactId}".toString() }
+        // jackson-databind is used directly but only arrived transitively via arrow-vector;
+        // pin it in the POM so consumers whose Arrow graph omits it don't break.
+        ['org.apache.arrow:arrow-vector', 'com.google.protobuf:protobuf-java',
+         'org.json:json', 'org.slf4j:slf4j-api',
+         'com.fasterxml.jackson.core:jackson-databind'].each { want ->
+            if (!deps.contains(want)) problems << "thin POM missing dependency: ${want}"
+        }
+        // Logging backend stays the consumer's choice (parity with the fat jar).
+        if (deps.contains('org.slf4j:slf4j-simple')) {
+            problems << "thin POM must not declare slf4j-simple (binding is the consumer's choice)"
+        }
+
+        if (!problems.isEmpty()) {
+            throw new GradleException("Thin jar verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("verifyThinJar: OK — unshaded, native-free, real driver present, ${deps.size()} deps declared.")
+    }
+}
+tasks.named('jar') { finalizedBy verifyThinJar }
+
+// Self-verify the per-platform thin jars: each carries the real driver + JDBC service file and
+// exactly the staged native(s) at NativeLibraryLoader's resource path, guarding the classifier<->
+// dir decoupling. -PnativeLibsDir checks all; in dev only the host jar carries a native.
+def verifyThinPlatformJars = tasks.register('verifyThinPlatformJars') {
+    dependsOn thinPlatformJars.values()
+    def enforceAll = project.hasProperty('nativeLibsDir')
+    def specs = nativePlatforms.findAll { enforceAll || it.dirs.contains(hostDir) }.collect { p ->
+        // -PnativeLibsDir: every libc variant staged for the platform; dev: host libc only.
+        def dirs = enforceAll ? stagedDirs(p) : p.dirs.findAll { it == hostDir }
+        [jar: tasks.named("thinJar-${p.classifier}").flatMap { it.archiveFile },
+         classifier: p.classifier, dirs: dirs, lib: p.lib]
+    }
+    doLast {
+        def base = 'net/snowflake/client/internal/unicore/native'
+        def problems = []
+        specs.each { s ->
+            def entries = new java.util.zip.ZipFile(s.jar.get().asFile).withCloseable { zf ->
+                zf.entries().collect { it.name }
+            }
+            // Runnable driver present (not just a bag of natives).
+            if (!entries.contains('net/snowflake/client/api/driver/SnowflakeDriver.class')) {
+                problems << "${s.classifier}: missing SnowflakeDriver.class"
+            }
+            if (!entries.contains('META-INF/services/java.sql.Driver')) {
+                problems << "${s.classifier}: missing META-INF/services/java.sql.Driver"
+            }
+            // A runnable classifier jar must carry at least one native; and exactly the libc
+            // variant(s) staged for this platform, each at the loader's resource path.
+            def libs = entries.findAll { !it.endsWith('/') && it.startsWith("${base}/") }.sort()
+            def expected = s.dirs.collect { "${base}/${it}/${s.lib}".toString() }.sort()
+            if (expected.isEmpty()) {
+                problems << "${s.classifier}: no native staged for this platform"
+            } else if (libs != expected) {
+                problems << "${s.classifier}: expected exactly ${expected} but jar holds ${libs}"
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("Thin platform jar verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("verifyThinPlatformJars: OK — ${specs.size()} platform jar(s), each a runnable driver with its staged native(s) at the loader's resource path${enforceAll ? '' : ' (dev: host only)'}.")
+    }
+}
+// Verify when the thin publication is staged, mirroring verifyShadowJar/verifyThinJar.
+tasks.matching { it.name.startsWith('publishThinPublicationTo') }.configureEach {
+    finalizedBy verifyThinPlatformJars
 }
 
 // ====================
@@ -246,7 +651,7 @@ def configureCommonTestTask = { t ->
             excludeTags.split(',').each { tag -> it.excludeTags tag.trim() }
         }
         if (!includeTags && !excludeTags) {
-            it.excludeTags 'requires_browser'
+            it.excludeTags 'requires_browser', 'requires_no_mfa'
         }
     }
     t.minHeapSize = '1g'

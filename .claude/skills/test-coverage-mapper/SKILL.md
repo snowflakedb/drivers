@@ -1,7 +1,7 @@
 ---
 name: test-coverage-mapper
 description: >
-  Maps old driver tests (ODBC/JDBC/Python) to UD test equivalents and verifies coverage via assertion-level code analysis. Triggers on: 'map old tests', 'coverage gap', 'which old tests are missing', 'add test mapping', 'reverse lookup', 'sync test mappings'.
+  Maps old driver test files and test case names (ODBC/JDBC/Python) to Universal Driver equivalents in tests/oldTestsCoverage/ YAML files, and verifies coverage via assertion-level code analysis. Use when the user says: 'map old tests', 'map old ODBC/JDBC/Python test', 'which old tests are unmapped', 'coverage gaps for ODBC/JDBC/Python', 'add test mapping', 'add a test mapping to odbc.yaml', 'reverse lookup', 'sync test mappings', 'which UD tests cover this old test', 'update the coverage yaml', 'reconcile summary counts in the yaml', 'TC_AUTH_NNN shows unmapped'. NOT for Jira bug tickets (use bug-regression-coverage for SNOW-XXXXXX). NOT for code coverage metrics such as line coverage, branch coverage, jacoco reports, coverage percentages, or coverage of newly written features.
 ---
 
 ## Opening context
@@ -43,13 +43,10 @@ Prompt:
 - **GitHub repo provided** → use `mcp__github__github_get_file` to fetch test files on demand
 - **Neither provided** → block progression. State: `"Cannot analyze test assertions without access to the old driver source. Please provide a path."`
 
-Store the resolved source reference for use in subsequent steps. The known repos are:
+Store the resolved source reference for use in subsequent steps. Known repos
+and typical local paths are in:
 
-| Driver | GitHub repo | Typical local paths |
-|---|---|---|
-| ODBC | `snowflakedb/snowflake-odbc` | `~/snowflake-odbc`, `~/emu/snowflake-odbc` |
-| JDBC | `snowflakedb/snowflake-jdbc` | `~/snowflake-jdbc`, `~/emu/snowflake-jdbc` |
-| Python | `snowflakedb/snowflake-connector-python` | `~/snowflake-connector-python`, `~/emu/snowflake-connector-python` |
+@.claude/rules/driver-repos.md
 
 ---
 

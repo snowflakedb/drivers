@@ -25,13 +25,14 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
 use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{ParamKey, ParamScope, param_names};
+use crate::config::param_registry::{ParamKey, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
     resolve_log_query_parameters, resolve_log_query_text,
 };
 use crate::config::retry::RetryPolicy;
+use crate::config::settings::Settings;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
@@ -39,7 +40,7 @@ use crate::rest::snowflake::{
     heartbeat, snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
-use crate::token_cache::TokenCache;
+use crate::tls::config::ProxyConfig;
 
 /// Whether `execute_session_sql` should refresh the connection's local
 /// session-state cache (`session_parameters`, `final_session_names`) from
@@ -298,16 +299,16 @@ impl DatabaseDriverV1 {
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 
-                    // Forward unrecognized settings as session parameters so
-                    // drivers can set arbitrary Snowflake session params
-                    // via regular connection options.
-                    let mut unknown_settings = collect_unknown_settings(&conn.connection_seed);
-                    // `CLIENT_SESSION_KEEP_ALIVE` and
-                    // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are registered
-                    // params so they don't show up as "unknown"; mirror them into
-                    // login session parameters to match the Python connector.
+                    // Session parameters to send in the login request. Seeded
+                    // with unrecognized connection options (so drivers can set
+                    // arbitrary Snowflake session params via regular connection
+                    // options), then augmented below with registered session
+                    // params that belong in SESSION_PARAMETERS
+                    // (CLIENT_SESSION_KEEP_ALIVE, its heartbeat frequency,
+                    // CLIENT_PREFETCH_THREADS, QUERY_TAG) to match the Python connector.
+                    let mut login_session_params = collect_unknown_settings(&conn.connection_seed);
                     if let Some(v) = resolved.get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE) {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE.as_str().to_string(),
                             v.to_string(),
                         );
@@ -315,10 +316,16 @@ impl DatabaseDriverV1 {
                     if let Some(v) =
                         resolved.get_int(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY)
                     {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY
                                 .as_str()
                                 .to_string(),
+                            v.to_string(),
+                        );
+                    }
+                    if let Some(v) = resolved.get_int(param_names::CLIENT_PREFETCH_THREADS) {
+                        login_session_params.insert(
+                            param_names::CLIENT_PREFETCH_THREADS.as_str().to_string(),
                             v.to_string(),
                         );
                     }
@@ -326,10 +333,16 @@ impl DatabaseDriverV1 {
                         .get_bool(param_names::VALIDATE_DEFAULT_PARAMETERS)
                         .unwrap_or(false)
                     {
-                        unknown_settings.insert(
+                        login_session_params.insert(
                             "CLIENT_VALIDATE_DEFAULT_PARAMETERS".to_string(),
                             "true".to_string(),
                         );
+                    }
+                    // QUERY_TAG is a registered session parameter (also
+                    // statement-overridable), so it isn't "unknown"; mirror a
+                    // connection-level value into the login session parameters.
+                    if let Some(v) = resolved.get_string(param_names::QUERY_TAG) {
+                        login_session_params.insert("QUERY_TAG".to_string(), v);
                     }
                     let init_params = match init_params {
                         Some(explicit) => {
@@ -340,12 +353,12 @@ impl DatabaseDriverV1 {
                                 .map(|(k, v)| (k.to_uppercase(), v))
                                 .collect();
                             // Explicit session params take precedence
-                            for (k, v) in unknown_settings {
+                            for (k, v) in login_session_params {
                                 merged.entry(k).or_insert(v);
                             }
                             Some(merged)
                         }
-                        None if !unknown_settings.is_empty() => Some(unknown_settings),
+                        None if !login_session_params.is_empty() => Some(login_session_params),
                         None => None,
                     };
 
@@ -359,9 +372,18 @@ impl DatabaseDriverV1 {
                     )
                 };
 
-                let http_client = crate::tls::create_tls_client_with_proxy(
+                warn_query_logging_risk(&resolved_snapshot);
+
+                let timeout_config = {
+                    let conn = conn_ptr.lock().await;
+                    crate::config::retry::TimeoutConfig::from_params(&conn.connection_seed)
+                };
+
+                let http_client = crate::tls::create_tls_client_with_proxy_and_timeouts(
                     config.tls.clone(),
                     Some(&config.proxy),
+                    self.crl_worker.clone(),
+                    timeout_config.connect_timeout,
                 )
                 .context(TlsClientCreationSnafu)?;
                 let login_parameters = LoginParameters::from_connection_config(
@@ -372,12 +394,28 @@ impl DatabaseDriverV1 {
                 );
 
                 // ---- Diagnostics: pre-connect -----------------------------------
-                let mut diag_runner = if let DiagnosticConfig::Enabled { .. } = config.diagnostic {
+                // Run diagnostics when explicitly enabled OR when troubleshooting
+                // is active (SNOWFLAKE_TROUBLESHOOTING_ENABLED=true implies diagnostics).
+                let ts_path = self.troubleshooting_path();
+                let effective_diag = match config.diagnostic {
+                    DiagnosticConfig::Enabled {
+                        ref log_path,
+                        ref allowlist_path,
+                    } => Some(DiagnosticConfig::Enabled {
+                        log_path: log_path.clone().or_else(|| ts_path.clone()),
+                        allowlist_path: allowlist_path.clone(),
+                    }),
+                    DiagnosticConfig::Disabled if ts_path.is_some() => {
+                        Some(DiagnosticConfig::Enabled {
+                            log_path: ts_path,
+                            allowlist_path: None,
+                        })
+                    }
+                    _ => None,
+                };
+                let mut diag_runner = if let Some(diag_cfg) = effective_diag {
                     let account = config.server.account.clone();
-                    // resolve_options() already ran derive_host_from_account, so host
-                    // is Some whenever account is set; the empty-string fallback is unreachable.
                     let host_str = host.clone().unwrap_or_default();
-                    let diag_cfg = config.diagnostic.clone();
                     tokio::task::spawn_blocking(move || {
                         let mut runner = DiagnosticRunner::new(&account, &host_str, diag_cfg);
                         runner.run_pre_connect();
@@ -423,18 +461,30 @@ impl DatabaseDriverV1 {
 
                 let retry_policy = {
                     let conn = conn_ptr.lock().await;
-                    RetryPolicy::http(&conn.connection_seed)
+                    RetryPolicy::login(&conn.connection_seed)
                 };
 
-                let login_result = crate::rest::snowflake::snowflake_login_with_client(
+                let login_fut = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
-                    token_cache.map(|c| c as &dyn TokenCache),
+                    token_cache,
                     Some(&self.prompt_locks),
                     &retry_policy,
-                )
-                .await;
+                );
+
+                let login_result = if let Some(budget) = timeout_config.login_timeout {
+                    match tokio::time::timeout(budget, login_fut).await {
+                        Ok(inner) => inner,
+                        Err(_) => Err(crate::rest::snowflake::OperationTimeoutSnafu {
+                            operation: "login".to_string(),
+                            budget,
+                        }
+                        .build()),
+                    }
+                } else {
+                    login_fut.await
+                };
 
                 // ---- Diagnostics: post-connect ----------------------------------
                 if let Some(mut runner) = diag_runner.take() {
@@ -495,6 +545,7 @@ impl DatabaseDriverV1 {
                         login_server_version,
                         resolved_snapshot,
                         logout_config,
+                        timeout_config,
                     )
                     .await;
 
@@ -535,13 +586,21 @@ impl DatabaseDriverV1 {
                             session_token: conn.tokens.clone(),
                         });
 
-                        // unwrap is safe: telemetry_enabled is only true when
-                        // telemetry_sessions() is Some.
-                        self.telemetry_sessions()
-                            .unwrap()
-                            .write()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(session_id, exporter_session);
+                        if let Some(sessions) = self.telemetry_sessions() {
+                            sessions
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(session_id, exporter_session);
+                        } else {
+                            // `telemetry_enabled` implies `telemetry_sessions()`
+                            // was Some (checked above); reaching None here means
+                            // the registry was cleared concurrently.
+                            tracing::error!(
+                                "telemetry session registry unexpectedly absent after \
+                                 telemetry_enabled check; session {session_id} not \
+                                 registered for telemetry"
+                            );
+                        }
 
                         let env_info = conn
                             .wrapper_identity
@@ -879,6 +938,21 @@ impl DatabaseDriverV1 {
 /// `Setting::String`, the value is trimmed first and skipped when empty;
 /// other variants are inserted as-is. Used both for wrapper-identity seeding
 /// and for process-wide defaults parsed from `sf.odbc.ini` / `[log]` TOML.
+fn warn_query_logging_risk(settings: &ParamStore) {
+    if resolve_log_query_text(settings) {
+        tracing::warn!(
+            "log_query_text is enabled: SQL query text will appear in logs - \
+             ensure logs are protected as confidential data"
+        );
+    }
+    if resolve_log_query_parameters(settings) {
+        tracing::warn!(
+            "log_query_parameters is enabled: bind parameter values will appear in logs - \
+             ensure logs are protected as confidential data"
+        );
+    }
+}
+
 fn inject_if_absent(seed: &mut ParamStore, key: &str, value: Setting) {
     let value = match value {
         Setting::String(s) => {
@@ -964,6 +1038,8 @@ pub struct Connection {
 
     /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
     pub logout_config: LogoutConfig,
+    /// Resolved operation-level timeout configuration (populated at connect time).
+    pub timeout_config: crate::config::retry::TimeoutConfig,
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
@@ -1019,6 +1095,7 @@ impl Connection {
             is_closed: Arc::new(AtomicBool::new(false)),
             is_master_token_expired: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
+            timeout_config: crate::config::retry::TimeoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             server_version: RwLock::new(None),
             wrapper_identity: None,
@@ -1040,6 +1117,14 @@ impl Connection {
     pub(crate) async fn use_s3_regional_url_session_param(&self) -> bool {
         let params = self.session_parameters.read().await;
         crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
+    }
+
+    /// Reads `unsafe_file_write` from the connection seed. Default `false`
+    /// (owner-only 0o600 permissions on GET downloads on Unix).
+    pub(crate) fn unsafe_file_write(&self) -> bool {
+        self.connection_seed
+            .get_bool(param_names::UNSAFE_FILE_WRITE)
+            .unwrap_or(false)
     }
 
     /// The resolved TLS config for this connection, read from the established
@@ -1097,10 +1182,12 @@ impl Connection {
         server_version: Option<String>,
         resolved_connect: ParamStore,
         logout_config: LogoutConfig,
+        timeout_config: crate::config::retry::TimeoutConfig,
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.retry_policy = RetryPolicy::http(&self.connection_seed);
+        self.timeout_config = timeout_config;
         self.host = host;
         self.port = port;
         self.server_url = Some(server_url);
@@ -1271,7 +1358,7 @@ impl RefreshContext {
     pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().await;
         if guard.is_closed.load(Ordering::SeqCst) {
-            return Err(ConnectionClosedSnafu {}.build());
+            return ConnectionClosedSnafu {}.fail();
         }
         Self::new(&guard)
     }
@@ -1461,10 +1548,9 @@ impl RefreshContext {
         F: Fn(SensitiveString) -> Fut,
         Fut: Future<Output = Result<T, RestError>>,
     {
-        use snafu::IntoError;
         crate::refresh::execute_with_refresh(self, |token| {
             let fut = f(token);
-            async move { fut.await.map_err(|e| QuerySnafu.into_error(e)) }
+            async move { fut.await.context(QuerySnafu) }
         })
         .await
     }
@@ -1653,6 +1739,16 @@ pub struct ConnectionInfo {
     pub master_token: Option<SensitiveString>,
     /// The User-Agent string built by the core for this client
     pub user_agent: Option<String>,
+    /// The configured HTTP proxy hostname, if any
+    pub proxy_host: Option<String>,
+    /// The configured HTTP proxy port, if any
+    pub proxy_port: Option<i64>,
+    /// The configured HTTP proxy username for Basic auth, if any
+    pub proxy_user: Option<String>,
+    /// The configured HTTP proxy password for Basic auth (redacted in Debug output)
+    pub proxy_password: Option<SensitiveString>,
+    /// Comma-separated list of hosts that bypass the proxy, if configured
+    pub no_proxy: Option<String>,
 }
 
 fn setting_as_display_string(setting: &Setting) -> Option<String> {
@@ -1727,7 +1823,7 @@ fn resolve_session_database(conn: &Connection) -> Result<Option<String>, ApiErro
     let final_names = conn
         .final_session_names
         .read()
-        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+        .map_err(|_| ConnectionLockSnafu {}.build())?;
     Ok(final_names
         .database
         .clone()
@@ -1782,7 +1878,7 @@ impl DatabaseDriverV1 {
                 let final_names = conn
                     .final_session_names
                     .read()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                    .map_err(|_| ConnectionLockSnafu {}.build())?;
                 let role = final_names
                     .role
                     .clone()
@@ -1806,6 +1902,18 @@ impl DatabaseDriverV1 {
                     .as_ref()
                     .map(crate::rest::snowflake::user_agent);
 
+                // Rebuild the effective proxy config from the resolved login
+                // snapshot (falling back to the raw seed before login) so the
+                // legacy `PROXY` URL form is merged with the individual
+                // `proxy_*` fields exactly as the HTTP client sees them. Reuses
+                // the single parser rather than re-reading fields piecemeal.
+                let proxy_settings: &dyn Settings = conn
+                    .resolved_connect
+                    .as_ref()
+                    .map(|s| s as &dyn Settings)
+                    .unwrap_or(&conn.connection_seed);
+                let proxy = ProxyConfig::from_settings(proxy_settings);
+
                 Ok(ConnectionInfo {
                     host,
                     port,
@@ -1820,6 +1928,11 @@ impl DatabaseDriverV1 {
                     warehouse,
                     master_token,
                     user_agent,
+                    proxy_host: proxy.host,
+                    proxy_port: proxy.port,
+                    proxy_user: proxy.user,
+                    proxy_password: proxy.password,
+                    no_proxy: proxy.no_proxy,
                 })
             }
             None => InvalidArgumentSnafu {
@@ -1841,12 +1954,12 @@ impl DatabaseDriverV1 {
             .fail();
         }
 
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let conn_ptr =
+            self.connections
+                .get_obj(conn_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
 
         let (http_client, server_url, client_info, retry_policy) = {
             let conn = conn_ptr.lock().await;
@@ -1951,7 +2064,7 @@ impl DatabaseDriverV1 {
                 let version = conn
                     .server_version
                     .read()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?
+                    .map_err(|_| ConnectionLockSnafu {}.build())?
                     .clone();
                 Ok(version)
             }
@@ -1981,7 +2094,7 @@ impl DatabaseDriverV1 {
 
                 let (canonical, def) = canonicalize_setting_key(&key);
                 if let Some(d) = def
-                    && d.scope == ParamScope::Session
+                    && d.is_session_scoped()
                 {
                     if let Some(s) = conn
                         .session_overrides
@@ -2866,6 +2979,85 @@ mod tests {
         assert_eq!(info.warehouse, None);
         assert!(info.session_token.is_none());
         assert_eq!(info.session_id, None);
+        assert_eq!(info.proxy_host, None);
+        assert_eq!(info.proxy_port, None);
+        assert_eq!(info.proxy_user, None);
+        assert!(info.proxy_password.is_none());
+        assert_eq!(info.no_proxy, None);
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_get_info_returns_proxy_settings() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            "proxy_host".into(),
+            Setting::String("proxy.example.com".into()),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_option(handle, "proxy_port".into(), Setting::Int(8080))
+            .await
+            .unwrap();
+        ds.connection_set_option(handle, "proxy_user".into(), Setting::String("puser".into()))
+            .await
+            .unwrap();
+        ds.connection_set_option(
+            handle,
+            "proxy_password".into(),
+            Setting::String("ppass".into()),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_option(
+            handle,
+            "no_proxy".into(),
+            Setting::String("localhost,127.0.0.1".into()),
+        )
+        .await
+        .unwrap();
+
+        let info = ds.connection_get_info(handle).await.unwrap();
+
+        assert_eq!(info.proxy_host, Some("proxy.example.com".into()));
+        assert_eq!(info.proxy_port, Some(8080));
+        assert_eq!(info.proxy_user, Some("puser".into()));
+        assert_eq!(
+            info.proxy_password.as_ref().map(|p| p.reveal().as_str()),
+            Some("ppass")
+        );
+        assert_eq!(info.no_proxy, Some("localhost,127.0.0.1".into()));
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    /// The legacy ODBC `PROXY` URL form must be parsed and surfaced through
+    /// `connection_get_info` exactly as the HTTP client sees it, since the
+    /// info aggregation reuses `ProxyConfig::from_settings`.
+    #[tokio::test]
+    async fn connection_get_info_parses_legacy_proxy_url() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            "proxy".into(),
+            Setting::String("http://puser:ppass@proxy.example.com:8080".into()),
+        )
+        .await
+        .unwrap();
+
+        let info = ds.connection_get_info(handle).await.unwrap();
+
+        assert_eq!(info.proxy_host, Some("proxy.example.com".into()));
+        assert_eq!(info.proxy_port, Some(8080));
+        assert_eq!(info.proxy_user, Some("puser".into()));
+        assert_eq!(
+            info.proxy_password.as_ref().map(|p| p.reveal().as_str()),
+            Some("ppass")
+        );
 
         ds.connection_release(handle).unwrap();
     }

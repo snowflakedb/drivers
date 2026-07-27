@@ -122,6 +122,15 @@ inline bool is_ascii_locale() {
     }                                                                                           \
   } while (0)
 
+// Gate for requires_no_mfa tests (parameters_aws_local.json, SF_TEST_NO_MFA=true).
+#define REQUIRE_NO_MFA(message)                                                      \
+  do {                                                                               \
+    const char* no_mfa_env = std::getenv("SF_TEST_NO_MFA");                          \
+    if (no_mfa_env == nullptr || std::string(no_mfa_env) != "true") {                \
+      SKIP("Requires parameters_aws_local.json (SF_TEST_NO_MFA=true): " << message); \
+    }                                                                                \
+  } while (0)
+
 // ============================================================================
 // Driver-manager-specific compatibility shims
 // ============================================================================

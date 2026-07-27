@@ -47,6 +47,18 @@ public interface DataConversionContext {
   }
 
   /**
+   * Whether scale-0 {@code FIXED}/{@code NUMBER} columns are surfaced as integers ({@code long}
+   * from {@code getObject}, {@code BIGINT} from the result-set metadata) rather than as {@code
+   * BigDecimal}/{@code DECIMAL}. Mirrors snowflake-jdbc's {@code JDBC_TREAT_DECIMAL_AS_INT} session
+   * parameter, which defaults to {@code true}. The value converters and {@code
+   * SnowflakeResultSetMetaDataImpl} both read this single flag so the reported column type and the
+   * materialized object stay consistent.
+   */
+  default boolean isTreatDecimalAsInt() {
+    return true;
+  }
+
+  /**
    * Mirrors snowflake-jdbc's {@code JDBC_GET_DATE_USE_NULL_TIMEZONE} (default true in {@code
    * SFBaseSession.getDateUseNullTimezone}). Consulted only by the no-Calendar {@code getDate(int)}:
    * when true it passes a null timezone to the converter (the raw epoch-day date), when false it

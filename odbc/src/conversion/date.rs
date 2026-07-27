@@ -2,6 +2,7 @@ use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
 use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
+use snafu::OptionExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -189,15 +190,12 @@ impl ReadODBC for SnowflakeDate {
             CDataType::Date | CDataType::TypeDate => {
                 let date = read_unaligned::<sql::Date>(binding);
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
-                    .ok_or_else(|| {
-                        InvalidDatetimeValueSnafu {
-                            reason: format!(
-                                "invalid date in SQL_C_TYPE_DATE for DATE target: \
+                    .with_context(|| InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_DATE for DATE target: \
                                  year={}, month={}, day={}",
-                                date.year, date.month, date.day
-                            ),
-                        }
-                        .build()
+                            date.year, date.month, date.day
+                        ),
                     })
             }
             CDataType::Char | CDataType::WChar => {
@@ -208,14 +206,11 @@ impl ReadODBC for SnowflakeDate {
             CDataType::Binary => {
                 let date = read_binary_struct::<sql::Date>(binding, "SQL_DATE_STRUCT")?;
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
-                    .ok_or_else(|| {
-                        BindingNumericOutOfRangeSnafu {
-                            reason: format!(
-                                "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
-                                date.year, date.month, date.day
-                            ),
-                        }
-                        .build()
+                    .with_context(|| BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
+                            date.year, date.month, date.day
+                        ),
                     })
             }
             // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the
@@ -234,15 +229,12 @@ impl ReadODBC for SnowflakeDate {
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
                 let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
-                    .ok_or_else(|| {
-                        InvalidDatetimeValueSnafu {
-                            reason: format!(
-                                "invalid date in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                    .with_context(|| InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_TIMESTAMP for DATE target: \
                              year={}, month={}, day={}",
-                                ts.year, ts.month, ts.day
-                            ),
-                        }
-                        .build()
+                            ts.year, ts.month, ts.day
+                        ),
                     })?;
                 NaiveTime::from_hms_nano_opt(
                     ts.hour as u32,
@@ -250,15 +242,12 @@ impl ReadODBC for SnowflakeDate {
                     ts.second as u32,
                     ts.fraction,
                 )
-                .ok_or_else(|| {
-                    InvalidDatetimeValueSnafu {
-                        reason: format!(
-                            "invalid time in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                .with_context(|| InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid time in SQL_C_TYPE_TIMESTAMP for DATE target: \
                              hour={}, minute={}, second={}, fraction={}",
-                            ts.hour, ts.minute, ts.second, ts.fraction
-                        ),
-                    }
-                    .build()
+                        ts.hour, ts.minute, ts.second, ts.fraction
+                    ),
                 })?;
                 if ts.hour != 0 || ts.minute != 0 || ts.second != 0 || ts.fraction != 0 {
                     return DatetimeFieldOverflowSnafu {

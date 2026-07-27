@@ -46,7 +46,9 @@
 //! | `SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN`           | legacy `AUTHENTICATOR=OAUTH` flow            |
 
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
+use sf_core::token_cache::{
+    CacheKey, KeyringTokenCache, TokenCache, TokenType, normalize_identifier, normalize_url,
+};
 
 // =============================================================================
 // Legacy `AUTHENTICATOR=OAUTH` (pre-acquired access token)
@@ -166,11 +168,18 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
         .parameters
         .get_server_url()
         .expect("expected a configured server URL");
-    let cache_host = sf_core::rest::snowflake::host_from_token_url(
-        token_url.as_deref().unwrap_or(""),
-        &server_url,
-    )
-    .expect("derive cache host");
+
+    // Build the CacheKey the same way the production AC flow does: normalize
+    // the IdP token-endpoint URL (falling back to the Snowflake server URL when
+    // no token URL is configured) and the Snowflake server URL.
+    let idp_url = token_url.as_deref().unwrap_or(server_url.as_str());
+    let cache_key = CacheKey {
+        token_type: TokenType::OAuthAccessToken,
+        idp: normalize_url(idp_url),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(&user),
+        role: normalize_identifier(client.parameters.role.as_deref().unwrap_or("")),
+    };
 
     // Pre-seed the OAuth access token so the AC flow skips the
     // browser leg entirely (mirroring the wiremock-driven
@@ -179,12 +188,7 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
     // `tests/integration/authentication/user_password_mfa_token_cache.rs`).
     let cache = KeyringTokenCache::new().expect("keyring token cache should be available");
     cache
-        .add_token(
-            &cache_host,
-            &user,
-            TokenType::OAuthAccessToken,
-            &access_token,
-        )
+        .add_token(&cache_key, &access_token)
         .expect("seed OAuth access token");
 
     set_authorization_code(&client);
@@ -203,8 +207,11 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
     // Cleanup: remove the cache entries we seeded so the keyring
     // doesn't accumulate test artefacts even if the test panicked
     // earlier (best-effort; we ignore errors).
-    let _ = cache.remove_token(&cache_host, &user, TokenType::OAuthAccessToken);
-    let _ = cache.remove_token(&cache_host, &user, TokenType::OAuthRefreshToken);
+    let _ = cache.remove_token(&cache_key);
+    let _ = cache.remove_token(&CacheKey {
+        token_type: TokenType::OAuthRefreshToken,
+        ..cache_key
+    });
 }
 
 // =============================================================================
