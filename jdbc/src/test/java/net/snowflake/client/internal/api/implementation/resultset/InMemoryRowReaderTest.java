@@ -42,6 +42,30 @@ class InMemoryRowReaderTest {
   }
 
   @Test
+  void shouldReportIsLastOnFinalRow() throws SQLException {
+    InMemoryRowReader reader = twoRowReader();
+    assertFalse(reader.isLast());
+
+    assertTrue(reader.next());
+    assertFalse(reader.isLast());
+
+    assertTrue(reader.next());
+    assertTrue(reader.isLast());
+
+    assertFalse(reader.next());
+    assertFalse(reader.isLast());
+  }
+
+  @Test
+  void shouldReportIsLastBeforeFirstRowOfEmptyResult() {
+    InMemoryRowReader empty = new InMemoryRowReader(new String[] {"C"}, new Object[0][]);
+    // Parity with snowflake-jdbc: before-first cursor of an empty result is reported as last.
+    assertTrue(empty.isLast());
+    assertFalse(empty.next());
+    assertFalse(empty.isLast());
+  }
+
+  @Test
   void shouldReturnZeroRowsWhenBackedByEmptyArray() {
     InMemoryRowReader empty = new InMemoryRowReader(new String[] {"C"}, new Object[0][]);
     assertTrue(empty.isBeforeFirst());

@@ -56,6 +56,9 @@ EXCLUDED_PATHS = [
     # CODEOWNERS. Re-include + scrub to a public team if external-review routing
     # is ever wanted.
     ".github/CODEOWNERS",
+    # Internal bug-regression tracking: Jira ticket catalogs, analysis status
+    # annotations, and the generated HTML report.
+    "tests/bugs_analysis/**",
 ]
 
 # Per-path overrides that re-include specific files from inside an EXCLUDED_PATHS

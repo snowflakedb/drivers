@@ -1,0 +1,67 @@
+# Routing-accuracy eval set for: run-odbc-ud-tests
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "how do I run the odbc tests?"
+    notes: "Direct, minimal request — ODBC keyword is the clearest routing signal."
+
+  - prompt: "build and run the odbc ud test suite"
+    notes: "Direct task request naming both build and run steps for the ODBC driver."
+
+  - prompt: "run.sh isn't finding the driver, DRIVER_PATH keeps failing"
+    notes: "DRIVER_PATH and run.sh are ODBC-specific; error scenario with clear ODBC signals."
+
+  - prompt: "how do I filter odbc tests by name? just want to run a subset"
+    notes: "Filtering by pattern (-R flag) is an ODBC/ctest workflow question."
+
+  - prompt: "cargo build --package odbc succeeded but ctest is failing, what's wrong"
+    notes: "Combines ODBC cargo package name and ctest — both unique to this skill."
+
+  - prompt: "cmake cache is stale after i switched from ninja to make, how do i fix"
+    notes: "CMake cache staleness with Ninja/Make is explicitly in the ODBC troubleshooting section."
+
+  - prompt: "need to set up unixodbc on linux before running tests"
+    notes: "unixodbc is an ODBC-specific prerequisite; Linux setup path."
+
+  - prompt: "how do i use iodbc instead of unixodbc for the driver manager"
+    notes: "DRIVER_MANAGER iodbc/unixodbc toggle is ODBC-specific env var."
+
+  - prompt: "odbc tests pass locally but ci is failing on the c++ harness build"
+    notes: "Indirect/contextual — C++ harness build is ODBC Catch2 setup; borderline since CI isn't mentioned in the skill."
+
+  - prompt: "run odbc tests against the reference snowflake driver for comparison"
+    notes: "run_reference.sh is an ODBC-specific comparison workflow."
+
+  - prompt: "libsfodbc.dylib is missing after rust rebuild, how do i relink"
+    notes: "libsfodbc is the ODBC driver artifact name — uniquely identifies this skill."
+
+  - prompt: "set QUERY_RESULT_FORMAT=JSON and rerun odbc suite"
+    notes: "Borderline — QUERY_RESULT_FORMAT appears in multiple driver skills, but combined with 'odbc suite' routes here."
+
+should_not_trigger:
+  - prompt: "how do i run the jdbc tests? getting UnsatisfiedLinkError at startup"
+    reason: "run-jdbc-ud-tests — UnsatisfiedLinkError and JDBC are explicit signals for the JDBC skill."
+
+  - prompt: "need to compile jdbc_bridge and set CORE_PATH before running gradle tests"
+    reason: "run-jdbc-ud-tests — jdbc_bridge, CORE_PATH, and Gradle are all JDBC-specific."
+
+  - prompt: "python connector tests failing with RuntimeError: Couldn't load core driver dependency"
+    reason: "run-python-ud-tests — that error message is called out verbatim in the Python skill's troubleshooting."
+
+  - prompt: "run hatch dev:integ for the python driver"
+    reason: "run-python-ud-tests — hatch and dev:integ are Python-specific test commands."
+
+  - prompt: "how do i run nodejs unit tests without credentials"
+    reason: "run-nodejs-ud-tests — Node.js and no-credential unit tests match the Node.js skill."
+
+  - prompt: "cargo build is failing for the rust core, getting a linker error"
+    reason: "No specific skill — generic Rust build issue not tied to ODBC; could relate to any driver's core but lacks ODBC/ctest/cmake signals."
+
+  - prompt: "how do I set up cmake for a new c++ project outside of this repo"
+    reason: "General CMake question, no ODBC or UD context — no skill (general conversation)."
+
+  - prompt: "decode_secrets.sh keeps prompting for a passphrase, how do I pass it non-interactively"
+    reason: "No specific skill — decode_secrets.sh is shared across all four driver skills; without ODBC/JDBC/Python/Node.js context this is a general credentials setup question."

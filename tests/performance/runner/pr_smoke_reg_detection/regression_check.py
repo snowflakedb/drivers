@@ -241,9 +241,6 @@ def _upload_to_benchstore(
     from runner.benchstore_upload import (
         PROJECT_NAME,
         login_to_benchstore,
-        get_snowhouse_config,
-        get_snowflake_connection_params,
-        get_local_connection_params,
         read_csv_results,
         _sanitize_tag,
     )
@@ -254,11 +251,6 @@ def _upload_to_benchstore(
     benchmark_manager.find_or_create_benchmark(
         PROJECT_NAME, PR_REGRESSION_BENCHMARK, sf_storage
     )
-    if use_local_auth:
-        connection_params = get_local_connection_params()
-    else:
-        snowhouse_config = get_snowhouse_config()
-        connection_params = get_snowflake_connection_params(snowhouse_config)
 
     is_local = os.getenv("BUILD_NUMBER") is None
     build_number = "LOCAL" if is_local else os.getenv("BUILD_NUMBER")
@@ -308,7 +300,7 @@ def _upload_to_benchstore(
     search_dir = results_dir / driver_type_subdir
 
     try:
-        with Quickstore(quickstore_input, snowflake_connection_params=connection_params) as quickstore:
+        with Quickstore(quickstore_input, storage=sf_storage) as quickstore:
             uploaded = 0
             for test_dir in sorted(search_dir.iterdir()):
                 if not test_dir.is_dir():

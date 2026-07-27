@@ -1,4 +1,4 @@
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
@@ -8,8 +8,18 @@ use sf_core::logging::LogManager;
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
+use sf_core::wrapper_event;
 
 static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
+
+fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
+    if s.is_null() {
+        return String::new();
+    }
+    env.get_string(s)
+        .map(|js| js.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
 
 struct JdbcBridge {
     runtime: tokio::runtime::Runtime,
@@ -62,6 +72,8 @@ static JDBC_BRIDGE: LazyLock<JdbcBridge> = LazyLock::new(JdbcBridge::new);
 
 mod sflogger_layer;
 
+static LOG_DISPATCH: OnceLock<tracing::dispatcher::Dispatch> = OnceLock::new();
+
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
@@ -69,6 +81,7 @@ pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jin
     let sessions = SessionRegistry::default();
     match LogManager::with_app_sink(sf_core::logging::LoggingConfig::default(), layer, sessions) {
         Ok(lm) => {
+            let _ = LOG_DISPATCH.set(lm.dispatch().clone());
             *JDBC_LOG_MANAGER.lock().unwrap_or_else(|e| e.into_inner()) = Some(lm);
             jni::sys::JNI_VERSION_1_2
         }
@@ -100,6 +113,7 @@ pub extern "system" fn JNI_OnUnload(_jvm: *mut jni::sys::JavaVM, _: *mut u8) -> 
 /// # Safety
 /// Called from Java, so we need to be careful with the pointer.
 #[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICoreTransport_nativeHandleMessage(
     mut env: JNIEnv,
     _class: JClass,
@@ -188,6 +202,52 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
     };
 
     response_obj.into_raw()
+}
+
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_net_snowflake_client_internal_unicore_CoreLoggingBridge_nativeIsTroubleshooting(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    i32::from(JDBC_BRIDGE.transport.is_troubleshooting())
+}
+
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_net_snowflake_client_internal_unicore_CoreLoggingBridge_nativeLogEvent(
+    mut env: JNIEnv,
+    _class: JClass,
+    level: jint,
+    message: JString,
+    file: JString,
+    line: jint,
+    function: JString,
+    logger_name: JString,
+) -> jint {
+    // Prevent unwinding across the JNI boundary; any panic becomes status 2.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(dispatch) = LOG_DISPATCH.get() else {
+            return 1;
+        };
+        let _guard = tracing::dispatcher::set_default(dispatch);
+
+        let message = jstring_to_string(&mut env, &message);
+        let file = jstring_to_string(&mut env, &file);
+        let function = jstring_to_string(&mut env, &function);
+        let logger_name = jstring_to_string(&mut env, &logger_name);
+
+        wrapper_event!(
+            level,
+            message = message,
+            file = file,
+            function = function,
+            line = line,
+            logger_name = logger_name,
+        );
+        0
+    }))
+    .unwrap_or(2)
 }
 
 #[cfg(test)]

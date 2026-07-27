@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, overload
 
 from .._internal.api_client.client_api import core_driver
+from .._internal.arrow_context import ArrowConverterContext
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
     create_row_iterator,
@@ -34,7 +35,9 @@ from .._internal.cursor.decorators import (
 from .._internal.decorators import api_telemetry, backward_compatibility, pep249, snowpark_compat
 from .._internal.errorcode import ER_INVALID_VALUE
 from .._internal.extras import pandas, pyarrow, requires_dependency
+from .._internal.logging import get_logger
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ABORT_QUERY_OUTCOME_ABORTED,
     ExecuteQueryResponse,
     MultiStatementResult,
     PrepareResult,
@@ -43,6 +46,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from .._internal.statement_utils import statement
+from .._internal.utils import _resolve_alias
 from ..errors import NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
@@ -55,25 +59,7 @@ if TYPE_CHECKING:
     from .._internal.arrow_stream_iterator import ArrowStreamIterator
     from ..connection import Connection
 
-logger = logging.getLogger(__name__)
-
-
-def _resolve_alias(
-    canonical: object,
-    alias: object,
-    canonical_name: str,
-    alias_name: str,
-) -> object:
-    """Return the resolved value from a canonical/legacy-alias pair.
-
-    Raises ProgrammingError if both are provided.
-    """
-    if canonical is not None and alias is not None:
-        raise ProgrammingError(
-            msg=f"Cannot supply both '{canonical_name}' and '{alias_name}'; pass one only.",
-            errno=ER_INVALID_VALUE,
-        )
-    return alias if alias is not None else canonical
+logger = get_logger(__name__)
 
 
 class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
@@ -202,6 +188,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         params: Sequence[Any] | dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
+        _statement_params: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -226,6 +213,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
                 the connection's paramstyle is pyformat/format. Used by
                 callers that emit ``?`` placeholders unconditionally.
+            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
+                sent to Snowflake with this query only. Never persisted on the
+                cursor; forwarded as query-request parameters, so they tag only
+                this query without mutating session state.
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
 
@@ -234,6 +225,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             skip_upload_on_content_match=_skip_upload_on_content_match,
             num_statements=num_statements,
         )
+        if _statement_params:
+            statement_parameters.update(_statement_params)
 
         self.reset()
         return self._execute(
@@ -256,8 +249,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("query: [%s]", self._format_query_for_log(operation))
+        if logger.is_enabled_for(logging.INFO) and self._connection.config.log_query_text:
+            logger.info("query: [%s]", self._format_query_for_log(operation))
 
         query, binding_params = self._prepare_query(
             operation, parameters, _force_qmark_paramstyle=_force_qmark_paramstyle
@@ -489,11 +482,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         params: Sequence[Any] | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[ResultMetadataV2] | None:
-        """Describe-only path returning new-format metadata.
+        """Describe-only path returning new-format metadata (see BD#43).
 
         Returns ``list[ResultMetadataV2]`` with ``vector_dimension`` populated
         from the proto ``dimension`` field. ``fields`` is always ``None`` (UD
-        proto carries no nested column list for structured types — BD#39).
+        proto carries no nested column list for structured types — BD#43).
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
         self.reset()
@@ -591,7 +584,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         return create_row_iterator(
             stream_ptr=stream_ptr,
-            connection=self._connection,
+            context=ArrowConverterContext.create(self._connection),
             use_dict_result=self._use_dict_result,
             use_numpy=bool(self._connection.config.numpy),
         )
@@ -769,7 +762,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
-            connection=self._connection,
+            context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -790,7 +783,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
-            connection=self._connection,
+            context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -972,7 +965,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        return response.success
+        return response.outcome == ABORT_QUERY_OUTCOME_ABORTED
 
     # ------------------------------------------------------------------
     # File-transfer stubs (Snowpark compatibility only)

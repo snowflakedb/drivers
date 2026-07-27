@@ -4,7 +4,7 @@ Knowledge base and source of truth for client-side logging practices across the 
 
 ## High-level principles
 
-- **Access credentials never leave the process.** Tokens, passwords, passcodes, and private keys must never appear in logs, on any level. Other sensitive data (e.g. query text, bindings) may appear in logs only when the user explicitly opts in.
+- **Access credentials never leave the process.** Tokens, passwords, passcodes, and private keys must never appear in logs, on any level. Query result data (values, schema metadata, rowsets, record batches) must never appear in logs - there is no opt-in. Other sensitive data (e.g. query text, bindings) may appear in logs only when the user explicitly opts in.
 - **Redact at the source.** Wrap or redact sensitive values before they enter the logging pipeline - never pass secrets through as plain strings for downstream filtering.
 - **Log at boundaries and lifecycle transitions.** Public API entry points, HTTP calls, and exceptions are must-log events. Significant internal lifecycle events - retries, re-authentication, token refresh, connection recovery - should be logged at **INFO** or **WARN** as appropriate.
 - **The host application stays in control.** The core forwards logs to the wrapper's own logging system.
@@ -113,6 +113,32 @@ Rules for both parameters:
 
 - `.ai/review/universal-driver-logging.yaml` (`ud-log-query-text-and-params-gated`) - enforces that query text
   and parameters are gated behind `log_query_text` / `log_query_parameters`, logged at INFO, with a risk warning.
+
+---
+
+## Query result data
+
+Query result payloads are customer data and must **never** appear in logs - on any log level, in any code path. Unlike [query text and bindings](#query-logging), there is no connection parameter to opt in.
+
+This includes:
+
+- row/cell values from JSON rowsets,
+- Arrow record batches and base64 chunk bodies,
+- file-transfer (PUT/GET) result bodies,
+- result-set schema metadata (column names, types, and related rowtype/field descriptors returned with a query result),
+- any serialization of the above (`{rowset:?}`, `batch.to_pydict()`, `{rowtype:?}`, etc.).
+
+Column names that appear in the SQL statement itself, and query parameter/bindings values, are **not** result data - they follow the opt-in rules in [Query logging](#query-logging) (`log_query_text` / `log_query_parameters`).
+
+Safe to log about a result:
+
+- row/column counts,
+- `queryId`, chunk count, rowset variant/type,
+- lifecycle events ("fetch complete", "chunk download started") without payload.
+
+### Rules
+
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-never-log-client-data`) - flags any logging call that emits query result payloads.
 
 ---
 

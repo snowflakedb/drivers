@@ -4,6 +4,8 @@ use std::time::Duration;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 
+use crate::env_vars;
+
 use self::aws::{CallerIdentityProvider, StsCallerIdentityProvider};
 
 mod aws;
@@ -48,11 +50,11 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
     // when SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION is truthy.
     // SNOWFLAKE_DISABLE_PLATFORM_DETECTION remains as an explicit kill-switch
     // and wins over the enable flag.
-    let disabled = std::env::var("SNOWFLAKE_DISABLE_PLATFORM_DETECTION")
+    let disabled = std::env::var(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION)
         .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
         .unwrap_or(false);
     let temporary_opt_in_enabled =
-        std::env::var("SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION")
+        std::env::var(env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION)
             .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
             .unwrap_or(false);
     if disabled || !temporary_opt_in_enabled {
@@ -123,8 +125,8 @@ pub(super) fn is_github_action() -> bool {
 
 #[cfg(any(test, feature = "test-utils"))]
 const PLATFORM_DETECTION_ENV_KEYS: &[&str] = &[
-    "SNOWFLAKE_DISABLE_PLATFORM_DETECTION",
-    "SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION",
+    env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION,
+    env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION,
     "LAMBDA_TASK_ROOT",
     "FUNCTIONS_WORKER_RUNTIME",
     "FUNCTIONS_EXTENSION_VERSION",
@@ -160,7 +162,7 @@ pub fn platform_detection_env_vars(
             // Detection is opt-in in production, but tests that use this helper
             // universally want it enabled; the explicit DISABLE flag still wins
             // when a caller sets it via `overrides`.
-            let default = if *key == "SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION" {
+            let default = if *key == env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION {
                 Some("true")
             } else {
                 None

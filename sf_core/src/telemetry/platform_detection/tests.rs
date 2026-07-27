@@ -1,5 +1,6 @@
 use super::aws::tests::FakeCallerIdentityProvider;
 use super::*;
+use crate::env_vars;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -25,7 +26,7 @@ fn test_detection_config() -> DetectionConfig {
 async fn returns_disabled_when_opt_in_flag_not_set() {
     temp_env::async_with_vars(
         [(
-            "SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION",
+            env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION,
             None::<&str>,
         )],
         async {
@@ -41,7 +42,7 @@ async fn returns_disabled_when_opt_in_flag_not_set() {
 #[tokio::test]
 async fn returns_disabled_when_env_flag_true() {
     temp_env::async_with_vars(
-        platform_detection_env_vars(&[("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", "true")]),
+        platform_detection_env_vars(&[(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION, "true")]),
         async {
             assert_eq!(
                 detect_platforms(&test_detection_config()).await,
@@ -56,7 +57,10 @@ async fn returns_disabled_when_env_flag_true() {
 async fn disabled_flag_accepts_truthy_values() {
     for flag_value in ["true", "TRUE", "True", "tRuE", "1"] {
         temp_env::async_with_vars(
-            platform_detection_env_vars(&[("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", flag_value)]),
+            platform_detection_env_vars(&[(
+                env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION,
+                flag_value,
+            )]),
             async {
                 assert_eq!(
                     detect_platforms(&test_detection_config()).await,
@@ -72,7 +76,7 @@ async fn disabled_flag_accepts_truthy_values() {
 #[tokio::test]
 async fn returns_empty_when_disable_flag_is_false() {
     temp_env::async_with_vars(
-        platform_detection_env_vars(&[("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", "false")]),
+        platform_detection_env_vars(&[(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION, "false")]),
         async {
             let platforms = detect_platforms(&test_detection_config()).await;
             assert!(platforms.is_empty(), "expected empty, got {platforms:?}");
@@ -200,7 +204,7 @@ async fn detects_multiple_env_platforms_simultaneously() {
 async fn disabled_flag_wins_over_other_env_signals() {
     temp_env::async_with_vars(
         platform_detection_env_vars(&[
-            ("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", "true"),
+            (env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION, "true"),
             ("GITHUB_ACTIONS", "true"),
             ("LAMBDA_TASK_ROOT", "/var/task"),
         ]),

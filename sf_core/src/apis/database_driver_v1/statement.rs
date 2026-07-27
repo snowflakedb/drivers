@@ -21,7 +21,7 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
+    AbortOutcome, QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
     snowflake_query_with_client,
 };
 
@@ -213,20 +213,20 @@ impl DatabaseDriverV1 {
 
             // Multi-statement query prepare is not supported.
             let ExecuteQueryResult::Single(rs_info) = result else {
-                return Err(InvalidArgumentSnafu {
+                return InvalidArgumentSnafu {
                     argument: "Multi-statement queries cannot be prepared".to_string(),
                 }
-                .build());
+                .fail();
             };
             let stream = self.result_set_get_stream(rs_info.handle).await?;
             self.result_set_release(rs_info.handle)?;
 
-            let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-                InvalidArgumentSnafu {
-                    argument: "Statement handle not found".to_string(),
-                }
-                .build()
-            })?;
+            let stmt_ptr =
+                self.statements
+                    .get_obj(stmt_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Statement handle not found".to_string(),
+                    })?;
             // TODO: re-lock the statement to just copy the query
             //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
             let stmt = stmt_ptr.lock().await;
@@ -296,7 +296,7 @@ impl DatabaseDriverV1 {
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
             .await
-            .context(StageBindingFailedSnafu)
+            .context(StageBindingSnafu)
     }
 
     async fn execute_query_internal<'a>(
@@ -306,12 +306,12 @@ impl DatabaseDriverV1 {
         describe_only: Option<bool>,
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let stmt_ptr =
+            self.statements
+                .get_obj(stmt_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                })?;
 
         let stmt = stmt_ptr.lock().await;
 
@@ -352,26 +352,41 @@ impl DatabaseDriverV1 {
             query_parameters: query_parameter_map,
         };
 
+        // Pair the budget with its deadline in one `Option` so the timeout arm
+        // has the budget without an `unwrap()`.
+        let query_deadline = {
+            let conn = conn_arc.lock().await;
+            conn.timeout_config.query_timeout
+        }
+        .map(|budget| (budget, tokio::time::Instant::now() + budget));
+
         let response = {
             let mut ctx = RefreshContext::from_arc(&conn_arc).await?;
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_query_with_client(
+                let query_call = snowflake_query_with_client(
                     &http_client,
                     query_parameters.clone(),
                     session_token.reveal(),
                     query_input.clone(),
                     &retry_policy,
                     execution_mode,
-                )
-                .await
-                {
-                    Ok(result) => break Ok(result),
+                );
+                let result = if let Some((budget, deadline)) = query_deadline {
+                    match tokio::time::timeout_at(deadline, query_call).await {
+                        Ok(inner) => inner,
+                        Err(_) => return Err(QueryTimeoutSnafu { budget }.build()),
+                    }
+                } else {
+                    query_call.await
+                };
+                match result {
+                    Ok(result) => break result,
                     Err(e) => last_error = Some(e),
                 }
             }
-        }?;
+        };
 
         if response.success {
             let conn = conn_arc.lock().await;
@@ -440,11 +455,17 @@ impl DatabaseDriverV1 {
                     });
                 // Late-bind connection params so post-init `set_option`
                 // overrides take effect (mirrors `LogoutConfig`).
-                let (retry_policy, use_s3_regional_url_session_param, tls_config) = {
+                let (
+                    retry_policy,
+                    use_s3_regional_url_session_param,
+                    unsafe_file_write,
+                    tls_config,
+                ) = {
                     let conn = conn.lock().await;
                     (
                         crate::config::retry::RetryPolicy::put_get(&conn.connection_seed),
                         conn.use_s3_regional_url_session_param().await,
+                        conn.unsafe_file_write(),
                         conn.tls_config(),
                     )
                 };
@@ -456,10 +477,12 @@ impl DatabaseDriverV1 {
                     stage_info_refresh_context,
                     use_s3_regional_url_session_param,
                     skip_upload_on_content_match,
+                    unsafe_file_write,
                     tls_config,
+                    self.crl_worker.clone(),
                 )
                 .await
-                .context(QueryResponseProcessingSnafu)
+                .context(QueryResponseProcessSnafu)
             }
             None => Ok(data.into_rowset_data()),
         }
@@ -471,12 +494,12 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<AsyncExecuteResult, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let stmt_ptr =
+            self.statements
+                .get_obj(stmt_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                })?;
 
         let mut stmt = stmt_ptr.lock().await;
 
@@ -540,11 +563,8 @@ impl DatabaseDriverV1 {
             }
         }?;
 
-        let query_id = result.query_id.ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "No query_id returned from async submission".to_string(),
-            }
-            .build()
+        let query_id = result.query_id.with_context(|| InvalidArgumentSnafu {
+            argument: "No query_id returned from async submission".to_string(),
         })?;
 
         stmt.state = StatementState::Executed;
@@ -559,11 +579,10 @@ impl DatabaseDriverV1 {
     ) -> Result<ExecuteQueryResult, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
-            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            let conn_ptr = self.connections.get_obj(conn_handle).with_context(|| {
                 InvalidArgumentSnafu {
                     argument: "Connection handle not found".to_string(),
                 }
-                .build()
             })?;
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
@@ -613,15 +632,15 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         query_id: String,
-    ) -> Result<(), ApiError> {
+    ) -> Result<AbortOutcome, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
-            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-                InvalidArgumentSnafu {
-                    argument: "Connection handle not found".to_string(),
-                }
-                .build()
-            })?;
+            let conn_ptr =
+                self.connections
+                    .get_obj(conn_handle)
+                    .with_context(|| InvalidArgumentSnafu {
+                        argument: "Connection handle not found".to_string(),
+                    })?;
 
             let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
 
@@ -648,30 +667,27 @@ impl DatabaseDriverV1 {
 /// needed to issue a query.
 ///
 /// Also rejects query execution if close() has already been called on the connection.
-async fn query_context(
+pub(super) async fn query_context(
     conn: &Arc<Mutex<Connection>>,
 ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
     let conn = conn.lock().await;
     // Reject query execution if close() has been called
     if conn.is_closed.load(Ordering::SeqCst) {
-        return Err(ConnectionClosedSnafu {}.build());
+        return ConnectionClosedSnafu {}.fail();
     }
     Ok((
         conn.query_transport_parameters()?,
         conn.http_client
             .clone()
             .context(ConnectionNotInitializedSnafu)?,
-        conn.retry_policy.clone(),
+        RetryPolicy::query(&conn.connection_seed),
     ))
 }
 
 /// Return the SQL text attached to a statement, or an error if none has been set.
 fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
-    stmt.query.clone().ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Query not found".to_string(),
-        }
-        .build()
+    stmt.query.clone().with_context(|| InvalidArgumentSnafu {
+        argument: "Query not found".to_string(),
     })
 }
 
@@ -724,8 +740,14 @@ fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
 
 /// Server-side parameter names forwarded in the query request.
 /// Each entry maps a local `ParamKey` to the Snowflake server-side parameter name.
-const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] =
-    &[(param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT")];
+/// Statement-scoped options forwarded to GS in the query-request `parameters`
+/// map. Maps the local `ParamKey` to the server-side parameter name. Only
+/// registry-recognized, server-meaningful options belong here (the client-only
+/// `skip_upload_on_content_match` is intentionally excluded).
+const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] = &[
+    (param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT"),
+    (param_names::QUERY_TAG, "QUERY_TAG"),
+];
 
 fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde_json::Value>> {
     let mut params = HashMap::new();
@@ -799,7 +821,7 @@ fn is_file_transfer(sql: &str) -> bool {
 }
 
 /// Strips leading whitespace, line comments (--), and block comments (/* */)
-fn skip_leading_whitespace_and_comments(s: &str) -> &str {
+pub(super) fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     let mut s = s;
     loop {
         s = s.trim_start();
@@ -948,6 +970,34 @@ mod tests {
         for (key, _server_name) in QUERY_PARAMETER_NAMES {
             assert_ne!(key.as_str(), "skip_upload_on_content_match");
         }
+    }
+
+    #[test]
+    fn query_tag_statement_option_is_forwarded_as_query_parameter() {
+        // Stored under the canonical key (as `statement_set_options` resolves it).
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "query_tag".to_string(),
+            Setting::String("stmt_tag".to_string()),
+        );
+        let params = build_query_parameters(&settings).expect("QUERY_TAG should be forwarded");
+        assert_eq!(
+            params.get("QUERY_TAG"),
+            Some(&serde_json::Value::String("stmt_tag".to_string()))
+        );
+    }
+
+    #[test]
+    fn registered_client_only_statement_option_is_not_forwarded() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            "skip_upload_on_content_match".to_string(),
+            Setting::Bool(true),
+        );
+        assert!(
+            build_query_parameters(&settings).is_none(),
+            "registered client-only statement option must not be forwarded to GS"
+        );
     }
 
     #[test]
@@ -1540,6 +1590,10 @@ mod tests {
         serde_json::from_str(json).expect("test JSON must be valid query response Data")
     }
 
+    fn rows_affected_of(data: &Data) -> Option<i64> {
+        result_set::calculate_rows_affected(data, data.statement_type_id)
+    }
+
     #[test]
     fn calculate_rows_affected_sums_dml_columns() {
         let data = deserialize_query_response(
@@ -1552,7 +1606,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(13));
+        assert_eq!(rows_affected_of(&data), Some(13));
     }
 
     #[test]
@@ -1567,7 +1621,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(5));
+        assert_eq!(rows_affected_of(&data), Some(5));
     }
 
     #[test]
@@ -1581,17 +1635,65 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(0));
+        assert_eq!(rows_affected_of(&data), Some(0));
     }
 
     #[test]
     fn calculate_rows_affected_select_uses_total() {
         let data = deserialize_query_response(
             r#"{
+                "statementTypeId": 4096,
                 "total": 42
             }"#,
         );
-        assert_eq!(result_set::calculate_rows_affected(&data), Some(42));
+        assert_eq!(rows_affected_of(&data), Some(42));
+    }
+
+    #[test]
+    fn calculate_rows_affected_ddl_is_none_not_total() {
+        // DDL (0x6000) is a no-result statement. Snowflake returns total: 1 as a
+        // generic success marker; we must report None rather than a misleading 1.
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 24576,
+                "total": 1
+            }"#,
+        );
+        assert_eq!(rows_affected_of(&data), None);
+    }
+
+    #[test]
+    fn calculate_rows_affected_unknown_type_is_none() {
+        // No statementTypeId -> unknown -> no-result -> None (not data.total).
+        let data = deserialize_query_response(
+            r#"{
+                "total": 1
+            }"#,
+        );
+        assert_eq!(rows_affected_of(&data), None);
+    }
+
+    #[test]
+    fn calculate_rows_affected_file_transfer_fallback_uses_total() {
+        use super::super::global_state::WrapperPresets;
+        use crate::query_types::statement_type::QueryType;
+
+        // PUT/GET responses can omit statementTypeId. Exercise the full wiring:
+        // response_to_descriptor must derive the effective type from
+        // command=UPLOAD via effective_statement_type_id, then rows_affected must
+        // use that same type (Cursor -> total), not fall back to None.
+        let upload = deserialize_query_response(
+            r#"{
+                "command": "UPLOAD",
+                "total": 3
+            }"#,
+        );
+        let descriptor = result_set::response_to_descriptor(&upload, &WrapperPresets::default());
+        assert_eq!(
+            descriptor.statement_type_id,
+            Some(QueryType::PUT_FILES.raw())
+        );
+        assert_eq!(descriptor.rows_affected, Some(3));
     }
 
     #[test]

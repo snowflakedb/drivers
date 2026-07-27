@@ -1,4 +1,5 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
+use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
@@ -6,12 +7,18 @@ use super::types::{
 };
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use crate::log_foreign_error;
 use crate::refresh::{Refresher, execute_with_refresh};
 use crate::sensitive::SensitiveString;
+use bytes::Bytes;
+use futures::StreamExt as _;
 use reqwest::{Method, StatusCode};
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+use tempfile::NamedTempFile;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -50,6 +57,7 @@ pub async fn upload_to_gcs_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, GcsUploadError> {
@@ -97,7 +105,7 @@ pub async fn upload_to_gcs_or_skip(
                 let head = check_file_exists_gcs(&client, &url, token).await;
 
                 if !overwrite && matches!(head, GcsHeadResult::Found { .. }) {
-                    tracing::info!("File already exists in GCS: {key}");
+                    tracing::info!("File already exists in GCS: {key:?}");
                     return Ok(UploadStatus::Skipped);
                 }
 
@@ -112,14 +120,31 @@ pub async fn upload_to_gcs_or_skip(
                     && d == &prepared.digest
                 {
                     tracing::info!(
-                        "Remote GCS object matches local content digest, skipping upload: {key}"
+                        "Remote GCS object matches local content digest, skipping upload: {key:?}"
                     );
                     return Ok(UploadStatus::Skipped);
                 }
 
-                upload_to_gcs(&client, &url, token, prepared, &wire_policy)
+                // Large files on the access-token path take the XML-API
+                // resumable chunked upload (bounded in-flight memory + per-chunk
+                // retry); the presigned-URL path and small files keep the single
+                // PUT. `token.is_some()` already implies the access-token path —
+                // `resolve_url_and_token` returns `None` for both presigned modes.
+                let body_len = multipart::upload_body_len(&prepared)
                     .await
+                    .map_err(|e| GcsRequestError::SourceIo { source: e })
                     .map_err(map_gcs_request_error_for_attempt)?;
+                if let Some(tok) = token
+                    && multipart.should_chunk(body_len)
+                {
+                    gcs_resumable_upload(&client, &url, tok, prepared, body_len, &wire_policy)
+                        .await
+                        .map_err(map_gcs_request_error_for_attempt)?;
+                } else {
+                    upload_to_gcs(&client, &url, token, prepared, &wire_policy)
+                        .await
+                        .map_err(map_gcs_request_error_for_attempt)?;
+                }
                 Ok(UploadStatus::Uploaded)
             }
         }
@@ -128,7 +153,7 @@ pub async fn upload_to_gcs_or_skip(
     let first = run_gcs_with_token_refresh(
         refresher.as_deref_mut(),
         stage_info,
-        |e| gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info),
     )
     .await;
@@ -165,7 +190,7 @@ pub async fn upload_to_gcs_or_skip(
                 );
                 return gcs_upload_error::PresignedUrlExpiredSnafu.fail();
             }
-            Err(e) => return Err(gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e)),
+            Err(e) => return Err(gcs_upload_error::StageInfoRefreshSnafu.into_error(e)),
         }
         stage_info.with_snapshot(r.cache().snapshot())
     };
@@ -173,7 +198,7 @@ pub async fn upload_to_gcs_or_skip(
     let second = run_gcs_with_token_refresh(
         refresher.as_deref_mut(),
         &refreshed_stage_info,
-        |e| gcs_upload_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| gcs_upload_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(&refreshed_stage_info),
     )
     .await;
@@ -299,7 +324,7 @@ async fn gcs_get_with_refresh(
     let first = run_gcs_with_token_refresh(
         refresher.as_deref_mut(),
         stage_info,
-        |e| gcs_download_error::StageInfoRefreshFailedSnafu.into_error(e),
+        |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
         make_attempt(stage_info, initial_per_file_url.clone()),
     )
     .await;
@@ -333,7 +358,7 @@ async fn gcs_get_with_refresh(
             };
             r.refresh_url()
                 .await
-                .context(gcs_download_error::StageInfoRefreshFailedSnafu)?;
+                .context(gcs_download_error::StageInfoRefreshSnafu)?;
             let snap = r.cache().snapshot();
             let new_url = snap
                 .presigned_urls
@@ -355,7 +380,7 @@ async fn gcs_get_with_refresh(
         let second = run_gcs_with_token_refresh(
             refresher.as_deref_mut(),
             &refreshed_stage_info,
-            |e| gcs_download_error::StageInfoRefreshFailedSnafu.into_error(e),
+            |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
             make_attempt(&refreshed_stage_info, refreshed_per_file_url),
         )
         .await;
@@ -535,7 +560,11 @@ async fn check_file_exists_gcs(
             }
         },
         Err(e) => {
-            tracing::warn!("Error checking GCS file existence, proceeding with upload: {e}");
+            log_foreign_error!(
+                warn,
+                e,
+                "Error checking GCS file existence, proceeding with upload"
+            );
             GcsHeadResult::NotFound
         }
     }
@@ -608,7 +637,7 @@ async fn upload_to_gcs(
     // these from this frame couldn't satisfy the `'static` bound the FFI/trait
     // futures require. `reqwest::Client` clone is a cheap `Arc` bump.
     let client = client.clone();
-    let url = url.to_string();
+    let url_owned = url.to_string();
     let token = token.map(str::to_string);
 
     gcs_upload_with_retry(
@@ -624,7 +653,7 @@ async fn upload_to_gcs(
             // S3 PUT path. Today this relies only on TLS + the GET-time `sfc-digest`
             // (verified over plaintext, on read), so corruption isn't caught at PUT.
             let mut req = client
-                .put(&url)
+                .put(&url_owned)
                 .header(GCS_META_SFC_DIGEST, &digest)
                 .header("content-encoding", "")
                 .header(reqwest::header::CONTENT_LENGTH, content_length)
@@ -641,12 +670,315 @@ async fn upload_to_gcs(
             }
             Ok(req)
         },
+        &Method::PUT,
+        url,
         policy,
     )
     .await?;
 
     tracing::debug!("GCS upload successful");
     Ok(())
+}
+
+/// Uploads `prepared` to GCS via the XML-API **resumable** protocol: a single
+/// initiation `POST` (carrying the digest + CSE metadata) mints a session URL,
+/// then the (optionally encrypting) source is cut into `chunk_size` chunks and
+/// `PUT` to that session URL **sequentially** with `Content-Range` headers. The
+/// final chunk's `200/201` ends the session; intermediate chunks return `308`
+/// ("Resume Incomplete"). On any terminal error a best-effort `DELETE` releases
+/// the half-staged session (GCS also GCs incomplete sessions on its own).
+///
+/// Used only on the access-token path for files at/above the multipart
+/// threshold; the presigned-URL path and smaller files take the single
+/// `Put`-object path in [`upload_to_gcs`]. Mirrors the Node.js connector's
+/// `uploadFileResumable` (snowflake-connector-nodejs#1427) and the
+/// Python/JDBC resumable upload model.
+async fn gcs_resumable_upload(
+    client: &reqwest::Client,
+    object_url: &str,
+    token: &str,
+    prepared: PreparedUpload,
+    body_len: u64,
+    policy: &RetryPolicy,
+) -> Result<(), GcsRequestError> {
+    let chunk_size =
+        multipart::compute_part_size(body_len, &MultipartConfig::GCS).map_err(|e| {
+            GcsRequestError::FileTooLarge {
+                detail: e.to_string(),
+            }
+        })?;
+
+    // Digest + CSE metadata ride on the initiation POST (the GCS analogue of
+    // Azure's metadata-on-commit), not on the per-chunk PUTs. CSE params (cloud
+    // metadata + encryptor) are both present or both absent.
+    let source = prepared.source.byte_source();
+    let digest = prepared.digest;
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
+    };
+    let encryption_data_str = encryption_metadata
+        .as_ref()
+        .map(|enc_meta| serde_json::to_string(&build_encryption_metadata_json(enc_meta)))
+        .transpose()
+        .context(SerializationSnafu)?;
+    let mat_desc_str = encryption_metadata
+        .as_ref()
+        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
+        .transpose()
+        .context(SerializationSnafu)?;
+
+    let session_url = gcs_resumable_initiate(
+        client,
+        object_url,
+        token,
+        body_len,
+        &digest,
+        encryption_data_str.as_deref(),
+        mat_desc_str.as_deref(),
+        policy,
+    )
+    .await?;
+
+    // Stream chunks into the session sequentially (a resumable session commits
+    // chunks in order). Each chunk body is a materialized `Bytes`, so a
+    // transient PUT failure is retried in place. On any terminal failure,
+    // best-effort DELETE the session so it doesn't linger as a half-staged blob.
+    let result = async {
+        let mut rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize, 1);
+        let mut offset: u64 = 0;
+        let mut committed = false;
+        while let Some(part) = rx.recv().await {
+            let part = part.map_err(|source| GcsRequestError::SourceIo { source })?;
+            let len = part.body.len() as u64;
+            let done = gcs_put_one_chunk(
+                client,
+                &session_url,
+                token,
+                part.body,
+                ChunkRange {
+                    offset,
+                    len,
+                    total: body_len,
+                },
+                policy,
+            )
+            .await?;
+            offset += len;
+            if done {
+                committed = true;
+                break;
+            }
+        }
+        if !committed {
+            return Err(GcsRequestError::Resumable {
+                detail: format!(
+                    "resumable upload ended without a terminal 2xx commit after {offset} of {body_len} bytes"
+                ),
+            });
+        }
+        if offset != body_len {
+            return Err(GcsRequestError::Resumable {
+                detail: format!("resumable upload ended after {offset} of {body_len} bytes"),
+            });
+        }
+        Ok(())
+    }
+    .await;
+
+    // Abort on every observable failure so partial chunks don't orphan. When
+    // the failure is a token expiry, this delete call uses the same expired
+    // token and will itself fail (logged, not fatal); GCS then expires the
+    // abandoned resumable session URI on its own (~1 week), and an incomplete
+    // resumable upload never surfaces as a bucket object.
+    // <https://cloud.google.com/storage/docs/resumable-uploads>
+    //
+    // NB: this only fires on Err. If a caller ever drops this future
+    // (cancellation), no Err is produced and the session lingers until GCS GCs
+    // it. Today no caller cancels PUT mid-flight (the whole operation runs
+    // under a single block_on with no cancel token), so this path is currently
+    // unreachable. When cancellation is introduced, add a Drop-based guard so
+    // the DELETE fires on drop too.
+    // TODO(SNOW-3704984)
+    match result {
+        Ok(()) => {
+            tracing::debug!("GCS resumable upload committed ({body_len} bytes)");
+            Ok(())
+        }
+        Err(e) => {
+            gcs_resumable_delete(client, &session_url, token).await;
+            Err(e)
+        }
+    }
+}
+
+/// Initiates a GCS XML-API resumable session against the bucket-path object URL
+/// (`POST` + `x-goog-resumable: start`) and returns the session URL minted in
+/// the `Location` response header. 401 maps to `TokenExpired` so the outer
+/// refresh loop can rotate creds and retry.
+///
+/// Every argument is a distinct input (client, target URL, auth token, body
+/// length, digest, encryption metadata, retry policy) needed to build and
+/// retry the initiation request.
+#[allow(clippy::too_many_arguments)]
+async fn gcs_resumable_initiate(
+    client: &reqwest::Client,
+    object_url: &str,
+    token: &str,
+    body_len: u64,
+    digest: &str,
+    encryption_data_str: Option<&str>,
+    mat_desc_str: Option<&str>,
+    policy: &RetryPolicy,
+) -> Result<String, GcsRequestError> {
+    let resp = gcs_request_with_retry(
+        || {
+            let mut req = client
+                .post(object_url)
+                .bearer_auth(token)
+                .header(reqwest::header::CONTENT_LENGTH, 0)
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .header("x-goog-resumable", "start")
+                .header("x-upload-content-length", body_len)
+                .header("content-encoding", "")
+                .header(GCS_META_SFC_DIGEST, digest);
+            if let Some(enc) = encryption_data_str {
+                req = req.header(GCS_META_ENCRYPTIONDATA, enc);
+            }
+            if let Some(md) = mat_desc_str {
+                req = req.header(GCS_META_MATDESC, md);
+            }
+            req
+        },
+        Method::POST,
+        policy,
+    )
+    .await?;
+
+    resp.headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .ok_or_else(|| GcsRequestError::Resumable {
+            detail: "initiation response carried no Location (session URL) header".to_string(),
+        })
+}
+
+/// One resumable-upload chunk's byte span: absolute `offset`, chunk `len`, and
+/// the object's `total` size. The `Content-Range` wire grammar is rendered
+/// from this inside [`gcs_put_one_chunk`], mirroring how `gcs_get_range`
+/// renders the `Range` header from a [`multipart::DownloadRange`].
+#[derive(Debug, Clone, Copy)]
+struct ChunkRange {
+    offset: u64,
+    len: u64,
+    total: u64,
+}
+
+/// PUTs one resumable chunk (its byte span given by `range`) to `session_url`,
+/// rendering the `Content-Range: bytes start-end/total` header locally.
+/// Returns `Ok(true)` when the object is complete (final-chunk `200/201`),
+/// `Ok(false)` on `308` ("Resume Incomplete"). Retries transient
+/// transport/HTTP failures in place (the chunk body is re-sendable); 401
+/// surfaces as `TokenExpired`.
+async fn gcs_put_one_chunk(
+    client: &reqwest::Client,
+    session_url: &str,
+    token: &str,
+    body: Bytes,
+    range: ChunkRange,
+    policy: &RetryPolicy,
+) -> Result<bool, GcsRequestError> {
+    let content_range = format!(
+        "bytes {}-{}/{}",
+        range.offset,
+        range.offset + range.len - 1,
+        range.total
+    );
+    let backoff = &policy.backoff;
+    let len = body.len();
+    let mut attempt: u32 = 0;
+    let mut delay_ms = backoff.base.as_millis() as f64;
+    let start = std::time::Instant::now();
+    // Only the host + path may be logged (ud-log-every-http-call-at-info); the
+    // resumable session URL's query carries the upload_id, so strip it.
+    let log_path = session_url.split(['?', '#']).next().unwrap_or("");
+    loop {
+        attempt += 1;
+        if let Some(budget) = policy.max_elapsed {
+            let elapsed = start.elapsed();
+            if elapsed >= budget {
+                return Err(GcsRequestError::RetryExhausted {
+                    detail: format!(
+                        "resumable chunk PUT deadline exceeded after {elapsed:?} (budget {budget:?})"
+                    ),
+                });
+            }
+        }
+        tracing::info!(method = %Method::PUT, path = %log_path, attempt, "outbound HTTP call");
+        let send = client
+            .put(session_url)
+            .bearer_auth(token)
+            .header(reqwest::header::CONTENT_LENGTH, len)
+            .header(reqwest::header::CONTENT_RANGE, &content_range)
+            .body(reqwest::Body::from(body.clone()))
+            .send()
+            .await;
+        match send {
+            Ok(resp) => {
+                let status = resp.status();
+                let code = status.as_u16();
+                tracing::info!(status = code, "HTTP response");
+                if status == StatusCode::UNAUTHORIZED {
+                    return Err(GcsRequestError::TokenExpired);
+                }
+                // 308 "Resume Incomplete" is the normal between-chunks signal;
+                // 200/201 ends the session on the final chunk.
+                if code == 308 {
+                    return Ok(false);
+                }
+                if status.is_success() {
+                    return Ok(true);
+                }
+                if cloud_http::is_retryable_status(code, &policy.extra_retryable_statuses)
+                    && attempt < policy.max_attempts
+                {
+                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                    delay_ms = cloud_http::next_delay_ms(delay_ms, backoff);
+                    continue;
+                }
+                let body = cloud_http::read_error_body(resp).await;
+                return Err(GcsRequestError::GcsHttp {
+                    status_code: code,
+                    body,
+                });
+            }
+            Err(e) => {
+                if attempt < policy.max_attempts {
+                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                    delay_ms = cloud_http::next_delay_ms(delay_ms, backoff);
+                    continue;
+                }
+                return Err(GcsRequestError::Http { source: e });
+            }
+        }
+    }
+}
+
+/// Best-effort `DELETE` of a resumable session URL to release a half-staged
+/// upload after a terminal error. Failures are logged and swallowed — the
+/// original upload error is what matters, and GCS GCs abandoned sessions itself.
+async fn gcs_resumable_delete(client: &reqwest::Client, session_url: &str, token: &str) {
+    // Only the host + path may be logged (ud-log-every-http-call-at-info); the
+    // resumable session URL's query carries the upload_id, so strip it.
+    let log_path = session_url.split(['?', '#']).next().unwrap_or("");
+    tracing::info!(method = %Method::DELETE, path = %log_path, "outbound HTTP call");
+    match client.delete(session_url).bearer_auth(token).send().await {
+        Ok(resp) => tracing::info!(status = resp.status().as_u16(), "HTTP response"),
+        Err(e) => {
+            tracing::debug!("GCS resumable session cleanup DELETE failed (best-effort): {e}");
+        }
+    }
 }
 
 // --- Retry logic (delegates to http::retry) ---
@@ -700,7 +1032,12 @@ async fn gcs_request_with_retry<F>(
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
-    let ctx = HttpContext::new(method, "gcs-transfer");
+    // `allow_post_retry` is a no-op for every method except POST/PATCH (see
+    // `allow_retry` in `http::retry`), so it's safe to set unconditionally
+    // here rather than have every caller remember it — the resumable-session
+    // initiation POST (the only POST/PATCH caller today) needs its transient
+    // failures retried like every other GCS request.
+    let ctx = HttpContext::new(method, "gcs-transfer").allow_post_retry();
 
     let response = http_execute_with_retry(build_request, &ctx, policy, |r| async move { Ok(r) })
         .await
@@ -769,12 +1106,14 @@ impl UploadRetryAdapter for GcsUploadRetry {
 /// reason as `gcs_request_with_retry`: the backoff is injectable for tests.
 async fn gcs_upload_with_retry<F>(
     build_request: F,
+    method: &Method,
+    url: &str,
     policy: &RetryPolicy,
 ) -> Result<(), GcsRequestError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
 {
-    cloud_http::upload_with_retry(policy, &GcsUploadRetry, build_request).await
+    cloud_http::upload_with_retry(policy, &GcsUploadRetry, method, url, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> GcsRequestError {
@@ -792,6 +1131,7 @@ fn create_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, GcsReque
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
+        stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
         ClientSetupSnafu {
@@ -929,17 +1269,47 @@ fn try_get_header(
 /// the channel, implementing `Read` so `decrypt_ciphertext_to_writer` (which is
 /// sync) can consume the body without blocking the async runtime.
 ///
-/// Marked `pub` so the cfg-gated `file_manager::internal` re-export can surface
-/// it to integration tests; the parent module `gcs_transfer` is itself private,
-/// so this is not part of the crate's public API.
+/// `pub` so the cfg-gated `file_manager::internal` re-export in `mod.rs`
+/// can surface it to integration tests via `pub use`; the parent module
+/// `gcs_transfer` is itself private, so this is not part of the crate's public API.
+///
+/// Every argument is a distinct input (stage identity, filename, presigned-URL
+/// override, retry policy, per-file index for logging, multipart params, the
+/// refresh hook, and where to spill the body) mirroring the other cloud
+/// download entry points' presigned-url + refresh + multipart surface.
+#[allow(clippy::too_many_arguments)]
 pub async fn download_from_gcs_streaming(
     stage_info: &StageInfo,
     filename: &str,
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
+    multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
+    // Ranged (multipart) download applies only on the access-token path — a
+    // presigned URL is signed for one specific GET and can't serve a HEAD/Range
+    // probe. For access-token sessions, probe the size and, when it's at/above
+    // the threshold, fetch the object with parallel ranged GETs into a tempfile.
+    let using_presigned_url =
+        per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
+    if !using_presigned_url
+        && let Some(ranged) = gcs_try_ranged_download(
+            stage_info,
+            filename,
+            policy,
+            multipart,
+            refresher,
+            spill_target,
+        )
+        .await?
+    {
+        return Ok(ranged);
+    }
+    // else: presigned session, or object below the threshold / size not
+    // probeable — fall through to the single streamed GET below.
+
     let response = gcs_get_with_refresh(
         stage_info,
         filename,
@@ -955,46 +1325,356 @@ pub async fn download_from_gcs_streaming(
     // byte count as a fallback for the Python flavor.
     let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
 
-    let headers = response.headers();
-    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
+    let cse_info = parse_gcs_cse_info(response.headers())?;
 
-    let cse_info = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
-        Some(encryption_data_str) => {
-            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
-                .context(gcs_download_error::DeserializationSnafu)?;
-
-            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
-                gcs_download_error::MissingMetadataSnafu {
-                    field: GCS_META_MATDESC,
-                },
-            )?;
-            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
-                .context(gcs_download_error::DeserializationSnafu)?;
-
-            // A CSE object always carries its content digest alongside the
-            // encryption headers — require it here so the decrypt path receives
-            // metadata and digest as one inseparable unit.
-            let digest = digest.context(gcs_download_error::MissingMetadataSnafu {
-                field: GCS_META_SFC_DIGEST,
-            })?;
-
-            Some(CseDownloadInfo {
-                metadata: EncryptedFileMetadata {
-                    encrypted_key: enc_data.wrapped_content_key.encrypted_key,
-                    iv: enc_data.content_encryption_iv,
-                    material_desc,
-                },
-                digest,
-            })
-        }
-        None => None,
-    };
-
+    let reader = cloud_http::spawn_byte_stream_producer(response);
+    let cloud_bytes_read = reader.bytes_read_handle();
     Ok(CloudStreamingDownload {
         cloud_byte_count,
         cse_info,
-        reader: cloud_http::spawn_byte_stream_producer(response),
+        cloud_bytes_read,
+        body: cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
     })
+}
+
+/// Parses the `sfc-digest` and (for CSE) the `encryptiondata` / `matdesc` GCS
+/// user-metadata headers into a [`CseDownloadInfo`] — `Some` for a
+/// client-side-encrypted object (where the content digest must ride alongside
+/// the encryption headers), `None` for SSE / raw objects. Shared by the single
+/// streamed GET and the ranged-download path.
+fn parse_gcs_cse_info(
+    headers: &reqwest::header::HeaderMap,
+) -> Result<Option<CseDownloadInfo>, GcsDownloadError> {
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
+    let Some(encryption_data_str) = try_get_header(headers, GCS_META_ENCRYPTIONDATA)? else {
+        return Ok(None);
+    };
+    let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
+        .context(gcs_download_error::DeserializationSnafu)?;
+
+    let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
+        gcs_download_error::MissingMetadataSnafu {
+            field: GCS_META_MATDESC,
+        },
+    )?;
+    let material_desc: MaterialDescription =
+        serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
+
+    // A CSE object should carry its content digest alongside the encryption
+    // headers. If sfc-digest is absent (e.g. git stage objects on GCS), fall
+    // through to raw bytes, matching the S3 behaviour fixed in #117.
+    let Some(digest) = digest else {
+        tracing::debug!("GCS encryptiondata present but sfc-digest absent; returning raw bytes");
+        return Ok(None);
+    };
+
+    Ok(Some(CseDownloadInfo {
+        metadata: EncryptedFileMetadata {
+            encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+            iv: enc_data.content_encryption_iv,
+            material_desc,
+        },
+        digest,
+    }))
+}
+
+/// On the access-token path, probe the object via HEAD and — when it is at/above
+/// the multipart threshold — fetch it with parallel ranged GETs into a tempfile,
+/// returning a [`CloudStreamingDownload`] backed by that tempfile. Returns
+/// `Ok(None)` to mean "fall through to the single streamed GET" (object below
+/// the threshold, or the HEAD couldn't determine a usable size). The whole
+/// probe+fetch runs inside the token-refresh loop, so a 401 at any step rotates
+/// creds and retries from the HEAD.
+async fn gcs_try_ranged_download(
+    stage_info: &StageInfo,
+    filename: &str,
+    policy: &RetryPolicy,
+    multipart: MultipartParams,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
+    let client = create_gcs_client(stage_info)?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+
+    let make_attempt = |base: &StageInfo| {
+        let base = base.clone();
+        let key = key.clone();
+        let client = client.clone();
+        move |snapshot: super::types::StageInfoSnapshot| {
+            let stage_info = base.with_snapshot(snapshot);
+            let key = key.clone();
+            let client = client.clone();
+            async move {
+                let (url, token) = resolve_url_and_token(&stage_info, &key, None)
+                    .map_err(map_gcs_request_error_for_attempt)?;
+                // Access-token path only (the caller already gated on
+                // `!using_presigned_url`); defensively fall through otherwise.
+                let Some(token) = token else {
+                    return Ok(None);
+                };
+                gcs_ranged_download_attempt(&client, &url, token, multipart, policy, spill_target)
+                    .await
+            }
+        }
+    };
+
+    run_gcs_with_token_refresh(
+        refresher.as_deref_mut(),
+        stage_info,
+        |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
+        make_attempt(stage_info),
+    )
+    .await
+}
+
+/// One ranged-download attempt: HEAD for size + metadata, then parallel ranged
+/// GETs into a tempfile. Returns `Ok(None)` to fall through to the single GET
+/// (sub-threshold, or HEAD couldn't size the object). 401 surfaces as
+/// `GcsAttemptError::TokenExpired` so the refresh loop rotates creds.
+async fn gcs_ranged_download_attempt(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<Option<CloudStreamingDownload>, GcsAttemptError<GcsDownloadError>> {
+    // HEAD probe. A 401 must refresh; any other probe failure degrades to the
+    // proven single-GET path (`Ok(None)`).
+    let head =
+        match gcs_request_with_retry(|| client.head(url).bearer_auth(token), Method::HEAD, policy)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(GcsRequestError::TokenExpired) => return Err(GcsAttemptError::TokenExpired),
+            Err(_) => return Ok(None),
+        };
+
+    let Some(content_length) = head
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+    else {
+        return Ok(None);
+    };
+    if !multipart.should_chunk(content_length) {
+        return Ok(None);
+    }
+
+    let cse_info = parse_gcs_cse_info(head.headers()).map_err(GcsAttemptError::Other)?;
+    let chunk_size =
+        multipart::compute_part_size(content_length, &MultipartConfig::GCS).map_err(|e| {
+            GcsAttemptError::Other(
+                gcs_download_error::FileTooLargeSnafu {
+                    detail: e.to_string(),
+                }
+                .build(),
+            )
+        })?;
+
+    tracing::debug!(
+        "GCS ranged download: content_length={content_length} chunk_size={chunk_size} \
+         concurrency={}",
+        multipart.concurrency
+    );
+    let spilled = gcs_range_download(
+        client,
+        url,
+        token,
+        content_length,
+        chunk_size,
+        multipart.concurrency,
+        policy,
+        spill_target,
+    )
+    .await
+    .map_err(map_gcs_request_error_for_attempt)?;
+
+    // Spilled body assembled in the destination dir: a non-encrypted download
+    // wrote straight into `.part` (renamed into place by the caller), while a
+    // CSE/git-stage download wrote ciphertext to a temp. Size is known from the
+    // HEAD `Content-Length`, so the chunked-TE bytes-pulled fallback
+    // (`cloud_bytes_read`) stays 0.
+    Ok(Some(CloudStreamingDownload {
+        cloud_byte_count: content_length as i64,
+        cse_info,
+        cloud_bytes_read: Arc::new(AtomicU64::new(0)),
+        body: cloud_http::CloudDownloadBody::Spilled(spilled),
+    }))
+}
+
+/// Downloads the object with parallel ranged GETs into a pre-allocated file,
+/// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
+/// Ranges are fetched up to `concurrency` at a time and written at their
+/// absolute offset (`pwrite`), so out-of-order completion is fine.
+///
+/// The assembly file is chosen by `target`: a non-encrypted download writes
+/// straight into the caller's `<dst>.part` (one rename from done), while an
+/// encrypted / git-stage download writes into a throwaway temp (its ciphertext
+/// is decrypted into `.part` afterwards).
+///
+/// On failure the range futures are *drained*, not short-circuited: every
+/// in-flight `write_at` finishes and drops its file handle before we return, so
+/// the partially-written assembly file can be removed even on Windows (which
+/// refuses to unlink an open file). A failed download therefore leaves no
+/// leftover; the only way a partial survives is a hard kill (SIGKILL / power
+/// loss), and then it is a self-documenting, self-overwriting `<dst>.part`.
+///
+/// Every argument is a distinct input (connection + request identity, the
+/// object's size and chosen chunk size, how many ranges to fetch at once, the
+/// retry policy, and the spill target); Azure's `azure_range_download` stays
+/// under the limit only because its auth rides in the URL/SAS rather than a
+/// separate bearer `token` argument.
+#[allow(clippy::too_many_arguments)]
+async fn gcs_range_download(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    content_length: u64,
+    chunk_size: u64,
+    concurrency: usize,
+    policy: &RetryPolicy,
+    target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<cloud_http::CloudSpilledBody, GcsRequestError> {
+    let mk_temp_err = |detail: String| GcsRequestError::TempFile { detail };
+
+    // Owns the assembly file for the duration of the download: either the
+    // caller's `.part` (referenced by path) or a RAII temp.
+    enum Assembly {
+        Part(std::path::PathBuf),
+        Temp(NamedTempFile),
+    }
+
+    // Create + pre-allocate the assembly file off-thread. spawn_blocking (not
+    // block_in_place): safe on current-thread runtimes; block_in_place panics
+    // on those. Returns the owner plus a shared, cloneable handle for the
+    // concurrent positioned writes.
+    let owned_target = match target {
+        cloud_http::CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
+        cloud_http::CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
+    };
+    #[allow(clippy::result_large_err)]
+    let (assembly, file) = tokio::task::spawn_blocking(move || {
+        let (is_part, path_or_dir) = owned_target;
+        if is_part {
+            // TODO(SNOW-3832603): the SSE ranged-download `.part` is created with the
+            // process umask, bypassing the owner-only 0o600 hardening that
+            // `create_output_file` applies when `unsafe_file_write == false`. This is a
+            // shared cross-cloud gap — S3 (`s3_range_download`) and Azure
+            // (`azure_range_download`) create their `.part` the same way, and
+            // `unsafe_file_write` is not threaded into any streaming ranged-download
+            // signature. Thread `unsafe_file_write` through and route Part creation via
+            // `create_output_file` so SSE plaintext ranged downloads on S3/Azure/GCS all
+            // get owner-only perms.
+            let f = std::fs::File::create(&path_or_dir).map_err(|e| mk_temp_err(e.to_string()))?;
+            f.set_len(content_length)
+                .map_err(|e| mk_temp_err(e.to_string()))?;
+            Ok::<_, GcsRequestError>((Assembly::Part(path_or_dir), Arc::new(f)))
+        } else {
+            let named =
+                NamedTempFile::new_in(&path_or_dir).map_err(|e| mk_temp_err(e.to_string()))?;
+            named
+                .as_file()
+                .set_len(content_length)
+                .map_err(|e| mk_temp_err(e.to_string()))?;
+            let file = Arc::new(
+                named
+                    .as_file()
+                    .try_clone()
+                    .map_err(|e| mk_temp_err(e.to_string()))?,
+            );
+            Ok((Assembly::Temp(named), file))
+        }
+    })
+    .await
+    .map_err(|e| mk_temp_err(format!("join error in tempfile setup: {e}")))??;
+
+    // Drain, don't short-circuit: `collect` (not `try_collect`) polls EVERY
+    // range future to completion, so all in-flight `write_at` tasks finish and
+    // release their cloned file handles before we return. With no writer holding
+    // the file open, the cleanup below can unlink it even on Windows. The first
+    // error is surfaced after the drain.
+    let ranges = multipart::plan_ranges(content_length, chunk_size);
+    let results: Vec<Result<(), GcsRequestError>> = futures::stream::iter(ranges)
+        .map(|range| {
+            let file = Arc::clone(&file);
+            async move {
+                let bytes = gcs_get_range(client, url, token, &range, policy).await?;
+                tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
+                    .await
+                    .map_err(|e| mk_temp_err(format!("join error writing chunk: {e}")))?
+                    .map_err(|e| mk_temp_err(e.to_string()))
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    // Release our write handle so the only reference left is the one owned by
+    // `assembly` (Temp) or none (Part) — required before unlinking on Windows.
+    drop(file);
+    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
+
+    match assembly {
+        Assembly::Part(path) => match outcome {
+            Ok(_) => Ok(cloud_http::CloudSpilledBody::Part(path)),
+            Err(e) => {
+                // Drained above, so no writer still holds `.part` open; the
+                // best-effort remove succeeds even on Windows.
+                let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(&path)).await;
+                Err(e)
+            }
+        },
+        // On success hand out the unlink-on-drop guard; on failure `named` drops
+        // here and NamedTempFile unlinks it (drained, so no open writer).
+        Assembly::Temp(named) => {
+            outcome.map(|_| cloud_http::CloudSpilledBody::Temp(named.into_temp_path()))
+        }
+    }
+}
+
+/// Ranged GET of `[range.start, range.end]`, returning the body bytes. 401
+/// surfaces as `GcsRequestError::TokenExpired` via `gcs_request_with_retry`.
+async fn gcs_get_range(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    range: &multipart::DownloadRange,
+    policy: &RetryPolicy,
+) -> Result<Bytes, GcsRequestError> {
+    let range_header = format!("bytes={}-{}", range.start, range.end);
+    let resp = gcs_request_with_retry(
+        || {
+            client
+                .get(url)
+                .bearer_auth(token)
+                .header(reqwest::header::RANGE, &range_header)
+        },
+        Method::GET,
+        policy,
+    )
+    .await?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|source| GcsRequestError::Http { source })?;
+    // Guard against endpoints that ignore Range and return the whole object
+    // (200 not 206): writing at range.start would corrupt the assembled file
+    // by overrunning the pre-allocated length.
+    let expected_len = range.end - range.start + 1;
+    if bytes.len() as u64 != expected_len {
+        return Err(GcsRequestError::RangeNotHonored {
+            detail: format!(
+                "ranged GET returned {} bytes, expected {expected_len} \
+                 (bytes={}-{}); endpoint may not honour Range header",
+                bytes.len(),
+                range.start,
+                range.end
+            ),
+        });
+    }
+    Ok(bytes)
 }
 
 // --- Reactive recovery scaffolding (mirror s3_transfer.rs) ---
@@ -1184,6 +1864,14 @@ enum GcsRequestError {
     ClientSetup { detail: String },
     #[snafu(display("Failed to serialize GCS metadata"))]
     Serialization { source: serde_json::Error },
+    #[snafu(display("Object too large to upload to GCS: {detail}"))]
+    FileTooLarge { detail: String },
+    #[snafu(display("GCS resumable upload protocol error: {detail}"))]
+    Resumable { detail: String },
+    #[snafu(display("Failed to stage GCS ranged download to a temp file: {detail}"))]
+    TempFile { detail: String },
+    #[snafu(display("GCS endpoint did not honor Range header: {detail}"))]
+    RangeNotHonored { detail: String },
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -1211,6 +1899,22 @@ impl From<GcsRequestError> for GcsUploadError {
             }
             GcsRequestError::Serialization { source } => {
                 gcs_upload_error::SerializationSnafu.into_error(source)
+            }
+            GcsRequestError::FileTooLarge { detail } => {
+                gcs_upload_error::FileTooLargeSnafu { detail }.build()
+            }
+            GcsRequestError::Resumable { detail } => {
+                gcs_upload_error::ResumableSnafu { detail }.build()
+            }
+            // TempFile is download-only; map to a generic upload error so the
+            // conversion stays total (it cannot actually occur on upload).
+            GcsRequestError::TempFile { detail } => {
+                gcs_upload_error::RetryExhaustedSnafu { detail }.build()
+            }
+            // RangeNotHonored is download-only; map to a generic upload error so
+            // the conversion stays total (it cannot actually occur on upload).
+            GcsRequestError::RangeNotHonored { detail } => {
+                gcs_upload_error::RetryExhaustedSnafu { detail }.build()
             }
         }
     }
@@ -1246,6 +1950,20 @@ impl From<GcsRequestError> for GcsDownloadError {
             // path it's a logic bug, but we still need a total mapping.
             GcsRequestError::Serialization { source } => {
                 gcs_download_error::DeserializationSnafu.into_error(source)
+            }
+            // FileTooLarge can occur on a ranged download (object > 5 TiB);
+            // Resumable is upload-only (logic-bug fallback on the download path).
+            GcsRequestError::FileTooLarge { detail } => {
+                gcs_download_error::FileTooLargeSnafu { detail }.build()
+            }
+            GcsRequestError::Resumable { detail } => {
+                gcs_download_error::RetryExhaustedSnafu { detail }.build()
+            }
+            GcsRequestError::TempFile { detail } => {
+                gcs_download_error::TempFileSnafu { detail }.build()
+            }
+            GcsRequestError::RangeNotHonored { detail } => {
+                gcs_download_error::RangeNotHonoredSnafu { detail }.build()
             }
         }
     }
@@ -1303,6 +2021,18 @@ pub enum GcsUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Object too large to upload to GCS: {detail}"))]
+    FileTooLarge {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS resumable upload protocol error: {detail}"))]
+    Resumable {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("GCS client setup failed: {detail}"))]
     ClientSetupFailed {
         detail: String,
@@ -1310,7 +2040,7 @@ pub enum GcsUploadError {
         location: Location,
     },
     #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
-    StageInfoRefreshFailed {
+    StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
@@ -1375,6 +2105,18 @@ pub enum GcsDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Object too large to download from GCS: {detail}"))]
+    FileTooLarge {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to stage GCS ranged download to a temp file: {detail}"))]
+    TempFile {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("GCS client setup failed: {detail}"))]
     ClientSetupFailed {
         detail: String,
@@ -1382,7 +2124,7 @@ pub enum GcsDownloadError {
         location: Location,
     },
     #[snafu(display("Failed to refresh GCS stage info after recoverable error"))]
-    StageInfoRefreshFailed {
+    StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
         source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
@@ -1394,6 +2136,12 @@ pub enum GcsDownloadError {
     ContentLengthMismatch {
         expected: u64,
         actual: u64,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS endpoint did not honor Range header: {detail}"))]
+    RangeNotHonored {
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1436,6 +2184,7 @@ mod tests {
             use_regional_url: overrides.use_regional_url,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: None,
         }
     }
@@ -1768,11 +2517,11 @@ mod tests {
         let policy = gcs_retry_policy(false, &base_policy());
         assert_eq!(
             policy.max_elapsed,
-            Duration::from_secs(600),
+            Some(Duration::from_secs(600)),
             "max_elapsed must exceed REQUEST_TIMEOUT_SECS (300s)"
         );
         assert!(
-            policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
+            policy.max_elapsed > Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
             "retry budget must be larger than a single request timeout"
         );
     }
@@ -2099,7 +2848,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     /// Builds a `StageInfo` whose URL strategy routes through the given
     /// custom endpoint (i.e. the wiremock server URI). Uses bearer-token
@@ -2308,6 +3057,292 @@ mod tests {
             .await;
     }
 
+    /// `MultipartParams` with a 1-byte threshold so any non-empty body takes the
+    /// resumable/ranged multipart path, at the resolved concurrency.
+    fn always_multipart() -> MultipartParams {
+        MultipartParams {
+            threshold: super::super::multipart::MultipartThreshold::from_server(Some(1)),
+            concurrency: 4,
+        }
+    }
+
+    /// Above the threshold on the access-token path, the upload takes the XML
+    /// resumable path: one initiation `POST` (carrying the digest) mints a
+    /// session URL, then the body is `PUT` to that session in `Content-Range`
+    /// chunks — `308` between chunks, `200` on the last. A 9 MiB body at the
+    /// 8 MiB GCS chunk size is two chunks.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_upload_initiates_then_puts_chunks() {
+        let server = MockServer::start().await;
+
+        // Existence-check HEAD: 404 so the upload proceeds.
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        // Initiation POST → 201 with the session URL in `Location`.
+        let session_path = "/resumable-session/abc";
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Chunk PUTs against the session URL: first 308, then 200.
+        let counter = Arc::new(AtomicU64::new(0));
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(move |_req: &Request| {
+                if counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+                    ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607")
+                } else {
+                    ResponseTemplate::new(200)
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                7u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            always_multipart(),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
+        )
+        .await
+        .expect("resumable upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+
+        let received = server.received_requests().await.unwrap();
+        let init = received
+            .iter()
+            .find(|r| r.method.as_str() == "POST")
+            .expect("an initiation POST must be sent");
+        assert!(
+            init.headers.get("x-goog-resumable").is_some(),
+            "initiation POST must carry x-goog-resumable: start"
+        );
+        assert!(
+            init.headers.get(GCS_META_SFC_DIGEST).is_some(),
+            "digest metadata must ride on the initiation POST"
+        );
+        let chunk_puts: Vec<_> = received
+            .iter()
+            .filter(|r| r.method.as_str() == "PUT")
+            .collect();
+        assert_eq!(chunk_puts.len(), 2, "9 MiB / 8 MiB chunk = 2 chunk PUTs");
+        for put in &chunk_puts {
+            assert!(
+                put.headers.get(reqwest::header::CONTENT_RANGE).is_some(),
+                "every chunk PUT must carry a Content-Range header"
+            );
+        }
+    }
+
+    /// A failed chunk PUT triggers a best-effort `DELETE` of the session URL.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_upload_deletes_session_on_chunk_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let session_path = "/resumable-session/xyz";
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .mount(&server)
+            .await;
+        // Chunk PUT fails hard.
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        // The cleanup DELETE against the session URL.
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                1u8;
+                1 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        // max_attempts=1 so the 500 fails fast (no long retry/backoff).
+        let result = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            always_multipart(),
+            &test_policy(false, 1),
+            &mut None,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "a 500 on the chunk PUT must fail the upload"
+        );
+        // The `.expect(1)` on the DELETE mock verifies cleanup fired on drop.
+    }
+
+    /// Above the threshold on the access-token path, the download HEADs for size
+    /// then fetches via ranged GETs into a tempfile, reassembled byte-for-byte.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_ranged_download_reassembles_object() {
+        use std::io::Read as _;
+
+        let payload = b"hello ranged gcs object world".to_vec();
+        let server = MockServer::start().await;
+        // HEAD reports the size via Content-Length (driven by the body length).
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&server)
+            .await;
+        // The single range returns the whole payload (206).
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let spill = tempfile::tempdir().unwrap();
+        let dl = download_from_gcs_streaming(
+            &stage,
+            "file.csv",
+            None,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            0,
+            always_multipart(),
+            &mut None,
+            cloud_http::CloudSpillTarget::Temp(spill.path()),
+        )
+        .await
+        .expect("ranged download should succeed against the mock");
+
+        assert_eq!(dl.cloud_byte_count, payload.len() as i64);
+        let mut got = Vec::new();
+        dl.body
+            .into_reader()
+            .unwrap()
+            .read_to_end(&mut got)
+            .unwrap();
+        assert_eq!(got, payload, "reassembled object must match");
+    }
+
+    /// A non-encrypted ranged GCS download assembles straight into the caller's
+    /// `.part` file, which the caller renames to the destination on success.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_ranged_download_assembles_into_part_file() {
+        let payload = b"gcs ranged straight into dot part".to_vec();
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&server)
+            .await;
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let dir = tempfile::tempdir().unwrap();
+        let part_path = dir.path().join("out.dat.part");
+        let dl = download_from_gcs_streaming(
+            &stage,
+            "file.csv",
+            None,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            0,
+            always_multipart(),
+            &mut None,
+            cloud_http::CloudSpillTarget::Part(&part_path),
+        )
+        .await
+        .expect("ranged download should succeed against the mock");
+
+        match dl.body {
+            cloud_http::CloudDownloadBody::Spilled(cloud_http::CloudSpilledBody::Part(p)) => {
+                assert_eq!(p, part_path, "the assembly file must be the caller's .part");
+                assert_eq!(
+                    std::fs::read(&p).unwrap(),
+                    payload,
+                    "the .part must hold the whole reassembled object"
+                );
+            }
+            _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
+        }
+    }
+
+    /// A failed ranged GCS download drains its in-flight writes and removes the
+    /// `.part`, so a failure never leaves a partial file behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_ranged_download_failure_removes_part_file() {
+        let server = MockServer::start().await;
+        // HEAD advertises 32 bytes, but every ranged GET returns a 4-byte body,
+        // tripping the range-length guard and failing the download.
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 32]))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(vec![0u8; 4]))
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let dir = tempfile::tempdir().unwrap();
+        let part_path = dir.path().join("out.dat.part");
+        let result = download_from_gcs_streaming(
+            &stage,
+            "file.csv",
+            None,
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            0,
+            always_multipart(),
+            &mut None,
+            cloud_http::CloudSpillTarget::Part(&part_path),
+        )
+        .await;
+
+        assert!(result.is_err(), "a short ranged GET must fail the download");
+        assert!(
+            !part_path.exists(),
+            "a failed ranged download must not leave a `.part` file behind"
+        );
+    }
+
     #[tokio::test]
     async fn upload_to_gcs_or_skip_skips_when_digest_matches_under_overwrite_true() {
         // Python parity: `storage_client.py:214-220` — content-match
@@ -2329,6 +3364,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2360,6 +3396,7 @@ mod tests {
             &stage,
             "file.csv",
             false,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2386,6 +3423,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2411,6 +3449,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2436,6 +3475,7 @@ mod tests {
             &stage,
             "file.csv",
             false,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2457,6 +3497,7 @@ mod tests {
             &stage,
             "file.csv",
             false,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2488,6 +3529,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2517,6 +3559,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )
@@ -2553,6 +3596,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
         )

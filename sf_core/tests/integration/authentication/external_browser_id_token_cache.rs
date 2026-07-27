@@ -3,7 +3,9 @@ use std::io::{Read, Write};
 use crate::common::mocks::external_browser;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
-use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
+use sf_core::token_cache::{
+    CacheKey, KeyringTokenCache, TokenCache, TokenType, normalize_identifier, normalize_url,
+};
 
 // =============================================================================
 // Test Fixture
@@ -13,8 +15,7 @@ struct IdTokenCacheFixture {
     mock: MockServerWithTls,
     client: SnowflakeTestClient,
     cache: KeyringTokenCache,
-    host: String,
-    user: String,
+    key: CacheKey,
 }
 
 impl IdTokenCacheFixture {
@@ -29,29 +30,28 @@ impl IdTokenCacheFixture {
         client.set_connection_option("client_store_temporary_credential", "true");
 
         let cache = KeyringTokenCache::new().expect("token cache should be available");
-        let host = url::Url::parse(&mock.http_url())
-            .expect("mock URL should be valid")
-            .host_str()
-            .expect("mock URL should have a host")
-            .to_string();
+        let server_url = mock.http_url();
+        // The default test parameters supply role="test_role"; the production code
+        // embeds normalize_identifier(login_parameters.role) in the ID-token cache key.
+        let key = CacheKey {
+            token_type: TokenType::IdToken,
+            idp: normalize_url(&server_url),
+            snowflake: normalize_url(&server_url),
+            username: normalize_identifier(user),
+            role: normalize_identifier("test_role"),
+        };
 
         Self {
             mock,
             client,
             cache,
-            host,
-            user: user.to_string(),
+            key,
         }
     }
 
     fn seed_cached_id_token(&self) {
         self.cache
-            .add_token(
-                &self.host,
-                &self.user,
-                TokenType::IdToken,
-                "cached_id_token",
-            )
+            .add_token(&self.key, "cached_id_token")
             .expect("failed to seed ID token in cache");
     }
 
@@ -61,16 +61,14 @@ impl IdTokenCacheFixture {
 
     fn cached_id_token(&self) -> Option<String> {
         self.cache
-            .get_token(&self.host, &self.user, TokenType::IdToken)
+            .get_token(&self.key)
             .expect("get_token should not fail")
     }
 }
 
 impl Drop for IdTokenCacheFixture {
     fn drop(&mut self) {
-        let _ = self
-            .cache
-            .remove_token(&self.host, &self.user, TokenType::IdToken);
+        let _ = self.cache.remove_token(&self.key);
     }
 }
 
@@ -397,14 +395,17 @@ fn should_not_cache_id_token_when_caching_disabled() {
     assert_success(result, "browser login to succeed without caching");
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&mock.http_url())
-        .expect("mock URL should be valid")
-        .host_str()
-        .expect("mock URL should have a host")
-        .to_string();
-    let cached = cache
-        .get_token(&host, "eb_no_cache", TokenType::IdToken)
-        .expect("get_token should not fail");
+    let server_url = mock.http_url();
+    // The default test parameters supply role="test_role"; the production code
+    // embeds normalize_identifier(login_parameters.role) in the ID-token cache key.
+    let key = CacheKey {
+        token_type: TokenType::IdToken,
+        idp: normalize_url(&server_url),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier("eb_no_cache"),
+        role: normalize_identifier("test_role"),
+    };
+    let cached = cache.get_token(&key).expect("get_token should not fail");
     assert!(
         cached.is_none(),
         "ID token should NOT be cached when client_store_temporary_credential is false"

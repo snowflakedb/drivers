@@ -166,6 +166,7 @@ message ResultSetDescriptor {
   optional int64 statement_type_id = 4;
   optional string sql_state = 5;
   optional QueryStats stats = 6;
+  optional int64 row_count = 7;
 }
 
 message ResultSetResponse {
@@ -350,6 +351,11 @@ message ConnectionGetInfoResponse {
   optional string warehouse = 11;
   optional string master_token = 12;
   optional string user_agent = 13;
+  optional string proxy_host = 14;
+  optional int64 proxy_port = 15;
+  optional string proxy_user = 16;
+  optional string proxy_password = 17;
+  optional string no_proxy = 18;
 }
 
 message ConnectionGetObjectsRequest {
@@ -552,6 +558,17 @@ message ConnectionGetResultSetRequest {
   string query_id = 2;
 }
 
+// Outcome of a ConnectionAbortQuery call. Genuine failures (invalid handle,
+// transport errors, ...) are reported as an RPC error, not through this enum.
+enum AbortQueryOutcome {
+  ABORT_QUERY_OUTCOME_UNSPECIFIED = 0;
+  // The query was running and the abort was acknowledged.
+  ABORT_QUERY_OUTCOME_ABORTED = 1;
+  // The query was not running (e.g. already completed, or never started),
+  // so there was nothing to abort.
+  ABORT_QUERY_OUTCOME_NOT_RUNNING = 2;
+}
+
 // Abort a running query by its Snowflake Query ID.
 message ConnectionAbortQueryRequest {
   ConnectionHandle conn_handle = 1;
@@ -559,7 +576,40 @@ message ConnectionAbortQueryRequest {
 }
 
 message ConnectionAbortQueryResponse {
-  bool success = 1;
+  AbortQueryOutcome outcome = 1;
+}
+
+// Streaming PUT: upload an in-memory byte buffer using a PUT SQL statement.
+// Backs JDBC `uploadStream` and Python `cursor.execute(file_stream=…)`.
+message ConnectionUploadStreamRequest {
+  ConnectionHandle conn_handle = 1;
+  // The PUT SQL statement. Must begin with PUT and reference a `file://`
+  // path whose basename is used as the destination filename in the stage.
+  string sql = 2;
+  // Raw bytes to upload. The caller has already drained the source stream.
+  bytes data = 3;
+}
+
+// Mirrors `ResultSetResponse`: a PUT-shaped result set (handle + descriptor),
+// so the caller can read the standard 8-column PUT rowset.
+message ConnectionUploadStreamResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
+}
+
+// Streaming GET: download a file from a stage and return its bytes. Backs
+// JDBC `downloadStream`.
+message ConnectionDownloadStreamRequest {
+  ConnectionHandle conn_handle = 1;
+  string stage_name = 2;
+  string source_filename = 3;
+  // When true, the core gunzips the downloaded bytes before returning
+  // (opt-in; the bytes are returned verbatim otherwise).
+  bool decompress = 4;
+}
+
+message ConnectionDownloadStreamResponse {
+  bytes data = 1;
 }
 
 // Statement service requests and responses
@@ -695,9 +745,9 @@ message ResultChunk {
 
 
 message DatabaseFetchChunkRequest {
-  DatabaseHandle db_handle = 1;
-  ResultChunk chunk = 2;
-  // Required when chunk.format == CHUNK_FORMAT_JSON (forward from ResultSetGetChunksResponse.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
+  ConnectionHandle conn_handle = 1;
+  repeated ResultChunk chunks = 2;
+  // Required for JSON remote chunks (forward from ResultSetGetChunksResponse.columns). Ignored otherwise.
   repeated ColumnMetadata columns = 3;
 }
 
@@ -721,7 +771,7 @@ message ResultSetGetChunksRequest {
 
 message ResultSetGetChunksResponse {
   repeated ResultChunk chunks = 1;
-  // Column metadata. Required for CHUNK_FORMAT_JSON (forward on DatabaseFetchChunkRequest); ignored for CHUNK_FORMAT_ARROW_IPC.
+  // Column metadata. Required when any chunk is CHUNK_FORMAT_JSON; ignored for Arrow-only results.
   repeated ColumnMetadata columns = 2;
 }
 
@@ -921,6 +971,9 @@ service DatabaseDriver {
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
   // Abort a running query by Snowflake Query ID
   rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
+  // Streaming PUT (upload bytes) / GET (download to bytes) from a stage
+  rpc ConnectionUploadStream(ConnectionUploadStreamRequest) returns (ConnectionUploadStreamResponse);
+  rpc ConnectionDownloadStream(ConnectionDownloadStreamRequest) returns (ConnectionDownloadStreamResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core

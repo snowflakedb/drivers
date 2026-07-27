@@ -20,6 +20,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
     ValidationIssue,
 )
+from snowflake.connector.connection import Connection
 from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
@@ -32,8 +33,6 @@ pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires univer
 @pytest.fixture
 def connection(mock_db_api):
     """Create a Connection with core_driver patched via mock_db_api fixture."""
-    from snowflake.connector.connection import Connection
-
     conn = Connection(user="test_user", account="test_account")
     yield conn
     # Prevent a late __del__ (deferred GC, especially on Python 3.14+) from
@@ -90,8 +89,6 @@ class TestSetAutocommitValidation:
 
     def test_init_autocommit_kwarg_rejects_non_bool(self, mock_db_api):
         """Connection(autocommit=1) should raise ProgrammingError."""
-        from snowflake.connector.connection import Connection
-
         with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
             Connection(user="test_user", account="test_account", autocommit=1)
 
@@ -552,6 +549,11 @@ class TestConnectionInfoProperties:
             schema="PUBLIC",
             warehouse="COMPUTE_WH",
             session_id=12345678,
+            proxy_host="proxy.example.com",
+            proxy_port=8080,
+            proxy_user="puser",
+            proxy_password="ppass",
+            no_proxy="localhost,127.0.0.1",
         )
         return connection
 
@@ -581,6 +583,21 @@ class TestConnectionInfoProperties:
 
     def test_session_id_returns_value(self, conn_with_info):
         assert conn_with_info.session_id == 12345678
+
+    def test_proxy_host_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_host == "proxy.example.com"
+
+    def test_proxy_port_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_port == 8080
+
+    def test_proxy_user_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_user == "puser"
+
+    def test_proxy_password_returns_value(self, conn_with_info):
+        assert conn_with_info.proxy_password == "ppass"
+
+    def test_no_proxy_returns_value(self, conn_with_info):
+        assert conn_with_info.no_proxy == "localhost,127.0.0.1"
 
 
 class TestConnectionInfoPropertiesUnset:
@@ -619,6 +636,21 @@ class TestConnectionInfoPropertiesUnset:
     def test_session_id_raises_when_unset(self, conn_empty_info):
         with pytest.raises(InterfaceError, match="Session ID is not available"):
             _ = conn_empty_info.session_id
+
+    def test_proxy_host_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_host is None
+
+    def test_proxy_port_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_port is None
+
+    def test_proxy_user_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_user is None
+
+    def test_proxy_password_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.proxy_password is None
+
+    def test_no_proxy_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.no_proxy is None
 
 
 class TestConnectionInfoDelegation:
@@ -1208,3 +1240,92 @@ class TestExpired:
         mock_db_api.connection_is_expired.return_value = ConnectionIsExpiredResponse(is_expired=True)
         result = connection.expired
         assert type(result) is bool
+
+
+class TestClientPrefetchThreadsProperty:
+    """Unit tests for Connection.client_prefetch_threads getter and setter."""
+
+    def test_should_return_default_value_of_4(self, connection):
+        assert connection.client_prefetch_threads == 4
+
+    def test_should_return_configured_value(self, mock_db_api):
+        conn = Connection(user="test_user", account="test_account", client_prefetch_threads=8)
+        conn.auto_cleanup = False
+        assert conn.client_prefetch_threads == 8
+
+    def test_should_update_value_via_setter(self, connection):
+        """Setting the property should execute ALTER SESSION so it actually takes
+        effect on subsequent fetches, not just update local state."""
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.client_prefetch_threads = 6
+
+        mock_cursor.execute.assert_called_once_with("ALTER SESSION SET CLIENT_PREFETCH_THREADS = 6")
+        assert connection.client_prefetch_threads == 6
+
+    def test_should_roundtrip_set_then_get(self, connection):
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        for value in (1, 3, 8, 10):
+            connection.client_prefetch_threads = value
+            assert connection.client_prefetch_threads == value
+
+    def test_setter_closes_cursor(self, connection):
+        """The cursor opened to run ALTER SESSION should always be closed."""
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.client_prefetch_threads = 6
+
+        mock_cursor.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            (-5, 1),
+            (0, 1),
+            (1, 1),
+            (10, 10),
+            (11, 10),
+            (999, 10),
+        ],
+    )
+    def test_setter_clamps_to_legacy_bounds(self, connection, given, expected):
+        """Values outside [1, 10] should be clamped, matching the legacy connector's
+        `_validate_client_prefetch_threads`."""
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.client_prefetch_threads = given
+
+        assert connection.client_prefetch_threads == expected
+        mock_cursor.execute.assert_called_once_with(f"ALTER SESSION SET CLIENT_PREFETCH_THREADS = {expected}")
+
+    def test_kwarg_clamps_to_legacy_bounds(self, mock_db_api):
+        """The constructor kwarg should be clamped the same way as the setter."""
+        conn = Connection(user="test_user", account="test_account", client_prefetch_threads=999)
+        conn.auto_cleanup = False
+        assert conn.client_prefetch_threads == 10
+
+
+class TestSetClientPrefetchThreads:
+    """Unit tests for Connection.set_client_prefetch_threads / get_client_prefetch_threads."""
+
+    def test_set_executes_alter_session(self, connection):
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.set_client_prefetch_threads(6)
+
+        mock_cursor.execute.assert_called_once_with("ALTER SESSION SET CLIENT_PREFETCH_THREADS = 6")
+        mock_cursor.close.assert_called_once()
+
+    def test_get_reflects_last_set_value(self, connection):
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.set_client_prefetch_threads(7)
+
+        assert connection.get_client_prefetch_threads() == 7

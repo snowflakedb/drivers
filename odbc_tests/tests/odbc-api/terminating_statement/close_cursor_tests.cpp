@@ -368,7 +368,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Resets get_data_state",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLNumResultCols after close on prepared statement",
                  "[odbc-api][closecursor][terminating_statement]") {
-  SKIP_OLD_DRIVER("BD#22", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1, 2, 3"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -378,21 +377,29 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLNumResultCols after 
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLSMALLINT col_count = 0;
+  // BD#20: SQLCloseCursor leaves the statement in the Prepared state, where the column metadata is
+  // still defined per the ODBC spec. The new driver reports the correct count; the old driver drops
+  // prepared-statement metadata across the close and reports 0.
+  SQLSMALLINT col_count = -1;
   ret = SQLNumResultCols(stmt_handle(), &col_count);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(col_count == 3);
+  NEW_DRIVER_ONLY("BD#20") { CHECK(col_count == 3); }
+  OLD_DRIVER_ONLY("BD#20") { CHECK(col_count == 0); }
 
-  ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  // The statement is still prepared, so it can be re-executed and fetched. Asserted on the new driver;
+  // the old driver's re-execution after the close is outside BD#20's reviewed scope (the column count).
+  NEW_DRIVER_ONLY("BD#20") {
+    ret = SQLExecute(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
 
-  SQLINTEGER val = 0;
-  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(val == 1);
+    SQLINTEGER val = 0;
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(val == 1);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLDescribeCol after close on prepared statement",

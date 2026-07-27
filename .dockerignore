@@ -31,7 +31,7 @@ python/src/snowflake/connector/_core/
 
 # Node.js build artifacts and dependencies
 nodejs/node_modules/
-nodejs/dist/
+nodejs/_build/
 
 # C++ build artifacts
 **/cmake-build/

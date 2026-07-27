@@ -1,5 +1,6 @@
 use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
+use std::time::Duration;
 
 pub use crate::apis::database_driver_v1::query::QueryResponseProcessingError;
 pub use crate::apis::database_driver_v1::statement::StatementError;
@@ -43,7 +44,7 @@ pub enum ApiError {
         source: Box<RestError>,
     },
     #[snafu(display("Failed to lock connection"))]
-    ConnectionLocking {
+    ConnectionLock {
         #[snafu(implicit)]
         location: Location,
     },
@@ -75,7 +76,7 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Failed to process query response: {source}"))]
-    QueryResponseProcessing {
+    QueryResponseProcess {
         #[snafu(implicit)]
         location: Location,
         #[snafu(source(from(QueryResponseProcessingError, Box::new)))]
@@ -121,7 +122,7 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Logout failed: {message}"))]
-    LogoutFailed {
+    Logout {
         message: String,
         #[snafu(implicit)]
         location: Location,
@@ -147,19 +148,25 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Failed to parse Arrow IPC data"))]
-    ArrowParsing {
+    ArrowParse {
         source: arrow::error::ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to decode JSON chunk data"))]
-    JsonChunkDecoding {
+    JsonChunkDecode {
         source: arrow::error::ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Background chunk-decode task failed to join"))]
+    BlockingTaskJoin {
+        source: tokio::task::JoinError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to encode inline JSON rowset as Arrow IPC"))]
-    InlineJsonEncoding {
+    InlineJsonEncode {
         #[snafu(implicit)]
         location: Location,
         source: ChunkError,
@@ -172,7 +179,7 @@ pub enum ApiError {
         source: crate::rest::snowflake::query_response::QueryResponseError,
     },
     #[snafu(display("Failed to decode base64 chunk data"))]
-    Base64Decoding {
+    Base64Decode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
@@ -184,9 +191,15 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Stage binding failed: {source}"))]
-    StageBindingFailed {
+    StageBinding {
         #[snafu(source(from(crate::stage_binding::StageBindingError, Box::new)))]
         source: Box<crate::stage_binding::StageBindingError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Query timed out after {budget:?}"))]
+    QueryTimeout {
+        budget: Duration,
         #[snafu(implicit)]
         location: Location,
     },

@@ -1,0 +1,147 @@
+{
+  "mappings": [
+    {
+      "name": "GS PUT command (1st call): returns Azure stageInfo with a SAS",
+      "scenarioName": "azure-sas-refresh-fails",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "RefreshAttempted",
+      "priority": 1,
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          { "matchesJsonPath": { "expression": "$.sqlText", "contains": "PUT" } },
+          { "matchesJsonPath": { "expression": "$.sqlText", "contains": "@AZURE_SAS_REFRESH_STAGE" } }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "command": "UPLOAD",
+            "stageInfo": {
+              "locationType": "AZURE",
+              "location": "test-container/prefix/",
+              "path": "prefix/",
+              "region": "eastus2",
+              "storageAccount": "wiremockaccount",
+              "isClientSideEncrypted": false,
+              "ciphers": null,
+              "creds": {
+                "AZURE_SAS_TOKEN": "?sv=2021-04-10&se=2026-01-01T00%3A00%3A00Z&sr=c&sp=racwl&sig=expiredsig"
+              },
+              "presignedUrl": null,
+              "useS3RegionalUrl": false,
+              "credExpiryTime": 4102444800000,
+              "useVirtualUrl": false,
+              "volumeEncryptionMode": null,
+              "encryptionKmsKeyId": null,
+              "bucketName": null,
+              "pathPrefix": null,
+              "endPoint": "{{WIREMOCK_HTTP_URL}}"
+            },
+            "encryptionMaterial": null,
+            "src_locations": [
+              "{{REPO_ROOT}}/tests/test_data/generated_test_data/basic/test_data.csv"
+            ],
+            "parallel": 1,
+            "threshold": 209715200,
+            "autoCompress": false,
+            "overwrite": true,
+            "sourceCompression": "none",
+            "stageWarnings": []
+          }
+        }
+      }
+    },
+    {
+      "name": "GS PUT command (refresh re-issue): GS is unreachable -> 500 (refresh mechanism fails)",
+      "scenarioName": "azure-sas-refresh-fails",
+      "requiredScenarioState": "RefreshAttempted",
+      "priority": 1,
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          { "matchesJsonPath": { "expression": "$.sqlText", "contains": "PUT" } },
+          { "matchesJsonPath": { "expression": "$.sqlText", "contains": "@AZURE_SAS_REFRESH_STAGE" } }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "success": false, "message": "GS unreachable for stage-info refresh", "code": "390000" }
+      }
+    },
+    {
+      "name": "GS transaction teardown (COMMIT/ROLLBACK): benign success so connection close does not 404",
+      "priority": 5,
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          { "matchesJsonPath": { "expression": "$.sqlText", "matches": "\\s*(COMMIT|ROLLBACK)\\s*" } }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "success": true,
+          "code": null,
+          "message": null,
+          "data": {
+            "rowtype": [
+              { "name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null }
+            ],
+            "rowset": [["Statement executed successfully."]],
+            "total": 1,
+            "returned": 1,
+            "queryResultFormat": "json",
+            "queryId": "teardown-query-id",
+            "statementTypeId": 4097,
+            "finalDatabaseName": "test_database",
+            "finalSchemaName": "test_schema"
+          }
+        }
+      }
+    },
+    {
+      "name": "Azure block-blob PUT -> 403 (any sig; triggers the refresh that then fails)",
+      "priority": 3,
+      "request": {
+        "urlPathPattern": "/test-container/prefix/.*",
+        "method": "PUT"
+      },
+      "response": {
+        "status": 403,
+        "statusMessage": "Server failed to authenticate the request.",
+        "headers": {
+          "Content-Type": "application/xml",
+          "x-ms-request-id": "mock-403-request-id",
+          "x-ms-version": "2021-04-10",
+          "x-ms-error-code": "AuthenticationFailed"
+        },
+        "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?><Error><Code>AuthenticationFailed</Code><Message>Server failed to authenticate the request. Make sure the value of the Authorization header is formed correctly including the signature.</Message></Error>"
+      }
+    },
+    {
+      "name": "Azure blob existence check HEAD -> 404 (skipped when OVERWRITE=TRUE; present to avoid noise)",
+      "priority": 4,
+      "request": {
+        "urlPathPattern": "/test-container/prefix/.*",
+        "method": "HEAD"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "Server": "Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0",
+          "x-ms-version": "2021-04-10",
+          "x-ms-error-code": "BlobNotFound",
+          "x-ms-request-id": "00000000-0000-0000-0000-000000000000"
+        }
+      }
+    }
+  ]
+}

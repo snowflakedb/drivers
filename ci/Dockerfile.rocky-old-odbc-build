@@ -16,6 +16,7 @@ RUN dnf install -y \
         awscli \
         bash \
         cmake \
+        dotnet-sdk-10.0 \
         gcc \
         gcc-c++ \
         git \

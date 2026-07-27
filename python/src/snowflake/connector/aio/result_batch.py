@@ -56,22 +56,23 @@ class ResultBatch(ResultBatchMixin):
     # Connection resolution
     # ------------------------------------------------------------------
 
-    def _resolve_connection(self, connection: Connection | None = None) -> Connection:
-        return cast("Connection", self._require_connection(connection))
+    def _resolve_connection(self, connection: Connection | None = None) -> Connection | None:
+        return connection or self._connection
 
     # ------------------------------------------------------------------
     # Data fetching
     # ------------------------------------------------------------------
 
-    async def _fetch_arrow_stream_ptr(self, connection: Connection) -> int:
+    async def _fetch_arrow_stream_ptr(self, connection: Connection | None = None) -> int:
+        conn_handle = connection.conn_handle if connection is not None else None
         response = await async_core_driver.database_fetch_chunk(
-            db_handle=connection.db_handle,  # type: ignore[arg-type]
+            conn_handle=conn_handle,
             chunk=self._chunk,
             columns=self._columns,
         )
         return get_stream_ptr(response)
 
-    async def _take_arrow_stream_ptr(self, connection: Connection) -> int:
+    async def _take_arrow_stream_ptr(self, connection: Connection | None = None) -> int:
         if self._arrow_stream_ptr is None:
             await self.populate_data(connection=connection)
         stream_ptr = cast(int, self._arrow_stream_ptr)
@@ -116,7 +117,7 @@ class ResultBatch(ResultBatchMixin):
 
         stream_ptr = await self._take_arrow_stream_ptr(conn)
         iterator = AsyncArrowStreamIterator(
-            create_row_iterator(stream_ptr, connection=conn, use_dict_result=use_dict_result)
+            create_row_iterator(stream_ptr, context=self._arrow_context, use_dict_result=use_dict_result)
         )
         async for row in iterator:
             yield row
@@ -133,7 +134,7 @@ class ResultBatch(ResultBatchMixin):
         return await collect_arrow_table_async(
             create_table_iterator(
                 stream_ptr,
-                connection=conn,
+                context=self._arrow_context,
                 number_to_decimal=number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
             ),

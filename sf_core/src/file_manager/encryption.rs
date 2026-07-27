@@ -115,7 +115,7 @@ pub fn build_encryptor(
 ) -> Result<(Encryptor, EncryptedFileMetadata), EncryptionError> {
     let master_key = BASE64_ENGINE
         .decode(encryption_material.query_stage_master_key.reveal())
-        .context(Base64DecodingSnafu {
+        .context(Base64DecodeSnafu {
             context: "master key",
         })?;
     let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
@@ -224,7 +224,7 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
 ) -> Result<i64, EncryptionError> {
     let master_key = BASE64_ENGINE
         .decode(encryption_material.query_stage_master_key.reveal())
-        .context(Base64DecodingSnafu {
+        .context(Base64DecodeSnafu {
             context: "master key",
         })?;
     let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
@@ -232,12 +232,12 @@ pub fn decrypt_ciphertext_to_writer<R: Read, W: Write>(
     let encrypted_file_key =
         BASE64_ENGINE
             .decode(&metadata.encrypted_key)
-            .context(Base64DecodingSnafu {
+            .context(Base64DecodeSnafu {
                 context: "encrypted file key",
             })?;
     let iv = BASE64_ENGINE
         .decode(&metadata.iv)
-        .context(Base64DecodingSnafu {
+        .context(Base64DecodeSnafu {
             context: "initialization vector",
         })?;
 
@@ -375,7 +375,7 @@ pub enum EncryptionError {
         location: Location,
     },
     #[snafu(display("Failed to decode Base64 encoded data: {context}"))]
-    Base64Decoding {
+    Base64Decode {
         context: String,
         source: base64::DecodeError,
         #[snafu(implicit)]

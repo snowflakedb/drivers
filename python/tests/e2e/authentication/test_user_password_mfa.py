@@ -137,6 +137,7 @@ class TestUserPasswordMfaAuthentication:
     # Error cases
     # ------------------------------------------------------------------
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_should_fail_authentication_when_wrong_password_is_provided(self, connection_factory, mfa_credentials):
         # Given Authentication is set to username_password_mfa and user is provided but password is skipped or invalid
         passcode = acquire_totp_passcode(mfa_credentials.totp_seed)

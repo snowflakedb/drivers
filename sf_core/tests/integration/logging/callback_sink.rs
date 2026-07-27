@@ -88,7 +88,8 @@ fn sf_core_log_event_delivers_wrapper_events() {
     CAPTURED.lock().unwrap().clear();
 
     let cb: CLogCallback = test_callback;
-    assert_eq!(sf_core::logging::c_api::sf_core_init(cb), 0);
+    let init = sf_core::logging::c_api::sf_core_init(cb);
+    assert_eq!(init.status, 0);
 
     let message = c"wrapper round trip";
     let file = c"cursor.py";

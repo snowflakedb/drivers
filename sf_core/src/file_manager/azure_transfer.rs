@@ -1,15 +1,25 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
+use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
-    MaterialDescription, PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json,
-    percent_encode_path,
+    MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
+    UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use crate::refresh::{Refresher, execute_with_refresh};
 use crate::sensitive::SensitiveString;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_ENGINE};
+use bytes::Bytes;
+use futures::StreamExt as _;
+use futures::TryStreamExt as _;
 use reqwest::Method;
-use snafu::{Location, OptionExt, ResultExt, Snafu};
-use std::time::Duration;
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
+use std::marker::PhantomData;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tempfile::NamedTempFile;
+use tokio_stream::wrappers::ReceiverStream;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -18,63 +28,613 @@ const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
 const AZURE_META_ENCRYPTIONDATA: &str = "x-ms-meta-encryptiondata";
 const AZURE_META_MATDESC: &str = "x-ms-meta-matdesc";
 
-/// Uploads a file to Azure, skipping when a HEAD probe says either
-/// "blob exists and overwrite is off" or "blob content matches the local
-/// digest and the caller opted into content-match skipping". HEAD is elided
-/// when neither skip branch can fire, saving a round-trip vs. Python.
-pub async fn upload_to_azure_or_skip(
+/// HTTP status code that Azure returns on SAS token expiry or authorization
+/// failure. Any 403 triggers a SAS refresh; the body is parsed only for
+/// diagnostic logging.
+const AZURE_SAS_REFRESH_STATUS: u16 = 403;
+
+/// Known Azure XML error codes that indicate SAS token expiry.
+const KNOWN_SAS_EXPIRY_CODES: &[&str] = &["AuthenticationFailed", "InvalidAuthenticationInfo"];
+
+// === SAS-refresh-on-403 infrastructure (mirrors the S3 STS-refresh shape) ===
+
+/// Predicate: does this status code warrant a SAS refresh? Any 403, body-blind.
+fn is_expired_sas_error(status_code: u16) -> bool {
+    status_code == AZURE_SAS_REFRESH_STATUS
+}
+
+/// Extracts `<Code>` from an Azure XML error body. Returns `None` if absent or malformed.
+fn parse_azure_error_code(body: &str) -> Option<String> {
+    let start = body.find("<Code>")? + "<Code>".len();
+    let rel_end = body[start..].find("</Code>")?;
+    Some(body[start..start + rel_end].trim().to_string())
+}
+
+/// Returns a copy of `stage_info` with `creds` replaced.
+fn with_creds(stage_info: &StageInfo, creds: CloudCredentials) -> StageInfo {
+    let mut info = stage_info.clone();
+    info.creds = creds;
+    info
+}
+
+/// One Azure transfer attempt's error. `SasExpired` is the recoverable 403;
+/// everything else is `Other`.
+#[derive(Debug)]
+enum AzureAttemptError<E> {
+    SasExpired {
+        status_code: u16,
+        body: String,
+        url_redacted: String,
+        code: Option<String>,
+    },
+    Other(E),
+}
+
+impl<E> AzureAttemptError<E> {
+    fn map_other<F, E2>(self, f: F) -> AzureAttemptError<E2>
+    where
+        F: FnOnce(E) -> E2,
+    {
+        match self {
+            AzureAttemptError::SasExpired {
+                status_code,
+                body,
+                url_redacted,
+                code,
+            } => AzureAttemptError::SasExpired {
+                status_code,
+                body,
+                url_redacted,
+                code,
+            },
+            AzureAttemptError::Other(e) => AzureAttemptError::Other(f(e)),
+        }
+    }
+}
+
+/// Maps a 403 to the recoverable `SasExpired` (routes to the refresh layer); any
+/// other status to `Other`. The single shared home for the 403→refresh decision.
+fn map_http_to_attempt<E>(
+    status_code: u16,
+    body: String,
+    url_redacted: &str,
+    make_http_err: impl FnOnce(u16, String) -> E,
+) -> AzureAttemptError<E> {
+    if is_expired_sas_error(status_code) {
+        let code = parse_azure_error_code(&body);
+        let known_expiry_code = code
+            .as_deref()
+            .is_some_and(|c| KNOWN_SAS_EXPIRY_CODES.contains(&c));
+        tracing::debug!(
+            status = status_code,
+            code = code.as_deref().unwrap_or("unknown"),
+            known_expiry_code,
+            url_redacted = %url_redacted,
+            "Azure 403; routing to SAS refresh"
+        );
+        AzureAttemptError::SasExpired {
+            status_code,
+            body,
+            url_redacted: url_redacted.to_string(),
+            code,
+        }
+    } else {
+        AzureAttemptError::Other(make_http_err(status_code, body))
+    }
+}
+
+/// Azure SAS implementation of [`Refresher`]. Detects whether a refresh
+/// actually landed a new snapshot via the cache's monotonic `cached_at` marker.
+struct AzureSasRefresher<'a, E, W> {
+    refresher: &'a mut dyn StageInfoRefresher,
+    last_cached_at: Instant,
+    map_refresh_err: W,
+    _marker: PhantomData<fn() -> E>,
+}
+
+impl<'a, E, W> AzureSasRefresher<'a, E, W>
+where
+    W: Fn(StageInfoRefreshError) -> E + Send,
+{
+    fn new_with_marker(
+        refresher: &'a mut dyn StageInfoRefresher,
+        last_cached_at: Instant,
+        map_refresh_err: W,
+    ) -> Self {
+        Self {
+            refresher,
+            last_cached_at,
+            map_refresh_err,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, E, W> Refresher<CloudCredentials, AzureAttemptError<E>> for AzureSasRefresher<'a, E, W>
+where
+    E: Send,
+    W: Fn(StageInfoRefreshError) -> E + Send,
+{
+    fn current(
+        &mut self,
+    ) -> crate::refresh::RefreshFuture<'_, Result<CloudCredentials, AzureAttemptError<E>>> {
+        let creds = self.refresher.cache().snapshot().creds;
+        Box::pin(async move { Ok(creds) })
+    }
+
+    fn should_refresh(&self, err: &AzureAttemptError<E>) -> bool {
+        matches!(err, AzureAttemptError::SasExpired { .. })
+    }
+
+    fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, AzureAttemptError<E>>> {
+        Box::pin(async move {
+            tracing::info!("Azure hit expired-SAS 403; refreshing stage credentials");
+            self.refresher
+                .refresh()
+                .await
+                .map_err(|e| AzureAttemptError::Other((self.map_refresh_err)(e)))?;
+            let current = self.refresher.cache().cached_at();
+            if current == self.last_cached_at {
+                return Ok(false);
+            }
+            self.last_cached_at = current;
+            Ok(true)
+        })
+    }
+}
+
+/// Runs `attempt` once (no refresher) or in a refresh-retry loop (with
+/// refresher), folding `AzureAttemptError<E>` back to `E` at the boundary.
+///
+/// 403 logging is outcome-tiered: a 403 recovered by a refresh is a `debug!`
+/// breadcrumb; a terminal failure logs once — a refresh-mechanism failure at the
+/// call site → `error!`, a 403 that survives the refresh → `warn!` here with the
+/// status and a SAS-redacted URL.
+async fn run_azure_with_sas_refresh<F, Fut, T, E>(
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    initial_creds: &CloudCredentials,
+    op: &'static str,
+    map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
+    map_sas_err: impl Fn(u16, String) -> E,
+    attempt: F,
+) -> Result<T, E>
+where
+    F: Fn(CloudCredentials) -> Fut,
+    Fut: std::future::Future<Output = Result<T, AzureAttemptError<E>>>,
+    E: Send,
+{
+    fn fold_silent<E>(e: AzureAttemptError<E>, map_sas_err: impl Fn(u16, String) -> E) -> E {
+        match e {
+            AzureAttemptError::Other(inner) => inner,
+            AzureAttemptError::SasExpired {
+                status_code, body, ..
+            } => map_sas_err(status_code, body),
+        }
+    }
+
+    match refresher {
+        Some(r) => {
+            let initial_marker = r.cache().cached_at();
+            let mut sas_refresher =
+                AzureSasRefresher::new_with_marker(*r, initial_marker, map_refresh_err);
+            execute_with_refresh(&mut sas_refresher, attempt)
+                .await
+                .map_err(|e| match e {
+                    AzureAttemptError::Other(inner) => inner,
+                    AzureAttemptError::SasExpired {
+                        status_code,
+                        body,
+                        url_redacted,
+                        code,
+                    } => {
+                        tracing::warn!(
+                            status = status_code,
+                            code = code.as_deref().unwrap_or("unknown"),
+                            url_redacted = %url_redacted,
+                            "Azure {op} failed terminally with 403 after SAS refresh"
+                        );
+                        map_sas_err(status_code, body)
+                    }
+                })
+        }
+        None => attempt(initial_creds.clone())
+            .await
+            .map_err(|e| fold_silent(e, &map_sas_err)),
+    }
+}
+
+/// Per-attempt Azure policy: preserves everything the caller configured —
+/// backoff, jitter, `max_elapsed`, `max_attempts`, and any user-set extra
+/// retryable statuses — and changes exactly one thing: 403 is removed from the
+/// retryable set so an expired-SAS 403 fast-fails to the SAS-refresh layer
+/// (`run_azure_with_sas_refresh`) instead of being inline-retried. Mirrors the
+/// clone-then-mutate shape of `s3_retry_policy` / `gcs_retry_policy` rather than
+/// rebuilding from `RetryPolicy::default()` (which silently dropped user config).
+fn azure_403_fastfail_policy(base: &RetryPolicy) -> RetryPolicy {
+    let mut policy = base.clone();
+    policy.extra_retryable_statuses.remove(&403);
+    policy
+}
+
+/// Runs ONE Azure PUT attempt with in-line retry for non-403 transients.
+/// 403 fast-fails as `AzureAttemptError::SasExpired`.
+async fn azure_put_attempt(
+    client: &reqwest::Client,
+    url: &str,
+    sas_token: &str,
+    prepared: PreparedUpload,
+    base: &RetryPolicy,
+) -> Result<(), AzureAttemptError<AzureUploadError>> {
+    let source = prepared.source.byte_source();
+    let digest = prepared.digest;
+    let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
+
+    let encryption_data_str = encryption_metadata
+        .as_ref()
+        .map(|enc_meta| {
+            let encryption_data = build_encryption_metadata_json(enc_meta);
+            serde_json::to_string(&encryption_data)
+        })
+        .transpose()
+        .context(azure_upload_error::SerializationSnafu)
+        .map_err(AzureAttemptError::Other)?;
+
+    let mat_desc_str = encryption_metadata
+        .as_ref()
+        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
+        .transpose()
+        .context(azure_upload_error::SerializationSnafu)
+        .map_err(AzureAttemptError::Other)?;
+
+    let content_length = match &encryptor {
+        Some(enc) => enc.cipher_len(),
+        None => match &source {
+            ByteSource::Bytes(b) => b.len() as i64,
+            ByteSource::Path(p) => tokio::fs::metadata(p)
+                .await
+                .context(azure_upload_error::SourceIoSnafu)
+                .map_err(AzureAttemptError::Other)?
+                .len() as i64,
+        },
+    };
+
+    let full_url = build_sas_url(url, sas_token);
+    let policy = azure_403_fastfail_policy(base);
+    let url_redacted = url_host_and_path(&full_url);
+    let client = client.clone();
+
+    let adapter = AzurePutAttemptRetry {
+        url_redacted: url_redacted.clone(),
+    };
+    cloud_http::upload_with_retry(
+        &policy,
+        &adapter,
+        &reqwest::Method::PUT,
+        &url_redacted,
+        async move || {
+            let body = cloud_http::body_for(&source, encryptor.as_ref())
+                .await
+                .context(azure_upload_error::SourceIoSnafu)?;
+
+            // TODO(SNOW-3701467): add an in-transit integrity checksum to match the S3 PUT path.
+            let mut req = client
+                .put(&full_url)
+                .header("x-ms-blob-type", "BlockBlob")
+                .header(AZURE_META_SFC_DIGEST, &digest)
+                .header(reqwest::header::CONTENT_LENGTH, content_length)
+                .body(body);
+
+            if let Some(ref enc_str) = encryption_data_str {
+                req = req.header(AZURE_META_ENCRYPTIONDATA, enc_str);
+            }
+            if let Some(ref md_str) = mat_desc_str {
+                req = req.header(AZURE_META_MATDESC, md_str);
+            }
+            Ok(req)
+        },
+    )
+    .await?;
+
+    tracing::debug!("Azure blob upload successful");
+    Ok(())
+}
+
+/// Adapter wiring Azure PUT-attempt errors into [`cloud_http::upload_with_retry`].
+/// 403 fast-fails as `AzureAttemptError::SasExpired`.
+struct AzurePutAttemptRetry {
+    url_redacted: String,
+}
+
+impl UploadRetryAdapter for AzurePutAttemptRetry {
+    type Err = AzureAttemptError<AzureUploadError>;
+    type BuildErr = AzureUploadError;
+
+    fn on_build_err(&self, e: AzureUploadError) -> AzureAttemptError<AzureUploadError> {
+        AzureAttemptError::Other(e)
+    }
+
+    fn on_http_failure(
+        &self,
+        status_code: u16,
+        body: String,
+    ) -> AzureAttemptError<AzureUploadError> {
+        map_http_to_attempt(
+            status_code,
+            sanitize_sas(body),
+            &self.url_redacted,
+            |status_code, body| AzureUploadError::AzureHttp {
+                status_code,
+                body,
+                location: Location::default(),
+            },
+        )
+    }
+
+    fn on_transport(&self, e: reqwest::Error) -> AzureAttemptError<AzureUploadError> {
+        AzureAttemptError::Other(AzureUploadError::Http {
+            detail: sanitize_sas(e.to_string()),
+            location: Location::default(),
+        })
+    }
+
+    fn on_exhausted(&self, detail: String) -> AzureAttemptError<AzureUploadError> {
+        AzureAttemptError::Other(AzureUploadError::RetryExhausted {
+            detail: format!("Azure upload {detail}"),
+            location: Location::default(),
+        })
+    }
+}
+
+/// Runs ONE Azure GET attempt with in-line retry for non-403 transients.
+/// 403 always fast-fails as `AzureAttemptError::SasExpired`.
+async fn azure_get_attempt(
+    client: &reqwest::Client,
+    full_url: &str,
+    base: &RetryPolicy,
+) -> Result<reqwest::Response, AzureAttemptError<AzureRequestError>> {
+    let ctx = HttpContext::new(Method::GET, "azure-transfer");
+    let policy = azure_403_fastfail_policy(base);
+
+    let response = http_execute_with_retry(
+        || client.get(full_url),
+        &ctx,
+        &policy,
+        |r| async move { Ok(r) },
+    )
+    .await
+    .map_err(|e| AzureAttemptError::Other(map_http_error(e)))?;
+
+    if response.status().is_success() {
+        return Ok(response);
+    }
+
+    let status_code = response.status().as_u16();
+    tracing::debug!(
+        status = status_code,
+        url = %url_host_and_path(full_url),
+        "Azure GET attempt returned non-success"
+    );
+    let body = sanitize_sas(cloud_http::read_error_body(response).await);
+    Err(map_http_to_attempt(
+        status_code,
+        body,
+        &url_host_and_path(full_url),
+        |status_code, body| AzureRequestError::AzureHttp { status_code, body },
+    ))
+}
+
+/// Issues the Azure blob GET under the SAS-refresh-on-403 layer.
+/// With a refresher: 403 fast-fails → refresh → retry with new SAS.
+/// Without a refresher: run once; 403 surfaces as a terminal error.
+async fn azure_get_with_refresh(
+    stage_info: &StageInfo,
+    filename: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<reqwest::Response, AzureDownloadError> {
+    let client = create_azure_client(stage_info)?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+    let attempt = |creds: CloudCredentials| {
+        let stage_info = with_creds(stage_info, creds);
+        let key = key.clone();
+        let client = client.clone();
+        let policy = policy.clone();
+        async move {
+            let (url, sas_token) = resolve_url_and_token(&stage_info, &key)
+                .map_err(|e| AzureAttemptError::Other(AzureDownloadError::from(e)))?;
+            let full_url = build_sas_url(&url, sas_token.reveal());
+
+            azure_get_attempt(&client, &full_url, &policy)
+                .await
+                .map_err(|e| e.map_other(AzureDownloadError::from))
+        }
+    };
+
+    let result = run_azure_with_sas_refresh(
+        refresher,
+        &stage_info.creds,
+        "GET",
+        |e| azure_download_error::StageInfoRefreshSnafu.into_error(e),
+        |status_code, body| AzureDownloadError::AzureHttp {
+            status_code,
+            body,
+            location: Location::default(),
+        },
+        attempt,
+    )
+    .await;
+
+    if let Err(AzureDownloadError::StageInfoRefresh { ref source, .. }) = result {
+        tracing::error!(reason = %source, "Azure SAS refresh failed; download aborted");
+    }
+
+    result
+}
+
+/// Maps an `AzureUploadError` from an in-closure sub-request (HEAD, block PUT,
+/// commit) to an attempt error: a 403 becomes the recoverable `SasExpired`
+/// (routes to the refresh layer); everything else stays `Other`.
+fn sas_expired_or_other(
+    e: AzureUploadError,
+    url: &str,
+    sas_token: &str,
+) -> AzureAttemptError<AzureUploadError> {
+    match e {
+        AzureUploadError::AzureHttp {
+            status_code: 403,
+            body,
+            ..
+        } => map_http_to_attempt(
+            403,
+            body,
+            &url_host_and_path(&build_sas_url(url, sas_token)),
+            // 403 always maps to SasExpired, so this closure is never invoked.
+            |status_code, body| AzureUploadError::AzureHttp {
+                status_code,
+                body,
+                location: Location::default(),
+            },
+        ),
+        // Non-403 (incl. non-HTTP) errors keep their original value + location.
+        other => AzureAttemptError::Other(other),
+    }
+}
+
+/// Whole-file restart on SAS-403 (legacy JDBC/Go/.NET/ODBC parity).
+/// Per-block resume is the PR-C follow-up (SNOW-3406384).
+// One arg over S3/GCS (Azure adds `skip_upload_on_content_match`); a follow-up
+// may bundle {multipart, policy, refresher} into an opts struct.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn upload_to_azure_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
     skip_upload_on_content_match: bool,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, AzureUploadError> {
-    let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
-    let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-
     let head_needed = !overwrite || skip_upload_on_content_match;
-    let remote = if head_needed {
-        match send_head_to_azure_blob(&client, &url, sas_token, policy).await {
-            Ok(remote) => remote,
-            Err(e) if !overwrite => {
-                // Cannot verify whether the blob exists; fail-CLOSED to
-                // avoid silently clobbering existing stage content.
-                return Err(e);
-            }
-            Err(_) => {
-                // skip_match path: a missed skip is bandwidth waste, not
-                // data loss — fail-OPEN and let the PUT proceed.
+
+    // Build the client once — TLS config is creds-independent; only the SAS in
+    // `stage_info.creds` rotates on refresh — and clone it into each attempt.
+    let client = create_azure_client(stage_info)?;
+    // On-cloud byte count (ciphertext length under CSE) decides single-PUT vs
+    // multipart; computed once, outside the per-attempt closure.
+    let body_len = multipart::upload_body_len(&prepared)
+        .await
+        .context(azure_upload_error::SourceIoSnafu)?;
+
+    let attempt = |creds: CloudCredentials| {
+        let prepared = prepared.clone();
+        let stage_info = with_creds(stage_info, creds);
+        let key = key.clone();
+        let base = policy.clone();
+        let client = client.clone();
+        async move {
+            let sas_token = match &stage_info.creds {
+                CloudCredentials::Azure { sas_token } => sas_token.clone(),
+                _ => {
+                    return Err(AzureAttemptError::Other(
+                        AzureUploadError::MissingAzureCredentials {
+                            location: Location::default(),
+                        },
+                    ));
+                }
+            };
+            let (url, _) = resolve_url_and_token(&stage_info, &key)
+                .map_err(|e| AzureAttemptError::Other(AzureUploadError::from(e)))?;
+            // 403 fast-fails to the refresh layer for every SAS-bearing request
+            // in this attempt (HEAD, single PUT, blocks) — never inline-retried.
+            let attempt_policy = azure_403_fastfail_policy(&base);
+
+            // HEAD runs INSIDE the refresh closure so an expired-SAS 403 on the
+            // existence/skip probe rotates the SAS and retries, rather than
+            // failing closed before the PUT ever runs (mirrors S3/GCS).
+            let remote = if head_needed {
+                match send_head_to_azure_blob(&client, &url, &sas_token, &attempt_policy).await {
+                    Ok(remote) => remote,
+                    // Expired-SAS 403 on the MANDATORY existence check (!overwrite):
+                    // route to refresh + retry rather than failing closed before
+                    // the PUT ever runs. This is the bug this change fixes.
+                    Err(
+                        e @ AzureUploadError::AzureHttp {
+                            status_code: 403, ..
+                        },
+                    ) if !overwrite => {
+                        return Err(sas_expired_or_other(e, &url, sas_token.reveal()));
+                    }
+                    // Any other !overwrite HEAD failure: fail-CLOSED (can't risk
+                    // clobbering an existing blob we couldn't verify).
+                    Err(e) if !overwrite => return Err(AzureAttemptError::Other(e)),
+                    // skip-match only (overwrite=true): fail-OPEN — a missed skip is
+                    // just bandwidth; the PUT refreshes on its own 403 if expired.
+                    Err(_) => None,
+                }
+            } else {
                 None
+            };
+
+            match classify_pre_upload_skip(
+                overwrite,
+                skip_upload_on_content_match,
+                remote.as_ref(),
+                &prepared.digest,
+            ) {
+                SkipDecision::Existence => {
+                    tracing::info!("Blob already exists in Azure: {:?}", key);
+                    return Ok(UploadStatus::Skipped);
+                }
+                SkipDecision::ContentMatch => {
+                    tracing::info!(
+                        "Blob content matches local digest, skipping upload: {:?}",
+                        key
+                    );
+                    return Ok(UploadStatus::Skipped);
+                }
+                SkipDecision::Upload => {}
             }
+
+            if body_len >= multipart.threshold.bytes() {
+                azure_multipart_upload(
+                    &client,
+                    &url,
+                    sas_token.reveal(),
+                    prepared,
+                    body_len,
+                    multipart.concurrency,
+                    &attempt_policy,
+                )
+                .await
+                .map_err(|e| sas_expired_or_other(e, &url, sas_token.reveal()))?;
+            } else {
+                azure_put_attempt(&client, &url, sas_token.reveal(), prepared, &base).await?;
+            }
+            Ok(UploadStatus::Uploaded)
         }
-    } else {
-        None
     };
 
-    match classify_pre_upload_skip(
-        overwrite,
-        skip_upload_on_content_match,
-        remote.as_ref(),
-        &prepared.digest,
-    ) {
-        SkipDecision::Existence => {
-            tracing::info!("Blob already exists in Azure: {}", key);
-            return Ok(UploadStatus::Skipped);
-        }
-        SkipDecision::ContentMatch => {
-            tracing::info!(
-                "Blob content matches local digest, skipping upload: {}",
-                key
-            );
-            return Ok(UploadStatus::Skipped);
-        }
-        SkipDecision::Upload => {}
+    let result = run_azure_with_sas_refresh(
+        refresher,
+        &stage_info.creds,
+        "PUT",
+        |e| azure_upload_error::StageInfoRefreshSnafu.into_error(e),
+        |status_code, body| AzureUploadError::AzureHttp {
+            status_code,
+            body,
+            location: Location::default(),
+        },
+        attempt,
+    )
+    .await;
+
+    if let Err(AzureUploadError::StageInfoRefresh { ref source, .. }) = result {
+        tracing::error!(reason = %source, "Azure SAS refresh failed; upload aborted");
     }
 
-    upload_to_azure(&client, &url, sas_token, prepared, policy).await?;
-    Ok(UploadStatus::Uploaded)
+    result
 }
 
 /// Outcome of the pre-upload skip check. Extracted so the decision is
@@ -119,51 +679,17 @@ fn classify_pre_upload_skip(
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
 ///
-/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
-/// the blob — taken from the collected body length, which equals the
-/// Azure `Content-Length` (i.e. the stored blob size) for non-streamed
-/// responses. This is the wire byte count, not the decrypted/decoded
-/// size of the original file.
+/// On a 403 the `refresher` (if any) fetches a fresh SAS and the GET retries.
 pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, AzureDownloadError> {
-    let client = create_azure_client(stage_info)?;
-    let key = format!("{}{filename}", stage_info.key_prefix);
-    let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let response = azure_request_with_retry(
-        || client.get(build_sas_url(&url, sas_token.reveal())),
-        Method::GET,
-        policy,
-    )
-    .await?;
+    let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
 
     // Extract metadata from response headers
-    let headers = response.headers();
-    let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
-
-    let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
-        Some(encryption_data_str) => {
-            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
-                .context(azure_download_error::DeserializationSnafu)?;
-
-            let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
-                azure_download_error::MissingMetadataSnafu {
-                    field: AZURE_META_MATDESC,
-                },
-            )?;
-            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
-                .context(azure_download_error::DeserializationSnafu)?;
-
-            Some(EncryptedFileMetadata {
-                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
-                iv: enc_data.content_encryption_iv,
-                material_desc,
-            })
-        }
-        None => None,
-    };
+    let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
 
     let data = response
         .bytes()
@@ -198,13 +724,10 @@ impl RemoteBlobHeader {
     }
 }
 
-/// Probes the blob with HEAD, retrying transient failures via the shared
-/// Azure retry helper. Returns:
-///
-/// - `Ok(Some(header))` on 200 — blob exists, digest header captured.
-/// - `Ok(None)` on 404 — blob does not exist, safe to upload.
-/// - `Err(_)` on any other outcome after retry exhaustion (persistent
-///   5xx / transport / 403, or non-retryable non-404 like 401 / 409).
+/// Probes the blob with HEAD. Returns:
+/// - `Ok(Some(header))` — 200, blob exists (digest captured).
+/// - `Ok(None)` — 404, blob absent (safe to upload).
+/// - `Err(_)` — any other outcome after retry exhaustion.
 async fn send_head_to_azure_blob(
     client: &reqwest::Client,
     url: &str,
@@ -233,136 +756,194 @@ async fn send_head_to_azure_blob(
     }
 }
 
-/// Upload data to Azure with retry logic.
+/// Uploads `prepared` as an Azure block blob: `Put Block` ×N then `Put Block List`.
 ///
-/// Streams the body without buffering the whole file in memory:
-/// - `ByteSource::Path` opens the file on each retry attempt via
-///   `tokio::fs::File` and wraps it in a streaming `reqwest::Body` — the
-///   file content is never fully resident in memory at the same time.
-/// - `ByteSource::Bytes` (the usual case after client-side encryption) uses
-///   the already-in-memory ciphertext directly. It is an `Arc`-backed
-///   `bytes::Bytes`, so the per-retry clone in `body_for` is an O(1)
-///   reference-count bump — no copy of the ciphertext.
-///
-/// Sets encryption metadata headers only when client-side encryption was used.
-///
-/// The SAS token is taken as `&SensitiveString` and revealed only at the
-/// URL-construction site so the raw secret never enters this function's
-/// outer scope.
-async fn upload_to_azure(
+/// No abort step: Azure garbage-collects uncommitted blocks (~7 days) and never
+/// charges for or exposes them, so a failed upload just leaves the blob uncommitted.
+async fn azure_multipart_upload(
     client: &reqwest::Client,
     url: &str,
-    sas_token: &SensitiveString,
+    sas_token: &str,
     prepared: PreparedUpload,
+    body_len: u64,
+    concurrency: usize,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
-    // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
-    // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
-    // gzip-tempfile guard inside `prepared.source` outlives the upload + every
-    // retry. The CSE params (cloud metadata + encryptor) are both present or
-    // both absent — unbundle them once.
+    let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
+        .context(azure_upload_error::FileTooLargeSnafu)?;
+    // CSE params (cloud metadata + encryptor) are both present or both absent;
+    // the metadata + digest ride on the `Put Block List` commit, the encryptor
+    // lazily encrypts each block as the part-reader cuts it.
     let source = prepared.source.byte_source();
     let digest = prepared.digest;
-    let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
-
-    let encryption_data_str = encryption_metadata
-        .as_ref()
-        .map(|enc_meta| {
-            let encryption_data = build_encryption_metadata_json(enc_meta);
-            serde_json::to_string(&encryption_data)
-        })
-        .transpose()
-        .context(azure_upload_error::SerializationSnafu)?;
-
-    let mat_desc_str = encryption_metadata
-        .as_ref()
-        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
-        .transpose()
-        .context(azure_upload_error::SerializationSnafu)?;
-
-    // Content-Length must be set explicitly on every Azure upload: the body is
-    // a streaming `reqwest::Body` (a wrapped CSE stream, or a `tokio::fs::File`
-    // for an SSE `Path` source) whose length reqwest can't infer, so without
-    // this header it would fall back to `Transfer-Encoding: chunked` — which
-    // Azure rejects with `400 UnsupportedHeader`. CSE uses the analytic
-    // ciphertext length; SSE uses the source length (file metadata / buffer len).
-    let content_length = match &encryptor {
-        Some(enc) => enc.cipher_len(),
-        None => match &source {
-            ByteSource::Bytes(b) => b.len() as i64,
-            ByteSource::Path(p) => tokio::fs::metadata(p)
-                .await
-                .context(azure_upload_error::SourceIoSnafu)?
-                .len() as i64,
-        },
+    let (encryption_metadata, encryptor) = match prepared.cse {
+        Some(c) => (Some(c.metadata), Some(c.encryptor)),
+        None => (None, None),
     };
+    let (encryption_data_str, mat_desc_str) =
+        azure_encryption_header_strs(encryption_metadata.as_ref())?;
+    let full_url = build_sas_url(url, sas_token);
+    let full_url = full_url.as_str();
 
-    // Own everything the per-attempt async closure touches so the closure is
-    // self-contained (`'static`): an `AsyncFn` whose returned future borrowed
-    // these from this frame couldn't satisfy the `'static` bound the FFI/trait
-    // futures require. `reqwest::Client` clone is a cheap `Arc` bump; the SAS
-    // token stays a `SensitiveString` and is revealed only inside the closure
-    // (per attempt), so the raw secret still never lands in this outer scope.
-    let client = client.clone();
-    let url = url.to_string();
-    let sas_token = sas_token.clone();
+    // Blocks read sequentially from the (optionally encrypting) source, staged
+    // concurrently.
+    let parts_rx =
+        multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
 
-    azure_upload_with_retry(
-        async move || {
-            // CSE → lazy AES-CBC encrypting stream; SSE Path → fresh
-            // tokio::fs::File per retry; SSE Bytes → O(1) Arc clone.
-            let body = cloud_http::body_for(&source, encryptor.as_ref())
-                .await
-                .context(azure_upload_error::SourceIoSnafu)?;
+    let mut block_numbers: Vec<i32> = ReceiverStream::new(parts_rx)
+        .map(|part| async move {
+            let part = part.context(azure_upload_error::SourceIoSnafu)?;
+            let number = part.number;
+            azure_put_block(client, full_url, part, policy).await?;
+            Ok::<i32, AzureUploadError>(number)
+        })
+        .buffer_unordered(concurrency)
+        .try_collect()
+        .await?;
 
-            // TODO(SNOW-3701467): add an in-transit integrity checksum (Azure verifies
-            // `Content-MD5` / `x-ms-content-crc64`, or per-segment CRC64 via the
-            // structured-body format) to match the S3 PUT path. Today this relies only
-            // on TLS + the GET-time `sfc-digest` (verified over plaintext, on read).
-            let mut req = client
-                .put(build_sas_url(&url, sas_token.reveal()))
-                .header("x-ms-blob-type", "BlockBlob")
-                .header(AZURE_META_SFC_DIGEST, &digest)
-                .header(reqwest::header::CONTENT_LENGTH, content_length)
-                .body(body);
+    // A block blob with zero blocks makes Azure reject `Put Block List` (or
+    // commit an empty blob); surface a clear error instead. Unreachable on the
+    // normal path (multipart requires `body_len >= threshold >= 1`) — this guards
+    // a source truncated to 0 bytes between the size stat and the first read.
+    // Mirrors the S3 empty-parts guard in `s3_transfer.rs`.
+    if block_numbers.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "no blocks produced (source became empty before read)",
+        ))
+        .context(azure_upload_error::SourceIoSnafu);
+    }
 
-            if let Some(ref enc_str) = encryption_data_str {
-                req = req.header(AZURE_META_ENCRYPTIONDATA, enc_str);
-            }
-            if let Some(ref md_str) = mat_desc_str {
-                req = req.header(AZURE_META_MATDESC, md_str);
-            }
-            Ok(req)
-        },
+    // `Put Block List` must name the blocks in blob order; uploads finished out
+    // of order, so sort by the original part number.
+    block_numbers.sort_unstable();
+
+    azure_put_block_list(
+        client,
+        full_url,
+        &block_numbers,
+        &digest,
+        encryption_data_str.as_deref(),
+        mat_desc_str.as_deref(),
         policy,
     )
     .await?;
 
-    tracing::debug!("Azure blob upload successful");
+    tracing::debug!(
+        "Azure block-blob upload committed ({} blocks)",
+        block_numbers.len()
+    );
     Ok(())
+}
+
+/// Fixed-width, base64 block id for a 1-based part number. Azure requires every
+/// block id in an upload to be the same length; eight digits covers the 50 000
+/// block ceiling with room to spare.
+fn azure_block_id(number: i32) -> String {
+    BASE64_ENGINE.encode(format!("block{number:08}"))
+}
+
+/// Stages one block via `Put Block` (no metadata; that rides on the commit).
+async fn azure_put_block(
+    client: &reqwest::Client,
+    full_url: &str,
+    part: multipart::UploadPart,
+    policy: &RetryPolicy,
+) -> Result<(), AzureUploadError> {
+    let block_id = azure_block_id(part.number);
+    let body = part.body;
+    let content_length = body.len();
+    let client = client.clone();
+    let url_owned = full_url.to_string();
+    azure_upload_with_retry(
+        async move || {
+            Ok(client
+                .put(&url_owned)
+                .query(&[("comp", "block"), ("blockid", block_id.as_str())])
+                .header(reqwest::header::CONTENT_LENGTH, content_length)
+                .body(reqwest::Body::from(body.clone())))
+        },
+        &Method::PUT,
+        full_url,
+        policy,
+    )
+    .await
+}
+
+/// Commits the staged blocks with `Put Block List`, attaching the digest and
+/// (for CSE) encryption metadata headers.
+async fn azure_put_block_list(
+    client: &reqwest::Client,
+    full_url: &str,
+    block_numbers: &[i32],
+    digest: &str,
+    encryption_data_str: Option<&str>,
+    mat_desc_str: Option<&str>,
+    policy: &RetryPolicy,
+) -> Result<(), AzureUploadError> {
+    let body = build_block_list_xml(block_numbers);
+    let client = client.clone();
+    let url_owned = full_url.to_string();
+    let digest = digest.to_string();
+    let encryption_data_str = encryption_data_str.map(str::to_string);
+    let mat_desc_str = mat_desc_str.map(str::to_string);
+    azure_upload_with_retry(
+        async move || {
+            let mut req = client
+                .put(&url_owned)
+                .query(&[("comp", "blocklist")])
+                .header(AZURE_META_SFC_DIGEST, &digest)
+                .body(body.clone());
+            if let Some(enc) = &encryption_data_str {
+                req = req.header(AZURE_META_ENCRYPTIONDATA, enc);
+            }
+            if let Some(md) = &mat_desc_str {
+                req = req.header(AZURE_META_MATDESC, md);
+            }
+            Ok(req)
+        },
+        &Method::PUT,
+        full_url,
+        policy,
+    )
+    .await
+}
+
+/// Builds the `Put Block List` request body naming every block (in order) as
+/// `<Latest>` (i.e. prefer an uncommitted block over any same-id committed one).
+fn build_block_list_xml(block_numbers: &[i32]) -> String {
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<BlockList>");
+    for &number in block_numbers {
+        xml.push_str("<Latest>");
+        xml.push_str(&azure_block_id(number));
+        xml.push_str("</Latest>");
+    }
+    xml.push_str("</BlockList>");
+    xml
+}
+
+/// Serializes the CSE encryption-data and material-description metadata header
+/// values from the (optional) CSE metadata (both `None` for SSE). Shared by the
+/// single `Put Blob` and the multipart `Put Block List` paths.
+fn azure_encryption_header_strs(
+    encryption_metadata: Option<&EncryptedFileMetadata>,
+) -> Result<(Option<String>, Option<String>), AzureUploadError> {
+    let encryption_data_str = encryption_metadata
+        .map(|enc_meta| serde_json::to_string(&build_encryption_metadata_json(enc_meta)))
+        .transpose()
+        .context(azure_upload_error::SerializationSnafu)?;
+    let mat_desc_str = encryption_metadata
+        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
+        .transpose()
+        .context(azure_upload_error::SerializationSnafu)?;
+    Ok((encryption_data_str, mat_desc_str))
 }
 
 // --- Retry logic (delegates to http::retry) ---
 
-/// Returns a retry policy tuned for Azure file-transfer operations.
-///
-/// Azure treats 403 as retryable (SAS token clock skew / replication delays),
-/// matching JDBC/ODBC behavior.
-pub(crate) fn azure_retry_policy(base: &RetryPolicy) -> RetryPolicy {
-    let mut policy = base.clone();
-    policy.extra_retryable_statuses.insert(403);
-    policy
-}
-
-/// Executes an Azure HTTP request with retry, then checks for Azure-specific status codes.
-///
-/// Unlike GCS, Azure does not have a `TokenExpired` (401) fast-fail path.
-/// Azure SAS tokens are URL-embedded and produce 403 on expiry (which is already retried).
-/// SAS tokens cannot be refreshed mid-request — a new query execution is needed.
-///
-/// `policy` is the whole `RetryPolicy` (which already carries `max_attempts`),
-/// not a bare `max_attempts`, so the *backoff* is injectable — production
-/// passes `azure_retry_policy(..)` while tests pass a zero-backoff variant.
+/// Executes an Azure HTTP request with in-line retry for non-403 transients.
+/// Its HEAD/ranged-GET callers pass `azure_403_fastfail_policy`, so a 403 fast-fails
+/// out to the SAS-refresh layer (`run_azure_with_sas_refresh`) instead of retrying.
 async fn azure_request_with_retry<F>(
     build_request: F,
     method: Method,
@@ -377,18 +958,15 @@ where
         .await
         .map_err(map_http_error)?;
 
+    tracing::info!(status = response.status().as_u16(), "HTTP response");
+
     if response.status().is_success() {
         return Ok(response);
     }
 
     let status_code = response.status().as_u16();
-    // Azure error bodies often echo the request URL — scrub SAS signatures.
-    // TODO(SNOW-3406377): SAS-signature redaction is done ad-hoc via
-    // `sanitize_sas` at each call site that surfaces an Azure error body or
-    // transport string. Once a centralized secure-logging / redaction layer
-    // exists, route these through it instead of string-scrubbing here, so the
-    // redaction policy lives in one place rather than being re-applied (and
-    // potentially missed) per call site.
+    // Scrub SAS signatures from the URL that Azure error bodies often echo.
+    // TODO(SNOW-3406377): centralise SAS redaction instead of per-call-site scrubbing.
     let body = sanitize_sas(cloud_http::read_error_body(response).await);
     Err(AzureRequestError::AzureHttp { status_code, body })
 }
@@ -442,12 +1020,14 @@ impl UploadRetryAdapter for AzureUploadRetry {
 /// reason as `azure_request_with_retry`: tests can supply zero backoff.
 async fn azure_upload_with_retry<F>(
     build_request: F,
+    method: &reqwest::Method,
+    url: &str,
     policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
 {
-    cloud_http::upload_with_retry(policy, &AzureUploadRetry, build_request).await
+    cloud_http::upload_with_retry(policy, &AzureUploadRetry, method, url, build_request).await
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
@@ -467,6 +1047,7 @@ fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureR
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
+        stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
         HttpSnafu {
@@ -582,43 +1163,19 @@ fn try_get_header(
     }
 }
 
-/// Downloads a file from Azure, streams the response body without buffering the
-/// full ciphertext in memory, and returns a [`CloudStreamingDownload`] that the
-/// caller uses to read the body via a sync `Read` interface.
-///
-/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
-/// The public `download_from_azure` keeps the old `DownloadResponse` shape for
-/// the integration-test / retry-test surface.
-///
-/// Marked `pub` so the cfg-gated `file_manager::internal` re-export can surface
-/// it to integration tests; the parent module `azure_transfer` is itself private,
-/// so this is not part of the crate's public API.
-pub async fn download_from_azure_streaming(
-    stage_info: &StageInfo,
-    filename: &str,
-    policy: &RetryPolicy,
-) -> Result<CloudStreamingDownload, AzureDownloadError> {
-    let client = create_azure_client(stage_info)?;
-    let key = format!("{}{filename}", stage_info.key_prefix);
-    let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let response = azure_request_with_retry(
-        || client.get(build_sas_url(&url, sas_token.reveal())),
-        Method::GET,
-        policy,
-    )
-    .await?;
-
-    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
-    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
-
-    let headers = response.headers();
+/// Parses the `sfcdigest` and (for CSE) the `encryptiondata` / `matdesc`
+/// metadata headers from an Azure response. All metadata is absent for SSE
+/// stages; when `encryptiondata` is present, `matdesc` must be too. Shared by
+/// every Azure download path (buffered, streaming, ranged).
+fn parse_azure_file_metadata(
+    headers: &reqwest::header::HeaderMap,
+) -> Result<(Option<String>, Option<EncryptedFileMetadata>), AzureDownloadError> {
     let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
 
-    let cse_info = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
+    let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
             let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
                 .context(azure_download_error::DeserializationSnafu)?;
-
             let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
                 azure_download_error::MissingMetadataSnafu {
                     field: AZURE_META_MATDESC,
@@ -626,31 +1183,379 @@ pub async fn download_from_azure_streaming(
             )?;
             let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
                 .context(azure_download_error::DeserializationSnafu)?;
-
-            // A CSE object always carries its content digest alongside the
-            // encryption headers — require it here so the decrypt path receives
-            // metadata and digest as one inseparable unit.
-            let digest = digest.context(azure_download_error::MissingMetadataSnafu {
-                field: AZURE_META_SFC_DIGEST,
-            })?;
-
-            Some(CseDownloadInfo {
-                metadata: EncryptedFileMetadata {
-                    encrypted_key: enc_data.wrapped_content_key.encrypted_key,
-                    iv: enc_data.content_encryption_iv,
-                    material_desc,
-                },
-                digest,
+            Some(EncryptedFileMetadata {
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
+                material_desc,
             })
         }
         None => None,
     };
+    Ok((digest, file_metadata))
+}
 
-    Ok(CloudStreamingDownload {
-        cloud_byte_count,
-        cse_info,
-        reader: cloud_http::spawn_byte_stream_producer(response),
+/// One Azure routing-HEAD attempt (Get Blob Properties) for size + metadata.
+/// 403 fast-fails as `AzureAttemptError::SasExpired` so the refresh layer can
+/// rotate the SAS before re-driving; non-403 transients retry in-line.
+async fn azure_head_attempt(
+    client: &reqwest::Client,
+    full_url: &str,
+    base: &RetryPolicy,
+) -> Result<reqwest::Response, AzureAttemptError<AzureDownloadError>> {
+    let policy = azure_403_fastfail_policy(base);
+    match azure_request_with_retry(|| client.head(full_url), Method::HEAD, &policy).await {
+        Ok(response) => Ok(response),
+        Err(AzureRequestError::AzureHttp { status_code, body }) => Err(map_http_to_attempt(
+            status_code,
+            body,
+            &url_host_and_path(full_url),
+            |status_code, body| AzureDownloadError::AzureHttp {
+                status_code,
+                body,
+                location: Location::default(),
+            },
+        )),
+        Err(other) => Err(AzureAttemptError::Other(AzureDownloadError::from(other))),
+    }
+}
+
+/// Wraps `azure_range_download` for the refresh layer: a 403 on any range
+/// (expired SAS) fast-fails as `SasExpired`, so the whole ranged download
+/// re-drives with a fresh SAS (whole-download restart, like the PUT multipart
+/// path); other errors pass through as `Other`.
+async fn azure_range_attempt(
+    client: &reqwest::Client,
+    full_url: &str,
+    content_length: u64,
+    chunk_size: u64,
+    concurrency: usize,
+    base: &RetryPolicy,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<cloud_http::CloudSpilledBody, AzureAttemptError<AzureDownloadError>> {
+    let policy = azure_403_fastfail_policy(base);
+    azure_range_download(
+        client,
+        full_url,
+        content_length,
+        chunk_size,
+        concurrency,
+        &policy,
+        spill_target,
+    )
+    .await
+    .map_err(|e| match e {
+        AzureDownloadError::AzureHttp {
+            status_code: 403,
+            body,
+            ..
+        } => map_http_to_attempt(
+            403,
+            body,
+            &url_host_and_path(full_url),
+            // 403 always maps to SasExpired, so this closure is never invoked.
+            |status_code, body| AzureDownloadError::AzureHttp {
+                status_code,
+                body,
+                location: Location::default(),
+            },
+        ),
+        other => AzureAttemptError::Other(other),
     })
+}
+
+/// Downloads a file from Azure and returns a [`CloudStreamingDownload`] whose
+/// `body` yields the ciphertext via a sync `Read`. A HEAD probe (Python /
+/// JDBC / ODBC parity) yields the blob size + metadata: blobs at or above
+/// `multipart.threshold` are fetched with parallel ranged GETs into a tempfile
+/// (read back through `SpilledReader`); smaller ones stream a single GET straight
+/// off the network. On a 403 the `refresher` (if any) rotates the SAS and the
+/// HEAD + GET retry with fresh credentials.
+pub async fn download_from_azure_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<CloudStreamingDownload, AzureDownloadError> {
+    // Build the client once (TLS config is creds-independent); only the SAS in
+    // `stage_info.creds` rotates on refresh.
+    let client = create_azure_client(stage_info)?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+
+    // The routing HEAD + the ranged/single GET all run INSIDE the refresh
+    // closure, so an expired-SAS 403 on any of them rotates the SAS and
+    // re-drives the whole download — symmetric with the PUT path.
+    let attempt = |creds: CloudCredentials| {
+        let stage_info = with_creds(stage_info, creds);
+        let key = key.clone();
+        let client = client.clone();
+        let base = policy.clone();
+        async move {
+            let (url, sas_token) = resolve_url_and_token(&stage_info, &key)
+                .map_err(|e| AzureAttemptError::Other(AzureDownloadError::from(e)))?;
+            let full_url = build_sas_url(&url, sas_token.reveal());
+
+            // Routing HEAD for size + metadata; 403 fast-fails to SasExpired.
+            let head = azure_head_attempt(&client, &full_url, &base).await?;
+            // Read the size from Content-Length rather than reqwest's
+            // `content_length()`, unreliable for HEAD (no body). Real Azure always
+            // sends Content-Length on Get Blob Properties.
+            let content_length = head
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let (digest, file_metadata) =
+                parse_azure_file_metadata(head.headers()).map_err(AzureAttemptError::Other)?;
+            // Git-stage objects carry encryption headers but no sfcdigest — non-CSE.
+            let cse_info = match (file_metadata, digest) {
+                (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+                (Some(_), None) => {
+                    tracing::debug!(
+                        "Azure: encryptiondata present but {AZURE_META_SFC_DIGEST} absent \
+                         (git-stage object); treating as non-CSE"
+                    );
+                    None
+                }
+                (None, _) => None,
+            };
+
+            // Route on size: parallel ranged GETs into a spill file above the
+            // threshold, a single streamed GET below. Both fast-fail 403.
+            let (body, cloud_bytes_read) = if content_length >= multipart.threshold.bytes() {
+                let chunk_size =
+                    multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
+                        .context(azure_download_error::FileTooLargeSnafu)
+                        .map_err(AzureAttemptError::Other)?;
+                tracing::debug!(
+                    "Azure ranged download: content_length={content_length} \
+                     chunk_size={chunk_size} concurrency={}",
+                    multipart.concurrency
+                );
+                let spilled = azure_range_attempt(
+                    &client,
+                    &full_url,
+                    content_length,
+                    chunk_size,
+                    multipart.concurrency,
+                    &base,
+                    spill_target,
+                )
+                .await?;
+                (
+                    cloud_http::CloudDownloadBody::Spilled(spilled),
+                    std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                )
+            } else {
+                let response = azure_get_attempt(&client, &full_url, &base)
+                    .await
+                    .map_err(|e| e.map_other(AzureDownloadError::from))?;
+                let reader = cloud_http::spawn_byte_stream_producer(response);
+                let handle = reader.bytes_read_handle();
+                (
+                    cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
+                    handle,
+                )
+            };
+
+            Ok(CloudStreamingDownload {
+                cloud_byte_count: content_length as i64,
+                cse_info,
+                cloud_bytes_read,
+                body,
+            })
+        }
+    };
+
+    let result = run_azure_with_sas_refresh(
+        refresher,
+        &stage_info.creds,
+        "GET",
+        |e| azure_download_error::StageInfoRefreshSnafu.into_error(e),
+        |status_code, body| AzureDownloadError::AzureHttp {
+            status_code,
+            body,
+            location: Location::default(),
+        },
+        attempt,
+    )
+    .await;
+
+    if let Err(AzureDownloadError::StageInfoRefresh { ref source, .. }) = result {
+        tracing::error!(reason = %source, "Azure SAS refresh failed; streaming download aborted");
+    }
+
+    result
+}
+
+/// Downloads the blob with parallel ranged GETs into a pre-allocated file,
+/// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
+/// Ranges are fetched up to `concurrency` at a time and written at their
+/// absolute offset, so out-of-order completion is fine.
+///
+/// The assembly file is chosen by `target`: a non-encrypted download writes
+/// straight into the caller's `<dst>.part` (one rename from done), while an
+/// encrypted / git-stage download writes into a throwaway temp (its ciphertext
+/// is decrypted into `.part` afterwards).
+///
+/// On failure the range futures are *drained*, not short-circuited: every
+/// in-flight `write_at` finishes and drops its file handle before we return, so
+/// the partially-written assembly file can be removed even on Windows (which
+/// refuses to unlink an open file). A failed download therefore leaves no
+/// leftover; the only way a partial survives is a hard kill (SIGKILL / power
+/// loss), and then it is a self-documenting, self-overwriting `<dst>.part`.
+async fn azure_range_download(
+    client: &reqwest::Client,
+    full_url: &str,
+    content_length: u64,
+    chunk_size: u64,
+    concurrency: usize,
+    policy: &RetryPolicy,
+    target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
+    let mk_temp_err = |e: std::io::Error| {
+        azure_download_error::TempFileSnafu {
+            detail: e.to_string(),
+        }
+        .build()
+    };
+
+    // Create + pre-allocate the assembly file off-thread. spawn_blocking (not
+    // block_in_place): safe on current-thread runtimes; block_in_place panics
+    // on those. Mirrors the S3 arm. Returns the owner (either the caller's
+    // `.part`, referenced by path, or a RAII temp) plus a shared, cloneable
+    // handle for the concurrent positioned writes.
+    enum Assembly {
+        Part(std::path::PathBuf),
+        Temp(NamedTempFile),
+    }
+
+    let owned_target = match target {
+        cloud_http::CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
+        cloud_http::CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
+    };
+    let (assembly, file) = tokio::task::spawn_blocking(move || {
+        let (is_part, path_or_dir) = owned_target;
+        if is_part {
+            let f = std::fs::File::create(&path_or_dir).map_err(mk_temp_err)?;
+            f.set_len(content_length).map_err(mk_temp_err)?;
+            Ok::<_, AzureDownloadError>((Assembly::Part(path_or_dir), Arc::new(f)))
+        } else {
+            let named = NamedTempFile::new_in(&path_or_dir).map_err(mk_temp_err)?;
+            named
+                .as_file()
+                .set_len(content_length)
+                .map_err(mk_temp_err)?;
+            let file = Arc::new(named.as_file().try_clone().map_err(mk_temp_err)?);
+            Ok((Assembly::Temp(named), file))
+        }
+    })
+    .await
+    .map_err(|e| {
+        azure_download_error::TempFileSnafu {
+            detail: format!("join error in tempfile setup: {e}"),
+        }
+        .build()
+    })??;
+
+    let ranges = multipart::plan_ranges(content_length, chunk_size);
+    // Drain, don't short-circuit: `collect` (not `try_collect`) polls EVERY
+    // range future to completion, so all in-flight `write_at` tasks finish and
+    // release their cloned file handles before we return. With no writer holding
+    // the file open, the cleanup below can unlink it even on Windows. The first
+    // error is surfaced after the drain.
+    let results: Vec<Result<(), AzureDownloadError>> = futures::stream::iter(ranges)
+        .map(|range| {
+            let file = Arc::clone(&file);
+            async move {
+                let bytes = azure_get_range(client, full_url, &range, policy).await?;
+                tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
+                    .await
+                    .map_err(|e| {
+                        azure_download_error::TempFileSnafu {
+                            detail: format!("join error writing chunk: {e}"),
+                        }
+                        .build()
+                    })?
+                    .map_err(|e| {
+                        azure_download_error::TempFileSnafu {
+                            detail: e.to_string(),
+                        }
+                        .build()
+                    })
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    // Release our write handle so the only reference left is the one owned by
+    // `assembly` (Temp) or none (Part) — required before unlinking on Windows.
+    drop(file);
+    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
+
+    match assembly {
+        Assembly::Part(path) => match outcome {
+            Ok(_) => Ok(cloud_http::CloudSpilledBody::Part(path)),
+            Err(e) => {
+                // Drained above, so no writer still holds `.part` open; the
+                // best-effort remove succeeds even on Windows.
+                let _ = std::fs::remove_file(&path);
+                Err(e)
+            }
+        },
+        // On success hand out the unlink-on-drop guard; on failure `named` drops
+        // here and NamedTempFile unlinks it (drained, so no open writer).
+        Assembly::Temp(named) => {
+            outcome.map(|_| cloud_http::CloudSpilledBody::Temp(named.into_temp_path()))
+        }
+    }
+}
+
+/// Ranged GET of `[range.start, range.end]`, returning the body bytes.
+async fn azure_get_range(
+    client: &reqwest::Client,
+    full_url: &str,
+    range: &multipart::DownloadRange,
+    policy: &RetryPolicy,
+) -> Result<Bytes, AzureDownloadError> {
+    let range_header = format!("bytes={}-{}", range.start, range.end);
+    let response = azure_request_with_retry(
+        || {
+            client
+                .get(full_url)
+                .header(reqwest::header::RANGE, &range_header)
+        },
+        Method::GET,
+        policy,
+    )
+    .await?;
+    // A body-read failure after a successful response maps to the same
+    // SAS-scrubbed transport error the buffered `download_from_azure` uses.
+    let bytes = response.bytes().await.map_err(|e| {
+        AzureDownloadError::from(AzureRequestError::Http {
+            detail: sanitize_sas(e.to_string()),
+        })
+    })?;
+    // Validate that the endpoint returned exactly the bytes we asked for.
+    // An endpoint that silently truncates a range would cause write_at to
+    // stomp adjacent chunks with zeros rather than surfacing an error.
+    let expected_len = (range.end - range.start + 1) as usize;
+    if bytes.len() != expected_len {
+        return Err(azure_download_error::TempFileSnafu {
+            detail: format!(
+                "ranged GET returned {} bytes, expected {} (range {}-{})",
+                bytes.len(),
+                expected_len,
+                range.start,
+                range.end,
+            ),
+        }
+        .build());
+    }
+    Ok(bytes)
 }
 
 /// Removes SAS token signature values from a string to prevent credential leakage in logs.
@@ -670,6 +1575,15 @@ fn sanitize_sas(input: String) -> String {
     }
     result.push_str(remaining);
     result
+}
+
+/// Host + path of a URL for logging, dropping the entire query string (SAS
+/// `sig`/`sv`/`se`/… included) per `ud-log-url-in-error-host-and-path`.
+/// `sanitize_sas` remains for scrubbing unstructured error-body text.
+fn url_host_and_path(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .map(|u| format!("{}{}", u.host_str().unwrap_or("<unknown-host>"), u.path()))
+        .unwrap_or_else(|_| "<unparseable-url>".to_string())
 }
 
 // --- Error types ---
@@ -777,6 +1691,20 @@ pub enum AzureUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("File too large for Azure block-blob upload"))]
+    FileTooLarge {
+        #[snafu(source(from(multipart::FileTooLargeError, Box::new)))]
+        source: Box<multipart::FileTooLargeError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to refresh Azure stage credentials after 403"))]
+    StageInfoRefresh {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -824,6 +1752,26 @@ pub enum AzureDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Object too large to download from Azure"))]
+    FileTooLarge {
+        #[snafu(source(from(multipart::FileTooLargeError, Box::new)))]
+        source: Box<multipart::FileTooLargeError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to stage Azure ranged download to a temp file: {detail}"))]
+    TempFile {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to refresh Azure stage credentials after 403"))]
+    StageInfoRefresh {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 // --- Unit tests ---
@@ -837,9 +1785,10 @@ mod tests {
     use bytes::Bytes;
 
     // Zero-backoff test policy lives in `file_manager::internal` so the in-crate
-    // and external integration tests share one definition that derives from the
-    // production `azure_retry_policy` (no drift). Aliased so call sites read
-    // `test_policy(..)`.
+    // and external integration tests share one definition (the base put/get
+    // policy; `azure_403_fastfail_policy` derives the per-attempt policy from it).
+    // Aliased so call sites read `test_policy(..)`.
+    use crate::file_manager::internal::FakeStageInfoRefresher;
     use crate::file_manager::internal::azure_test_retry_policy as test_policy;
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
@@ -857,6 +1806,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: overrides
                 .storage_account
                 .or(Some("mystorageaccount".to_string())),
@@ -1004,44 +1954,55 @@ mod tests {
     }
 
     #[test]
-    fn azure_retry_policy_includes_403() {
-        let policy = azure_retry_policy(&base_policy());
+    fn azure_403_fastfail_policy_excludes_403_from_retryable() {
+        // Even if the caller's base policy lists 403 as retryable, the per-attempt
+        // policy must exclude it so an expired-SAS 403 fast-fails to the refresh
+        // layer instead of being inline-retried.
+        let mut base = base_policy();
+        base.extra_retryable_statuses.insert(403);
+        let policy = azure_403_fastfail_policy(&base);
         assert!(
-            policy.extra_retryable_statuses.contains(&403),
-            "403 should be retryable (SAS token clock skew / replication delays)"
+            !policy.extra_retryable_statuses.contains(&403),
+            "403 must be excluded so it fast-fails to the SAS-refresh layer"
         );
     }
 
     #[test]
-    fn azure_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = azure_retry_policy(&base_policy());
-        assert_eq!(
-            policy.max_elapsed,
-            Duration::from_secs(600),
-            "max_elapsed must exceed REQUEST_TIMEOUT_SECS (300s)"
-        );
-        assert!(
-            policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
-            "retry budget must be larger than a single request timeout"
-        );
-    }
-
-    #[test]
-    fn azure_retry_policy_max_attempts() {
+    fn azure_403_fastfail_policy_preserves_user_backoff_and_extra_statuses() {
+        // Regression guard: the per-attempt policy must carry the caller's
+        // backoff, jitter, max_elapsed, max_attempts, and user-configured extra
+        // retryable statuses unchanged — only 403 is removed. The previous
+        // implementation rebuilt from `RetryPolicy::default()`, silently dropping
+        // all of these (mirrors GCS's `gcs_retry_policy_preserves_*` guard).
         let mut base = base_policy();
         base.max_attempts = 25;
-        assert_eq!(azure_retry_policy(&base).max_attempts, 25);
-        base.max_attempts = 1;
-        assert_eq!(azure_retry_policy(&base).max_attempts, 1);
-    }
-
-    #[test]
-    fn azure_retry_policy_backoff_bounds() {
-        let p = azure_retry_policy(&base_policy());
-        assert_eq!(p.backoff.base, Duration::from_millis(250));
-        assert_eq!(p.backoff.cap, Duration::from_secs(16));
-        assert_eq!(p.backoff.factor, 2.0);
-        assert!(matches!(p.backoff.jitter, Jitter::Decorrelated));
+        base.extra_retryable_statuses.insert(429);
+        let policy = azure_403_fastfail_policy(&base);
+        assert_eq!(policy.max_attempts, 25, "max_attempts preserved");
+        assert_eq!(
+            policy.max_elapsed, base.max_elapsed,
+            "max_elapsed preserved"
+        );
+        assert_eq!(
+            policy.backoff.base, base.backoff.base,
+            "backoff base preserved"
+        );
+        assert_eq!(
+            policy.backoff.cap, base.backoff.cap,
+            "backoff cap preserved"
+        );
+        assert_eq!(
+            policy.backoff.factor, base.backoff.factor,
+            "backoff factor preserved"
+        );
+        assert!(
+            matches!(policy.backoff.jitter, Jitter::Decorrelated),
+            "jitter preserved (not forced to None)"
+        );
+        assert!(
+            policy.extra_retryable_statuses.contains(&429),
+            "user-configured extra retryable status preserved"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -1164,6 +2125,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: Some("test".to_string()),
         }
     }
@@ -1174,6 +2136,391 @@ mod tests {
             digest: digest.to_string(),
             cse: None,
         }
+    }
+
+    // ---- Refresh-on-403: predicate, marker, and HEAD-recovery coverage ----
+    // (Restored from PR #248; the GET-redrive proof lands with the per-range
+    // work.)
+
+    fn azure_creds(sig: &str) -> CloudCredentials {
+        CloudCredentials::Azure {
+            sas_token: SensitiveString::from(format!("sv=2021&sig={sig}&se=2099")),
+        }
+    }
+
+    fn identity_refresh_map(
+        e: crate::file_manager::types::StageInfoRefreshError,
+    ) -> AzureUploadError {
+        AzureUploadError::StageInfoRefresh {
+            source: Box::new(e),
+            location: Location::default(),
+        }
+    }
+
+    #[test]
+    fn is_expired_sas_error_fires_on_any_403() {
+        assert!(is_expired_sas_error(403));
+    }
+
+    #[test]
+    fn is_expired_sas_error_ignores_non_403() {
+        assert!(!is_expired_sas_error(200));
+        assert!(!is_expired_sas_error(404));
+        assert!(!is_expired_sas_error(500));
+        assert!(!is_expired_sas_error(401));
+    }
+
+    #[tokio::test]
+    async fn azure_sas_refresher_refresh_returns_false_when_cache_marker_unchanged() {
+        // No arm_rotation: refresh() bumps the call counter but stores nothing,
+        // so the cache marker does not advance; AzureSasRefresher must report
+        // the coalesced no-op as Ok(false).
+        let mut fake = FakeStageInfoRefresher::new(azure_creds("SIG1"));
+        let initial_marker = fake.cache().cached_at();
+        let mut sas_refresher =
+            AzureSasRefresher::new_with_marker(&mut fake, initial_marker, identity_refresh_map);
+
+        let result = crate::refresh::Refresher::refresh(&mut sas_refresher).await;
+
+        assert!(
+            result.is_ok(),
+            "unchanged marker must return Ok; got: {result:?}"
+        );
+        assert!(
+            !result.unwrap(),
+            "Ok(false): marker unchanged means no new snapshot"
+        );
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "fake called exactly once even though nothing was stored"
+        );
+    }
+
+    #[tokio::test]
+    async fn azure_sas_refresher_refresh_returns_true_when_cache_marker_advances() {
+        let mut fake = FakeStageInfoRefresher::new(azure_creds("SIG1"));
+        fake.arm_rotation(azure_creds("SIG2"));
+        let initial_marker = fake.cache().cached_at();
+        let mut sas_refresher =
+            AzureSasRefresher::new_with_marker(&mut fake, initial_marker, identity_refresh_map);
+
+        let result = crate::refresh::Refresher::refresh(&mut sas_refresher).await;
+
+        assert!(
+            result.is_ok(),
+            "rotated marker must return Ok; got: {result:?}"
+        );
+        assert!(
+            result.unwrap(),
+            "Ok(true): marker advanced means new snapshot landed"
+        );
+    }
+
+    /// Regression for the HEAD-bypass bug: a default PUT (!overwrite) whose
+    /// pre-upload HEAD probe hits an expired-SAS 403 must REFRESH and retry,
+    /// not fail closed before the PUT. Fails on the pre-fix code (HEAD ran
+    /// outside the refresh closure → terminal, no refresh); passes after.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_403_with_refresher_refreshes_then_uploads_when_not_overwrite() {
+        use wiremock::Request;
+        const ORIGINAL_SIG: &str = "sig=ORIGINAL-EXPIRED";
+        const REFRESHED_SIG: &str = "sig=REFRESHED-FRESH";
+        let original_sas = format!("sv=2021-08-06&{ORIGINAL_SIG}&se=2099-01-01");
+        let refreshed_sas = format!("sv=2021-08-06&{REFRESHED_SIG}&se=2099-01-01");
+
+        let server = MockServer::start().await;
+        // HEAD: 403 with the expired SAS; 404 (blob absent) once refreshed.
+        Mock::given(method("HEAD"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(404)
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+        // PUT succeeds only with the refreshed SAS.
+        Mock::given(method("PUT"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(201)
+                } else {
+                    ResponseTemplate::new(403)
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(CloudCredentials::Azure {
+                sas_token: SensitiveString::from(original_sas.clone()),
+            }),
+            ..Default::default()
+        });
+
+        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Azure {
+            sas_token: SensitiveString::from(refreshed_sas.clone()),
+        });
+        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+
+        let status = upload_to_azure_or_skip(
+            prepared_with_digest("local-digest"),
+            &stage,
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut refresher_opt,
+        )
+        .await
+        .expect("default PUT must refresh the expired SAS on the HEAD 403 and upload");
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "exactly one refresh for the single HEAD-403 recovery"
+        );
+
+        let requests = server.received_requests().await.unwrap_or_default();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.method.as_str() == "PUT" && r.url.as_str().contains(REFRESHED_SIG)),
+            "the PUT after refresh must carry the refreshed SAS"
+        );
+    }
+
+    /// §13 M1/M2 (Gherkin S7): a refresh-MECHANISM failure logs once at `error!`,
+    /// naming the failure reason. S4 (GET) shares this contract on the download path.
+    #[tokio::test(flavor = "multi_thread")]
+    #[tracing_test::traced_test]
+    async fn put_refresh_mechanism_failure_logs_at_error_naming_reason() {
+        let server = MockServer::start().await;
+        // Every PUT 403s → triggers a refresh; the refresh itself is armed to fail.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("expired"))
+            .mount(&server)
+            .await;
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_failure("GS re-issue rejected in test");
+        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+
+        let result = upload_to_azure_or_skip(
+            prepared_with_digest("d"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut refresher_opt,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "a refresh-mechanism failure must be terminal"
+        );
+        assert!(
+            logs_contain("Azure SAS refresh failed; upload aborted"),
+            "refresh-mechanism failure must log at error! (upload aborted)"
+        );
+        assert!(
+            logs_contain("GS re-issue rejected in test"),
+            "the error! log must name the refresh-failure reason"
+        );
+    }
+
+    /// §13 M1/M2 (Gherkin S5/S8): a 403 that survives the refresh (the fresh SAS
+    /// is still rejected) logs once at `warn!` carrying the status and a
+    /// SAS-redacted URL (no sig value leaks).
+    #[tokio::test(flavor = "multi_thread")]
+    #[tracing_test::traced_test]
+    async fn put_terminal_403_after_refresh_logs_at_warn_with_redacted_url() {
+        const REFRESHED_SIG: &str = "sig=REFRESHED-STILL-BAD";
+        let refreshed_sas = format!("sv=2021&{REFRESHED_SIG}&se=2099");
+        let server = MockServer::start().await;
+        // Every PUT 403s, even with the refreshed SAS: refresh rotates once, the
+        // retry still 403s, and the terminal 403 surfaces after the refresh.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("still denied"))
+            .mount(&server)
+            .await;
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(azure_creds("ORIGINAL-EXPIRED")),
+            ..Default::default()
+        });
+        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Azure {
+            sas_token: SensitiveString::from(refreshed_sas.clone()),
+        });
+        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+
+        let result = upload_to_azure_or_skip(
+            prepared_with_digest("d"),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut refresher_opt,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 403,
+                    ..
+                })
+            ),
+            "a 403 surviving the refresh must be terminal; got {result:?}"
+        );
+        assert!(
+            logs_contain("failed terminally with 403 after SAS refresh"),
+            "a terminal 403 must log at warn!"
+        );
+        assert!(
+            !logs_contain("REFRESHED-STILL-BAD") && !logs_contain("ORIGINAL-EXPIRED"),
+            "the warn! log's URL must be SAS-redacted (no sig value)"
+        );
+    }
+
+    /// Symmetric-GET regression: a 403 on the streaming download's routing HEAD
+    /// (expired SAS) must refresh and re-drive, not fail closed. Fails on the
+    /// pre-fix code (routing HEAD ran outside the refresh layer). The ranged-GET
+    /// path shares this closure + `azure_range_attempt`'s 403 mapping; a wire
+    /// test for the ranged branch (Range-request mocking) is a follow-up.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn streaming_get_routing_head_403_with_refresher_recovers() {
+        use wiremock::Request;
+        const ORIGINAL_SIG: &str = "sig=ORIGINAL-EXPIRED";
+        const REFRESHED_SIG: &str = "sig=REFRESHED-FRESH";
+        const BLOB_BODY: &[u8] = b"WHOLE-BLOB-BODY";
+        let original_sas = format!("sv=2021-08-06&{ORIGINAL_SIG}&se=2099-01-01");
+        let refreshed_sas = format!("sv=2021-08-06&{REFRESHED_SIG}&se=2099-01-01");
+
+        let server = MockServer::start().await;
+        // Routing HEAD: 403 with the expired SAS; 200 once refreshed.
+        Mock::given(method("HEAD"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(200).insert_header(AZURE_META_SFC_DIGEST, "test-digest")
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+        // Single GET (content-length below threshold): 200 body once refreshed.
+        Mock::given(method("GET"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(200).set_body_bytes(BLOB_BODY.to_vec())
+                } else {
+                    ResponseTemplate::new(403)
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(CloudCredentials::Azure {
+                sas_token: SensitiveString::from(original_sas.clone()),
+            }),
+            ..Default::default()
+        });
+        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Azure {
+            sas_token: SensitiveString::from(refreshed_sas.clone()),
+        });
+        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+
+        let dl = download_from_azure_streaming(
+            &stage,
+            "file.csv",
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
+            &mut refresher_opt,
+        )
+        .await
+        .expect("streaming GET must refresh on the routing-HEAD 403 and succeed");
+
+        let mut body = Vec::new();
+        std::io::Read::read_to_end(&mut dl.body.into_reader().expect("into_reader"), &mut body)
+            .expect("read body after re-drive");
+        assert_eq!(
+            body, BLOB_BODY,
+            "body after re-drive must match served bytes"
+        );
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "exactly one refresh for the single routing-HEAD 403"
+        );
+        let reqs = server.received_requests().await.unwrap_or_default();
+        assert!(
+            reqs.iter()
+                .any(|r| r.method.as_str() == "HEAD" && r.url.as_str().contains(REFRESHED_SIG)),
+            "the re-driven HEAD must carry the refreshed SAS"
+        );
+    }
+
+    /// GET with no refresher: a routing-HEAD 403 terminates as `AzureHttp` 403
+    /// (no refresh, no inline 403 retry, no hang) — symmetric with the PUT
+    /// no-refresher test.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn streaming_get_403_no_refresher_terminates() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_string("Server failed to authenticate the request."),
+            )
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let result = download_from_azure_streaming(
+            &stage,
+            "file.csv",
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
+            &mut None,
+        )
+        .await;
+        // `CloudStreamingDownload` is not Debug; assert on the extracted error.
+        let err = result.err();
+        assert!(
+            matches!(
+                &err,
+                Some(AzureDownloadError::AzureHttp {
+                    status_code: 403,
+                    ..
+                })
+            ),
+            "routing-HEAD 403 + no refresher must terminate as AzureHttp 403; got: {err:?}"
+        );
     }
 
     /// Scenario 1: existence-only branch — `!overwrite && exists` returns
@@ -1200,7 +2547,9 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -1233,7 +2582,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1278,7 +2629,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -1311,7 +2664,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1341,7 +2696,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1373,7 +2730,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1495,7 +2854,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1551,7 +2912,9 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await;
         assert!(
@@ -1599,7 +2962,9 @@ mod tests {
             "file.dat",
             true,
             false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -1682,21 +3047,25 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
         .expect("retry should recover and existence skip should fire");
         assert_eq!(status, UploadStatus::Skipped);
     }
 
-    /// Persistent 403 + !overwrite: HEAD retries up to max_attempts (6),
-    /// then `upload_to_azure_or_skip` fails-CLOSED. PUT must not run.
+    /// 403 + !overwrite, no refresher: the HEAD probe fast-fails the expired
+    /// SAS to the refresh layer (no inline 403 retry — that is the bug this
+    /// change fixes). With no refresher to rotate against, it surfaces
+    /// terminally as `AzureHttp` 403 (fail-CLOSED). HEAD runs once; PUT never.
     #[tokio::test(flavor = "multi_thread")]
-    async fn head_fails_closed_on_persistent_403_when_not_overwrite() {
+    async fn head_403_without_refresher_fails_closed_when_not_overwrite() {
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
             .respond_with(ResponseTemplate::new(403))
-            .expect(DEFAULT_PUT_GET_MAX_ATTEMPTS as u64)
+            .expect(1)
             .mount(&mock)
             .await;
         Mock::given(method("PUT"))
@@ -1712,31 +3081,37 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await;
         assert!(
             matches!(
                 &result,
-                Err(AzureUploadError::RetryExhausted { detail, .. }) if detail.contains("403")
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 403,
+                    ..
+                })
             ),
-            "persistent 403 + !overwrite must fail-CLOSED with RetryExhausted carrying \"403\" in detail, not silently fall through to PUT; got: {result:?}"
+            "403 + !overwrite + no refresher must fail-CLOSED terminally as AzureHttp 403 (fast-fail, no inline 403 retry, no PUT); got: {result:?}"
         );
     }
 
-    /// Persistent 403 + skip_match (overwrite=true): HEAD retries up to
-    /// max_attempts (6), then fails-OPEN to PUT. HEAD-count = 6 pins
-    /// that retry runs even on the skip_match branch.
+    /// 403 + skip_match (overwrite=true), no refresher: the HEAD probe
+    /// fast-fails once (no inline 403 retry) and falls through to PUT
+    /// (fail-OPEN — a missed skip is just bandwidth, and the PUT refreshes on
+    /// its own 403 if the SAS is expired). HEAD runs once; PUT runs and succeeds.
     #[tokio::test(flavor = "multi_thread")]
-    async fn head_fails_open_on_persistent_403_when_skip_match() {
+    async fn head_403_fails_open_to_put_when_skip_match() {
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
             .respond_with(ResponseTemplate::new(403))
-            .expect(DEFAULT_PUT_GET_MAX_ATTEMPTS as u64)
+            .expect(1)
             .mount(&mock)
             .await;
-        // Pins M3: the skip_match path must fall through to PUT after HEAD
-        // exhaustion (fail-OPEN), not surface the HEAD error (fail-CLOSED).
+        // The skip_match path falls through to PUT on a HEAD failure (fail-OPEN),
+        // rather than surfacing the HEAD error (fail-CLOSED).
         Mock::given(method("PUT"))
             .respond_with(ResponseTemplate::new(201))
             .expect(1)
@@ -1750,10 +3125,12 @@ mod tests {
             "f.dat",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await
-        .expect("skip_match path should fail-OPEN to PUT after HEAD retry exhaustion");
+        .expect("skip_match 403 HEAD should fail-OPEN to PUT");
         assert_eq!(status, UploadStatus::Uploaded);
     }
 
@@ -1781,7 +3158,9 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await;
         assert!(
@@ -1817,7 +3196,9 @@ mod tests {
             "f.dat",
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
         )
         .await;
         assert!(
@@ -1829,6 +3210,228 @@ mod tests {
                 })
             ),
             "non-retryable non-404 status + !overwrite must fail-CLOSED with AzureHttp{{401}} on first attempt; got: {result:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Block-blob multipart upload + ranged download (wiremock)
+    // ---------------------------------------------------------------
+
+    use wiremock::Request;
+    use wiremock::matchers::query_param;
+
+    /// `MultipartParams` with a 1-byte threshold so any non-empty body takes
+    /// the block-blob path.
+    fn always_multipart() -> MultipartParams {
+        MultipartParams {
+            threshold: super::super::multipart::MultipartThreshold::from_server(Some(1)),
+            concurrency: 4,
+        }
+    }
+
+    /// A 9 MiB SSE body splits into three Azure blocks (4 + 4 + 1 MiB) at the
+    /// 4 MiB default block size: `Put Block` ×3 then one `Put Block List`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_block_blob_upload_stages_blocks_then_commits() {
+        let mock = MockServer::start().await;
+
+        // Put Block: PUT ?comp=block&blockid=...
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(3)
+            .mount(&mock)
+            .await;
+
+        // Put Block List: PUT ?comp=blocklist — must carry the digest metadata.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                3u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "file.dat",
+            true,
+            false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
+        )
+        .await
+        .expect("block-blob upload should succeed against the mock");
+
+        let received = mock.received_requests().await.unwrap();
+        let commit = received
+            .iter()
+            .find(|r| {
+                r.url
+                    .query_pairs()
+                    .any(|(k, v)| k == "comp" && v == "blocklist")
+            })
+            .expect("a Put Block List commit must be sent");
+        assert!(
+            commit.headers.get(AZURE_META_SFC_DIGEST).is_some(),
+            "digest metadata must ride on the block-list commit"
+        );
+    }
+
+    /// A blob above the threshold is fetched with a ranged GET into a tempfile
+    /// and re-read byte-for-byte through the returned reader.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_ranged_download_reassembles_blob() {
+        use std::io::Read as _;
+
+        let payload = b"hello ranged azure blob world".to_vec();
+        let mock = MockServer::start().await;
+
+        // HEAD (Get Blob Properties) reports the size via Content-Length; the
+        // body bytes drive that header (production reads the header, not the
+        // body, on HEAD).
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&mock)
+            .await;
+
+        // The single range returns the whole payload.
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+
+        let spill = tempfile::tempdir().unwrap();
+        let dl = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Temp(spill.path()),
+            &mut None,
+        )
+        .await
+        .expect("ranged download should succeed against the mock");
+
+        assert_eq!(dl.cloud_byte_count, payload.len() as i64);
+        let mut got = Vec::new();
+        dl.body
+            .into_reader()
+            .unwrap()
+            .read_to_end(&mut got)
+            .unwrap();
+        assert_eq!(got, payload, "reassembled blob must match the object");
+    }
+
+    /// A non-encrypted ranged Azure download assembles straight into the caller's
+    /// `.part` file, which the caller renames to the destination on success.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_ranged_download_assembles_into_part_file() {
+        let payload = b"azure ranged straight into dot part".to_vec();
+        let mock = MockServer::start().await;
+
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&mock)
+            .await;
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let part_path = dir.path().join("out.dat.part");
+        let dl = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Part(&part_path),
+            &mut None,
+        )
+        .await
+        .expect("ranged download should succeed against the mock");
+
+        match dl.body {
+            cloud_http::CloudDownloadBody::Spilled(cloud_http::CloudSpilledBody::Part(p)) => {
+                assert_eq!(p, part_path, "the assembly file must be the caller's .part");
+                assert_eq!(
+                    std::fs::read(&p).unwrap(),
+                    payload,
+                    "the .part must hold the whole reassembled object"
+                );
+            }
+            _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
+        }
+    }
+
+    /// A failed ranged Azure download drains its in-flight writes and removes the
+    /// `.part`, so a failure never leaves a partial file behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn azure_ranged_download_failure_removes_part_file() {
+        let mock = MockServer::start().await;
+
+        // HEAD advertises 32 bytes, but every ranged GET returns a 4-byte body,
+        // tripping the range-length guard and failing the download.
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 32]))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(vec![0u8; 4]))
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let part_path = dir.path().join("out.dat.part");
+        let result = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            cloud_http::CloudSpillTarget::Part(&part_path),
+            &mut None,
+        )
+        .await;
+
+        assert!(result.is_err(), "a short ranged GET must fail the download");
+        assert!(
+            !part_path.exists(),
+            "a failed ranged download must not leave a `.part` file behind"
         );
     }
 }

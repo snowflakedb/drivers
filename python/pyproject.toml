@@ -24,7 +24,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "cryptography>=44.0.1",
+    "cryptography>=46.0.5",
     "protobuf>=6.32.1",
     "pytz",
     "tomlkit>=0.13",
@@ -137,7 +137,7 @@ addopts = [
     "--durations=0",
     # Flaky tests are excluded by default; the python_flaky_tests CI job
     # overrides this with `-m flaky` to run them in isolation.
-    "-m", "not flaky",
+    "-m", "not flaky and not requires_no_mfa",
 ]
 # Default timeout for tests (2 minutes) - prevents hanging tests on CI
 timeout = 120
@@ -148,6 +148,7 @@ markers = [
     "skip_for_json_result_set(reason: str=''): skip when QUERY_RESULT_FORMAT=JSON (tests requiring Arrow precision)",
     "require_vpn: test requires VPN access (skipped outside Jenkins CI)",
     "requires_browser: test requires headless browser container (skipped unless SF_TEST_HEADLESS_BROWSER=true)",
+    "requires_no_mfa: uses parameters_aws_local.json (skipped unless SF_TEST_NO_MFA=true)",
     "flaky: marks tests as flaky; skipped by default, run explicitly via the flaky CI job or `-m flaky` locally",
 ]
 log_cli = false
@@ -234,7 +235,7 @@ dependencies = [
     # Runtime deps mypy needs to resolve imports in snowflake.connector.
     # Keep in sync with `[project].dependencies` plus numpy (referenced by
     # arrow_context.py type hints).
-    "cryptography>=44.0.1",
+    "cryptography>=46.0.5",
     "protobuf>=6.32.1",
     "pytz",
     "tomlkit>=0.13",
@@ -312,6 +313,8 @@ cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --cov=sr
 # Runs only tests marked @pytest.mark.flaky. `-m flaky` overrides the default
 # `-m "not flaky"` from [tool.pytest.ini_options].addopts.
 flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas -m flaky --no-cov {args}"
+# Runs @pytest.mark.requires_no_mfa tests (parameters_aws_local.json).
+no_mfa = "pytest tests/e2e/authentication/test_user_password.py -m requires_no_mfa -n 0 --no-cov {args}"
 
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]

@@ -1,0 +1,1882 @@
+bugs:
+- key: SNOW-26586
+  commit_date: 2016-12
+  summary: 'Snowsql: 250003: Failed to decode JSON output due to invalid UTF-8 byte
+    sequence in a chunk of large result set'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-26990
+  commit_date: 2017-01
+  summary: OCSP response file cache problem on python connector 1.3.5
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-26972
+  commit_date: 2017-01
+  summary: ocsp_pyopenssl.py has incompatible import for python 2
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-26912
+  commit_date: 2017-01
+  summary: 'Python3.6: TypeError: _send_request() takes 5 positional arguments but
+    6 were given'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-26552
+  commit_date: 2017-01
+  summary: Python connector stuck downloading result set in Python2
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-27328
+  commit_date: 2017-01
+  summary: region cannot be used in Python Connector and SnowSQL
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-27289
+  commit_date: 2017-01
+  summary: HTTP 504 is not retried in Python Connector
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-27254
+  commit_date: 2017-01
+  summary: snowflakecomputing.okta.com returns 400
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-27059
+  commit_date: 2017-01
+  summary: 'ocsp_pyopenssl.py: AttributeError: ''module'' object has no attribute
+    ''_strptime_time'''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-28072
+  commit_date: 2017-02
+  summary: Conversion failure causes collections.defaultdict
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-27749
+  commit_date: 2017-02
+  summary: query_results method doesn't return sfqid and sqlstate
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-27691
+  commit_date: 2017-02
+  summary: signal handling issue in snowflake_connector_python
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-27671
+  commit_date: 2017-02
+  summary: snowsql - PUT file show success but not loaded into the stage
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-27588
+  commit_date: 2017-02
+  summary: NBC Universal unable to connect via proxy without insecure_mode=True
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-27530
+  commit_date: 2017-02
+  summary: 'Snowflake: Snowflake Python Connector and AWS SQS Interaction Error'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-27443
+  commit_date: 2017-02
+  summary: 'Invalid account name causes TypeError: argument of type ''NoneType'' is
+    not iterable'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-28596
+  commit_date: 2017-03
+  summary: snowsql may not be closing sessions properly
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-28493
+  commit_date: 2017-03
+  summary: 'Python3.4.3 and 3.5.0: datetime.utcfromtimestamp and fromtimestamp rounds
+    results incorrectly'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-29324
+  commit_date: 2017-04
+  summary: 'Windows: SnowSQL ''select'' statement returns Error: [Errno 22] Invalid
+    argument'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-29114
+  commit_date: 2017-04
+  summary: Failed to remove session object
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-30428
+  commit_date: 2017-05
+  summary: Snowsql error when attempting to GET files from a strage
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31712
+  commit_date: 2017-07
+  summary: SnowSQL GET command to download internal stage files to local drive is
+    not working
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-31358
+  commit_date: 2017-07
+  summary: connector_python2.test_ocsp.test_ocsp_generate_pair_of_certid_response
+    fails
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-31353
+  commit_date: 2017-07
+  summary: relax dependency of botocore, boto3, etc for Python Connector
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-33054
+  commit_date: 2017-08
+  summary: 'Python 3.6: ''force_to_stop'' is assigned to before global declaration'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-32100
+  commit_date: 2017-08
+  summary: '''NoneType'' object has no attribute ''upload_file'' when running PUT
+    command'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-33544
+  commit_date: 2017-09
+  summary: snowsql/python connector error in course of longer run
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-33471
+  commit_date: 2017-09
+  summary: 'Python Connector application hangs and raises TypeError: signal handler
+    must be signal.SIG_IGN, signal.SIG_DFL, or a callable object'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-35672
+  commit_date: 2017-10
+  summary: Uninitialized ASN.1 value ("__nonzero__" attribute looked up)
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-35473
+  commit_date: 2017-10
+  summary: 'KeyError: ''dst_file_size'' in Python Connector'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-35404
+  commit_date: 2017-10
+  summary: snowsql does not report milliseconds correctly on timestamps
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-35374
+  commit_date: 2017-10
+  summary: Send CLIENT_APP_ID and CLIENT_APP_VERSION to GS from client in all requests
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-34123
+  commit_date: 2017-10
+  summary: 'KeyError: ''errorMessage'''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-34027
+  commit_date: 2017-10
+  summary: AWS Token exception is not caught properly in Python Connector
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-39175
+  commit_date: 2018-01
+  summary: 'KeyError: u''No field numbered 1 is present in this asn1crypto.keys.PublicKeyInfo'''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-39905
+  commit_date: 2018-02
+  summary: SQLALchemy cannot run a SQL in paramstyle=qmark mode
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-40296
+  commit_date: 2018-03
+  summary: (botocore 1.8.50 (/tmp/a/lib/python3.4/site-packages), Requirement.parse('botocore<1.10.0,>=1.9.0'),
+    {'boto3'})
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-39815
+  commit_date: 2018-03
+  summary: Python connector fails if $HOME or %USERPROFILE% not set
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-48327
+  commit_date: 2018-07
+  summary: Intermittent Float Division by Zero observed on SnowSQL doing puts to Azure
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-51567
+  commit_date: 2018-08
+  summary: Snowflake connector doesn't terminate the docker container in v1.6.4 onwards
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-51297
+  commit_date: 2018-08
+  summary: SnowSQL -o remove_comments=True breaks the query
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-50743
+  commit_date: 2018-08
+  summary: The timestamp is in the local timezone in comparison
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-50514
+  commit_date: 2018-08
+  summary: Renew session token by id token while running a query
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-63032
+  commit_date: 2019-01
+  summary: 'Python: Invalidate outdated OCSP response when checking cache hit'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-66722
+  commit_date: 2019-02
+  summary: 'Possible problem date-handling specifically on MS-Windows: Error 252005
+    (n/a): Failed to convert: field DT: DATE::-25567, Error: [Errno 22] Invalid argument'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-66025
+  commit_date: 2019-02
+  summary: COPY INTO Error - File became not found
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-65289
+  commit_date: 2019-03
+  summary: Python Add OCSP signing certificate validity check
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-74395
+  commit_date: 2019-04
+  summary: Put on Azure failing with Authorization Error after 2 hours
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-74042
+  commit_date: 2019-04
+  summary: Fix the incorrect custom OCSP Cache Server URL in Python Driver for Privatelink
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-75423
+  commit_date: 2019-04
+  summary: qmark not binding None
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-57024
+  commit_date: 2019-05
+  summary: Casting a timestamp earlier than UNIX time adds 0.100 seconds
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-75990
+  commit_date: 2019-05
+  summary: PUT URI bug in python driver
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-82268
+  commit_date: 2019-06
+  summary: Privatelink OCSP URL should not change for SnowSQL
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-80218
+  commit_date: 2019-06
+  summary: unsupported format character ''' (0x27) at index 189
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-79769
+  commit_date: 2019-06
+  summary: Update Python Connector to discard invalid OCSP Responses while merging
+    caches
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-79076
+  commit_date: 2019-06
+  summary: 'Python: ignore session gone 390111'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-77611
+  commit_date: 2019-07
+  summary: not all arguments converted during string formatting
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-91462
+  commit_date: 2019-08
+  summary: Encounter Arrow error when returning empty result using python connecter
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-91104
+  commit_date: 2019-08
+  summary: connector looses context after connection drop/restore
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-89190
+  commit_date: 2019-08
+  summary: Azure Gov Issue with PUT
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-88410
+  commit_date: 2019-08
+  summary: Python custom OCSP Server URL problem in multithreaded env
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-88126
+  commit_date: 2019-08
+  summary: Increase in "JWT token is invalid" errors with Python connector
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-85085
+  commit_date: 2019-08
+  summary: Flaky Test - test.test_connection::test_privatelink in BPTP mainline runs
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-98133
+  commit_date: 2019-09
+  summary: 'BPTP Failure: test.test_ocsp::test_ocsp_revoked_certificate'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-105228
+  commit_date: 2019-10
+  summary: 'Python: try to reproduce CTC issue using Ryder''s Azure database'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-101495
+  commit_date: 2019-10
+  summary: 'PythonConnector-Win64-Test failed while running fetchmany(): name error
+    ArrowConverterContext not found'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-94449
+  commit_date: 2019-10
+  summary: Python sessions remain open even if they are disposed manually
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-116504
+  commit_date: 2019-11
+  summary: snowflake-connector-python pyarrow cxx11 abi build issue with python:3.6
+    container
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-115762
+  commit_date: 2019-11
+  summary: Tests on Mac are failing
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-124396
+  commit_date: 2019-12
+  summary: Arrow result did not work on Python Connector Mac
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-122797
+  commit_date: 2019-12
+  summary: Snowsql 1.2.1 is not working on MacOS Catalina 10.15.1
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-116535
+  commit_date: 2019-12
+  summary: XP stages the result data in GCS without GZIP content type if ROWS_PER_RESULTSET
+    is set to the statement/query-request
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1245057
+  commit_date: 2020-01
+  summary: '[MEDIUM] Multi-Cluster Warehouse Spindown Not Working (awsuswest2preprod9)'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-123935
+  commit_date: 2020-01
+  summary: get_columns retrieve table data only when there are too many tables in
+    schema
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-122477
+  commit_date: 2020-01
+  summary: 'Python: When OVERWRITE is false the file upload behavior is different
+    on AWS and AZURE'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-133561
+  commit_date: 2020-01
+  summary: cur.fetch_pandas_all() return wrong result for column type decimal (38,
+    10)
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-132325
+  commit_date: 2020-01
+  summary: Add precommit hooks to python connector and sqlalchemy
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-132226
+  commit_date: 2020-01
+  summary: Add a testing file generating CLI
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-153683
+  commit_date: 2020-04
+  summary: 'Preprod BPTP Failure: t_dml::mod_guard_exec.py'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-150680
+  commit_date: 2020-04
+  summary: Add Jenkins testing for Python connector's FIPS mode
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-159494
+  commit_date: 2020-05
+  summary: Flake 8 errors Python connector
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-156287
+  commit_date: 2020-05
+  summary: 'Python connector error: cryptography.hazmat.primitives.hashes'' has no
+    attribute ''SHA3_384'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-167749
+  commit_date: 2020-06
+  summary: Memory Leak found in Python Connector version 2.2.7
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-165626
+  commit_date: 2020-06
+  summary: Support cffi v1.14.0
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-165132
+  commit_date: 2020-06
+  summary: auto_compress corrupts gzip file when filename contains UTF8 characters
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-164802
+  commit_date: 2020-06
+  summary: Resolve flaky Python Connector tests
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-162908
+  commit_date: 2020-06
+  summary: Report Unknown Errors from Python Connector to OOB Telemetry
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-161954
+  commit_date: 2020-06
+  summary: Temporary Directory Path Not Windows-Compatible
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-161039
+  commit_date: 2020-06
+  summary: Azure Core doesn't support Python 3.5.1.
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-159405
+  commit_date: 2020-06
+  summary: snowflake-connector-python 2.2.4 requires keyring in setup.py
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-169276
+  commit_date: 2020-06
+  summary: Python Connector write_pandas fails if you include database or schema
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-82046
+  commit_date: 2020-06
+  summary: Python connector doesn't report invalid parameters to the connect() method.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-171018
+  commit_date: 2020-07
+  summary: 'fetch_pandas_all() gives "NotSupportedError: Unknown error" for result_scan
+    queries'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-186696
+  commit_date: 2020-08
+  summary: Python Mac Packages are getting generated in new version specific directory
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-182731
+  commit_date: 2020-08
+  summary: Fix Put issue
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-197585
+  commit_date: 2020-09
+  summary: 'KeyError: KeyError(''snowflake-connector-python'',)'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-197364
+  commit_date: 2020-09
+  summary: GH action for Issue doesn't set the assignee
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-189907
+  commit_date: 2020-09
+  summary: Unclosed file handler
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-199427
+  commit_date: 2020-09
+  summary: 'BPTP Job failure: RT-Python35'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-183907
+  commit_date: 2020-10
+  summary: Loading data with write_pandas/to_sql does not honor column defaults
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-216517
+  commit_date: 2020-10
+  summary: Improve Cursor Code Coverage
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-215519
+  commit_date: 2020-10
+  summary: RT-PyConnectorN tests don't aggregate the test results.
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-210833
+  commit_date: 2020-10
+  summary: 'BPTP Job failure: RT-FIPS-PyConnector36'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-210112
+  commit_date: 2020-10
+  summary: Fix GH to Jira comments
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-207403
+  commit_date: 2020-10
+  summary: Fix Windows 37 test issues
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-201547
+  commit_date: 2020-10
+  summary: Upload Code Coverage HTML Output to GitHub
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-201468
+  commit_date: 2020-10
+  summary: Fix failing Windows PyConnector tests
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-201139
+  commit_date: 2020-10
+  summary: Add ignore folder functionality to dependabot
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-200160
+  commit_date: 2020-10
+  summary: Support Pandas 1.1
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-200123
+  commit_date: 2020-10
+  summary: Improve File Transfer Agent Code Coverage
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-200122
+  commit_date: 2020-10
+  summary: Improve S3 Util Code Coverage
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-200120
+  commit_date: 2020-10
+  summary: Improve ssl_wrap_socket.py Code Coverage
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-200118
+  commit_date: 2020-10
+  summary: Secret Detector at 100% Code Coverage
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-143458
+  commit_date: 2020-11
+  summary: Python 3.8 wheel doesn't work on Windows
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-219413
+  commit_date: 2020-11
+  summary: Improve Connection Code Coverage
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-230672
+  commit_date: 2020-11
+  summary: 'BPTP Job failure: RT-FIPS-PyConnector36'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-240266
+  commit_date: 2020-12
+  summary: 'BPTP-C7 Job failure: RT-FIPS-PyConnector36'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-226899
+  commit_date: 2020-12
+  summary: ''
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-269926
+  commit_date: 2021-01
+  summary: 'BPTP Job failure: RT-FIPS-PyConnector36'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-267170
+  commit_date: 2021-01
+  summary: Fix OldDriver tests
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-256116
+  commit_date: 2021-01
+  summary: Disable flake8 check on Windows build
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-232777
+  commit_date: 2021-01
+  summary: Python connector doesn't send Host Header with initial CONNECT request,
+    causing issues for Customer required to use ssl proxy
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-281257
+  commit_date: 2021-02
+  summary: 'BPTP Job failure: RT-PyConnector36'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-274851
+  commit_date: 2021-02
+  summary: Bump pytz dependency limit
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-270946
+  commit_date: 2021-02
+  summary: 'Error:  NOT_FOUND_FILE | float division by zero, when running an empty
+    stage load via Snowsql'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-298813
+  commit_date: 2021-03
+  summary: 'SnowSQL Error: eventloop:1237 - 253003: 253003: ''NoneType'' object has
+    no attribute ''get_blob_client'''
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-298604
+  commit_date: 2021-03
+  summary: Resolve new flaky test
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-294266
+  commit_date: 2021-03
+  summary: Python Connector - issuing implicit commit unconditionally upon connection
+    __exit__() method call
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-294263
+  commit_date: 2021-03
+  summary: ''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-329431
+  commit_date: 2021-03
+  summary: '`StatusQuery.QUEUED_REPAIRING_WAREHOUSE` is not correctly represented
+    in the API (typo)'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-256036
+  commit_date: 2021-05
+  summary: 'BPTP Test failure: t_tpcds-comp::query51a.sql'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-303685
+  commit_date: 2021-05
+  summary: Snowflake-connector-python raises segmentation fault when loading timestamp
+    value with a year greater than 2263
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-344429
+  commit_date: 2021-05
+  summary: Pandas and case sensitivity
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-371846
+  commit_date: 2021-06
+  summary: Fix olddrivertests
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-299658
+  commit_date: 2021-07
+  summary: 'Python Connector: write_pandas() does not escape parquet column identifiers'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-378268
+  commit_date: 2021-07
+  summary: S3 Internal Stage Private Link Snowsql PUT command is not working in us-east-1
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-371967
+  commit_date: 2021-07
+  summary: Implement AWS Support recommendations to manage connection pool count/reduce
+    thread count
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-368531
+  commit_date: 2021-08
+  summary: Corrupted dates with executemany
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-430464
+  commit_date: 2021-08
+  summary: Add retry back to parallel fetch
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-414668
+  commit_date: 2021-08
+  summary: Add support for pyarrow 5.0
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-157438
+  commit_date: 2021-09
+  summary: 'Feature request: print `sso_url` when unable to open browser'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-200089
+  commit_date: 2021-09
+  summary: 'unsupported operand type(s) for +: ''int'' and ''str'' in write_pandas'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-466099
+  commit_date: 2021-09
+  summary: 'Python Connector Error from internal stage GET: AttributeError: ''NoneType''
+    object has no attribute ''key'''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-454169
+  commit_date: 2021-09
+  summary: Support Pandas 1.3 series
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-448675
+  commit_date: 2021-09
+  summary: Snowflake Python connector not able to create temp SYSTEMBIND stage during
+    bulk insert
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-446950
+  commit_date: 2021-09
+  summary: massive amount of ERROR level logs introduced with result_batch.py coming
+    with 2.6.0 (negative effect on performance)
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-443844
+  commit_date: 2021-09
+  summary: 'PUT ''400 Client Error: Bad Request for url'' error w/use_new_put_get=True
+    (Python Connector v2.6.0)'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-436322
+  commit_date: 2021-09
+  summary: Setting client_session_keep_alive=True hangs Python on exit, even with
+    atexit hooks
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-196953
+  commit_date: 2021-10
+  summary: include standard C++ headers everywhere that needs them.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-481620
+  commit_date: 2021-10
+  summary: Base Snowflake exception class doesn't set args
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-475323
+  commit_date: 2021-10
+  summary: 'write_pandas throwing __init__() missing 1 required positional argument:
+    ''backend'''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-468993
+  commit_date: 2021-10
+  summary: Error Structure Change between 2.5.1 and 2.6.0
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-449590
+  commit_date: 2021-10
+  summary: snowflake.connector.SnowflakeCursor.execute params type hint should be
+    Optional[Union[List, Tuple, Dict]]
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-500750
+  commit_date: 2021-11
+  summary: pyarrow 6.0 results in version conflict
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-499495
+  commit_date: 2021-11
+  summary: Add an attribute with the cursor's last executed query
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-487478
+  commit_date: 2021-11
+  summary: Chunk upload fails for streams exceeding the multipart_threshold
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-487268
+  commit_date: 2021-11
+  summary: dbapi.Binary should be bytes not str
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-487250
+  commit_date: 2021-11
+  summary: Review usage of D_GLIBCXX_USE_CXX11_ABI
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-480963
+  commit_date: 2021-11
+  summary: Snowsql v1.2.19 shows 403 Forbidden error when the file with characters
+    like '~' gets uploaded to internal stage
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-477347
+  commit_date: 2021-11
+  summary: 'Bug and standardization request: fix conflicting requirements.txt and
+    snowflake-connector package requirements. Standardize install process'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-372033
+  commit_date: 2021-11
+  summary: Hundreds of JWT token expiration via ODBC driver
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-501058
+  commit_date: 2021-11
+  summary: Cursor.execute() fails to interpolate SQL when params=()
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-491028
+  commit_date: 2021-12
+  summary: Python Connector does not check for self.rest causing 'NoneType' object
+    has no attribute 'request'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-521102
+  commit_date: 2021-12
+  summary: Fix description rendering on PyPI
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-510552
+  commit_date: 2021-12
+  summary: PEP 561 support, missing py.typed
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-507674
+  commit_date: 2021-12
+  summary: v2.7.1 - Blocked queries are now be considered to be still running- Not
+    working as expected
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-347580
+  commit_date: 2022-01
+  summary: Enable option to create tables (including temporary/transient option) when
+    table doesn exist using write_pandas
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-499499
+  commit_date: 2022-01
+  summary: Violating NOT NULL constraint should raise IntegrityError instead of ProgrammingError
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-499498
+  commit_date: 2022-01
+  summary: Raise InterfaceError instead of DatabaseError when trying to execute against
+    a closed cursor
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-499496
+  commit_date: 2022-01
+  summary: Cursor.executemany() crashes if args is an iterator
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-474539
+  commit_date: 2022-01
+  summary: TIMESTAMP_TZ loses TZ when fetching as pandas/arrow
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-467996
+  commit_date: 2022-01
+  summary: negative numbers get mangled in Python Connector with arrow_number_to_decimal=True
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-523131
+  commit_date: 2022-01
+  summary: Possible memory leak in SnowflakeConnection
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-514815
+  commit_date: 2022-01
+  summary: SnowSQL does not seem to attempt Duo authentication for MFA-enrolled user,
+    same works in same version of Python Connector
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-513998
+  commit_date: 2022-01
+  summary: '''StorageCredential'' object has no attribute ''_command'' with long running
+    put'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-514682
+  commit_date: 2022-02
+  summary: Fix FIPS tests
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-560944
+  commit_date: 2022-03
+  summary: Python3.6 downloading unsupported snowflake connector
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-544463
+  commit_date: 2022-03
+  summary: curs.fetch_pandas_all get the wrong index number
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-544083
+  commit_date: 2022-03
+  summary: 'AttributeError: ''NoneType'' object has no attribute ''_use_requests_session''
+    with Python Connector Version 2.6.0 and above'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-539182
+  commit_date: 2022-03
+  summary: '"SnowflakeConnection" is not exported from module "snowflake.connector.connector"'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-499493
+  commit_date: 2022-04
+  summary: Some interval math off by one microsecond for years beyond ~2250
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-469340
+  commit_date: 2022-04
+  summary: Add no-retry option when submitting an Asynchronous Query (execute_async)
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-285535
+  commit_date: 2022-05
+  summary: Implement callproc
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-587720
+  commit_date: 2022-05
+  summary: CLA bot stopped working
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-522489
+  commit_date: 2022-05
+  summary: GET fails to download a file from Internal stage using snowsql v1.2.21
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-592647
+  commit_date: 2022-06
+  summary: 'IndexError: list index out of range in snowflake/connector/result_batch.py:698:
+    IndexError'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-584369
+  commit_date: 2022-06
+  summary: error code missing while fetching result of a failed query using `get_results_from_sfqid()`
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-634755
+  commit_date: 2022-07
+  summary: 'ImportError: cannot import name ''NamedTuple'' from ''typing_extensions'''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-628192
+  commit_date: 2022-07
+  summary: RequestsDependencyWarning
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-628190
+  commit_date: 2022-07
+  summary: Support pyarrow versions 7 and 8
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-623822
+  commit_date: 2022-07
+  summary: Fix SnowparkPythonRegressRunner Job
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-617426
+  commit_date: 2022-07
+  summary: Ability to overwrite tables when using write_pandas()
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-612517
+  commit_date: 2022-07
+  summary: Rejecting invalid query request w/o query entity by GS although query exists
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-582728
+  commit_date: 2022-07
+  summary: Invalid Pyarrow Timestamps Returned
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-641540
+  commit_date: 2022-08
+  summary: When using fetch_arrow and fetch_pandas functions empty results are not
+    typed
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-651560
+  commit_date: 2022-08
+  summary: “extTypeName” can be empty when returned by a table stored proc
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-647539
+  commit_date: 2022-08
+  summary: UPDATE and DELETE not returning rowcount for snowflake-sqlalchemy
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-645247
+  commit_date: 2022-08
+  summary: Python connector telemetry is partially broken
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-669945
+  commit_date: 2022-09
+  summary: 'BUG: snowflake-connector-python versions  >= 2.7.8 have incompatible dependencies'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-664933
+  commit_date: 2022-09
+  summary: session.create_dataframe() crashes when the Pandas dataframe is empty.
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-669650
+  commit_date: 2022-10
+  summary: write_pandas is not atomic
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-698526
+  commit_date: 2022-11
+  summary: Python connector 2.8.2 infinite loop in OCSP cache validation
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-686297
+  commit_date: 2022-11
+  summary: Support pandas 1.5
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-679732
+  commit_date: 2022-11
+  summary: Please stop aggressively upper bounding cryptography
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-676736
+  commit_date: 2022-11
+  summary: GET file results in change of file permissions (does not inherit parent
+    folder permission)
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-668660
+  commit_date: 2022-11
+  summary: Inefficient file lock for OCSP cache mechanism
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-534004
+  commit_date: 2023-01
+  summary: write_pandas does not use schema provided
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-730503
+  commit_date: 2023-01
+  summary: 'ModuleNotFoundError: No module named ''awscli'''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-725840
+  commit_date: 2023-01
+  summary: Getting the "unsupported" exception when trying to use fetch_arrow_all
+    function of Snowflake Python connector
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-721780
+  commit_date: 2023-01
+  summary: 'ModuleNotFoundError: No module named ''cryptography.hazmat.backends.openssl.x509'''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-721779
+  commit_date: 2023-01
+  summary: Client MFA caching not working in 2.9.0
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-698916
+  commit_date: 2023-01
+  summary: Pyarrow 8 is not compatible with Python 3.11
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-673771
+  commit_date: 2023-01
+  summary: SnowSQL authenticator externalbrowser issue
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-744534
+  commit_date: 2023-02
+  summary: prepare() gets args, but supports only kwargs
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-733835
+  commit_date: 2023-02
+  summary: ReauthenticationRequest Error upon externalbrowser Authentication
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-647590
+  commit_date: 2023-02
+  summary: Using `execute_async` to perform a `PUT` command raises KeyError
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-749141
+  commit_date: 2023-03
+  summary: 'Python connector PUT command fails with "AttributeError("''NoneType''
+    object has no attribute ''strip" on re-upload of files >200 MB. '
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-733718
+  commit_date: 2023-03
+  summary: 'Setting SnowSQL option "remove_comments=true" breaks the SQL syntax '
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-761004
+  commit_date: 2023-03
+  summary: ''
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-752200
+  commit_date: 2023-03
+  summary: Invalide None values in fetchmany and fetchall introduced in 3.0.1
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-670921
+  commit_date: 2023-04
+  summary: Login did not fails instantly on 403 response
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-803639
+  commit_date: 2023-04
+  summary: Allow charset-normalizer>=3
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-777893
+  commit_date: 2023-04
+  summary: Cannot access member "fetchone" for type "dict[str, Any]"
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-773047
+  commit_date: 2023-04
+  summary: write_pandas fails for non-range indexed dataframes
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-787480
+  commit_date: 2023-05
+  summary: Snowsql's output has messy code
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-770678
+  commit_date: 2023-05
+  summary: Incorrect date values when inserting via array bind optimization
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-746341
+  commit_date: 2023-06
+  summary: Snowpark is not escaping column names with double quotes
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-837919
+  commit_date: 2023-06
+  summary: Fix Python Connector tests
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-834366
+  commit_date: 2023-06
+  summary: Cannot use session.write_pandas snowpark command
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-799408
+  commit_date: 2023-06
+  summary: 'Connector not handling ocsp_response_validation_cache file correctly in
+    Windows '
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-735220
+  commit_date: 2023-07
+  summary: pd_writer example from documentation not working
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-862388
+  commit_date: 2023-07
+  summary: Native Okta Authentication fails on retry for sso/saml endpoint when connections
+    increase
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-856569
+  commit_date: 2023-07
+  summary: Segmentation Fault in cache.py pickle dump
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-847497
+  commit_date: 2023-07
+  summary: 'Python UDF workloads on GCPpreprod failed with '
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-833713
+  commit_date: 2023-07
+  summary: SnowSQL performance issue with OCSP validation in 1.2.26.
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-767903
+  commit_date: 2023-07
+  summary: '"OSError: [WinError 145] The directory is not empty" when PUTing a temporary
+    stage'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-739316
+  commit_date: 2023-08
+  summary: Snowflake Batch Results (get_result_batches())
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-874210
+  commit_date: 2023-08
+  summary: Snowsql corrupts large files in PUT commands
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-870802
+  commit_date: 2023-08
+  summary: Dictionary changed size during iteration when running in a multithreaded
+    environment
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-810810
+  commit_date: 2023-08
+  summary: AttributeError when using SOCKS5 Proxy
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-899912
+  commit_date: 2023-09
+  summary: 'DeprecationWarning: ''urllib3.contrib.pyopenssl'' module is deprecated'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-893112
+  commit_date: 2023-09
+  summary: Bump platformdirs upper bound (ideally to be <4)
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-872568
+  commit_date: 2023-09
+  summary: Python Driver Does not retry Entire OCSP URLfor Privatelink
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-937596
+  commit_date: 2023-10
+  summary: Add chmod and chown suggestions to owner and permission checks
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-843716
+  commit_date: 2023-10
+  summary: Cryptography library cleanup
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-926289
+  commit_date: 2023-11
+  summary: Why is urllib3 both vendored and marked as a dependency?
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-901157
+  commit_date: 2023-11
+  summary: Session.builder.getOrCreate does not take into consideration if the authentication
+    token has expired
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-966003
+  commit_date: 2023-12
+  summary: Unexpected arrow table behaviour when query returns zero rows
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-999576
+  commit_date: 2024-01
+  summary: Fix some snowflake-python-connector local test problems
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-986347
+  commit_date: 2024-01
+  summary: Compilation issue on arm/linux (missing cstdin include)
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1049425
+  commit_date: 2024-02
+  summary: ''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1017272
+  commit_date: 2024-02
+  summary: Cannot install snowflake-connector-python cryptography>=42.0.0
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1015703
+  commit_date: 2024-02
+  summary: Memory Leak when running queries with many PARTITION clauses
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1045652
+  commit_date: 2024-03
+  summary: Bump platformdirs upper bound (again)?
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-956671
+  commit_date: 2024-03
+  summary: We should change the user-agent of the diagnostic report so we can track
+    it's usage
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-996732
+  commit_date: 2024-03
+  summary: Error - cannot import name 'SnowflakeOCSPAsn1Crypto' from partially initialized
+    module
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1279205
+  commit_date: 2024-05
+  summary: 'Arctic Wolf POC:  Intermittent failure of python procedure (OperationalError
+    255005: Failed to open arrow stream)'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1367711
+  commit_date: 2024-05
+  summary: Log Error coming from line CArrowTableIterator.cpp#L230 making a lot noise
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1473581
+  commit_date: 2024-06
+  summary: Nested URL within the query parameter is not adequately handled by the
+    regex pattern
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1460707
+  commit_date: 2024-06
+  summary: Erroneously Looking for Config.toml File when using DATABASES dictionary
+    in settings.py
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1538754
+  commit_date: 2024-07
+  summary: Update keyring upper bound
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1526475
+  commit_date: 2024-07
+  summary: str typing for private_key is misleading and causes errors if used
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1511108
+  commit_date: 2024-07
+  summary: client_session_keep_alive_heartbeat_frequency is parsed as string instead
+    of int
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1473577
+  commit_date: 2024-07
+  summary: MFA caching not working when set internal_application_name or internal_application_version
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1613751
+  commit_date: 2024-08
+  summary: https://github.com/snowflakedb/snowflake-connector-python/issues
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1362666
+  commit_date: 2024-08
+  summary: Multiple calls to `write_pandas` with the same global random seed can result
+    in stage name collisions
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1650640
+  commit_date: 2024-09
+  summary: Emit `WARNING` instead of `ERROR` for OCSP fail-open message
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1625324
+  commit_date: 2024-09
+  summary: '`execute_async()` + `get_results_from_sfqid()` has a naive error handler'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1559272
+  commit_date: 2024-09
+  summary: get_results_from_sfqid(query_id) vs query_result(query_id)
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1657037
+  commit_date: 2024-10
+  summary: ''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1650124
+  commit_date: 2024-10
+  summary: ''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1820480
+  commit_date: 2024-11
+  summary: ECDSA-signed certificate seems to trip up PythonConnector with `TypeError`
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1763555
+  commit_date: 2024-11
+  summary: OpenTelemetry integration utterly breaks driver if using DataDog
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1836910
+  commit_date: 2024-12
+  summary: '`AttributeError: module ''lib'' has no attribute ''X509_V_FLAG_NOTIFY_POLICY''`
+    when importing snowflake.connector'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1891253
+  commit_date: 2025-01
+  summary: Unable to install with latest pyOpenSSL==25.0.0
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1920533
+  commit_date: 2025-02
+  summary: '`__open_connection` doesn''t determine privatelink OCSP Cache correctly,
+    when `host` is uppercase'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1989239
+  commit_date: 2025-03
+  summary: Segmentation fault while parsing response with invalid datetime `tupleitem
+    (a=0x7ffff54a30d0, i=0) at Objects/tupleobject.c:368`
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-1763673
+  commit_date: 2025-03
+  summary: Publish Python 3.13 wheels
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1896089
+  commit_date: 2025-04
+  summary: '[Logs] - Downgrade log level from info to debug'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-2057503
+  commit_date: 2025-04
+  summary: ''
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-2055494
+  commit_date: 2025-04
+  summary: '[regression] Latest version (3.14.1) throwing issue to import InstanceMetadataRegionFetcher'
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-2048239
+  commit_date: 2025-04
+  summary: 'Mac tests got flaky on main branch: fails to lock OCSP cache file'
+  status: Done
+  priority: Highest
+  analysis_status: not_analyzed
+- key: SNOW-2026002
+  commit_date: 2025-04
+  summary: Connectivity Diagnostic check connecting to "ireallyshouldnotexistatallanywhere.com"
+    returns 200 response
+  status: Done
+  priority: PatchCritical
+  analysis_status: not_analyzed
+- key: SNOW-1959514
+  commit_date: 2025-05
+  summary: write_pandas() does not process database with single quotes in name correctly
+  status: Done
+  priority: Highest
+  analysis_status: not_analyzed
+- key: SNOW-2100781
+  commit_date: 2025-05
+  summary: '`use_virtual_url` is not passed into the `get_location`'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-2182766
+  commit_date: 2025-07
+  summary: Is 3.15.1 not released yet?
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-2127911
+  commit_date: 2025-07
+  summary: Issue with initializing file based cache in version 3.15.0
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-2129602
+  commit_date: 2025-08
+  summary: Snowflake client connectors do not add "https://" for custom GCS endpoints
+    in some clients
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-694457
+  commit_date: 2025-08
+  summary: Connector is leaking HTTP(S)_PROXY environment variables
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-2464063
+  commit_date: 2026-01
+  summary: '[python connector] Fix string representation for interval year-month subtypes'
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-2439940
+  commit_date: 2026-02
+  summary: ''
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-3020359
+  commit_date: 2026-02
+  summary: Automatically expand tilde (~) to $HOME in private_key_file path
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-3244317
+  commit_date: 2026-03
+  summary: ''
+  status: Done
+  priority: Critical
+  analysis_status: not_analyzed
+- key: SNOW-3230072
+  commit_date: 2026-03
+  summary: '`skip_config_file_permissions_check` is not respected while reading connections.toml'
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-3220158
+  commit_date: 2026-03
+  summary: Azure Workload Identity Federation Metadata Request Header
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-1184290
+  commit_date: 2026-04
+  summary: write_pandas() w/auto_create_table=False + overwrite=True should not CREATE
+    TABLE IF NOT EXISTS
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-298756
+  commit_date: 2026-04
+  summary: executemany - INSERT regex wrong
+  status: Done
+  priority: Medium
+  analysis_status: not_analyzed
+- key: SNOW-1902886
+  commit_date: 2026-05
+  summary: ''
+  status: Done
+  priority: Low
+  analysis_status: not_analyzed
+- key: SNOW-3526469
+  commit_date: 2026-05
+  summary: snowflake-connector-python sdist ships non-native minicore .so files, breaks
+    Homebrew audit
+  status: Done
+  priority: High
+  analysis_status: not_analyzed
+- key: SNOW-3481510
+  commit_date: 2026-05
+  summary: Failures in snowflake.connector.pandas_tools._do_create_temp_stage when
+    CREATE TEMPORARY STAGE <name> is issued without IF NOT EXISTS
+  status: Done
+  priority: Highest
+  analysis_status: not_analyzed
+- key: SNOW-3392651
+  commit_date: 2026-06
+  summary: ''
+  status: Ready for Deployment
+  priority: Low
+  analysis_status: not_analyzed
+- key: SNOW-3388299
+  commit_date: 2026-06
+  summary: ''
+  status: In Review
+  priority: Medium
+  analysis_status: not_analyzed

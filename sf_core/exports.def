@@ -10,3 +10,4 @@ EXPORTS
     sf_core_perf_enabled
     sf_core_get_perf_data
     sf_core_reset_perf_metrics
+    sf_core_log_event

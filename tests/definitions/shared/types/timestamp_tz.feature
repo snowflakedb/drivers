@@ -1,11 +1,11 @@
-@python @core_not_needed
+@python @jdbc @core_not_needed
 Feature: TIMESTAMP_TZ type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should cast timestamp_tz values to appropriate type
     # Python: Values should be cast to 'datetime' type with tzinfo set
     Given Snowflake client is logged in
@@ -17,7 +17,7 @@ Feature: TIMESTAMP_TZ type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select timestamp_tz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -30,7 +30,7 @@ Feature: TIMESTAMP_TZ type support
       | epoch        | '1970-01-01 00:00:00 +00:00'::TIMESTAMP_TZ                                                       | 1970-01-01 00:00:00 +00:00                              |
       | microseconds | '2024-01-15 10:30:00.123456 +05:00'::TIMESTAMP_TZ                                                | 2024-01-15 10:30:00.123456 +05:00                       |
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should preserve timezone offset for timestamp_tz
     # TIMESTAMP_TZ preserves the original offset — unlike LTZ which converts to session TZ
     # Includes fractional offsets (+05:30, +04:30, -02:30) found in real-world timezones
@@ -38,7 +38,7 @@ Feature: TIMESTAMP_TZ type support
     When Query "SELECT '2024-01-15 10:30:00 +05:30'::TIMESTAMP_TZ, '2024-01-15 10:30:00 -08:00'::TIMESTAMP_TZ, '2024-01-15 10:30:00 +00:00'::TIMESTAMP_TZ, '2024-01-15 10:30:00 +04:30'::TIMESTAMP_TZ, '2024-01-15 10:30:00 -02:30'::TIMESTAMP_TZ" is executed
     Then Result should preserve offsets [+05:30, -08:00, +00:00, +04:30, -02:30]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select edge date timestamp_tz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -51,13 +51,13 @@ Feature: TIMESTAMP_TZ type support
       | year 1900  | '1900-01-01 00:00:00 +00:00'::TIMESTAMP_TZ                    | 1900-01-01 00:00:00 +00:00      |
       | pre-epoch  | '1960-06-15 12:00:00 +05:00'::TIMESTAMP_TZ                    | 1960-06-15 12:00:00 +05:00      |
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL values for timestamp_tz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00 +05:00'::TIMESTAMP_TZ, NULL::TIMESTAMP_TZ" is executed
     Then Result should contain [2024-01-15 10:30:00 +05:00, NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks for timestamp_tz
     Given Snowflake client is logged in
     When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1, '2024-01-01 00:00:00 +00:00'::TIMESTAMP_TZ) as ts FROM TABLE(GENERATOR(ROWCOUNT => 50000)) ORDER BY ts" is executed
@@ -67,7 +67,7 @@ Feature: TIMESTAMP_TZ type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select <values> from table for timestamp_tz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_TZ column exists with values <insert_values>
@@ -82,7 +82,7 @@ Feature: TIMESTAMP_TZ type support
       | microseconds | '2024-01-15 10:30:00 +05:00', '2024-01-15 10:30:00.123456 +05:00'          | 2024-01-15 10:30:00 +05:00, 2024-01-15 10:30:00.123456 +05:00     |
       | null         | NULL, '2024-01-15 10:30:00 +05:00'                                         | 2024-01-15 10:30:00 +05:00, NULL                                    |
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks from table for timestamp_tz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_TZ column exists with 50000 sequential timestamp values
@@ -93,20 +93,20 @@ Feature: TIMESTAMP_TZ type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select timestamp_tz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_TZ, ?::TIMESTAMP_TZ" is executed with bound timestamp values
     Then Result should contain the bound timestamps
     And Values should have timezone info
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select null timestamp_tz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_TZ" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert timestamp_tz using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_TZ column exists

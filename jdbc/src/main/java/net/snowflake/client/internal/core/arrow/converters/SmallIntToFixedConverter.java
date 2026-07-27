@@ -93,6 +93,9 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
     if (smallIntVector.isNull(index)) {
       return null;
     }
+    if (!shouldTreatDecimalAsInt()) {
+      return toBigDecimal(index);
+    }
     return (long) getShort(index);
   }
 

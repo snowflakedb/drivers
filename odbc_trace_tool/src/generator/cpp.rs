@@ -1087,6 +1087,16 @@ impl<'a> GenContext<'a> {
             "SQLRETURN ret = SQLExtendedFetch({stmt_var}, {orient}, {offset}, &extfetch_rows_{n}, extfetch_status_{n}.data());"
         ));
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        if call.return_code.is_success() {
+            if let Some(rc) = call.row_count {
+                self.writeln(&format!("CHECK(extfetch_rows_{n} == {rc});"));
+            }
+            if call.return_code == crate::model::ReturnCode::Success {
+                self.writeln(&format!(
+                    "CHECK(extfetch_status_{n}[0] == SQL_ROW_SUCCESS);"
+                ));
+            }
+        }
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
@@ -2452,8 +2462,48 @@ mod tests {
             "extended fetch call; output:\n{output}"
         );
         assert!(
+            output.contains("CHECK(extfetch_rows_0 == 6);"),
+            "row-count assertion; output:\n{output}"
+        );
+        assert!(
+            output.contains("CHECK(extfetch_status_0[0] == SQL_ROW_SUCCESS);"),
+            "row-status[0] assertion; output:\n{output}"
+        );
+        assert!(
             output.contains("SQLFreeStmt(stmt0, SQL_CLOSE);"),
             "free stmt option; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_extended_fetch_success_with_info_omits_row_status_assertion() {
+        use crate::model::{ExtendedFetch, OdbcCall, ReturnCode, SetStmtAttr};
+
+        let calls = vec![
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ROWSET_SIZE".to_string()),
+                value: Some(1),
+                str_len: Some(0),
+            }),
+            OdbcCall::ExtendedFetch(ExtendedFetch {
+                return_code: ReturnCode::SuccessWithInfo,
+                handle: Some("0xstmt".to_string()),
+                orientation: Some(1),
+                orientation_name: Some("SQL_FETCH_NEXT".to_string()),
+                offset: Some(0),
+                row_count: Some(1),
+            }),
+        ];
+        let output = gen_ado(calls);
+        assert!(
+            output.contains("CHECK(extfetch_rows_0 == 1);"),
+            "row-count still asserted under SuccessWithInfo; output:\n{output}"
+        );
+        assert!(
+            !output.contains("CHECK(extfetch_status_0[0] == SQL_ROW_SUCCESS);"),
+            "row-status[0] must not be asserted when fetch returns SuccessWithInfo; output:\n{output}"
         );
     }
 

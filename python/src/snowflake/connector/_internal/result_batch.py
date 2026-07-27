@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum, unique
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from ..errors import InterfaceError
+from .arrow_context import ArrowConverterContext
 from .errorhandler import ErrorHandlerMixin
 from .protobuf_gen.database_driver_v1_pb2 import ColumnMetadata, ResultChunk
 
@@ -54,6 +54,7 @@ class ResultBatchMixin(ErrorHandlerMixin):
     _description: list[ResultMetadata]
     _connection: Connection | AsyncConnection | None
     _columns: list[ColumnMetadata]
+    _arrow_context: ArrowConverterContext
     _arrow_stream_ptr: int | None
 
     def __init__(
@@ -67,6 +68,9 @@ class ResultBatchMixin(ErrorHandlerMixin):
         self._description = description
         self._connection = connection
         self._columns = list(columns) if columns else []
+        self._arrow_context = (
+            ArrowConverterContext.create(connection) if connection is not None else ArrowConverterContext()
+        )
         self._arrow_stream_ptr = None
 
     @classmethod
@@ -111,18 +115,6 @@ class ResultBatchMixin(ErrorHandlerMixin):
         return self._connection
 
     # ------------------------------------------------------------------
-    # Connection resolution
-    # ------------------------------------------------------------------
-
-    def _require_connection(
-        self, connection: Connection | AsyncConnection | None = None
-    ) -> Connection | AsyncConnection:
-        conn = connection or self._connection
-        if conn is None:
-            raise InterfaceError("ResultBatch is not connected to a database driver. Pass a connection argument.")
-        return conn
-
-    # ------------------------------------------------------------------
     # Pickle support
     # ------------------------------------------------------------------
 
@@ -131,6 +123,7 @@ class ResultBatchMixin(ErrorHandlerMixin):
             "chunk_bytes": self._chunk.SerializeToString(),
             "description": self._description,
             "column_bytes": [c.SerializeToString() for c in self._columns],
+            "arrow_context": self._arrow_context,
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -144,5 +137,6 @@ class ResultBatchMixin(ErrorHandlerMixin):
             col.ParseFromString(raw)
             columns.append(col)
         self._columns = columns
+        self._arrow_context = state.get("arrow_context", ArrowConverterContext())
         self._connection = None
         self._arrow_stream_ptr = None

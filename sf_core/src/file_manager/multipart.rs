@@ -5,14 +5,20 @@
 //! Only the cloud-agnostic policy lives here — per-cloud limits
 //! ([`MultipartConfig`]), the part-size formula ([`compute_part_size`]), and
 //! the server-resolved knobs ([`MultipartThreshold`] / [`MultipartParams`]).
-//! The streaming part-reader (upload) and ranged-GET planner (download) are
-//! added by the per-cloud consumer PRs. S3 and Azure upload parts
-//! concurrently; GCS uses an XML-API resumable session (sequential chunks),
-//! so it drives the part-reader at concurrency 1.
-#![allow(dead_code)] // Consumed by the S3 / Azure multipart PRs stacked on this one.
+//! The streaming part-reader ([`spawn_part_reader`]) and ranged-GET planner
+//! ([`plan_ranges`]) also live here, consumed by the per-cloud transfer
+//! modules. S3 and Azure upload parts concurrently; GCS uses an XML-API
+//! resumable session (sequential chunks), so it drives the part-reader at
+//! concurrency 1.
 
+use bytes::Bytes;
 use snafu::{Location, Snafu};
+use std::io::Read;
+use tempfile::TempPath;
+use tokio::sync::mpsc;
 
+use super::encryption::Encryptor;
+use super::types::{ByteSource, PreparedUpload};
 use file_too_large_error::FileTooLargeSnafu;
 
 const KIB: u64 = 1024;
@@ -93,8 +99,7 @@ impl MultipartConfig {
     /// never grows the chunk — it stays at the 8 MiB default for every file.
     /// That default is 32 × 256 KiB, satisfying GCS's requirement that every
     /// non-final chunk be a 256-KiB multiple; `gcs_part_is_256kib_aligned` pins
-    /// this. `max_part` (5 GiB) is inert — the chunk never grows to reach it —
-    /// and only backs the `compute_part_size` debug assertion.
+    /// this.
     /// Object size: <https://cloud.google.com/storage/quotas>
     /// 256-KiB rule: <https://cloud.google.com/storage/docs/performing-resumable-uploads>
     pub(super) const GCS: Self = Self {
@@ -202,6 +207,14 @@ impl MultipartParams {
             concurrency: resolve_part_concurrency(parallel),
         }
     }
+
+    /// True when a `body_len`-byte transfer should take the multipart/chunked
+    /// path rather than a single PUT/GET (i.e. it is at or above the resolved
+    /// threshold). Hides the `threshold` accessor so call sites don't reach
+    /// through to the raw byte count.
+    pub(super) fn should_chunk(self, body_len: u64) -> bool {
+        body_len >= self.threshold.bytes()
+    }
 }
 
 impl Default for MultipartParams {
@@ -210,11 +223,13 @@ impl Default for MultipartParams {
     }
 }
 
-/// Raised when a source file exceeds a cloud's `max_object` limit. The per-cloud
-/// transfer modules wrap this into their own `Upload*Error` enums.
+/// Raised when a source file exceeds a cloud's `max_object` limit. The S3 /
+/// Azure transfer modules wrap this into their own `Upload*Error` enums, which
+/// are themselves `pub` (reached via `FileManagerError`), so this is `pub` too
+/// to keep the error chain nameable end-to-end.
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module, visibility(pub(crate)))]
-pub(crate) enum FileTooLargeError {
+pub enum FileTooLargeError {
     #[snafu(display(
         "File too large for {cloud} multipart upload: {actual_bytes} bytes exceeds limit {limit_bytes}"
     ))]
@@ -225,6 +240,201 @@ pub(crate) enum FileTooLargeError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+// ---------------------------------------------------------------------------
+// Upload: sequential part reader
+// ---------------------------------------------------------------------------
+
+/// On-cloud byte count of a prepared upload: the analytic ciphertext length
+/// for CSE, or the source length for SSE. This is what gets split into parts,
+/// so it (not the plaintext size) drives the multipart threshold and chunk
+/// sizing on every cloud.
+pub(super) async fn upload_body_len(prepared: &PreparedUpload) -> std::io::Result<u64> {
+    if let Some(cse) = prepared.cse.as_ref() {
+        return Ok(cse.encryptor.cipher_len() as u64);
+    }
+    match prepared.source.byte_source() {
+        ByteSource::Bytes(b) => Ok(b.len() as u64),
+        // Offload the stat to tokio's blocking pool: a slow stat on a networked
+        // filesystem (NFS, EBS) must not stall the async runtime thread — mirrors
+        // `ByteSource::open_async`.
+        ByteSource::Path(p) => Ok(tokio::fs::metadata(p).await?.len()),
+    }
+}
+
+/// One upload part: its 1-based number and the owned body bytes. Sized at the
+/// resolved chunk size, except the final part which carries the remainder.
+pub(super) struct UploadPart {
+    /// 1-based part number (S3 `partNumber`; Azure derives a block id from it).
+    pub number: i32,
+    pub body: Bytes,
+}
+
+/// Reads `source` (lazily AES-CBC-encrypting it when `encryptor` is `Some`)
+/// into `chunk_size`-byte [`UploadPart`]s, sending each over a bounded channel
+/// as it is produced. The blocking read loop runs on `spawn_blocking` so file
+/// I/O and AES-CBC encryption stay off the async runtime; the `EncryptingReader`
+/// (and its non-`Send` OpenSSL `Crypter`) is built inside the task and never
+/// crosses a thread boundary, mirroring `cloud_http::encrypting_body_stream`.
+///
+/// Reads are **sequential and in order**: the CSE body is an AES-CBC stream
+/// whose part N only exists once parts `0..N` have been produced, so the
+/// splitter cannot seek. Concurrency happens on the consumer (upload) side;
+/// the channel bound (`concurrency`) caps read-ahead, keeping resident memory
+/// at roughly `concurrency * chunk_size`. This mirrors libsnowflakeclient's
+/// `StreamSplitter` (serial reads, parallel part uploads).
+pub(super) fn spawn_part_reader(
+    source: ByteSource,
+    encryptor: Option<Encryptor>,
+    chunk_size: usize,
+    concurrency: usize,
+) -> mpsc::Receiver<std::io::Result<UploadPart>> {
+    let (tx, rx) = mpsc::channel(concurrency.max(1));
+    tokio::task::spawn_blocking(move || {
+        // Open (and, for CSE, wrap) the source inside the task so the reader
+        // stays thread-local. A failure here surfaces as the first item.
+        let mut reader: Box<dyn Read> = match open_part_source(source, encryptor) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(e));
+                return;
+            }
+        };
+        let mut number: i32 = 0;
+        loop {
+            let mut buf = vec![0u8; chunk_size];
+            match fill_chunk(reader.as_mut(), &mut buf) {
+                // Clean EOF exactly on a part boundary: nothing left to send.
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.truncate(n);
+                    number += 1;
+                    let part = UploadPart {
+                        number,
+                        body: Bytes::from(buf),
+                    };
+                    if tx.blocking_send(Ok(part)).is_err() {
+                        break; // consumer dropped (an upload errored / aborted)
+                    }
+                    // A short read means the source hit EOF; the next read
+                    // would return 0, so stop without spinning a final read.
+                    if n < chunk_size {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+/// Opens `source` for reading, wrapping it in an [`EncryptingReader`] when a
+/// CSE `encryptor` is present. Runs on the blocking part-reader task.
+fn open_part_source(
+    source: ByteSource,
+    encryptor: Option<Encryptor>,
+) -> std::io::Result<Box<dyn Read>> {
+    let base = source.open()?;
+    match encryptor {
+        Some(enc) => Ok(Box::new(
+            enc.encrypting_reader(base).map_err(std::io::Error::other)?,
+        )),
+        None => Ok(base),
+    }
+}
+
+/// Reads until `buf` is full or the source reaches EOF, coping with short
+/// reads (and retrying on `Interrupted`). Returns the number of bytes placed
+/// in `buf` — less than `buf.len()` only at EOF.
+fn fill_chunk(reader: &mut dyn Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
+}
+
+// ---------------------------------------------------------------------------
+// Download: ranged-GET planning + positioned writes
+// ---------------------------------------------------------------------------
+
+/// One ranged GET: an inclusive byte range `[start, end]`. `start` doubles as
+/// the destination write offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DownloadRange {
+    pub start: u64,
+    /// Inclusive end offset, as required by the HTTP `Range: bytes=start-end`
+    /// header and S3/Azure range semantics.
+    pub end: u64,
+}
+
+/// Splits a `content_length`-byte object into inclusive byte ranges of at most
+/// `chunk_size` (the last range carries the remainder). Mirrors the ranged-GET
+/// planners in the Python and libsnowflakeclient connectors.
+pub(super) fn plan_ranges(content_length: u64, chunk_size: u64) -> Vec<DownloadRange> {
+    let mut ranges = Vec::new();
+    let mut start = 0u64;
+    while start < content_length {
+        let end = (start + chunk_size).min(content_length) - 1;
+        ranges.push(DownloadRange { start, end });
+        start = end + 1;
+    }
+    ranges
+}
+
+/// Writes `data` at absolute `offset` in `file` without using or disturbing
+/// the file cursor, so concurrent writers targeting disjoint ranges of a
+/// pre-allocated file are safe. The positioned-write syscall (`pwrite` /
+/// `seek_write`) is the cross-platform equivalent of the per-chunk
+/// seek-then-write the Python connector performs.
+#[cfg(unix)]
+pub(super) fn write_at(file: &std::fs::File, offset: u64, data: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.write_all_at(data, offset)
+}
+
+#[cfg(windows)]
+pub(super) fn write_at(file: &std::fs::File, offset: u64, data: &[u8]) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut written = 0usize;
+    while written < data.len() {
+        written += file.seek_write(&data[written..], offset + written as u64)?;
+    }
+    Ok(())
+}
+
+/// Blocking `Read` over a ciphertext tempfile produced by a ranged download,
+/// keeping the `TempPath` alive (the file is unlinked on drop) for the read's
+/// duration. Shared by the S3 and Azure download paths; works on Windows,
+/// which can't unlink an open file. `Send`, so it can hand off to the
+/// `spawn_blocking` decrypt step.
+pub(super) struct SpilledReader {
+    file: std::fs::File,
+    _temp: TempPath,
+}
+
+impl SpilledReader {
+    /// Opens `temp` for reading and takes ownership of its unlink-on-drop guard.
+    pub fn open(temp: TempPath) -> std::io::Result<Self> {
+        let file = std::fs::File::open(&temp)?;
+        Ok(Self { file, _temp: temp })
+    }
+}
+
+impl Read for SpilledReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.file.read(buf)
+    }
 }
 
 #[cfg(test)]
@@ -362,5 +572,69 @@ mod tests {
             MultipartParams::default().concurrency,
             DEFAULT_PART_CONCURRENCY
         );
+    }
+
+    /// Collects every part the reader produces, asserting numbering and that
+    /// the concatenated bodies reproduce the source byte-for-byte.
+    async fn collect_parts(data: Vec<u8>, chunk_size: usize) -> Vec<UploadPart> {
+        let source = ByteSource::Bytes(Bytes::from(data));
+        let mut rx = spawn_part_reader(source, None, chunk_size, 4);
+        let mut parts = Vec::new();
+        while let Some(part) = rx.recv().await {
+            parts.push(part.expect("part read must not error"));
+        }
+        parts
+    }
+
+    #[tokio::test]
+    async fn part_reader_splits_into_numbered_chunks() {
+        let data: Vec<u8> = (0..25u8).collect();
+        let parts = collect_parts(data.clone(), 10).await;
+
+        // 25 bytes / 10 => parts of 10, 10, 5.
+        let sizes: Vec<usize> = parts.iter().map(|p| p.body.len()).collect();
+        assert_eq!(sizes, vec![10, 10, 5]);
+        // 1-based, contiguous numbering.
+        let numbers: Vec<i32> = parts.iter().map(|p| p.number).collect();
+        assert_eq!(numbers, vec![1, 2, 3]);
+        // Reassembly is byte-identical to the source.
+        let joined: Vec<u8> = parts.iter().flat_map(|p| p.body.to_vec()).collect();
+        assert_eq!(joined, data);
+    }
+
+    #[tokio::test]
+    async fn part_reader_exact_multiple_has_no_trailing_empty_part() {
+        // 20 bytes / 10 => exactly two full parts and no empty third part
+        // (the libsnowflakeclient `+1` off-by-one is intentionally avoided).
+        let parts = collect_parts((0..20u8).collect(), 10).await;
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| p.body.len() == 10));
+    }
+
+    #[test]
+    fn plan_ranges_covers_object_with_inclusive_bounds() {
+        let ranges = plan_ranges(25, 10);
+        let pairs: Vec<(u64, u64)> = ranges.iter().map(|r| (r.start, r.end)).collect();
+        assert_eq!(pairs, vec![(0, 9), (10, 19), (20, 24)]);
+        // Ranges tile the object with no gaps or overlap, last one short.
+        let total: u64 = ranges.iter().map(|r| r.end - r.start + 1).sum();
+        assert_eq!(total, 25);
+    }
+
+    #[test]
+    fn plan_ranges_exact_multiple() {
+        let ranges = plan_ranges(20, 10);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!((ranges[1].start, ranges[1].end), (10, 19));
+    }
+
+    #[test]
+    fn write_at_places_disjoint_chunks_at_offsets() {
+        let f = tempfile::NamedTempFile::new().unwrap();
+        f.as_file().set_len(6).unwrap();
+        // Write out of order; positioned writes must land at the right offset.
+        write_at(f.as_file(), 3, b"DEF").unwrap();
+        write_at(f.as_file(), 0, b"ABC").unwrap();
+        assert_eq!(std::fs::read(f.path()).unwrap(), b"ABCDEF");
     }
 }

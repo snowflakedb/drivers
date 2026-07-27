@@ -12,8 +12,6 @@ from .type_codes import FIXED
 if TYPE_CHECKING:
     from pyarrow import Schema, Table
 
-    from ..aio.connection import Connection as AsyncConnection
-    from ..connection import Connection
     from .cursor.result_metadata import ResultMetadata
 
 
@@ -40,12 +38,12 @@ def release_arrow_stream(stream_ptr: int | None) -> None:
 
 def create_row_iterator(
     stream_ptr: int,
-    connection: Connection | AsyncConnection,
+    *,
+    context: ArrowConverterContext,
     use_dict_result: bool = False,
     use_numpy: bool = False,
 ) -> ArrowStreamIterator:
     """Build an :class:`ArrowStreamIterator` that yields one row at a time."""
-    context = ArrowConverterContext.create(connection)
     return ArrowStreamIterator(
         stream_ptr,
         context,
@@ -56,12 +54,12 @@ def create_row_iterator(
 
 def create_table_iterator(
     stream_ptr: int,
-    connection: Connection | AsyncConnection,
+    *,
+    context: ArrowConverterContext,
     number_to_decimal: bool = False,
     force_microsecond_precision: bool = False,
 ) -> ArrowStreamTableIterator:
     """Build an :class:`ArrowStreamTableIterator` that yields one RecordBatch at a time."""
-    context = ArrowConverterContext.create(connection)
     return ArrowStreamTableIterator(
         stream_ptr,
         context,

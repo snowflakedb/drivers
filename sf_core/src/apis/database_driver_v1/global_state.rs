@@ -7,13 +7,14 @@ use super::connection::{Connection, WrapperIdentity};
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
+use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::LogManager;
 use crate::rest::snowflake::prompt_lock::PromptLockMap;
 use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
-use crate::token_cache::{KeyringTokenCache, TokenCacheError};
+use crate::token_cache::{KeyringTokenCache, TokenCache, TokenCacheError};
 
 /// Which shape the PUT/GET result set should take.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -83,6 +84,10 @@ pub struct DriverProviders {
     /// interactive-auth prompts against the same lock entries.  Production code
     /// always uses `..Default::default()` and gets a fresh map.
     pub prompt_locks: Option<Arc<PromptLockMap>>,
+    /// Inject a shared lazy CRL worker so that multiple `DatabaseDriverV1`
+    /// instances reuse the same background thread. Production code always uses
+    /// `..Default::default()` and gets a fresh lazy handle.
+    pub crl_worker: Option<SharedCrlWorker>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -90,14 +95,17 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     pub(super) results: HandleManager<Mutex<ResultSet>>,
-    token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
+    token_cache: once_cell::sync::OnceCell<Arc<dyn TokenCache>>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
     log_manager: Option<LogManager>,
     pub(super) wrapper_presets: WrapperPresets,
-    /// Process-global per-`(host, user, token-type)` prompt locks.
+    /// Process-global per-[`crate::token_cache::CacheKey`] prompt locks
+    /// (scoped by idp, snowflake, username, role, and token_type).
     /// Shared across all connections on this driver instance.
     pub(crate) prompt_locks: Arc<PromptLockMap>,
+    /// Lazy CRL worker shared across all connections on this driver instance.
+    pub(crate) crl_worker: SharedCrlWorker,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -125,6 +133,7 @@ impl DatabaseDriverV1 {
             prompt_locks: providers
                 .prompt_locks
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
+            crl_worker: providers.crl_worker.unwrap_or_else(CrlWorker::new_lazy),
         }
     }
 
@@ -178,8 +187,12 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {
-        self.token_cache.get_or_try_init(KeyringTokenCache::new)
+    pub fn token_cache(&self) -> Result<Arc<dyn TokenCache>, TokenCacheError> {
+        self.token_cache
+            .get_or_try_init(|| {
+                KeyringTokenCache::new().map(|c| Arc::new(c) as Arc<dyn TokenCache>)
+            })
+            .map(Arc::clone)
     }
 
     pub fn fs_adapter(&self) -> Arc<dyn FsAdapter> {
@@ -196,6 +209,22 @@ impl DatabaseDriverV1 {
         self.log_manager
             .as_ref()
             .and_then(|lm| lm.os_details().as_ref())
+    }
+
+    /// Whether troubleshooting mode is currently active. Delegates to the
+    /// `LogManager` if one was injected; returns `false` otherwise.
+    pub fn is_troubleshooting(&self) -> bool {
+        self.log_manager
+            .as_ref()
+            .is_some_and(|lm| lm.is_troubleshooting())
+    }
+
+    /// Resolved troubleshooting log directory when troubleshooting is active.
+    /// Used as a fallback for `DiagnosticConfig::log_path`.
+    pub(crate) fn troubleshooting_path(&self) -> Option<std::path::PathBuf> {
+        self.log_manager
+            .as_ref()
+            .and_then(|lm| lm.troubleshooting_path())
     }
 
     /// Process-wide default for `log_query_text`, sourced from the
@@ -236,8 +265,26 @@ mod tests {
         let first = driver.token_cache().expect("first call failed");
         let second = driver.token_cache().expect("second call failed");
         assert!(
-            std::ptr::eq(first, second),
+            Arc::ptr_eq(&first, &second),
             "token_cache() should return the same instance on repeated calls"
+        );
+    }
+
+    #[test]
+    fn crl_worker_lazy_init_succeeds() {
+        let driver = DatabaseDriverV1::new();
+        let worker = driver.crl_worker.clone();
+        assert!(Arc::strong_count(&worker) >= 1);
+    }
+
+    #[test]
+    fn crl_worker_returns_same_instance() {
+        let driver = DatabaseDriverV1::new();
+        let first = driver.crl_worker.clone();
+        let second = driver.crl_worker.clone();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "crl_worker field should return the same Arc on repeated clones"
         );
     }
 

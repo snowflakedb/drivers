@@ -38,9 +38,11 @@ describe('Connection', () => {
     (name === '.connectAsync()' && isRunningForOldDriver() ? it.skip : it)(
       'surfaces an error on invalid parameters',
       async () => {
-        const connection = createTestConnection(snowflake, { password: '' });
+        const connection = createTestConnection(snowflake, {
+          username: 'incorrect-username',
+        });
         const error = await connectFn(connection).catch((err) => err);
-        expect(error.message).toBe('Incorrect username or password was specified.');
+        expect(error.message).toMatch(/JWT token is invalid/);
       },
     );
   });

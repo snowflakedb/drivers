@@ -273,7 +273,7 @@ class TestMixedFetchModes:
 class TestResultBatchPickleArrow:
     """Tests for result batch pickle round-trip with to_arrow conversion."""
 
-    def test_should_survive_pickle_round_trip_and_convert_to_arrow(self, execute_query, cursor, connection_factory):
+    def test_should_survive_pickle_round_trip_and_convert_to_arrow(self, execute_query, cursor):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
@@ -290,8 +290,6 @@ class TestResultBatchPickleArrow:
         # And The batches are deserialized with pickle
         restored_batches = pickle.loads(pickled)
 
-        # And The batches are fetched via to_arrow with a fresh connection
-        with connection_factory() as fresh_conn:
-            # Then Fetching all deserialized batches via to_arrow should return 100000 total rows
-            total_rows = sum(batch.to_arrow(connection=fresh_conn).num_rows for batch in restored_batches)
-            assert total_rows == LARGE_RESULT_SET_ROW_COUNT
+        # Then Fetching all deserialized batches via to_arrow should return 100000 total rows
+        total_rows = sum(batch.to_arrow().num_rows for batch in restored_batches)
+        assert total_rows == LARGE_RESULT_SET_ROW_COUNT

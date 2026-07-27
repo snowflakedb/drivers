@@ -72,6 +72,7 @@
 //! so only the trailing second is range-checked against 0..=59.
 
 use odbc_sys as sql;
+use snafu::OptionExt;
 
 use crate::api::CDataType;
 use crate::conversion::error::{
@@ -356,11 +357,8 @@ fn build_single_field(
         IntervalSecond => parts.second,
         _ => unreachable!("build_single_field called with {target:?}"),
     }
-    .ok_or_else(|| {
-        InvalidValueSnafu {
-            reason: format!("interval input does not carry a {target:?} component"),
-        }
-        .build()
+    .with_context(|| InvalidValueSnafu {
+        reason: format!("interval input does not carry a {target:?} component"),
     })?;
 
     crate::conversion::numeric_helpers::check_leading_precision(value, value, binding)?;
@@ -464,13 +462,8 @@ fn build_composite(
     }
 
     let read = |field: Option<u128>, name: &str| -> Result<u128, WriteOdbcError> {
-        field.ok_or_else(|| {
-            InvalidValueSnafu {
-                reason: format!(
-                    "interval input is missing required '{name}' component for {target:?}"
-                ),
-            }
-            .build()
+        field.with_context(|| InvalidValueSnafu {
+            reason: format!("interval input is missing required '{name}' component for {target:?}"),
         })
     };
 
