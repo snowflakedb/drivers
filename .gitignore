@@ -31,6 +31,7 @@ python/src/snowflake/connector/_internal/*.so
 *.egg-info/
 universal_driver_e2e_test_coverage.html
 tests/oldTestsCoverage/report.html
+tests/bugs_analysis/report.html
 tests/oldTestsCoverage/scripts/utils/__pycache__/
 .vscode
 tests/wiremock/__files/*
