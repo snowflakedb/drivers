@@ -26,6 +26,7 @@ use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::*;
 
 use crate::config::connection_config::DiagnosticConfig;
+use crate::log_foreign_error;
 
 const REPORT_FILENAME: &str = "SnowflakeConnectionTestReport.txt";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -338,7 +339,7 @@ fn dns_lookup(host: &str, section: &str, results: &mut HashMap<String, Vec<Strin
             }
         }
         Err(e) => {
-            warn!("Connectivity Test Exception in list_ips: {e}");
+            log_foreign_error!(warn, e, "Connectivity Test Exception in list_ips");
         }
     }
 }

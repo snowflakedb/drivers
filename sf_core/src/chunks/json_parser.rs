@@ -36,12 +36,12 @@ pub fn convert_string_rowset_to_arrow_reader(
                 None => builders[col_idx].push_null(),
                 Some(val) => builders[col_idx]
                     .push_value(val.as_bytes())
-                    .context(ChunkReadingSnafu)?,
+                    .context(ChunkReadSnafu)?,
             }
         }
     }
 
-    let batches = builders_to_batches(builders, row_types).context(ChunkReadingSnafu)?;
+    let batches = builders_to_batches(builders, row_types).context(ChunkReadSnafu)?;
 
     let schema = if let Some(batch) = batches.first() {
         batch.schema()

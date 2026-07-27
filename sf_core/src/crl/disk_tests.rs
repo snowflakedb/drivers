@@ -5,8 +5,10 @@ mod disk_crl_tests {
     };
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
     use crate::crl::validator::CrlValidator;
+    use fs2::FileExt;
     use std::fs;
     use std::io::Write;
+    use std::sync::{Arc, Barrier};
     use tempfile::TempDir;
     use x509_parser::prelude::FromDer;
 
@@ -188,22 +190,137 @@ mod disk_crl_tests {
     }
 
     /// Test atomic write helper does not panic and replaces file
-    #[tokio::test]
-    async fn test_atomic_write_helper() {
+    #[test]
+    fn test_atomic_write_helper() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("atomic.crl");
         fs::write(&path, b"old").unwrap();
 
-        let cfg = CrlConfig {
-            enable_disk_caching: true,
-            ..Default::default()
-        };
-        let validator = CrlValidator::new(cfg).unwrap();
-
-        // Call the helper indirectly via fetch path to avoid private method access
-        // Simulate network fetch by writing file directly
-        validator.write_crl_atomic(&path, b"new");
+        crate::crl::cache::write_crl_atomic(temp_dir.path(), "atomic.crl", b"new").unwrap();
         let content = fs::read(&path).unwrap();
         assert_eq!(&content, b"new");
+    }
+
+    /// Concurrent atomic writes must never produce a torn file
+    #[test]
+    fn test_atomic_write_is_never_torn() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_name = "concurrent.crl";
+        let path = temp_dir.path().join(file_name);
+        let payloads: Vec<Vec<u8>> = (0..8).map(|i| vec![i as u8; 1024 + i]).collect();
+
+        let barrier = Arc::new(Barrier::new(payloads.len()));
+        let handles: Vec<_> = payloads
+            .iter()
+            .map(|payload| {
+                let dir = temp_dir.path().to_path_buf();
+                let payload = payload.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    crate::crl::cache::write_crl_atomic(&dir, file_name, &payload)
+                })
+            })
+            .collect();
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.join().unwrap() {
+                Ok(()) => successes += 1,
+                // On Windows, `persist` (MoveFileExW / REPLACE_EXISTING) can
+                // fail under concurrent contention when the destination is
+                // briefly held open/locked by a sibling writer — documented and
+                // acceptable (a lost write just triggers a re-fetch). On POSIX
+                // `rename` ignores such contention, so a failure there is a bug.
+                Err(_e) => {
+                    #[cfg(not(windows))]
+                    panic!("write_crl_atomic failed on POSIX: {_e}");
+                }
+            }
+        }
+        assert!(
+            successes >= 1,
+            "at least one concurrent writer must publish a complete file"
+        );
+
+        let final_bytes = fs::read(&path).unwrap();
+        assert!(
+            payloads.contains(&final_bytes),
+            "final file must exactly match one complete payload, not a torn mix"
+        );
+
+        for entry in fs::read_dir(temp_dir.path()).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(!name.ends_with(".tmp"), "leftover temp file: {name}");
+        }
+    }
+
+    #[test]
+    fn sweep_skips_locked_orphan_temp_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join(".crl-tmp-locked.tmp");
+        let file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        file.try_lock_exclusive().unwrap();
+
+        let removed = crate::crl::cache::sweep_orphan_temp_files(temp_dir.path(), 100);
+        assert_eq!(removed, 0);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn sweep_removes_unlocked_orphan_temp_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join(".crl-tmp-unlocked.tmp");
+        fs::write(&path, b"orphan").unwrap();
+
+        let removed = crate::crl::cache::sweep_orphan_temp_files(temp_dir.path(), 100);
+        assert_eq!(removed, 1);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn sweep_never_touches_real_cache_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let hex_name = "a".repeat(64);
+        let cache_path = temp_dir.path().join(&hex_name);
+        fs::write(&cache_path, b"real cache").unwrap();
+        fs::write(temp_dir.path().join(".crl-tmp-orphan.tmp"), b"x").unwrap();
+
+        let removed = crate::crl::cache::sweep_orphan_temp_files(temp_dir.path(), 100);
+        assert_eq!(removed, 1);
+        assert!(cache_path.exists());
+    }
+
+    #[test]
+    fn filesystem_now_is_recent_and_leaves_no_residue() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Local-FS smoke test only: here the FS clock IS the system clock, so
+        // this cannot validate the cross-host skew-immunity claim — it just
+        // checks the probe returns a sane time and cleans up after itself.
+        let fs_now = crate::fs_lock::filesystem_now(temp_dir.path(), ".crl-probe-").expect("probe");
+        let sys_now = std::time::SystemTime::now();
+        let skew = sys_now
+            .duration_since(fs_now)
+            .or_else(|_| fs_now.duration_since(sys_now))
+            .unwrap();
+        assert!(
+            skew < std::time::Duration::from_secs(60),
+            "probe time drifted from system clock by {skew:?}"
+        );
+
+        // The throwaway probe temp is unlinked on drop — nothing lingers.
+        for entry in fs::read_dir(temp_dir.path()).unwrap() {
+            let name = entry.unwrap().file_name();
+            assert!(
+                !name.to_string_lossy().starts_with(".crl-probe-"),
+                "probe residue: {name:?}"
+            );
+        }
     }
 }

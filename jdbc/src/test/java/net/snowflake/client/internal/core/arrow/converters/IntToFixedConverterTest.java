@@ -2,6 +2,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -85,6 +86,66 @@ public class IntToFixedConverterTest extends BaseConverterTest {
       }
     }
     vector.clear();
+  }
+
+  /**
+   * getObject on a scale-0 FIXED column returns a {@code long} under the default {@code
+   * JDBC_TREAT_DECIMAL_AS_INT=true}, matching legacy snowflake-jdbc and the {@code BIGINT} column
+   * type reported by the result-set metadata (SNOW-3740746: the two surfaces read the same flag).
+   */
+  @Test
+  public void shouldReturnLongFromToObjectForScaleZeroFixedByDefault() throws Exception {
+    IntVector vector = scaleZeroVectorWithSingleValue(42);
+
+    ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, this);
+    Object value = converter.toObject(0);
+
+    assertInstanceOf(
+        Long.class, value, "default JDBC_TREAT_DECIMAL_AS_INT=true must materialize a long");
+    assertEquals(42L, value);
+    vector.clear();
+  }
+
+  /**
+   * With {@code JDBC_TREAT_DECIMAL_AS_INT=false}, getObject on a scale-0 FIXED column returns a
+   * {@code BigDecimal} (scale 0) rather than a {@code long}, matching legacy snowflake-jdbc and the
+   * {@code DECIMAL} column type the metadata then reports. Regression guard for the previously
+   * inconsistent state where the value was always a {@code long} while metadata said {@code
+   * DECIMAL}.
+   */
+  @Test
+  public void shouldReturnBigDecimalFromToObjectForScaleZeroFixedWhenTreatDecimalAsIntFalse()
+      throws Exception {
+    IntVector vector = scaleZeroVectorWithSingleValue(42);
+    DataConversionContext treatDecimalAsIntFalse =
+        new DataConversionContext() {
+          @Override
+          public boolean isTreatDecimalAsInt() {
+            return false;
+          }
+        };
+
+    ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, treatDecimalAsIntFalse);
+    Object value = converter.toObject(0);
+
+    assertInstanceOf(
+        BigDecimal.class,
+        value,
+        "JDBC_TREAT_DECIMAL_AS_INT=false must materialize a BigDecimal, matching legacy snowflake-jdbc");
+    assertEquals(BigDecimal.valueOf(42L, 0), value);
+    vector.clear();
+  }
+
+  private IntVector scaleZeroVectorWithSingleValue(int val) {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "FIXED");
+    customFieldMeta.put("precision", "10");
+    customFieldMeta.put("scale", "0");
+    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
+    IntVector vector = new IntVector("col_one", fieldType, allocator);
+    vector.setSafe(0, val);
+    vector.setValueCount(1);
+    return vector;
   }
 
   @Test

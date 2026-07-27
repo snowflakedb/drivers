@@ -4,6 +4,7 @@ use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::chunks::ChunkFormatKind;
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::config::toml_loader::FilePermissionCheck;
@@ -11,8 +12,7 @@ use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
     ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
-    proto_chunk_format_to_kind, proto_options_to_hashmap, reader_to_arrow_stream_ptr,
-    toml_value_to_json,
+    proto_options_to_hashmap, reader_to_arrow_stream_ptr, toml_value_to_json,
 };
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
@@ -56,6 +56,10 @@ impl DatabaseDriverImpl {
         Self {
             driver: DatabaseDriverV1::with_providers(providers),
         }
+    }
+
+    pub fn is_troubleshooting(&self) -> bool {
+        self.driver.is_troubleshooting()
     }
 }
 
@@ -122,12 +126,20 @@ impl DatabaseDriver for DatabaseDriverImpl {
         &self,
         input: DatabaseFetchChunkRequest,
     ) -> Result<DatabaseFetchChunkResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
-        let chunk = required(input.chunk, "Chunk is required")?;
-        let chunk_format: ChunkFormatKind = required(
-            proto_chunk_format_to_kind(chunk.format),
-            "Chunk format is required",
-        )?;
+        let conn_handle = input.conn_handle.map(|h| h.into());
+        let _ = required(input.chunks.first(), "At least one chunk is required")?;
+
+        // format of the remote chunks, inline chunk is always arrow
+        let chunk_format: ChunkFormatKind = input
+            .chunks
+            .iter()
+            .find_map(|chunk| match chunk.data.as_ref()? {
+                Data::Inline(_) => None,
+                Data::Remote(_) => proto_chunk_format_to_kind(chunk.format),
+            })
+            .unwrap_or(ChunkFormatKind::ArrowIpc);
+
+        let nullable_flags: Vec<bool> = input.columns.iter().map(|c| c.nullable).collect();
         // Columns are only needed for JSON chunks; Arrow IPC streams are self-describing.
         let row_types: Vec<RowType> = match chunk_format {
             ChunkFormatKind::ArrowIpc => Vec::new(),
@@ -138,12 +150,22 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 .collect::<Result<Vec<_>, _>>()
                 .to_protobuf()?,
         };
-        let chunk_data = required(chunk.data, "Chunk data is required")?;
-        let fetch_input: FetchChunkInput = chunk_data.into();
+
+        let chunks: Vec<FetchChunkInput> = input
+            .chunks
+            .iter()
+            .map(FetchChunkInput::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let stream = self
             .driver
-            .database_fetch_chunk(db_handle.into(), fetch_input, chunk_format, row_types)
+            .database_fetch_chunk(
+                conn_handle,
+                chunks,
+                chunk_format,
+                &nullable_flags,
+                row_types,
+            )
             .await
             .to_protobuf()?;
 
@@ -591,6 +613,45 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_upload_stream", skip(self, input))]
+    async fn connection_upload_stream(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> Result<ConnectionUploadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let rs_info = self
+            .driver
+            .connection_upload_stream(conn_handle.into(), input.sql, input.data)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamResponse {
+            result_set_handle: Some(rs_info.handle.into()),
+            result_descriptor: Some(rs_info.descriptor.into()),
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream",
+        skip(self, input)
+    )]
+    async fn connection_download_stream(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> Result<ConnectionDownloadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let data = self
+            .driver
+            .connection_download_stream(
+                conn_handle.into(),
+                &input.stage_name,
+                &input.source_filename,
+                input.decompress,
+            )
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamResponse { data })
+    }
+
     #[instrument(
         name = "DatabaseDriverV1::connection_get_query_status",
         skip(self, input)
@@ -617,16 +678,15 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionAbortQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let success = match self
+        let outcome = self
             .driver
             .connection_abort_query(conn_handle.into(), input.query_id)
             .await
-        {
-            Ok(()) => true,
-            Err(_) => false,
-        };
+            .to_protobuf()?;
 
-        Ok(ConnectionAbortQueryResponse { success })
+        Ok(ConnectionAbortQueryResponse {
+            outcome: AbortQueryOutcome::from(outcome) as i32,
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_send_http", skip(self, input))]
@@ -1077,7 +1137,8 @@ pub type DatabaseDriverClient =
     >;
 
 pub use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
-use crate::chunks::ChunkFormatKind;
+use crate::protobuf::apis::database_driver_v1::converter::proto_chunk_format_to_kind;
+use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::query_types::RowType;
 
 pub fn database_driver_client() -> DatabaseDriverClient {
@@ -1141,6 +1202,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementExecuteQueryRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
+    fn statement_execute_async_blocking(
+        &self,
+        input: StatementExecuteAsyncRequest,
+    ) -> BlockingProtoResult<StatementExecuteAsyncResponse>;
     fn statement_set_sql_query_blocking(
         &self,
         input: StatementSetSqlQueryRequest,
@@ -1213,6 +1278,22 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
+    fn connection_upload_stream_blocking(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamResponse>;
+    fn connection_download_stream_blocking(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamResponse>;
+    fn connection_abort_query_blocking(
+        &self,
+        input: ConnectionAbortQueryRequest,
+    ) -> BlockingProtoResult<ConnectionAbortQueryResponse>;
+    fn connection_get_query_status_blocking(
+        &self,
+        input: ConnectionGetQueryStatusRequest,
+    ) -> BlockingProtoResult<ConnectionGetQueryStatusResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1264,6 +1345,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementExecuteQueryRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
         block_on_client_call(self.statement_execute_query(input))
+    }
+
+    fn statement_execute_async_blocking(
+        &self,
+        input: StatementExecuteAsyncRequest,
+    ) -> BlockingProtoResult<StatementExecuteAsyncResponse> {
+        block_on_client_call(self.statement_execute_async(input))
     }
 
     fn statement_set_sql_query_blocking(
@@ -1390,5 +1478,33 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse> {
         block_on_client_call(self.connection_get_query_result(input))
+    }
+
+    fn connection_upload_stream_blocking(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionUploadStreamResponse> {
+        block_on_client_call(self.connection_upload_stream(input))
+    }
+
+    fn connection_download_stream_blocking(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamResponse> {
+        block_on_client_call(self.connection_download_stream(input))
+    }
+
+    fn connection_abort_query_blocking(
+        &self,
+        input: ConnectionAbortQueryRequest,
+    ) -> BlockingProtoResult<ConnectionAbortQueryResponse> {
+        block_on_client_call(self.connection_abort_query(input))
+    }
+
+    fn connection_get_query_status_blocking(
+        &self,
+        input: ConnectionGetQueryStatusRequest,
+    ) -> BlockingProtoResult<ConnectionGetQueryStatusResponse> {
+        block_on_client_call(self.connection_get_query_status(input))
     }
 }

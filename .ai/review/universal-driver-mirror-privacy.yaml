@@ -31,6 +31,10 @@ excluded_folders:
   - ".github"
   - "ci"
   - "scripts"
+  # Subdirectory of `tests/` excluded from the public mirror: internal Jira
+  # ticket catalogs, analysis status tracking, and generated HTML report.
+  # See EXCLUDED_PATHS in ci/mirroring/copy.bara.sky.
+  - "tests/bugs_analysis"
 allowed_file_extensions:
   - ".md"
   - ".mdc"

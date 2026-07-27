@@ -99,6 +99,9 @@ class BaseConfigInstallation {
   [[nodiscard]] const std::string& config_dir() const;
   [[nodiscard]] std::string dsn_name(size_t index = 0) const;
   [[nodiscard]] std::string connection_string(size_t index = 0) const;
+  // Configured login user (the "UID" parameter) for the given data source,
+  // or an empty string when the data source has no UID (e.g. keypair/OAuth).
+  [[nodiscard]] std::string user_name(size_t index = 0) const;
 
  protected:
   explicit BaseConfigInstallation(const std::vector<DataSourceConfig>& data_sources,

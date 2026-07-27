@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,20 +10,39 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class StringTests extends SnowflakeIntegrationTestBase {
+public class StringTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final String STRING_TYPE = "VARCHAR";
   private static final int LARGE_RESULT_SET_SIZE = 10_000;
+  // Unbounded VARCHAR reports max length as 16 MB in bits (matching
+  // SnowflakeResultSetMetaDataImplTest).
+  private static final int VARCHAR_MAX_LENGTH = 16 * 1024 * 1024 * 8;
 
   private static final String JAPANESE_TEXT = "\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8";
   private static final String SNOWMAN = "\u26c4";
   private static final String COMBINING_CHAR_TEXT = "y\u0306es";
   private static final String SURROGATE_PAIR_TEXT = "\ud834\udd1e";
+  private static final ColumnExpectation VARCHAR_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.VARCHAR,
+          "VARCHAR",
+          String.class.getName(),
+          VARCHAR_MAX_LENGTH,
+          0,
+          VARCHAR_MAX_LENGTH,
+          false,
+          true,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastStringValuesToAppropriateTypeForStringAndSynonyms() throws Exception {
@@ -40,6 +60,16 @@ public class StringTests extends SnowflakeIntegrationTestBase {
 
           // Then All values should be returned as appropriate type
           assertSingleRow(resultSet, Arrays.asList("hello", "Hello World", JAPANESE_TEXT));
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  VARCHAR_COLUMN.withColumnName("'HELLO'::VARCHAR"),
+                  VARCHAR_COLUMN.withColumnName("'HELLO WORLD'::VARCHAR"),
+                  VARCHAR_COLUMN.withColumnName("'" + JAPANESE_TEXT + "'::VARCHAR")));
         });
   }
 

@@ -40,6 +40,7 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     }
 }
@@ -60,6 +61,7 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     }
 }
@@ -770,6 +772,7 @@ fn gcs_stage_presigned_only_no_stage_url() -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     }
 }
@@ -820,6 +823,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         presigned_urls: vec![Some(url_a.clone()), Some(url_b.clone())],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
@@ -855,6 +859,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         presigned_urls: vec![None],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let err = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
@@ -1331,6 +1336,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         &stage,
         "file.csv",
         true,
+        MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1419,6 +1425,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         &stage,
         "file.csv",
         true,
+        MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1498,6 +1505,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         &stage,
         "part-01.csv.gz",
         true,
+        MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1571,6 +1579,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         &stage,
         "file.csv",
         true,
+        MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1785,6 +1794,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         presigned_urls: vec![Some(stale_a.clone()), Some(stale_b.clone())],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
@@ -1883,6 +1893,7 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         &gcs_stage_with_token(&server.uri()),
         "file.bin",
         true,
+        MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         &mut refresher_opt,
     )
@@ -1902,4 +1913,70 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         0,
         "encrypted body must be sent with Content-Length, not Transfer-Encoding: chunked",
     );
+}
+
+// ---------------------------------------------------------------
+// Git stage objects: encryptiondata present but sfc-digest absent
+// ---------------------------------------------------------------
+
+#[tokio::test]
+async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
+    // Git stage objects on GCS carry CSE key-wrap headers (encryptiondata,
+    // matdesc) but no sfc-digest — the object was uploaded by Snowflake's git
+    // integration. download_files must succeed and write the raw bytes.
+    let server = MockServer::start().await;
+
+    let enc_data = serde_json::json!({
+        "EncryptionMode": "FullBlob",
+        "WrappedContentKey": {
+            "KeyId": "symmKey1",
+            "EncryptedKey": "dGVzdC1rZXk=",
+            "Algorithm": "AES_CBC_256"
+        },
+        "ContentEncryptionIV": "dGVzdC1pdg=="
+    });
+    let mat_desc = serde_json::json!({
+        "queryId": "test-query",
+        "smkId": "1",
+        "keySize": "256"
+    });
+    // No x-goog-meta-sfc-digest header — matches what Snowflake's git integration uploads.
+    let presigned_url = format!("{}/presigned/git-file.txt", server.uri());
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/presigned/git-file.txt"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"raw-git-file-bytes".to_vec())
+                .insert_header("x-goog-meta-encryptiondata", enc_data.to_string().as_str())
+                .insert_header("x-goog-meta-matdesc", mat_desc.to_string().as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local_location = tmp.path().to_string_lossy().to_string();
+
+    let data = DownloadData {
+        src_locations: vec!["git-file.txt".to_string()],
+        local_location: local_location.clone(),
+        stage_info: gcs_stage_with_presigned_url(&presigned_url),
+        encryption_materials: vec![Some(sf_core::file_manager::EncryptionMaterial {
+            query_stage_master_key: SensitiveString::from("dGVzdC1tYXN0ZXIta2V5"),
+            query_id: "test-query".to_string(),
+            smk_id: "1".to_string(),
+        })],
+        presigned_urls: vec![Some(presigned_url)],
+        flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
+        unsafe_file_write: false,
+    };
+
+    let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
+        .await
+        .expect("git stage download should succeed even without sfc-digest");
+
+    assert_eq!(results.len(), 1);
+    let written = std::fs::read(std::path::Path::new(&local_location).join("git-file.txt"))
+        .expect("downloaded file should exist");
+    assert_eq!(written, b"raw-git-file-bytes");
 }

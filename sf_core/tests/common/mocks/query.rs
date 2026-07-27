@@ -96,3 +96,19 @@ pub async fn mount_single_statement_response(server: &MockServer, expected_calls
         .mount(server)
         .await;
 }
+
+/// Mount a response for `POST /queries/{query_id}/abort-request`, returning
+/// `{"success": success}`. Use `success: false` to simulate the server
+/// declining the abort (e.g. an already-completed query).
+pub async fn mount_abort_query_response(server: &MockServer, success: bool, expected_calls: u64) {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/.*/abort-request"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": success }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .expect(expected_calls)
+        .mount(server)
+        .await;
+}

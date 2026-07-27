@@ -21,12 +21,14 @@ from .._internal.connection import (
     CURRENT_VERSION_SQL,
     ROLLBACK_SQL,
     SET_AUTOCOMMIT_SQL,
+    SET_CLIENT_PREFETCH_THREADS_SQL,
     ConnectionMixin,
+    clamp_client_prefetch_threads,
     requires_open,
 )
 from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from .._internal.errorcode import ER_INVALID_VALUE
-from .._internal.logging import safe_log
+from .._internal.logging import get_logger
 from .._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
@@ -52,7 +54,7 @@ from ..version import __version__
 from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Connection(ConnectionMixin):
@@ -230,7 +232,7 @@ class Connection(ConnectionMixin):
             if not self.is_closed():
                 self.close(retry=False)
         except Exception:
-            safe_log(logger, logging.DEBUG, "close() failed during cleanup", exc_info=True)
+            logger.safe_log(logging.DEBUG, "close() failed during cleanup", exc_info=True)
 
     def _should_auto_cleanup(self) -> bool:
         """Whether this connection should auto-close on GC/exit.
@@ -294,8 +296,7 @@ class Connection(ConnectionMixin):
 
             self._try_close()
         except Exception:
-            safe_log(
-                logger,
+            logger.safe_log(
                 logging.WARNING,
                 "_close_at_process_exit failed during interpreter shutdown",
                 exc_info=True,
@@ -413,6 +414,46 @@ class Connection(ConnectionMixin):
     def autocommit(self, value: bool) -> None:
         """Set autocommit mode."""
         self.set_autocommit(value)
+
+    # ------------------------------------------------------------------
+    # Client prefetch threads
+    # ------------------------------------------------------------------
+
+    @requires_open
+    @api_telemetry
+    def set_client_prefetch_threads(self, value: int) -> None:
+        """Set the number of concurrent chunk-prefetch threads.
+
+        Executes ``ALTER SESSION SET CLIENT_PREFETCH_THREADS`` so the change
+        takes effect on subsequent result-set fetches — matching the legacy
+        connector's immediate, locally-effective setter — rather than only
+        updating local config, which the core's chunk downloader never reads
+        back from after connect.
+        """
+        value = clamp_client_prefetch_threads(value)
+        self.config.client_prefetch_threads = value
+        cur = self.cursor()
+        try:
+            cur.execute(SET_CLIENT_PREFETCH_THREADS_SQL.format(value=value))
+        finally:
+            cur.close()
+
+    @api_telemetry
+    def get_client_prefetch_threads(self) -> int:
+        """Get the configured number of chunk-prefetch threads."""
+        return cast(int, self.config.client_prefetch_threads)
+
+    @property
+    @api_telemetry
+    def client_prefetch_threads(self) -> int | None:
+        """The number of threads used to prefetch query result data."""
+        return self.config.client_prefetch_threads
+
+    @client_prefetch_threads.setter
+    @api_telemetry
+    def client_prefetch_threads(self, value: int) -> None:
+        """Set client_prefetch_threads; applies immediately via ``ALTER SESSION SET``."""
+        self.set_client_prefetch_threads(value)
 
     # ------------------------------------------------------------------
     # Connection state

@@ -94,6 +94,7 @@ class UserPasswordMfaTests implements WithQueryUtils, WithConnect, WithTotpCodes
   // -------------------------------------------------------------------------
 
   @Test
+  @Disabled("Bad-secret tests cause pipeline flakiness by blocking the test account")
   void shouldFailAuthenticationWhenWrongPasswordIsProvided() {
     // Given Authentication is set to username_password_mfa and user is provided but password is
     // skipped or invalid

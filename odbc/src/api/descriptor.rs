@@ -12,6 +12,7 @@ use crate::api::{DescField, OdbcResult, desc_from_handle};
 use crate::conversion::warning::Warnings;
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
+use snafu::OptionExt;
 use tracing;
 
 /// Get a descriptor field value.
@@ -142,6 +143,16 @@ fn get_ard_field(
                         value_ptr as *mut *mut sql::Len,
                         desc.bind_offset_ptr,
                     );
+                }
+                Ok(())
+            }
+            DescField::ArrayStatusPtr => {
+                // SQL_DESC_ARRAY_STATUS_PTR — the array operation pointer
+                // (SQL_ATTR_ROW_OPERATION_PTR on an ARD, or SQL_ATTR_PARAM_OPERATION_PTR
+                // when an explicit descriptor is used as an APD). Explicit descriptors
+                // always route here, so this is the read path for both.
+                unsafe {
+                    std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
                 }
                 Ok(())
             }
@@ -870,6 +881,16 @@ fn set_ard_field(
                 desc.bind_offset_ptr = ptr;
                 Ok(())
             }
+            DescField::ArrayStatusPtr => {
+                // SQL_DESC_ARRAY_STATUS_PTR — array operation pointer
+                // (SQL_ATTR_ROW_OPERATION_PTR on an ARD, or SQL_ATTR_PARAM_OPERATION_PTR
+                // when an explicit descriptor is used as an APD). Explicit descriptors
+                // always route here, so this is the write path for both.
+                let ptr = value_ptr as *mut u16;
+                tracing::debug!("set_desc_field: ARD ArrayStatusPtr = {:?}", ptr);
+                desc.array_status_ptr = ptr;
+                Ok(())
+            }
             _ => {
                 tracing::warn!("set_desc_field: unsupported ARD header field {:?}", field);
                 crate::api::error::InvalidDescriptorFieldIdSnafu {
@@ -1094,6 +1115,7 @@ fn get_apd_field(
             return Ok(());
         }
         DescField::ArrayStatusPtr => {
+            // SQL_ATTR_PARAM_OPERATION_PTR — per-set PROCEED/IGNORE array.
             unsafe {
                 std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
             }
@@ -1197,6 +1219,7 @@ fn set_apd_field(
                 Ok(())
             }
             DescField::ArrayStatusPtr => {
+                // SQL_ATTR_PARAM_OPERATION_PTR — per-set PROCEED/IGNORE array.
                 desc.array_status_ptr = value_ptr as *mut u16;
                 Ok(())
             }
@@ -1517,11 +1540,10 @@ pub fn set_desc_rec(
     // correctly), mirroring the CONCISE_TYPE handling in `set_desc_field`.
     const SQL_DATETIME: sql::SmallInt = 9;
     let type_ = if type_ == SQL_DATETIME {
-        concise_datetime_type(sub_type).ok_or_else(|| {
+        concise_datetime_type(sub_type).with_context(|| {
             crate::api::error::InconsistentDescriptorInfoSnafu {
                 reason: format!("invalid datetime SubType {sub_type} for SQL_DATETIME"),
             }
-            .build()
         })?
     } else {
         type_

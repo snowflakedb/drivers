@@ -1,0 +1,22 @@
+queries:
+- index: 0
+  original: |-
+    SELECT a.INTVAL,
+           a.BIGINTVAL,
+           a.VARCHARVAL,
+           a.DATEVAL,
+           a.TSNTZ,
+           SEQ4() AS DUP_ID
+    FROM ODBCMETADATATESTDB.DATATYPETESTS.ALLDATATYPES a
+    CROSS JOIN TABLE(GENERATOR(ROWCOUNT => 12500))
+    ORDER BY a.ROWKIND, DUP_ID;
+  mapped: |-
+    SELECT a.INTVAL,
+           a.BIGINTVAL,
+           a.VARCHARVAL,
+           a.DATEVAL,
+           a.TSNTZ,
+           SEQ4() AS DUP_ID
+    FROM ODBCMETADATATESTDB.DATATYPETESTS.ALLDATATYPES a
+    CROSS JOIN TABLE(GENERATOR(ROWCOUNT => 12500))
+    ORDER BY a.ROWKIND, DUP_ID;

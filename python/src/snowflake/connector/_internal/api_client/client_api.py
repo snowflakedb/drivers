@@ -496,11 +496,11 @@ class CoreDriver:
 
     def database_fetch_chunk(
         self,
-        db_handle: DatabaseHandle,
+        conn_handle: ConnectionHandle | None,
         chunk: ResultChunk,
         columns: list[ColumnMetadata],
     ) -> DatabaseFetchChunkResponse:
-        request = DatabaseFetchChunkRequest(db_handle=db_handle, chunk=chunk, columns=columns)
+        request = DatabaseFetchChunkRequest(conn_handle=conn_handle, chunks=[chunk], columns=columns)
         return self.client.database_fetch_chunk(request)
 
     # =====================================================================
@@ -813,12 +813,12 @@ class AsyncCoreDriver:
 
     async def database_fetch_chunk(
         self,
-        db_handle: DatabaseHandle,
+        conn_handle: ConnectionHandle | None,
         chunk: ResultChunk,
         columns: list[ColumnMetadata],
     ) -> DatabaseFetchChunkResponse:
         return await self.client.database_fetch_chunk(
-            DatabaseFetchChunkRequest(db_handle=db_handle, chunk=chunk, columns=columns)
+            DatabaseFetchChunkRequest(conn_handle=conn_handle, chunks=[chunk], columns=columns)
         )
 
 

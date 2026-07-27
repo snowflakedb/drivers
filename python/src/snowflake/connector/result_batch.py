@@ -50,8 +50,10 @@ class ResultBatch(ResultBatchMixin):
     :meth:`create_iter`, :meth:`to_arrow`, or :meth:`to_pandas` is called.
 
     These objects are pickleable for easy distribution and replication.
-    After unpickling, pass a live :class:`~snowflake.connector.Connection`
-    to any data-fetching method.
+    Remote chunks use presigned URLs and can be fetched without a live
+    connection. Pass an optional :class:`~snowflake.connector.Connection`
+    when you need the connection-scoped HTTP client (for example after
+    unpickling in a worker that opens a fresh session).
     """
 
     _connection: Connection | None
@@ -85,22 +87,23 @@ class ResultBatch(ResultBatchMixin):
     # Connection resolution
     # ------------------------------------------------------------------
 
-    def _resolve_connection(self, connection: Connection | None = None) -> Connection:
-        return cast("Connection", self._require_connection(connection))
+    def _resolve_connection(self, connection: Connection | None = None) -> Connection | None:
+        return connection or self._connection
 
     # ------------------------------------------------------------------
     # Data fetching
     # ------------------------------------------------------------------
 
-    def _fetch_arrow_stream_ptr(self, connection: Connection) -> int:
+    def _fetch_arrow_stream_ptr(self, connection: Connection | None = None) -> int:
+        conn_handle = connection.conn_handle if connection is not None else None
         response = core_driver.database_fetch_chunk(
-            db_handle=connection.db_handle,  # type: ignore[arg-type]
+            conn_handle=conn_handle,
             chunk=self._chunk,
             columns=self._columns,
         )
         return get_stream_ptr(response)
 
-    def _take_arrow_stream_ptr(self, connection: Connection) -> int:
+    def _take_arrow_stream_ptr(self, connection: Connection | None = None) -> int:
         """Return the Arrow stream pointer, fetching first if necessary."""
         if self._arrow_stream_ptr is None:
             self.populate_data(connection=connection)
@@ -154,7 +157,7 @@ class ResultBatch(ResultBatchMixin):
             )
 
         stream_ptr = self._take_arrow_stream_ptr(conn)
-        return create_row_iterator(stream_ptr, connection=conn, use_dict_result=use_dict_result)
+        return create_row_iterator(stream_ptr, context=self._arrow_context, use_dict_result=use_dict_result)
 
     @requires_dependency(pyarrow)
     def to_arrow(
@@ -168,7 +171,7 @@ class ResultBatch(ResultBatchMixin):
         return collect_arrow_table(
             create_table_iterator(
                 stream_ptr,
-                connection=conn,
+                context=self._arrow_context,
                 number_to_decimal=number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
             ),

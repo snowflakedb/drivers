@@ -6,6 +6,9 @@ use super::global_state::{DatabaseDriverV1, WrapperPresets};
 use super::query::build_reader_from_rowset_data;
 use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::handle_manager::Handle;
+use crate::query_types::statement_type::{
+    DML_AFFECTED_ROWS_COLUMN_PREFIXES, DML_AFFECTED_ROWS_COLUMNS, QueryType, ResultKind,
+};
 use crate::rest::snowflake::query_response::{Data, RowType, RowsetData, Stats};
 use crate::rest::snowflake::snowflake_get_query_result;
 use arrow::array::RecordBatchReader;
@@ -39,6 +42,7 @@ pub struct ResultSetDescriptor {
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
     pub rows_affected: Option<i64>,
+    pub row_count: Option<i64>,
     pub statement_type_id: Option<i64>,
     pub sql_state: Option<String>,
     pub stats: Option<Stats>,
@@ -148,73 +152,60 @@ pub(super) struct ResultSet {
     pub reader_ctx: ReaderContext,
 }
 
-// --- DML detection constants ---
-
-const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
-    "number of rows updated",
-    "number of multi-joined rows updated",
-    "number of rows deleted",
-];
-const DML_AFFECTED_ROWS_COLUMN_PREFIXES: &[&str] = &["number of rows inserted"];
-
-const STATEMENT_TYPE_ID_DML: i64 = 0x3000;
-const STATEMENT_TYPE_ID_INSERT: i64 = 0x3100;
-const STATEMENT_TYPE_ID_UPDATE: i64 = 0x3200;
-const STATEMENT_TYPE_ID_DELETE: i64 = 0x3300;
-const STATEMENT_TYPE_ID_MERGE: i64 = 0x3400;
-const STATEMENT_TYPE_ID_MULTI_TABLE_INSERT: i64 = 0x3500;
-const STATEMENT_TYPE_ID_GET_FILES: i64 = 0x7101;
-const STATEMENT_TYPE_ID_PUT_FILES: i64 = 0x7102;
-
 // --- Response parsing helpers ---
 
-fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
-    statement_type_id.is_some_and(|type_id| {
-        matches!(
-            type_id,
-            STATEMENT_TYPE_ID_DML
-                | STATEMENT_TYPE_ID_INSERT
-                | STATEMENT_TYPE_ID_UPDATE
-                | STATEMENT_TYPE_ID_DELETE
-                | STATEMENT_TYPE_ID_MERGE
-                | STATEMENT_TYPE_ID_MULTI_TABLE_INSERT
-        )
+/// The statement type id to classify a response by: the server-provided
+/// `statementTypeId`, falling back to the file-transfer `command` when the
+/// server omits it (PUT/GET responses sometimes do). Both `response_to_descriptor`
+/// and `calculate_rows_affected` key off this so classification never diverges.
+fn effective_statement_type_id(data: &Data) -> Option<i64> {
+    data.statement_type_id.or(match data.command.as_deref() {
+        Some("UPLOAD") => Some(QueryType::PUT_FILES.raw()),
+        Some("DOWNLOAD") => Some(QueryType::GET_FILES.raw()),
+        _ => None,
     })
 }
 
-/// Calculate rows affected based on statement type.
+/// Calculate rows affected from a query response, keyed off the statement's
+/// [`ResultKind`] (the shared `query_types::statement_type` classifier).
 ///
-/// Returns `Some(count)` when rows affected is known, `None` when it is not
-/// (when the statement type is unknown).
-///
-/// - For DML: Parse rowset columns to sum affected rows
-/// - For SELECT and other queries: Use total field
-/// - For unknown: Return None
-pub(super) fn calculate_rows_affected(data: &Data) -> Option<i64> {
-    if is_dml_statement(data.statement_type_id) {
-        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type)
-            && !rowset.is_empty()
-            && !rowset[0].is_empty()
-        {
-            let mut affected_rows = 0i64;
-            for (idx, col) in row_types.iter().enumerate() {
-                let col_name = col.name.to_lowercase();
-                if (DML_AFFECTED_ROWS_COLUMNS.contains(&col_name.as_str())
-                    || DML_AFFECTED_ROWS_COLUMN_PREFIXES
-                        .iter()
-                        .any(|p| col_name.starts_with(p)))
-                    && let Some(Some(value)) = rowset[0].get(idx)
-                    && let Ok(count) = value.parse::<i64>()
-                {
-                    affected_rows += count;
-                }
-            }
-            return Some(affected_rows);
-        }
-        return Some(0);
+/// - `UpdateCount` (DML): sum the affected-row columns from the rowset.
+/// - `Cursor` (SELECT / SHOW / file transfers / ...): the result-set size in
+///   `data.total`.
+/// - `NoResult` (DDL / TCL / unknown): `None`. Snowflake returns `total: 1` as a
+///   generic success marker for these; surfacing it as `rows_affected = 1` is
+///   misleading, so we report "not applicable" instead.
+pub(super) fn calculate_rows_affected(data: &Data, statement_type_id: Option<i64>) -> Option<i64> {
+    match QueryType::from_raw(statement_type_id).result_kind() {
+        ResultKind::UpdateCount => Some(sum_dml_affected_rows(data)),
+        ResultKind::Cursor => data.total,
+        ResultKind::NoResult => None,
+    }
+}
+
+/// Sum the integer cells of the DML affected-row columns in the first rowset row.
+fn sum_dml_affected_rows(data: &Data) -> i64 {
+    let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type) else {
+        return 0;
+    };
+    if rowset.is_empty() || rowset[0].is_empty() {
+        return 0;
     }
 
-    data.total
+    let mut affected_rows = 0i64;
+    for (idx, col) in row_types.iter().enumerate() {
+        let col_name = col.name.to_lowercase();
+        if (DML_AFFECTED_ROWS_COLUMNS.contains(&col_name.as_str())
+            || DML_AFFECTED_ROWS_COLUMN_PREFIXES
+                .iter()
+                .any(|p| col_name.starts_with(p)))
+            && let Some(Some(value)) = rowset[0].get(idx)
+            && let Ok(count) = value.parse::<i64>()
+        {
+            affected_rows += count;
+        }
+    }
+    affected_rows
 }
 
 pub(super) fn response_to_descriptor(
@@ -222,7 +213,8 @@ pub(super) fn response_to_descriptor(
     wrapper_presets: &WrapperPresets,
 ) -> ResultSetDescriptor {
     let query_id = data.query_id.clone().unwrap_or_default();
-    let rows_affected = calculate_rows_affected(data);
+    let statement_type_id = effective_statement_type_id(data);
+    let rows_affected = calculate_rows_affected(data, statement_type_id);
     let columns = data
         .row_type
         .as_ref()
@@ -234,16 +226,11 @@ pub(super) fn response_to_descriptor(
         .map(|row_types| row_types_to_columns(row_types))
         .unwrap_or_default();
 
-    let statement_type_id = data.statement_type_id.or(match data.command.as_deref() {
-        Some("UPLOAD") => Some(STATEMENT_TYPE_ID_PUT_FILES),
-        Some("DOWNLOAD") => Some(STATEMENT_TYPE_ID_GET_FILES),
-        _ => None,
-    });
-
     ResultSetDescriptor {
         query_id,
         columns,
         rows_affected,
+        row_count: data.total,
         statement_type_id,
         sql_state: data.sql_state.clone(),
         stats: data.stats.clone(),
@@ -417,12 +404,12 @@ impl DatabaseDriverV1 {
         &self,
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
-        let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
+        let rs_ptr = self
+            .results
+            .get_obj(result_handle)
+            .with_context(|| InvalidArgumentSnafu {
                 argument: "result_handle: ResultSet handle not found".to_string(),
-            }
-            .build()
-        })?;
+            })?;
         let (data, http_client, prefetch_config, columns) = snapshot_reader_inputs(&rs_ptr).await;
 
         let nullable_flags: Vec<bool> = columns.iter().map(|c| c.nullable).collect();
@@ -439,7 +426,7 @@ impl DatabaseDriverV1 {
             flags,
         )
         .await
-        .context(QueryResponseProcessingSnafu)?;
+        .context(QueryResponseProcessSnafu)?;
         Ok(reader)
     }
 
@@ -450,12 +437,12 @@ impl DatabaseDriverV1 {
         &self,
         result_handle: Handle,
     ) -> Result<ChunkDataWithDescriptor, ApiError> {
-        let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
+        let rs_ptr = self
+            .results
+            .get_obj(result_handle)
+            .with_context(|| InvalidArgumentSnafu {
                 argument: "ResultSet handle not found".to_string(),
-            }
-            .build()
-        })?;
+            })?;
         let result_set = rs_ptr.lock().await;
 
         let chunk_data = (&result_set.data).into();
@@ -468,10 +455,10 @@ impl DatabaseDriverV1 {
 
     pub fn result_set_release(&self, result_handle: Handle) -> Result<(), ApiError> {
         if !self.results.delete_handle(result_handle) {
-            return Err(InvalidArgumentSnafu {
+            return InvalidArgumentSnafu {
                 argument: "ResultSet handle not found".to_string(),
             }
-            .build());
+            .fail();
         }
         Ok(())
     }
@@ -494,7 +481,7 @@ impl DatabaseDriverV1 {
     }
 
     /// Creates a ResultSet and registers it in the handle manager.
-    fn create_result_set(
+    pub(super) fn create_result_set(
         &self,
         descriptor: ResultSetDescriptor,
         data: RowsetData,
@@ -525,9 +512,9 @@ impl DatabaseDriverV1 {
         let schema = batch.schema();
         let mut buf = Vec::new();
         {
-            let mut writer = StreamWriter::try_new(&mut buf, &schema).context(ArrowParsingSnafu)?;
-            writer.write(batch).context(ArrowParsingSnafu)?;
-            writer.finish().context(ArrowParsingSnafu)?;
+            let mut writer = StreamWriter::try_new(&mut buf, &schema).context(ArrowParseSnafu)?;
+            writer.write(batch).context(ArrowParseSnafu)?;
+            writer.finish().context(ArrowParseSnafu)?;
         }
 
         let chunk_base64 = BASE64.encode(&buf);
@@ -537,6 +524,7 @@ impl DatabaseDriverV1 {
             query_id: String::new(),
             columns: Vec::new(),
             rows_affected: Some(-1),
+            row_count: None,
             statement_type_id: None,
             sql_state: None,
             stats: None,
@@ -563,12 +551,12 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ResultSetInfo, ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let conn_ptr =
+            self.connections
+                .get_obj(conn_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
 
         let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
@@ -714,6 +702,28 @@ mod tests {
 
         assert_id_name_reader(reader);
         drop(runtime);
+    }
+
+    #[test]
+    fn response_to_descriptor_sets_row_count_from_total() {
+        let json = r#"{
+            "queryResultFormat": "json",
+            "total": 42,
+            "rowset": [["1"]],
+            "rowtype": [
+                {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0}
+            ]
+        }"#;
+        let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.row_count, Some(42));
+    }
+
+    #[test]
+    fn response_to_descriptor_leaves_row_count_none_without_total() {
+        let data: Data = serde_json::from_str(JSON_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(descriptor.row_count, None);
     }
 
     #[test]

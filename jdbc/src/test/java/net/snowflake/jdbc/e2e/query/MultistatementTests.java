@@ -1,7 +1,10 @@
 package net.snowflake.jdbc.e2e.query;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,7 +14,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.statement.SnowflakeStatement;
+import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -313,5 +318,52 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
     assertTrue(
         ex.getMessage().toLowerCase().contains("bind"),
         "Expected error to mention bind variables, got: " + ex.getMessage());
+  }
+
+  // Skipped on legacy: getQueryID() returns the parent ID here but the first child's ID on legacy
+  // (BD#24), so feeding it to getChildQueryIds yields the children only on the universal driver.
+  @Test
+  @SkipOldDriver("BD#24")
+  public void shouldReturnChildQueryIdsForMultistatementQuery() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When a multistatement query with 3 SELECTs is executed
+    try (Statement statement = connection.createStatement()) {
+      statement.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 3);
+      statement.execute("SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c");
+      String parentQueryId = statement.unwrap(SnowflakeStatement.class).getQueryID();
+
+      // Then getChildQueryIds returns one query ID per sub-statement
+      String[] childQueryIds =
+          connection.unwrap(SnowflakeConnection.class).getChildQueryIds(parentQueryId);
+      assertEquals(3, childQueryIds.length, "Expected one child query ID per sub-statement");
+      for (String childId : childQueryIds) {
+        assertNotNull(childId, "Child query ID should not be null");
+        assertFalse(childId.isEmpty(), "Child query ID should not be empty");
+        assertNotEquals(
+            parentQueryId, childId, "Child query ID should differ from the parent query ID");
+      }
+    }
+  }
+
+  @Test
+  public void shouldReturnQueryIdItselfForSingleStatementQuery() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When a single-statement query is executed
+    try (Statement statement = connection.createStatement()) {
+      statement.execute("SELECT 1");
+      String queryId = statement.unwrap(SnowflakeStatement.class).getQueryID();
+
+      // Then getChildQueryIds returns an array containing only that query ID
+      String[] childQueryIds =
+          connection.unwrap(SnowflakeConnection.class).getChildQueryIds(queryId);
+      assertArrayEquals(
+          new String[] {queryId},
+          childQueryIds,
+          "Single-statement query should report itself as its only child");
+    }
   }
 }

@@ -112,6 +112,123 @@ class ConvertingRowReaderTest {
     assertTrue(reader.isAfterLast());
   }
 
+  // --- isLast (one-row look-ahead) ---
+
+  @Test
+  void shouldReportIsLastOnlyOnFinalProjectedRow() throws SQLException {
+    reader = readerWithPassthrough();
+    when(delegate.next()).thenReturn(true, true, false);
+    when(delegate.getInt(1)).thenReturn(1, 2);
+    when(delegate.getString(2)).thenReturn("a", "b");
+    when(delegate.getBoolean(3)).thenReturn(true, false);
+
+    assertTrue(reader.next());
+    assertFalse(reader.isLast());
+
+    assertTrue(reader.next());
+    assertTrue(reader.isLast());
+
+    assertFalse(reader.next());
+    assertFalse(reader.isLast());
+  }
+
+  @Test
+  void shouldReportIsLastForSingleRowResult() throws SQLException {
+    reader = new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {1});
+    when(delegate.next()).thenReturn(true, false);
+
+    assertTrue(reader.next());
+    assertTrue(reader.isLast());
+  }
+
+  @Test
+  void shouldReportIsLastBeforeFirstRowOfEmptyResult() throws SQLException {
+    reader = readerWithPassthrough();
+    when(delegate.next()).thenReturn(false);
+
+    // Parity with snowflake-jdbc: before-first cursor of an empty projected result is last.
+    assertTrue(reader.isLast());
+    assertFalse(reader.next());
+    assertFalse(reader.isLast());
+  }
+
+  @Test
+  void shouldNotReportIsLastBeforeFirstRowOfNonEmptyResult() throws SQLException {
+    reader =
+        new ConvertingRowReader(delegate, new String[] {"V"}, row -> new Object[] {row.getInt(1)});
+    when(delegate.next()).thenReturn(true, false);
+    when(delegate.getInt(1)).thenReturn(7);
+
+    assertFalse(reader.isLast());
+
+    // The peek did not consume the row: next() still returns it.
+    assertTrue(reader.next());
+    assertEquals(7, reader.getInt(1));
+    assertTrue(reader.isLast());
+  }
+
+  @Test
+  void shouldAccountForFilteredTrailingRowsInIsLast() throws SQLException {
+    int[] callCount = {0};
+    reader =
+        new ConvertingRowReader(
+            delegate,
+            columnNames,
+            row -> {
+              callCount[0]++;
+              return callCount[0] == 1 ? new Object[] {42, "kept", true} : null;
+            });
+    // Delegate still has two rows after the kept one, but the converter drops both.
+    when(delegate.next()).thenReturn(true, true, true, false);
+
+    assertTrue(reader.next());
+    assertEquals(0, reader.getCurrentRow());
+    // The kept row is last even though the delegate is not yet exhausted.
+    assertTrue(reader.isLast());
+    assertFalse(reader.next());
+  }
+
+  @Test
+  void shouldNotReportIsLastWhenAKeptRowFollowsFilteredRows() throws SQLException {
+    int[] callCount = {0};
+    reader =
+        new ConvertingRowReader(
+            delegate,
+            columnNames,
+            row -> {
+              callCount[0]++;
+              if (callCount[0] == 2) {
+                return null; // drop the middle delegate row
+              }
+              return new Object[] {callCount[0], "row", true};
+            });
+    when(delegate.next()).thenReturn(true, true, true, false);
+
+    assertTrue(reader.next());
+    assertEquals(1, reader.getInt(1));
+    // A later kept row still follows across the dropped one, so this is not last.
+    assertFalse(reader.isLast());
+
+    assertTrue(reader.next());
+    assertEquals(3, reader.getInt(1));
+    assertTrue(reader.isLast());
+  }
+
+  @Test
+  void shouldReturnSameIsLastOnRepeatedCallsWithoutAdvancing() throws SQLException {
+    reader = readerWithPassthrough();
+    when(delegate.next()).thenReturn(true, false);
+    when(delegate.getInt(1)).thenReturn(1);
+    when(delegate.getString(2)).thenReturn("a");
+    when(delegate.getBoolean(3)).thenReturn(true);
+
+    assertTrue(reader.next());
+    assertTrue(reader.isLast());
+    // A second call reuses the buffered peek rather than advancing the delegate again.
+    assertTrue(reader.isLast());
+    assertFalse(reader.next());
+  }
+
   // --- column access: typed getters ---
 
   @Test

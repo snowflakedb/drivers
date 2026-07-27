@@ -18,12 +18,6 @@
 
 using namespace Catch::Matchers;
 
-// Some test accounts (notably GCP) enforce MFA at the account level, which
-// causes plain username+password login to fail with:
-//   "Multi-factor authentication is required for this account."
-// This is a server-side policy, not a driver bug.  We detect this at runtime
-// and SKIP the happy-path tests so they don't produce false failures.
-
 std::string get_password_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
@@ -72,27 +66,9 @@ void verify_simple_query(ConnectionHandleWrapper& dbc) {
   REQUIRE(result == 1);
 }
 
-bool try_password_connect(const std::string& connection_string, ConnectionHandleWrapper& dbc) {
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
-                                   SQL_DRIVER_NOPROMPT);
-  if (ret == SQL_ERROR) {
-    auto records = get_diag_rec(dbc);
-    for (const auto& record : records) {
-      if (record.messageText.find("Multi-factor authentication is required") != std::string::npos) {
-        SKIP("Account has MFA enforcement enabled — plain password auth is not possible on this account");
-        return false;
-      }
-    }
-    REQUIRE_ODBC(ret, dbc);
-  }
-  return true;
-}
+TEST_CASE("should authenticate using username and password", "[user_password][requires_no_mfa]") {
+  REQUIRE_NO_MFA("requires parameters_aws_local.json");
 
-TEST_CASE("should authenticate using username and password", "[user_password]") {
-  auto params = get_test_parameters("testconnection");
-  if (params.find("SNOWFLAKE_TEST_PASSWORD") == params.end()) {
-    SKIP("Skipping: SNOWFLAKE_TEST_PASSWORD not configured (JWT-only environment)");
-  }
   // Given Authentication is set to default (snowflake) with valid username and password
   std::string connection_string = get_password_connection_string();
 
@@ -102,19 +78,19 @@ TEST_CASE("should authenticate using username and password", "[user_password]") 
   REQUIRE_ODBC(ret, env);
 
   auto dbc = env.createConnectionHandle();
-  if (!try_password_connect(connection_string, dbc)) return;
+  ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                         SQL_DRIVER_NOPROMPT);
+  REQUIRE_ODBC(ret, dbc);
 
   // Then Login is successful and simple query can be executed
   verify_simple_query(dbc);
   SQLDisconnect(dbc.getHandle());
 }
 
-TEST_CASE("should authenticate using explicit snowflake authenticator", "[user_password]") {
+TEST_CASE("should authenticate using explicit snowflake authenticator", "[user_password][requires_no_mfa]") {
+  REQUIRE_NO_MFA("requires parameters_aws_local.json");
   SKIP_OLD_DRIVER("", "Old driver already accepts 'snowflake' — test verifies new driver does too");
-  auto params = get_test_parameters("testconnection");
-  if (params.find("SNOWFLAKE_TEST_PASSWORD") == params.end()) {
-    SKIP("Skipping: SNOWFLAKE_TEST_PASSWORD not configured (JWT-only environment)");
-  }
+
   // Given Authentication is explicitly set to snowflake with valid username and password
   std::string connection_string = get_password_connection_string_with_explicit_authenticator();
 
@@ -124,14 +100,18 @@ TEST_CASE("should authenticate using explicit snowflake authenticator", "[user_p
   REQUIRE_ODBC(ret, env);
 
   auto dbc = env.createConnectionHandle();
-  if (!try_password_connect(connection_string, dbc)) return;
+  ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                         SQL_DRIVER_NOPROMPT);
+  REQUIRE_ODBC(ret, dbc);
 
   // Then Login is successful and simple query can be executed
   verify_simple_query(dbc);
   SQLDisconnect(dbc.getHandle());
 }
 
-TEST_CASE("should fail authentication when wrong password is provided", "[user_password]") {
+TEST_CASE("should fail authentication when wrong password is provided", "[user_password][requires_no_mfa]") {
+  REQUIRE_NO_MFA("requires parameters_aws_local.json");
+
   // Given Authentication is set to default with valid username and wrong password
   std::string connection_string = get_wrong_password_connection_string();
 

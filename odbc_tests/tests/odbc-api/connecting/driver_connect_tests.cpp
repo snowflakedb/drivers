@@ -312,10 +312,6 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Connection string keyword=value 
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString buffer handling",
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
-  // The new driver does not yet echo the expanded connection string back into
-  //   OutConnectionString, so outConnStrLen stays 0.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // Test with output buffer
@@ -351,11 +347,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString tr
   // outConnStrLen should indicate the full length needed
   if (ret == SQL_SUCCESS_WITH_INFO) {
     const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-    OLD_IODBC_ONLY("BD#61") {
-      // The old driver under iODBC reports SQL_SUCCESS_WITH_INFO for the
-      //   truncation but doesn't post a diagnostic record - the truncation
-      //   signal lives only in the return code. The new driver posts the
-      //   01004 record.
+    IODBC_ONLY {
+      // BD#61: the iODBC Driver Manager does not surface the driver's
+      //   diagnostic record for SQLDriverConnect, so the truncation signal
+      //   lives only in the SQL_SUCCESS_WITH_INFO return code. This holds for
+      //   both the old and new driver (the new driver posts the 01004 record,
+      //   but iODBC drops it before the application can read it).
       (void)records;
     }
     else {
@@ -371,10 +368,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString tr
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL OutConnectionString with non-NULL length pointer",
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
-  // The new driver does not yet report the required OutConnectionString length,
-  //   so outConnStrLen stays 0.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string connStr = build_dsn_connection_string(dsn_name());
   SQLSMALLINT outConnStrLen = 0;
 
@@ -392,10 +385,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL OutConnectionStri
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL StringLength2Ptr pointer",
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
-  // The new driver does not yet populate OutConnectionString, so the output
-  //   buffer stays empty.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string connStr = build_dsn_connection_string(dsn_name());
   SQLCHAR outConnStr[1024];
 
@@ -516,8 +505,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Connection with additi
 TEST_CASE_METHOD(DbcDefaultDSNFixture,
                  "SQLDriverConnect: 01S00 - Invalid connection string attribute (unrecognized keyword)",
                  "[odbc-api][driverconnect][dsn][integration]") {
-  // The new driver does not yet emit the 01S00 warning for unrecognized
-  //   keywords (it returns plain SQL_SUCCESS).
+  // The new driver forwards unrecognized connection-string keywords to the
+  //   server as session parameters rather than ignoring them, so it does not
+  //   (yet) emit the 01S00 warning. Revisit once 01S00 is sourced from a
+  //   server-side "parameter not applied" signal rather than local unknown-ness.
+  //   Tracked: SNOW-3765949.
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Per ODBC spec, unrecognized keywords return SQL_SUCCESS_WITH_INFO with 01S00

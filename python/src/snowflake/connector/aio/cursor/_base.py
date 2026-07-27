@@ -12,12 +12,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..._internal.api_client.client_api import async_core_driver
+from ..._internal.arrow_context import ArrowConverterContext
 from ..._internal.arrow_stream_async import (
     AsyncArrowStreamIterator,
     collect_arrow_table_async,
     to_pandas_async,
 )
 from ..._internal.arrow_stream_utils import create_row_iterator, create_table_iterator
+from ..._internal.binding_converters import ParamStyle
 from ..._internal.cursor import (
     AsyncQueryResultWaiter,
     CursorBaseMixin,
@@ -35,7 +37,9 @@ from ..._internal.cursor.decorators import (
 from ..._internal.decorators import api_telemetry, pep249
 from ..._internal.errorcode import ER_INVALID_VALUE
 from ..._internal.extras import pandas, pyarrow, requires_dependency
+from ..._internal.logging import get_logger
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ABORT_QUERY_OUTCOME_ABORTED,
     ExecuteQueryResponse,
     MultiStatementResult,
     PrepareResult,
@@ -44,6 +48,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from ..._internal.statement_utils import async_statement
+from ..._internal.utils import _resolve_alias
 from ...errors import NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
@@ -55,7 +60,7 @@ if TYPE_CHECKING:
 
     from ..connection import Connection
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Distinguishes "stream exhausted" from a legitimate ``None`` row value.
 _FETCH_DONE = object()
@@ -172,6 +177,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
         _skip_upload_on_content_match: bool = False,
+        *,
+        _force_qmark_paramstyle: bool = False,
+        _statement_params: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -191,12 +199,21 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 concurrent uploaders; only meaningful with ``OVERWRITE=TRUE``.
                 Underscore-prefixed for parity with the legacy
                 Python-connector kwarg name.
+            _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
+                the connection's paramstyle is pyformat/format. Used by
+                callers that emit ``?`` placeholders unconditionally.
+            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
+                sent to Snowflake with this query only. Never persisted on the
+                cursor; forwarded as query-request parameters, so they tag only
+                this query without mutating session state.
         """
         # Per-call params: this execute() only, never persisted on the cursor.
         statement_parameters = self._collect_statement_params(
             skip_upload_on_content_match=_skip_upload_on_content_match,
             num_statements=num_statements,
         )
+        if _statement_params:
+            statement_parameters.update(_statement_params)
 
         await self.reset()
         return await self._execute(
@@ -204,6 +221,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             parameters,
             _is_put_get,
             statement_parameters=statement_parameters,
+            _force_qmark_paramstyle=_force_qmark_paramstyle,
             **kwargs,
         )
 
@@ -214,13 +232,16 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _is_put_get: bool | None = None,
         *,
         statement_parameters: dict[str, Any] | None = None,
+        _force_qmark_paramstyle: bool = False,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("query: [%s]", self._format_query_for_log(operation))
+        if logger.is_enabled_for(logging.INFO) and self._connection.config.log_query_text:
+            logger.info("query: [%s]", self._format_query_for_log(operation))
 
-        query, binding_params = self._prepare_query(operation, parameters)
+        query, binding_params = self._prepare_query(
+            operation, parameters, _force_qmark_paramstyle=_force_qmark_paramstyle
+        )
 
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             await self._apply_statement_parameters(stmt_handle, statement_parameters)
@@ -300,6 +321,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self,
         operation: str,
         seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]],
+        _force_qmark_paramstyle: bool = False,
     ) -> None:
         """Execute each parameter set individually and aggregate rowcount.
 
@@ -311,7 +333,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         total_rowcount = 0
         unknown_rowcount = False
         for params in seq_of_parameters:
-            await self._execute(operation, params)  # no reset between calls
+            await self._execute(
+                operation, params, _force_qmark_paramstyle=_force_qmark_paramstyle
+            )  # no reset between calls
             rc = self._query_result.rowcount
             if rc is None or rc == -1:
                 unknown_rowcount = True
@@ -324,7 +348,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @pep249
     @api_telemetry
     @requires_open
-    async def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
+    async def executemany(
+        self,
+        operation: str,
+        seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        *,
+        seqparams: Sequence[Sequence[Any] | dict[str, Any]] | None = None,
+        _force_qmark_paramstyle: bool = False,
+    ) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
@@ -341,21 +372,29 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Args:
             operation (str): SQL statement (INSERT, UPDATE, DELETE, etc.)
             seq_of_parameters (sequence): Sequence of parameter sequences or dicts
+            seqparams: Legacy alias for ``seq_of_parameters`` (kwarg-only).
+                Cannot be supplied together with ``seq_of_parameters``.
+            _force_qmark_paramstyle: If True, treat as qmark even when the
+                connection's paramstyle is pyformat/format.
 
         Raises:
             InterfaceError: If parameter sequences have inconsistent lengths
         """
+        seq_of_parameters = _resolve_alias(  # type: ignore[assignment]
+            seq_of_parameters, seqparams, "seq_of_parameters", "seqparams"
+        )
+
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
 
-        paramstyle = self._connection.paramstyle
+        paramstyle = ParamStyle.QMARK if _force_qmark_paramstyle else self._connection.paramstyle
         first_params = seq_of_parameters[0]
 
         # Execute individually for:
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
-            await self._executemany_per_row(operation, seq_of_parameters)
+            await self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
             return
 
         # Validate row widths and pre-compute column-major layout before the server
@@ -370,11 +409,11 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         if prepare_result is None or not prepare_result.array_bind_supported:
             # Per-row fallback: server does not support array binding for this
             # statement type (e.g. UPDATE, DELETE, MERGE).
-            await self._executemany_per_row(operation, seq_of_parameters)
+            await self._executemany_per_row(operation, seq_of_parameters, _force_qmark_paramstyle)
             return
 
         # Server confirmed array binding: use pre-computed column-major params.
-        await self.execute(operation, transposed)
+        await self.execute(operation, transposed, _force_qmark_paramstyle=_force_qmark_paramstyle)
 
     @api_telemetry
     @requires_open
@@ -500,7 +539,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         return AsyncArrowStreamIterator(
             create_row_iterator(
                 stream_ptr=stream_ptr,
-                connection=self._connection,
+                context=ArrowConverterContext.create(self._connection),
                 use_dict_result=self._use_dict_result,
                 use_numpy=bool(self._connection.config.numpy),
             )
@@ -680,7 +719,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         iterator = AsyncArrowStreamIterator(
             create_table_iterator(
                 stream_ptr=stream_ptr,
-                connection=self._connection,
+                context=ArrowConverterContext.create(self._connection),
                 number_to_decimal=self._connection.arrow_number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
             )
@@ -701,7 +740,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         stream_ptr = await self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
-            connection=self._connection,
+            context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -884,4 +923,4 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        return response.success
+        return response.outcome == ABORT_QUERY_OUTCOME_ABORTED

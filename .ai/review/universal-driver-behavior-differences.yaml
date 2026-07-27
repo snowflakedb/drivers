@@ -159,3 +159,83 @@ rules:
       }
       ```
 
+  - id: ud-fixed-bd-must-have-no-test-marker
+    scope: full-pr
+    rule: |
+      **OBJECTIVE**: A behavioral-difference entry marked `status: fixed` means the old-vs-new delta no longer exists — the new (universal) driver was realigned to the legacy driver. Once that is true there is nothing to gate on driver identity, so the behavior must be asserted by ordinary plain assertions, NOT by a `BD#N` compatibility marker. A leftover marker on a fixed BD is stale: it either skips the old driver for a difference that is gone, or splits `OLD_DRIVER_ONLY`/`NEW_DRIVER_ONLY` on identical values.
+
+      **REQUIREMENT**: A test must NOT reference a BD whose `status` is `fixed` in the matching `BehaviorDifferences.yaml` via any driver-conditional compatibility marker or skip. The now-common behavior is asserted with plain, unconditional assertions. This applies to every surface:
+
+      - **ODBC (C++)** — `OLD_DRIVER_ONLY("BD#N")`, `NEW_DRIVER_ONLY("BD#N")`, `OLD_IODBC_ONLY("BD#N")`, `NEW_IODBC_ONLY("BD#N")`, `SKIP_OLD_DRIVER("BD#N", …)`, `SKIP_NEW_DRIVER("BD#N", …)`, `SKIP_OLD_IODBC("BD#N", …)`, or a bare `"BD#N"` token. Assert with plain `CHECK` / `REQUIRE`.
+      - **JDBC (Java)** — the `@SkipOldDriver("BD#N")` / `@SkipNewDriver("BD#N")` annotations (`net.snowflake.jdbc.utils`). Assert with a plain JUnit assertion (`assertEquals`, `assertThrows`, …).
+      - **Python** — `if OLD_DRIVER_ONLY("BD#N")` / `elif NEW_DRIVER_ONLY("BD#N")` guards (`tests.compatibility`). Assert with a plain `assert` / `pytest.raises`.
+
+      **Path → BD file mapping** (same as `ud-behavior-change-requires-bd-entry`):
+      - `odbc_tests/**` tests → `odbc_tests/BehaviorDifferences.yaml`
+      - `jdbc/src/test/**` → `jdbc/BehaviorDifferences.yaml`
+      - `python/**` tests → `python/BehaviorDifferences.yaml`
+
+      **When a PR flips a BD to `status: fixed`**, it MUST also remove that BD's existing markers in the test suite (the plain assertion stays and now runs for both drivers). Flag a PR that sets `status: fixed` while leaving `BD#N` markers behind.
+
+      **Corollary**: a fixed BD legitimately has no `BD#N` reference anywhere — that is the correct end state, not a coverage gap. Do NOT ask for a marker to be "added back" for a fixed BD.
+
+      This is the inverse of `ud-java-skip-annotation-requires-behavior-differences-entry` (every `@SkipOldDriver`/`@SkipNewDriver` needs a BD entry): here, a BD that has reached `status: fixed` must shed its skip/marker on every surface.
+
+      **EXEMPTIONS** — do NOT flag if ANY hold:
+      - The referenced BD's `status` is not `fixed` (`allowed` / `todo` / `unknown` keep their markers — those deltas are real).
+      - The `BD#N` string appears only in `BehaviorDifferences.yaml` prose or in a cross-reference comment that is not a compatibility macro (e.g. "related to BD#35").
+
+      ❌ **BAD** — a `SKIP_OLD_DRIVER` still points at a BD that is `status: fixed`:
+      ```cpp
+      // odbc_tests/BehaviorDifferences.yaml → 17: { status: fixed }
+      SKIP_OLD_DRIVER("BD#17", "old driver produces negative zero for interval types");
+      ```
+
+      ❌ **BAD** — paired marker on a fixed BD asserting the same value on both sides:
+      ```cpp
+      // 6: { status: fixed }
+      OLD_DRIVER_ONLY("BD#6") { CHECK(status == "UPLOADED"); }
+      NEW_DRIVER_ONLY("BD#6") { CHECK(status == "UPLOADED"); }
+      ```
+
+      ✅ **GOOD** — fixed behavior asserted with a plain, unguarded check and no `BD#N` token:
+      ```cpp
+      // 6: { status: fixed } — both drivers now behave the same
+      CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == "UPLOADED");
+      ```
+
+      ✅ **GOOD** — a real (non-fixed) delta keeps its paired marker:
+      ```cpp
+      // 2: { status: todo } — difference still exists, marker required
+      NEW_DRIVER_ONLY("BD#2") { CHECK(compression_type == expected); }
+      OLD_DRIVER_ONLY("BD#2") { CHECK(compression_type == to_lower(expected)); }
+      ```
+
+      ❌ **BAD (JDBC)** — a `@SkipOldDriver` annotation still points at a BD that is `status: fixed`:
+      ```java
+      // jdbc/BehaviorDifferences.yaml → 24: { status: fixed }
+      @SkipOldDriver("BD#24")
+      void shouldReturnChildQueryIds() { ... }
+      ```
+
+      ✅ **GOOD (JDBC)** — fixed behavior asserted with a plain, unconditional JUnit assertion:
+      ```java
+      // 24: { status: fixed } — both drivers now behave the same
+      assertEquals(expectedChildIds, statement.getChildQueryIds());
+      ```
+
+      ❌ **BAD (Python)** — a driver-conditional guard still points at a BD that is `status: fixed`:
+      ```python
+      # python/BehaviorDifferences.yaml → 3: { status: fixed }
+      if OLD_DRIVER_ONLY("BD#3"):
+          assert result.compression == "gzip"
+      elif NEW_DRIVER_ONLY("BD#3"):
+          assert result.compression == "GZIP"
+      ```
+
+      ✅ **GOOD (Python)** — fixed behavior asserted with a plain, unconditional assert:
+      ```python
+      # 3: { status: fixed } — both drivers now behave the same
+      assert result.compression == "GZIP"
+      ```
+

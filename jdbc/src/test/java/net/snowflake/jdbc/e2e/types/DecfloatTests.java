@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -10,19 +11,35 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class DecfloatTests extends SnowflakeIntegrationTestBase {
+public class DecfloatTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final int LARGE_RESULT_SET_SIZE = 20_000;
+  private static final ColumnExpectation DECFLOAT_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.DECIMAL,
+          "DECFLOAT",
+          BigDecimal.class.getName(),
+          38,
+          0,
+          40,
+          true,
+          false,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastDecfloatValuesToAppropriateType() throws Exception {
@@ -57,6 +74,18 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase {
                 "Column " + (i + 1) + " value mismatch for DECFLOAT");
           }
           assertEquals(38, row.get(3).precision(), "Column 4 should preserve 38 digits");
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  DECFLOAT_COLUMN.withColumnName("0::DECFLOAT"),
+                  DECFLOAT_COLUMN.withColumnName("123.456::DECFLOAT"),
+                  DECFLOAT_COLUMN.withColumnName("1.23E37::DECFLOAT"),
+                  DECFLOAT_COLUMN.withColumnName(
+                      "'12345678901234567890123456789012345678'::DECFLOAT")));
         });
   }
 

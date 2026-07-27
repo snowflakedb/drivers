@@ -172,6 +172,23 @@ fn scope_section(scope: ParamScope) -> &'static str {
     }
 }
 
+/// Representative scope for grouping a possibly multi-scoped parameter, by
+/// precedence Connection > Session > Statement.
+fn primary_scope(scopes: &[ParamScope]) -> ParamScope {
+    if scopes.contains(&ParamScope::Connection) {
+        ParamScope::Connection
+    } else if scopes.contains(&ParamScope::Session) {
+        ParamScope::Session
+    } else {
+        ParamScope::Statement
+    }
+}
+
+/// A parameter belongs on the connection config unless it is statement-only.
+fn is_statement_only(scopes: &[ParamScope]) -> bool {
+    !scopes.contains(&ParamScope::Connection) && !scopes.contains(&ParamScope::Session)
+}
+
 // ---------------------------------------------------------------------------
 // Code generation
 // ---------------------------------------------------------------------------
@@ -185,7 +202,8 @@ fn generate(params: &[ParamDef]) -> String {
     // generated file is stable across rebuilds.
     let mut sorted_params: Vec<&ParamDef> = params.iter().collect();
     sorted_params.sort_by(|a, b| {
-        (scope_section(a.scope), a.canonical_name).cmp(&(scope_section(b.scope), b.canonical_name))
+        (scope_section(primary_scope(a.scopes)), a.canonical_name)
+            .cmp(&(scope_section(primary_scope(b.scopes)), b.canonical_name))
     });
 
     // ── Header ─────────────────────────────────────────────────────────
@@ -228,8 +246,9 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     let mut sensitive: Vec<String> = Vec::new();
 
     for p in sorted_params.iter().copied() {
-        // Skip statement-scoped params; they belong on the cursor, not the connection.
-        if p.scope == ParamScope::Statement {
+        // Skip statement-only params; they belong on the cursor, not the connection.
+        // (A param that is also session/connection-scoped still appears here.)
+        if is_statement_only(p.scopes) {
             continue;
         }
 
@@ -276,16 +295,17 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     let mut current_scope: Option<ParamScope> = None;
 
     for p in sorted_params.iter().copied() {
-        // Skip statement-scoped params; they belong on the cursor, not the connection.
-        if p.scope == ParamScope::Statement {
+        // Skip statement-only params; they belong on the cursor, not the connection.
+        // (A param that is also session/connection-scoped still appears here.)
+        if is_statement_only(p.scopes) {
             continue;
         }
 
-        if current_scope != Some(p.scope) {
-            current_scope = Some(p.scope);
+        if current_scope != Some(primary_scope(p.scopes)) {
+            current_scope = Some(primary_scope(p.scopes));
             out.push_str(&format!(
                 "    # -- {} parameters {}\n",
-                scope_section(p.scope),
+                scope_section(primary_scope(p.scopes)),
                 "-".repeat(50)
             ));
         }

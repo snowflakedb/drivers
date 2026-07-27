@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
-
 from .._internal.api_client.client_api import core_driver
 from .._internal.cursor.result_set_wrapper import ResultSetWrapperBase
+from .._internal.logging import get_logger
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     ResultSetGetChunksResponse,
     ResultSetHandle,
@@ -11,7 +10,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
 from .._internal.statement_utils import get_stream_ptr
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class _ResultSetWrapper(ResultSetWrapperBase):

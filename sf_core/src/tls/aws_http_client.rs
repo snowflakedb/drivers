@@ -24,6 +24,8 @@ use hyper_util::rt::TokioExecutor;
 use std::sync::Arc;
 
 use crate::crl::config::CertRevocationCheckMode;
+use crate::crl::worker::SharedCrlWorker;
+use crate::log_foreign_error;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::client::create_root_store_from_pem;
 use crate::tls::config::TlsConfig;
@@ -74,10 +76,13 @@ impl HttpClient for TlsConfiguredHttpClient {
 /// [`TlsConfig`] (version window, CRL, custom root store). Always injects a
 /// custom hyper/rustls client so every S3 PUT/GET connection honours the
 /// driver's TLS policy uniformly.
-pub(crate) fn tls_configured_aws_http_client(tls_config: &TlsConfig) -> impl HttpClient + 'static {
+pub(crate) fn tls_configured_aws_http_client(
+    tls_config: &TlsConfig,
+    crl_worker: SharedCrlWorker,
+) -> impl HttpClient + 'static {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let client_config = build_aws_rustls_config(tls_config);
+    let client_config = build_aws_rustls_config(tls_config, crl_worker);
 
     let mut http = HyperHttpConnector::new();
     http.enforce_http(false);
@@ -98,7 +103,10 @@ pub(crate) fn tls_configured_aws_http_client(tls_config: &TlsConfig) -> impl Htt
 /// Build a `rustls::ClientConfig` for the AWS hyper client, honoring the full
 /// [`TlsConfig`]. Falls back to the full TLS 1.2–1.3 window with native certs
 /// if the window is somehow empty (a validated invariant that should not occur).
-fn build_aws_rustls_config(tls_config: &TlsConfig) -> rustls::ClientConfig {
+fn build_aws_rustls_config(
+    tls_config: &TlsConfig,
+    crl_worker: SharedCrlWorker,
+) -> rustls::ClientConfig {
     let versions = tls_config.versions.enabled_rustls_versions();
 
     match tls_config.crl_config.check_mode {
@@ -107,8 +115,12 @@ fn build_aws_rustls_config(tls_config: &TlsConfig) -> rustls::ClientConfig {
             if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
                 match std::fs::read(pem_path).map(|pem| create_root_store_from_pem(&pem)) {
                     Ok(Ok(store)) => roots = store,
-                    Ok(Err(e)) => tracing::error!("failed to load custom root store: {e}"),
-                    Err(e) => tracing::error!("failed to read custom root store file: {e}"),
+                    Ok(Err(e)) => {
+                        log_foreign_error!(e, "failed to load custom root store");
+                    }
+                    Err(e) => {
+                        log_foreign_error!(e, "failed to read custom root store file");
+                    }
                 }
             } else {
                 let native = rustls_native_certs::load_native_certs();
@@ -126,11 +138,11 @@ fn build_aws_rustls_config(tls_config: &TlsConfig) -> rustls::ClientConfig {
                 match std::fs::read(p).map(|pem| create_root_store_from_pem(&pem)) {
                     Ok(Ok(store)) => Some(store),
                     Ok(Err(e)) => {
-                        tracing::error!("failed to load custom root store: {e}");
+                        log_foreign_error!(e, "failed to load custom root store");
                         None
                     }
                     Err(e) => {
-                        tracing::error!("failed to read custom root store file: {e}");
+                        log_foreign_error!(e, "failed to read custom root store file");
                         None
                     }
                 }
@@ -139,14 +151,15 @@ fn build_aws_rustls_config(tls_config: &TlsConfig) -> rustls::ClientConfig {
                 tls_config.crl_config.clone(),
                 custom_root_store,
                 tls_config.verify_hostname,
+                crl_worker.clone(),
             ) {
                 Ok(v) => build_with_versions(&versions)
                     .dangerous()
                     .with_custom_certificate_verifier(Arc::new(v))
                     .with_no_client_auth(),
                 Err(e) => {
-                    tracing::error!("failed to build CRL verifier for AWS client: {e}");
-                    build_aws_rustls_config(&TlsConfig::default())
+                    log_foreign_error!(e, "failed to build CRL verifier for AWS client");
+                    build_aws_rustls_config(&TlsConfig::default(), crl_worker)
                 }
             }
         }
@@ -169,10 +182,12 @@ mod tests {
     use super::*;
     use crate::tls::config::{TlsVersion, TlsVersions};
 
+    use crate::crl::worker::CrlWorker;
+
     #[test]
     fn builds_client_for_default_config() {
         // Default config must also produce a custom client now (always injected).
-        let _ = tls_configured_aws_http_client(&TlsConfig::default());
+        let _ = tls_configured_aws_http_client(&TlsConfig::default(), CrlWorker::new_lazy());
     }
 
     #[test]
@@ -184,7 +199,7 @@ mod tests {
             },
             ..TlsConfig::default()
         };
-        let _ = tls_configured_aws_http_client(&cfg);
+        let _ = tls_configured_aws_http_client(&cfg, CrlWorker::new_lazy());
     }
 
     #[test]
@@ -196,6 +211,6 @@ mod tests {
             },
             ..TlsConfig::default()
         };
-        let _ = tls_configured_aws_http_client(&cfg);
+        let _ = tls_configured_aws_http_client(&cfg, CrlWorker::new_lazy());
     }
 }

@@ -9,7 +9,7 @@ use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::error::map_http_error;
 use crate::rest::snowflake::{
-    AsyncQuerySnafu, LogoutFailedSnafu, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
+    AsyncQuerySnafu, LogoutSnafu, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
     SnowflakeResponseError, UrlJoinSnafu, user_agent,
 };
 use crate::sensitive::SensitiveString;
@@ -35,7 +35,7 @@ struct LogoutResponse {
 /// - SESSION_GONE (390111) → `Ok(())` (session already terminated, true success)
 /// - SESSION_TOKEN_EXPIRED (390112) → `Err(InvalidSnowflakeResponse { SessionExpired })`
 ///   (signals `RefreshContext` to refresh master token and retry)
-/// - Other Snowflake codes → `Err(RestError::LogoutFailed { code, message })`
+/// - Other Snowflake codes → `Err(RestError::Logout { code, message })`
 /// - Non-2xx with non-JSON body → `Err(RestError::InvalidSnowflakeResponse { ResponseStatus })`
 /// - HTTP transport/retry errors → `Err(RestError::AsyncQuery { SfError })` (mapped from HttpError)
 #[tracing::instrument(skip(client, session_token))]
@@ -190,7 +190,7 @@ fn handle_logout_response(response: LogoutResponse) -> Result<(), RestError> {
 
     // Other Snowflake errors
     tracing::warn!(code, %message, "Logout failed with error");
-    LogoutFailedSnafu { message, code }.fail()
+    LogoutSnafu { message, code }.fail()
 }
 
 #[cfg(test)]
@@ -258,8 +258,8 @@ mod tests {
         };
         let err = handle_logout_response(response).unwrap_err();
         assert!(
-            matches!(err, RestError::LogoutFailed { code: 400, .. }),
-            "Expected LogoutFailed with code 400, got: {:?}",
+            matches!(err, RestError::Logout { code: 400, .. }),
+            "Expected Logout with code 400, got: {:?}",
             err
         );
     }

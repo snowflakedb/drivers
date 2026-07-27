@@ -80,6 +80,7 @@ class TestConfig:
 
         _disable_ocsp_for_wiremock(connection_params, self.driver_type)
         _enable_proxy_env_for_wiremock(connection_params, self.driver_type)
+        _disable_tls_verification_for_wiremock(self.driver_type)
 
         return connection_params
     
@@ -101,10 +102,46 @@ def _enable_proxy_env_for_wiremock(connection_params, driver_type):
     The WireMock perf harness routes traffic via proxy env vars, not explicit
     proxy_host/proxy_port kwargs. Universal driver defaults to ignoring env
     vars unless use_proxy_env=True (see ODBC perf harness USE_PROXY_ENV=true).
+
+    The legacy (old) connector needs nothing here: it uses a plain
+    requests.Session with trust_env=True, so it already picks up HTTPS_PROXY
+    from the environment and CONNECT-tunnels through WireMock.
     """
     if driver_type != "universal":
         return
     if os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY"):
         connection_params["use_proxy_env"] = True
         print("Universal driver: use_proxy_env=True (WireMock proxy env detected)")
+
+
+def _disable_tls_verification_for_wiremock(driver_type):
+    """Relax the SSL context for the old connector when running behind the WireMock test proxy."""
+    if driver_type != "old":
+        return
+    if not (os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")):
+        return
+
+    import ssl
+
+    try:
+        from snowflake.connector import ssl_wrap_socket as sws
+    except Exception as e:  # pragma: no cover - import shape guard
+        print(f"WARNING: could not import ssl_wrap_socket to relax TLS verification: {e}")
+        return
+
+    builder = getattr(sws, "_build_context_with_partial_chain", None)
+    if builder is None:
+        print(
+            "WARNING: snowflake.connector.ssl_wrap_socket._build_context_with_partial_chain "
+            "not found; old-driver TLS verification NOT relaxed for WireMock proxy."
+        )
+        return
+
+    def _no_verify_context(cafile=None, src_context=None):
+        ctx = builder(cafile, src_context)
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    sws._build_context_with_partial_chain = _no_verify_context
+    print("Old driver: TLS certificate verification disabled for WireMock test proxy")
 

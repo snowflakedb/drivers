@@ -1,3 +1,4 @@
+use crate::utils::sync::RwLockRecoverExt;
 use std::sync::{Arc, RwLock};
 use tracing::{Level, span};
 
@@ -33,7 +34,7 @@ impl<T> HandleManager<T> {
     pub fn add_handle(&self, obj: T) -> Handle {
         let span = span!(target: "handle_manager", Level::INFO, "HandleManager::add_handle");
         let _enter = span.enter();
-        let mut handles = self.handles.write().unwrap();
+        let mut handles = self.handles.write_recover();
 
         let size = handles.len();
         let handle = Handle {
@@ -54,7 +55,7 @@ impl<T> HandleManager<T> {
         let _enter = span.enter();
 
         let index = handle.id as usize;
-        let handles = self.handles.read().unwrap();
+        let handles = self.handles.read_recover();
 
         if index >= handles.len() {
             tracing::error!("Handle index out of bounds, cannot get object");
@@ -83,7 +84,7 @@ impl<T> HandleManager<T> {
         let span = span!(target: "handle_manager", Level::INFO, "Deleting handle", handle_id = handle.id, handle_magic = handle.magic);
         let _enter = span.enter();
         let index = handle.id as usize;
-        let mut handles = self.handles.write().unwrap();
+        let mut handles = self.handles.write_recover();
 
         if index >= handles.len() {
             tracing::error!("Handle index out of bounds, cannot delete handle");

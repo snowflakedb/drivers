@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.arrow_context import PARAMETER_TIMEZONE
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ResultChunk
 from snowflake.connector.errors import Error, InterfaceError
 from snowflake.connector.result_batch import (
@@ -27,6 +28,10 @@ def _make_description(*names: str) -> list:
 
 
 def _make_batch(connection=None, description=None) -> ResultBatch:
+    if isinstance(connection, MagicMock):
+        if not isinstance(connection._session_parameters, dict):
+            connection._session_parameters = {}
+        connection._session_parameters.setdefault(PARAMETER_TIMEZONE, "UTC")
     return ResultBatch(
         chunk=ResultChunk(),
         description=description or _make_description("ID"),
@@ -180,15 +185,13 @@ class TestResolveConnection:
         batch = _make_batch(connection=stored)
         assert batch._resolve_connection() is stored
 
-    def test_raises_when_no_connection(self):
+    def test_returns_none_when_no_connection(self):
         batch = _make_batch()
-        with pytest.raises(InterfaceError, match="not connected"):
-            batch._resolve_connection()
+        assert batch._resolve_connection() is None
 
-    def test_raises_when_explicit_is_none_and_stored_is_none(self):
+    def test_returns_none_when_explicit_is_none_and_stored_is_none(self):
         batch = _make_batch()
-        with pytest.raises(InterfaceError):
-            batch._resolve_connection(None)
+        assert batch._resolve_connection(None) is None
 
 
 # ------------------------------------------------------------------
@@ -209,6 +212,15 @@ class TestPickle:
         batch = _make_batch(connection=MagicMock())
         restored = pickle.loads(pickle.dumps(batch))
         assert restored.connection is None
+
+    def test_pickle_round_trip_preserves_arrow_context(self):
+        conn = MagicMock()
+        conn._session_parameters = {PARAMETER_TIMEZONE: "America/Los_Angeles"}
+        batch = _make_batch(connection=conn)
+
+        restored = pickle.loads(pickle.dumps(batch))
+
+        assert restored._arrow_context.timezone == "America/Los_Angeles"
 
     def test_pickle_round_trip_preserves_chunk(self):
         chunk = ResultChunk()
@@ -268,7 +280,7 @@ class TestCreateIterDispatch:
             mock_iter.return_value = iter([(1,), (2,)])
             rows = list(batch.create_iter(iter_unit=IterUnit.ROW_UNIT))
         assert rows == [(1,), (2,)]
-        mock_iter.assert_called_once_with(0, connection=mock_connection, use_dict_result=False)
+        mock_iter.assert_called_once_with(0, context=batch._arrow_context, use_dict_result=False)
 
     def test_row_unit_with_dict_result(self):
         mock_connection = MagicMock()
@@ -279,7 +291,7 @@ class TestCreateIterDispatch:
         ):
             mock_iter.return_value = iter([{"id": 1}])
             batch.create_iter(iter_unit=IterUnit.ROW_UNIT, use_dict_result=True)
-        mock_iter.assert_called_once_with(0, connection=mock_connection, use_dict_result=True)
+        mock_iter.assert_called_once_with(0, context=batch._arrow_context, use_dict_result=True)
 
     def test_table_unit_pandas_calls_to_pandas(self):
         batch = _make_batch(connection=MagicMock())
@@ -334,10 +346,15 @@ class TestToArrowConnection:
             batch.to_arrow(connection=explicit)
         mock_fetch.assert_called_once_with(explicit)
 
-    def test_to_arrow_raises_without_connection(self):
+    def test_to_arrow_works_without_connection(self):
         batch = _make_batch()
-        with pytest.raises(InterfaceError):
+        with (
+            patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0) as mock_fetch,
+            patch("snowflake.connector.result_batch.create_table_iterator"),
+            patch("snowflake.connector.result_batch.collect_arrow_table"),
+        ):
             batch.to_arrow()
+        mock_fetch.assert_called_once_with(None)
 
     def test_to_arrow_forwards_conversion_params(self):
         mock_connection = MagicMock()
@@ -349,7 +366,7 @@ class TestToArrowConnection:
         ):
             batch.to_arrow(number_to_decimal=True, force_microsecond_precision=True)
         mock_table_iter.assert_called_once_with(
-            0, connection=mock_connection, number_to_decimal=True, force_microsecond_precision=True
+            0, context=batch._arrow_context, number_to_decimal=True, force_microsecond_precision=True
         )
 
 
@@ -398,6 +415,30 @@ class TestErrorhandlerRouting:
         assert len(conn.messages) == 1
         assert conn.messages[0][0] is InterfaceError
 
+    def test_fetch_passes_conn_handle_when_connection_provided(self):
+        batch = _make_batch()
+        mock_connection = MagicMock()
+        mock_connection.conn_handle = "conn-handle"
+        with (
+            patch("snowflake.connector.result_batch.core_driver.database_fetch_chunk") as mock_fetch,
+            patch("snowflake.connector.result_batch.get_stream_ptr", return_value=42),
+        ):
+            mock_fetch.return_value = MagicMock()
+            assert batch._fetch_arrow_stream_ptr(mock_connection) == 42
+        mock_fetch.assert_called_once()
+        assert mock_fetch.call_args.kwargs["conn_handle"] == "conn-handle"
+
+    def test_fetch_omits_conn_handle_without_connection(self):
+        batch = _make_batch()
+        with (
+            patch("snowflake.connector.result_batch.core_driver.database_fetch_chunk") as mock_fetch,
+            patch("snowflake.connector.result_batch.get_stream_ptr", return_value=42),
+        ):
+            mock_fetch.return_value = MagicMock()
+            assert batch._fetch_arrow_stream_ptr() == 42
+        mock_fetch.assert_called_once()
+        assert mock_fetch.call_args.kwargs["conn_handle"] is None
+
     def test_custom_handler_is_called_before_reraise(self):
         conn = _make_connection_with_handler()
         observed = []
@@ -410,7 +451,12 @@ class TestErrorhandlerRouting:
 
         assert observed == [InterfaceError]
 
-    def test_no_connection_still_raises(self):
+    def test_no_connection_still_fetches(self):
         batch = _make_batch()
-        with pytest.raises(InterfaceError, match="not connected"):
-            batch.create_iter()
+        with (
+            patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
+            patch("snowflake.connector.result_batch.create_row_iterator") as mock_iter,
+        ):
+            mock_iter.return_value = iter([])
+            list(batch.create_iter())
+        mock_iter.assert_called_once_with(0, context=batch._arrow_context, use_dict_result=False)

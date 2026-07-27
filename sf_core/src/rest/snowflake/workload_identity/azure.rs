@@ -44,7 +44,7 @@ pub enum AzureAttestationError {
         location: Location,
     },
     #[snafu(display("{context} failed"))]
-    RequestFailed {
+    Request {
         context: &'static str,
         source: reqwest::Error,
         #[snafu(implicit)]
@@ -59,14 +59,14 @@ pub enum AzureAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to read {context} response body"))]
-    ResponseBodyReadFailed {
+    ResponseBodyRead {
         context: &'static str,
         source: reqwest::Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to parse {context} response"))]
-    ResponseParseFailed {
+    ResponseParse {
         context: &'static str,
         source: serde_json::Error,
         #[snafu(implicit)]
@@ -78,13 +78,13 @@ pub enum AzureAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to base64-decode JWT payload"))]
-    JwtPayloadDecodeFailed {
+    JwtPayloadDecode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to parse JWT payload JSON"))]
-    JwtPayloadParseFailed {
+    JwtPayloadParse {
         source: serde_json::Error,
         #[snafu(implicit)]
         location: Location,
@@ -197,13 +197,13 @@ async fn get_from_azure_functions(
     )
     .await
     .context(RequestTimedOutSnafu { context: CTX })?
-    .context(RequestFailedSnafu { context: CTX })?;
+    .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
     let body = response
         .text()
         .await
-        .context(ResponseBodyReadFailedSnafu { context: CTX })?;
+        .context(ResponseBodyReadSnafu { context: CTX })?;
 
     if !status.is_success() {
         return UnexpectedHttpStatusSnafu {
@@ -215,7 +215,7 @@ async fn get_from_azure_functions(
     }
 
     let parsed: ManagedIdentityTokenResponse =
-        serde_json::from_str(&body).context(ResponseParseFailedSnafu { context: CTX })?;
+        serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
     maybe_impersonate_sp(
         parsed.access_token.reveal().to_string(),
         snowflake_resource,
@@ -245,13 +245,13 @@ async fn get_from_imds(
     )
     .await
     .context(RequestTimedOutSnafu { context: CTX })?
-    .context(RequestFailedSnafu { context: CTX })?;
+    .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
     let body = response
         .text()
         .await
-        .context(ResponseBodyReadFailedSnafu { context: CTX })?;
+        .context(ResponseBodyReadSnafu { context: CTX })?;
 
     if !status.is_success() {
         return UnexpectedHttpStatusSnafu {
@@ -263,7 +263,7 @@ async fn get_from_imds(
     }
 
     let parsed: ManagedIdentityTokenResponse =
-        serde_json::from_str(&body).context(ResponseParseFailedSnafu { context: CTX })?;
+        serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
     maybe_impersonate_sp(
         parsed.access_token.reveal().to_string(),
         snowflake_resource,
@@ -327,13 +327,13 @@ async fn get_sp_token_via_impersonation(
     )
     .await
     .context(RequestTimedOutSnafu { context: CTX })?
-    .context(RequestFailedSnafu { context: CTX })?;
+    .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
     let body = response
         .text()
         .await
-        .context(ResponseBodyReadFailedSnafu { context: CTX })?;
+        .context(ResponseBodyReadSnafu { context: CTX })?;
 
     if !status.is_success() {
         return UnexpectedHttpStatusSnafu {
@@ -345,7 +345,7 @@ async fn get_sp_token_via_impersonation(
     }
 
     let parsed: SpTokenResponse =
-        serde_json::from_str(&body).context(ResponseParseFailedSnafu { context: CTX })?;
+        serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
     Ok(parsed.access_token)
 }
 
@@ -357,10 +357,10 @@ fn extract_tid_from_jwt(jwt: &str) -> Result<String, AzureAttestationError> {
 
     let payload_bytes = URL_SAFE_NO_PAD
         .decode(payload_b64)
-        .context(JwtPayloadDecodeFailedSnafu)?;
+        .context(JwtPayloadDecodeSnafu)?;
 
     let payload: serde_json::Value =
-        serde_json::from_slice(&payload_bytes).context(JwtPayloadParseFailedSnafu)?;
+        serde_json::from_slice(&payload_bytes).context(JwtPayloadParseSnafu)?;
 
     payload["tid"]
         .as_str()

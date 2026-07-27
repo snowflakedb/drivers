@@ -535,6 +535,170 @@ class TestPassedArgumentsThroughStack:
         assert _passed_arguments_for(mock_db_api, "Connection.cursor") == []
 
 
+class TestApiTelemetryFreeFunction:
+    """Tests for @api_telemetry applied to module-level free functions."""
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _decorate(func):
+        from snowflake.connector._internal.decorators import api_telemetry
+
+        return api_telemetry(func)
+
+    # ── synchronous ────────────────────────────────────────────────────────────
+
+    def test_sync_method_still_works_with_positional_self(self):
+        """Regression guard: existing method paths must be unaffected by the fix."""
+
+        class Worker:
+            pass
+
+        def run(self, x: int) -> int:
+            return x * 2
+
+        worker = Worker()
+        assert self._decorate(run)(worker, 5) == 10
+
+    def test_sync_free_function_called_with_keyword_args(self):
+        def compute(conn, value: int) -> int:
+            return value + 1
+
+        # Before fix: TypeError — wrapper had `self` as first param with no match
+        assert self._decorate(compute)(conn=object(), value=7) == 8
+
+    def test_sync_free_function_called_with_positional_args(self):
+        def compute(conn, value: int) -> int:
+            return value + 1
+
+        assert self._decorate(compute)(object(), 7) == 8
+
+    def test_sync_free_function_called_with_mixed_args(self):
+        def compute(conn, value: int, factor: int = 1) -> int:
+            return value * factor
+
+        assert self._decorate(compute)(object(), 3, factor=4) == 12
+
+    def test_sync_free_function_tracking_resets_after_call(self):
+        def compute(conn, value: int) -> int:
+            return value + 1
+
+        self._decorate(compute)(conn=object(), value=7)
+        assert _TRACKING.get() is True
+
+    def test_sync_free_function_tracking_resets_after_exception(self):
+        def broken(conn) -> None:
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            self._decorate(broken)(conn=object())
+
+        assert _TRACKING.get() is True
+
+    def test_sync_nested_free_functions_inner_tracking_suppressed(self):
+        """_TRACKING is False when the inner decorated function runs."""
+        tracking_states: list[bool] = []
+
+        def inner(conn) -> None:
+            tracking_states.append(_TRACKING.get())
+
+        def outer(conn) -> None:
+            self._decorate(inner)(conn=conn)
+
+        self._decorate(outer)(conn=object())
+        assert tracking_states == [False]
+        assert _TRACKING.get() is True
+
+    def test_sync_free_function_generator_yields_all_values(self):
+        def produce(conn, n: int):
+            yield from range(n)
+
+        assert list(self._decorate(produce)(conn=object(), n=3)) == [0, 1, 2]
+
+    def test_sync_free_function_generator_tracking_resets_after_exhaustion(self):
+        def produce(conn, n: int):
+            yield from range(n)
+
+        list(self._decorate(produce)(object(), 3))
+        assert _TRACKING.get() is True
+
+    # ── async coroutine ────────────────────────────────────────────────────────
+
+    def test_async_free_function_awaited_with_keyword_args(self):
+        async def fetch(conn, query: str) -> list:
+            return []
+
+        assert _run_async(self._decorate(fetch)(conn=object(), query="SELECT 1")) == []
+
+    def test_async_free_function_awaited_with_positional_args(self):
+        async def fetch(conn, query: str) -> list:
+            return []
+
+        assert _run_async(self._decorate(fetch)(object(), "SELECT 1")) == []
+
+    def test_async_free_function_tracking_resets_after_await(self):
+        async def fetch(conn, query: str) -> list:
+            return []
+
+        _run_async(self._decorate(fetch)(conn=object(), query="SELECT 1"))
+        assert _TRACKING.get() is True
+
+    def test_async_free_function_tracking_resets_after_exception(self):
+        async def broken(conn) -> None:
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            _run_async(self._decorate(broken)(conn=object()))
+
+        assert _TRACKING.get() is True
+
+    def test_async_nested_free_functions_inner_tracking_suppressed(self):
+        tracking_states: list[bool] = []
+
+        async def inner(conn) -> None:
+            tracking_states.append(_TRACKING.get())
+
+        async def outer(conn) -> None:
+            await self._decorate(inner)(conn=conn)
+
+        _run_async(self._decorate(outer)(conn=object()))
+        assert tracking_states == [False]
+        assert _TRACKING.get() is True
+
+    # ── async generator ────────────────────────────────────────────────────────
+
+    def test_async_generator_free_function_yields_with_keyword_args(self):
+        async def stream(conn, n: int):
+            for i in range(n):
+                yield i
+
+        async def collect():
+            return [v async for v in self._decorate(stream)(conn=object(), n=3)]
+
+        assert _run_async(collect()) == [0, 1, 2]
+
+    def test_async_generator_free_function_yields_with_positional_args(self):
+        async def stream(conn, n: int):
+            for i in range(n):
+                yield i
+
+        async def collect():
+            return [v async for v in self._decorate(stream)(object(), 3)]
+
+        assert _run_async(collect()) == [0, 1, 2]
+
+    def test_async_generator_free_function_tracking_resets_after_exhaustion(self):
+        async def stream(conn, n: int):
+            for i in range(n):
+                yield i
+
+        async def collect():
+            return [v async for v in self._decorate(stream)(object(), 3)]
+
+        _run_async(collect())
+        assert _TRACKING.get() is True
+
+
 class TestAsyncExpired:
     """Unit tests for ``aio.Connection.is_expired()`` coroutine.
 

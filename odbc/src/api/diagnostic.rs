@@ -373,10 +373,10 @@ pub fn set_diag_info_from_warnings(
     }
 }
 
-pub fn set_diag_info_from_result(
+pub fn set_diag_info_from_result<T>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
-    result: &OdbcResult<()>,
+    result: &OdbcResult<T>,
 ) {
     if handle.is_null() {
         return;
@@ -497,10 +497,9 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
         return NoMoreDataSnafu.fail();
     }
 
-    let record = diagnostic_info
-        .records
-        .get((rec_number - 1) as usize)
-        .unwrap();
+    let Some(record) = diagnostic_info.records.get((rec_number - 1) as usize) else {
+        return NoMoreDataSnafu.fail();
+    };
 
     let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
     write_string_chars::<E>(state, sql_state, 6, std::ptr::null_mut(), None);

@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -8,11 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Period;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import net.snowflake.jdbc.utils.WithQueryUtils;
 import org.junit.jupiter.api.Test;
@@ -29,8 +33,35 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Requires {@code ENABLE_INTERVAL_TYPE} to be active on the account.
  */
-public class IntervalTests extends SnowflakeIntegrationTestBase {
+public class IntervalTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
+  private static final ColumnExpectation INTERVAL_YEAR_MONTH_COLUMN =
+      new ColumnExpectation(
+          null,
+          SnowflakeType.EXTRA_TYPES_YEAR_MONTH_INTERVAL,
+          "INTERVAL_YEAR_MONTH",
+          null,
+          0,
+          0,
+          25,
+          false,
+          false,
+          columnNoNulls,
+          null);
+  private static final ColumnExpectation INTERVAL_DAY_TIME_COLUMN =
+      new ColumnExpectation(
+          null,
+          SnowflakeType.EXTRA_TYPES_DAY_TIME_INTERVAL,
+          "INTERVAL_DAY_TIME",
+          null,
+          0,
+          3,
+          25,
+          false,
+          false,
+          columnNoNulls,
+          null);
 
   // Reused corner-case durations.
   private static final Duration D_99999 =
@@ -67,6 +98,19 @@ public class IntervalTests extends SnowflakeIntegrationTestBase {
               Period.of(999999999, 11, 0),
               Duration.ofSeconds(1, 200_000_000),
               D_99999);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  INTERVAL_YEAR_MONTH_COLUMN.withColumnName("'1-2'::INTERVAL YEAR TO MONTH"),
+                  INTERVAL_YEAR_MONTH_COLUMN.withColumnName(
+                      "'999999999-11'::INTERVAL YEAR TO MONTH"),
+                  INTERVAL_DAY_TIME_COLUMN.withColumnName("'0 0:0:1.2'::INTERVAL DAY TO SECOND"),
+                  INTERVAL_DAY_TIME_COLUMN.withColumnName(
+                      "'99999 23:59:59.999999'::INTERVAL DAY TO SECOND")));
         });
   }
 

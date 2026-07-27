@@ -29,7 +29,7 @@ use openssl::nid::Nid;
 use openssl::pkey::Private;
 use openssl::sha::Sha256;
 use reqwest::header::HeaderMap;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use url::Url;
 use uuid::Uuid;
 
@@ -72,24 +72,24 @@ impl DPoPKey {
             }
             .fail();
         }
-        let d_b64 = jwk.get("d").and_then(|v| v.as_str()).ok_or_else(|| {
-            DPoPJwkParseSnafu {
+        let d_b64 = jwk
+            .get("d")
+            .and_then(|v| v.as_str())
+            .with_context(|| DPoPJwkParseSnafu {
                 reason: "DPoP JWK is missing the private component (`d`)".to_string(),
-            }
-            .build()
-        })?;
-        let x_b64 = jwk.get("x").and_then(|v| v.as_str()).ok_or_else(|| {
-            DPoPJwkParseSnafu {
+            })?;
+        let x_b64 = jwk
+            .get("x")
+            .and_then(|v| v.as_str())
+            .with_context(|| DPoPJwkParseSnafu {
                 reason: "DPoP JWK is missing `x`".to_string(),
-            }
-            .build()
-        })?;
-        let y_b64 = jwk.get("y").and_then(|v| v.as_str()).ok_or_else(|| {
-            DPoPJwkParseSnafu {
+            })?;
+        let y_b64 = jwk
+            .get("y")
+            .and_then(|v| v.as_str())
+            .with_context(|| DPoPJwkParseSnafu {
                 reason: "DPoP JWK is missing `y`".to_string(),
-            }
-            .build()
-        })?;
+            })?;
         let d = decode_b64url_bn(d_b64)?;
         let x = decode_b64url_bn(x_b64)?;
         let y = decode_b64url_bn(y_b64)?;

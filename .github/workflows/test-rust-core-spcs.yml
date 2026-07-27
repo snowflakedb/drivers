@@ -7,13 +7,13 @@ name: Rust Core SPCS E2E
 #
 # What it does:
 #   1. Builds the `spcs_probe` image (tests/docker/spcs).
-#   2. Pushes it to the image repository created by ci/account_setup.sql.
+#   2. Pushes it to the image repository created by ci/ci_account_setup/ci_account_setup.sql.
 #   3. Runs the orchestrating e2e test, which launches a one-shot SPCS job
 #      service from that image; the in-container probe authenticates using only
 #      the platform-injected session token (no user) and runs a query. The job
 #      reaching DONE proves the SPCS_TOKEN login path end-to-end.
 #
-# Pre-requisite: ci/account_setup.sql has been applied to the target account
+# Pre-requisite: ci/ci_account_setup/ci_account_setup.sql has been applied to the target account
 # (creates compute pool `ud_test_spcs_pool` + image repository
 # `testing_setup.public.ud_test_image_repo`). That script needs ACCOUNTADMIN and
 # is run once per account, so it is NOT run here by default.
@@ -137,6 +137,13 @@ jobs:
             echo "password = \"$password\"" >> "$HOME/.snowflake/connections.toml"
           fi
           chmod 600 "$HOME/.snowflake/connections.toml"
+
+      - name: Verify Snowflake connection and image repository visibility
+        env:
+          SNOWFLAKE_DEFAULT_CONNECTION_NAME: spcs
+        run: |
+          snow connection test
+          snow sql --query "SHOW IMAGE REPOSITORIES IN SCHEMA ${IMAGE_REPO_DB}.${IMAGE_REPO_SCHEMA}"
 
       - name: Resolve image repository URL
         id: repo

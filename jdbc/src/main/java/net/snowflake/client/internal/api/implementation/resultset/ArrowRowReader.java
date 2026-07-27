@@ -24,14 +24,17 @@ class ArrowRowReader implements RowReader {
   private final CursorState cursor;
   private final SchemaState schema;
   private final ArrowBatchManager batchManager;
+  private final long totalRowCount;
   private boolean closed = false;
 
-  ArrowRowReader(ArrowResources resources, DataConversionContext conversionContext)
+  ArrowRowReader(
+      ArrowResources resources, DataConversionContext conversionContext, long totalRowCount)
       throws SQLException {
     this.resources = resources;
     this.cursor = new CursorState();
     this.schema = new SchemaState(resources.getActiveRoot(), conversionContext);
     this.batchManager = new ArrowBatchManager(cursor, resources, schema);
+    this.totalRowCount = totalRowCount;
   }
 
   @Override
@@ -78,6 +81,13 @@ class ArrowRowReader implements RowReader {
   @Override
   public boolean isFirst() {
     return cursor.getCurrentRow() == 0 && !cursor.isAfterLast();
+  }
+
+  @Override
+  public boolean isLast() {
+    // Parity with snowflake-jdbc: an empty result (totalRowCount == 0) reports the before-first
+    // cursor as last, since currentRow (-1) + 1 == 0. Deliberately no currentRow >= 0 guard.
+    return !cursor.isAfterLast() && cursor.getCurrentRow() + 1 == totalRowCount;
   }
 
   @Override

@@ -217,14 +217,20 @@ inline std::string get_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  // uSUT (local Snowflake test instance) only provisions password credentials for the test user
+  // — no RSA key is registered. Use password auth when SNOWFLAKE_TEST_IS_USUT is set.
+  if (params.count("SNOWFLAKE_TEST_IS_USUT")) {
+    add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
+  } else {
+    ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
 #ifdef SNOWFLAKE_OLD_DRIVER
-  ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
+    ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
+    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
 #else
-  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
+    ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
+    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
 #endif
+  }
   if (auto result_format = test_utils::get_query_result_format(); !result_format.empty()) {
     ss << "ODBC_QUERY_RESULT_FORMAT=" << result_format << ";";
   }

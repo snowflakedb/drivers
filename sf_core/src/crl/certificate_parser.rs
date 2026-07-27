@@ -1,4 +1,4 @@
-use crate::crl::error::{CrlError, CrlParsingSnafu};
+use crate::crl::error::{CrlDataParseSnafu, CrlError};
 use chrono::TimeZone;
 use snafu::Location;
 use snafu::ResultExt;
@@ -8,7 +8,7 @@ use x509_parser::prelude::*;
 /// Extract CRL distribution points from a DER-encoded certificate
 pub fn extract_crl_distribution_points(cert_der: &[u8]) -> Result<Vec<String>, CrlError> {
     let (_, cert) =
-        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlDataParseSnafu)?;
 
     let crl_urls: Vec<String> = cert
         .extensions()
@@ -81,7 +81,7 @@ pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
 /// `to_bytes_be()` strips it, causing ~50% of serial comparisons to fail.
 pub fn get_certificate_serial_number(cert_der: &[u8]) -> Result<Vec<u8>, CrlError> {
     let (_, cert) =
-        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlDataParseSnafu)?;
     Ok(cert.raw_serial().to_vec())
 }
 
@@ -90,8 +90,8 @@ pub fn get_certificate_not_before(
     cert_der: &[u8],
 ) -> Result<chrono::DateTime<chrono::Utc>, CrlError> {
     let (_, cert) =
-        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
-    asn1_time_to_datetime(&cert.validity.not_before).ok_or_else(|| CrlError::CrlParsing {
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlDataParseSnafu)?;
+    asn1_time_to_datetime(&cert.validity.not_before).ok_or_else(|| CrlError::CrlDataParse {
         source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
         location: Location::new(file!(), line!(), 0),
     })
@@ -102,8 +102,8 @@ pub fn get_certificate_not_after(
     cert_der: &[u8],
 ) -> Result<chrono::DateTime<chrono::Utc>, CrlError> {
     let (_, cert) =
-        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
-    asn1_time_to_datetime(&cert.validity.not_after).ok_or_else(|| CrlError::CrlParsing {
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlDataParseSnafu)?;
+    asn1_time_to_datetime(&cert.validity.not_after).ok_or_else(|| CrlError::CrlDataParse {
         source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
         location: Location::new(file!(), line!(), 0),
     })
@@ -129,7 +129,7 @@ pub fn get_certificate_validity_duration_inclusive(
 /// Determine if a certificate is a CA certificate (BasicConstraints CA=true)
 pub fn is_ca_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
     let (_, cert) =
-        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlDataParseSnafu)?;
     for ext in cert.extensions() {
         if let ParsedExtension::BasicConstraints(bc) = ext.parsed_extension() {
             return Ok(bc.ca);
@@ -142,7 +142,7 @@ pub fn is_ca_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
 /// Parse and validate a CRL, checking if a certificate serial number is revoked
 pub fn check_certificate_in_crl(cert_serial: &[u8], crl_der: &[u8]) -> Result<bool, CrlError> {
     use x509_parser::revocation_list::CertificateRevocationList;
-    let (_, crl) = CertificateRevocationList::from_der(crl_der).context(CrlParsingSnafu)?;
+    let (_, crl) = CertificateRevocationList::from_der(crl_der).context(CrlDataParseSnafu)?;
 
     // Check if the CRL has expired
     let now = chrono::Utc::now();

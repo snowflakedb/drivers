@@ -59,6 +59,13 @@ class InMemoryRowReader implements RowReader {
   }
 
   @Override
+  public boolean isLast() {
+    // Parity with snowflake-jdbc: an empty result reports the before-first cursor as last, since
+    // currentRow (-1) == rows.length - 1 (-1). Deliberately no currentRow >= 0 guard.
+    return !isAfterLast() && currentRow == rows.length - 1;
+  }
+
+  @Override
   public int getCurrentRow() {
     return currentRow;
   }
