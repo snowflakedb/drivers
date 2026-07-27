@@ -35,8 +35,8 @@ final class NativeLibraryLoader {
 
   /**
    * Root resource dir for the native libs. The fat JAR carries one lib per platform under an {@code
-   * <os>-<arch>} subdir; each {@code snowflake-jdbc-v2-native} artifact carries one. {@link
-   * #load()} picks the running platform's at startup.
+   * <os>-<arch>} subdir; each {@code snowflake-jdbc-native} artifact carries one. {@link #load()}
+   * picks the running platform's at startup.
    */
   private static final String NATIVE_RESOURCE_DIR =
       "/net/snowflake/client/internal/unicore/native/";
@@ -69,10 +69,15 @@ final class NativeLibraryLoader {
       extracted = extractNativeLibFromResource();
     } catch (IOException e) {
       throw new RuntimeException(
-          "Failed to extract bundled native library from JAR resources. Either ensure the lib is "
-              + "bundled in the JAR (the self-contained snowflake-jdbc-v2-standalone jar, or the "
-              + "matching snowflake-jdbc-v2-native artifact for this platform) or set CORE_PATH / "
-              + "jdbc.library.path explicitly.",
+          "No bundled native library found in JAR resources. The classifier-less "
+              + "'net.snowflake:snowflake-jdbc-native' jar is native-free by design and is not runnable "
+              + "on its own. For a runnable driver, depend on the platform classifier jar "
+              + "'net.snowflake:snowflake-jdbc-native:<version>:<classifier>' (e.g. classifier "
+              + "osx-aarch_64; let os-maven-plugin / osdetector-gradle-plugin fill in "
+              + "${os.detected.classifier}), or the self-contained "
+              + "'net.snowflake:snowflake-jdbc-native-all' jar. Advanced setups can instead point "
+              + "CORE_PATH or the jdbc.library.path system property at a local native lib. See "
+              + "https://github.com/snowflakedb/universal-driver/tree/main/jdbc",
           e);
     }
     System.load(extracted.toAbsolutePath().toString());
@@ -87,12 +92,12 @@ final class NativeLibraryLoader {
         throw new IOException(
             "Native library not found in JAR at "
                 + resourcePath
-                + ". The driver JAR was built "
-                + "without the native lib for this platform ("
+                + ". This JAR carries no native lib for this platform ("
                 + System.getProperty("os.name")
                 + "/"
                 + System.getProperty("os.arch")
-                + ") bundled.");
+                + ") — expected for the native-free 'snowflake-jdbc-native' jar, or for a classifier "
+                + "jar built for a different platform.");
       }
       // Use a per-version subdir so concurrent JVMs don't clobber each other and the OS
       // doesn't refuse to load a file that's been overwritten while still mapped.
@@ -120,14 +125,35 @@ final class NativeLibraryLoader {
   }
 
   /**
-   * The {@code <os>-<arch>} resource subdir for the running platform (e.g. {@code darwin-aarch64}).
+   * The resource subdir for the running platform: {@code <os>-<arch>-<libc>} on Linux (glibc and
+   * musl natives aren't interchangeable, so each jar carries both variants and we pick here), just
+   * {@code <os>-<arch>} on macOS/Windows.
    *
-   * <p>SYNC CONTRACT: {@link #osToken()}/{@link #archToken()} must match {@code hostOsToken}/
-   * {@code hostArchToken} in {@code build.gradle} and the {@code os_token}/{@code arch} matrix in
-   * {@code _build-jdbc-fatjar.yml}, which name the jar's subdirs.
+   * <p>SYNC CONTRACT: {@link #osToken()}/{@link #archToken()}/{@link #libcToken()} must match the
+   * {@code host*Token} derivations in {@code build.gradle} and the matrix in {@code
+   * _build-jdbc-fatjar.yml}, which name the jar's subdirs.
    */
   private static String osArchDir() {
-    return osToken() + "-" + archToken();
+    String osArch = osToken() + "-" + archToken();
+    // Only Linux ships a per-libc native; mac/windows subdirs carry no libc segment.
+    if ("linux".equals(osToken())) {
+      return osArch + "-" + libcToken();
+    }
+    return osArch;
+  }
+
+  /**
+   * The C library flavor of the running host: {@code "musl"} or {@code "gnu"}. Only consulted on
+   * Linux (see {@link #osArchDir()}). The {@code jdbc.libc} system property overrides {@link
+   * LibcDetector#detect()} for locked-down JVMs; defaults to {@code "gnu"} when detection is
+   * inconclusive (glibc is the common case and the override is the escape hatch).
+   */
+  private static String libcToken() {
+    String override = System.getProperty("jdbc.libc");
+    if (override != null && !override.isEmpty()) {
+      return override.toLowerCase();
+    }
+    return "musl".equals(LibcDetector.detect()) ? "musl" : "gnu";
   }
 
   private static String osToken() {

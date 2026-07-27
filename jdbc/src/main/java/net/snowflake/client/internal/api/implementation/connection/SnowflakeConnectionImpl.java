@@ -136,7 +136,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     Builder identityBuilder =
         WrapperIdentity.newBuilder()
             .setDriverName("JDBC")
-            .setDriverVersion(SnowflakeDriver.DRIVER_VERSION);
+            .setDriverVersion(SnowflakeDriver.CLIENT_APP_VERSION);
     String runtimeName = System.getProperty("java.vm.name");
     if (runtimeName != null && !runtimeName.trim().isEmpty()) {
       identityBuilder.setLanguageRuntime(runtimeName);

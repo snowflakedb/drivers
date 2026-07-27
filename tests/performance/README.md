@@ -716,7 +716,7 @@ These libraries are copied into the final driver images:
 - **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
 - **JDBC**: Copies `libjdbc_bridge.so` → Loaded by `NativeLibraryLoader` via `CORE_PATH`. The
-  universal JDBC fat jar (`snowflake-jdbc-v2-standalone.jar`) is assembled by the jar stage of
+  universal JDBC fat jar (`snowflake-jdbc-native-all.jar`) is assembled by the jar stage of
   `drivers/jdbc/Dockerfile`, which extends `sf-core-builder` and adds a JDK. It extends the
   builder (rather than using a plain JDK image) because `gradlew shadowJar` runs
   `generateProtobuf`, which shells out to the Rust `proto_generator` against the workspace's

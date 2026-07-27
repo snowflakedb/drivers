@@ -4,17 +4,22 @@ This is a stub implementation of a JDBC driver for Snowflake that provides the b
 
 ## Consuming the driver
 
-The driver is published under `net.snowflake` in two flavors:
+The driver is published under `net.snowflake` in three flavors:
 
 | Coordinate | What it is |
 |---|---|
-| `net.snowflake:snowflake-jdbc-v2` | **Thin** (recommended): unshaded jar; dependencies (Arrow, protobuf, …) resolve from Maven. Needs a matching `-native` artifact for your platform. |
-| `net.snowflake:snowflake-jdbc-v2-standalone` | **Self-contained**: one shaded jar with all dependencies **and** every platform's native bundled in. No `-native` artifact needed. |
-| `net.snowflake:snowflake-jdbc-v2-native:<classifier>` | The compiled native library for **one** platform. Paired with the thin jar. |
+| `net.snowflake:snowflake-jdbc-native:<version>:<classifier>` | **Recommended.** Self-contained *per-platform* jar: thin Java + that platform's native, in one artifact. Dependencies (Arrow, protobuf, …) resolve from the POM. One dependency, one platform. |
+| `net.snowflake:snowflake-jdbc-native-all` | Self-contained *fat* jar: all dependencies shaded **and** every platform's native bundled in. Portable across platforms in a single artifact; larger, and shades transitive deps. |
+| `net.snowflake:snowflake-jdbc-native` (no classifier) | **Advanced / native-free.** No native bundled — the JVM resolves the lib from `CORE_PATH` or the `jdbc.library.path` system property. Used on unlisted platforms or when you supply the native out-of-band. Not runnable on its own. |
 
-The native `<classifier>` follows the [`os-maven-plugin`](https://github.com/trustin/os-maven-plugin) / [`osdetector`](https://github.com/google/osdetector-gradle-plugin) convention: `linux-x86_64`, `linux-aarch_64`, `osx-x86_64`, `osx-aarch_64`, `windows-x86_64`.
+The `<classifier>` follows the [`os-maven-plugin`](https://github.com/trustin/os-maven-plugin) / [`osdetector`](https://github.com/google/osdetector-gradle-plugin) convention: `linux-x86_64`, `linux-aarch_64`, `osx-x86_64`, `osx-aarch_64`, `windows-x86_64`.
 
-### Thin jar + native (Maven)
+> **Note on the classifier-less coordinate.** A bare `net.snowflake:snowflake-jdbc-native:<version>`
+> (no classifier) *resolves* fine but is native-free, so it fails at first use with a signpost
+> pointing back here. Maven and Gradle cannot auto-substitute the platform classifier from
+> module metadata alone, so pick a classifier explicitly (below) or use `-all`.
+
+### Per-platform classifier jar — Maven (recommended)
 
 Add the `os-maven-plugin` extension so `${os.detected.classifier}` fills in automatically:
 
@@ -27,16 +32,15 @@ Add the `os-maven-plugin` extension so `${os.detected.classifier}` fills in auto
 
 <dependencies>
   <dependency>
-    <groupId>net.snowflake</groupId><artifactId>snowflake-jdbc-v2</artifactId><version>4.0.0</version>
-  </dependency>
-  <dependency>
-    <groupId>net.snowflake</groupId><artifactId>snowflake-jdbc-v2-native</artifactId>
-    <version>4.0.0</version><classifier>${os.detected.classifier}</classifier>
+    <groupId>net.snowflake</groupId><artifactId>snowflake-jdbc-native</artifactId>
+    <version>0.0.1</version><classifier>${os.detected.classifier}</classifier>
   </dependency>
 </dependencies>
 ```
 
-### Thin jar + native (Gradle)
+(Or hard-code the classifier, e.g. `<classifier>osx-aarch_64</classifier>`, when you build for a fixed target.)
+
+### Per-platform classifier jar — Gradle (recommended)
 
 Apply the `osdetector` plugin so `osdetector.classifier` fills in the running platform:
 
@@ -44,17 +48,16 @@ Apply the `osdetector` plugin so `osdetector.classifier` fills in the running pl
 plugins { id 'com.google.osdetector' version '1.7.3' }
 
 dependencies {
-    implementation 'net.snowflake:snowflake-jdbc-v2:4.0.0'
-    runtimeOnly "net.snowflake:snowflake-jdbc-v2-native:4.0.0:${osdetector.classifier}"
+    implementation "net.snowflake:snowflake-jdbc-native:0.0.1:${osdetector.classifier}"
 }
 ```
 
-(Or hard-code the classifier, e.g. `...:4.0.0:osx-aarch_64`, when you build for a fixed target.)
+(Or hard-code the classifier, e.g. `...:0.0.1:osx-aarch_64`, when you build for a fixed target.)
 
-### Self-contained jar (no native artifact)
+### Self-contained fat jar (portable, all platforms in one)
 
 ```groovy
-implementation 'net.snowflake:snowflake-jdbc-v2-standalone:4.0.0'
+implementation 'net.snowflake:snowflake-jdbc-native-all:0.0.1'
 ```
 
 ## Testing
