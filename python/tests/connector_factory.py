@@ -91,9 +91,15 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
         "role": test_params.get("SNOWFLAKE_TEST_ROLE"),
     }
 
-    # Use JWT authentication by default (unless custom private_key_file or authenticator is provided)
+    # Use JWT authentication by default (unless custom private_key_file or authenticator is
+    # provided). uSUT (local Snowflake test instance) only provisions password credentials for the
+    # test user — no RSA key is registered — so fall back to password auth when
+    # SNOWFLAKE_TEST_IS_USUT is set.
     if "private_key_file" not in override_params and "authenticator" not in override_params:
-        setup_default_jwt_auth(connection_params)
+        if test_params.get("SNOWFLAKE_TEST_IS_USUT"):
+            connection_params["password"] = test_params.get("SNOWFLAKE_TEST_PASSWORD")
+        else:
+            setup_default_jwt_auth(connection_params)
 
     # Add optional parameters if they exist
     if test_params.get("SNOWFLAKE_TEST_SERVER_URL"):
