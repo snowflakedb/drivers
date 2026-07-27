@@ -53,6 +53,7 @@ COPY protobuf/ ./protobuf/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY jdbc_bridge/ ./jdbc_bridge/
+COPY nodejs_bridge/ ./nodejs_bridge/
 COPY odbc_trace_tool/ ./odbc_trace_tool/
 
 # Copy Python package sources
@@ -96,11 +97,7 @@ RUN echo "N/A" > /etc/rust_version
 
 ENV DRIVER_TYPE=old
 
+# TLS trust for the WireMock test proxy is not needed here: the app relaxes
+# certificate verification for the old driver behind the proxy at runtime instead.
 CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
-    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
-        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
-        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
-        export REQUESTS_CA_BUNDLE="$CA_BUNDLE"; \
-        export SSL_CERT_FILE="$CA_BUNDLE"; \
-    fi && \
     python main.py

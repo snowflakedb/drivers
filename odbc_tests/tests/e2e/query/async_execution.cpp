@@ -451,7 +451,10 @@ TEST_CASE("should preserve prepared state after async execute and cursor close",
 // =============================================================================
 
 TEST_CASE("should cancel async execution with HY008", "[query][async][cancel]") {
-  SKIP_OLD_DRIVER("BD#32", "Async cancel does not interrupt in-progress operations on reference driver");
+  SKIP_OLD_DRIVER("BD#32",
+                  "Reference driver's SQLCancel does not interrupt in-progress async operations, so the "
+                  "cancellation asserted here is unobservable; the query would only end by running to natural "
+                  "completion (~30s), which races the poll ceiling and would be flaky. See BD#32 in the yaml.");
 
   // Given Snowflake client is logged in with async enabled
   Connection conn;

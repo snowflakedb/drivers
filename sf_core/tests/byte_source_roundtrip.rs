@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
@@ -187,7 +190,21 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
     let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
 
     // Mock S3: return the valid ciphertext but with a deliberately wrong digest.
+    // S3 HEADs first (for size + metadata) then GETs the body; the tampered
+    // digest rides on both so the decrypt step sees it.
     let mock_server = MockServer::start().await;
+    let cipher_len = ciphertext.len();
+    Mock::given(method("HEAD"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-length", cipher_len.to_string())
+                .insert_header("x-amz-meta-sfc-digest", "BAADBAADBAADBAAD")
+                .insert_header("x-amz-meta-x-amz-matdesc", mat_desc_json.as_str())
+                .insert_header("x-amz-meta-x-amz-key", enc_meta.encrypted_key.as_str())
+                .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str()),
+        )
+        .mount(&mock_server)
+        .await;
     Mock::given(method("GET"))
         .respond_with(
             ResponseTemplate::new(200)
@@ -221,6 +238,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
             storage_account: None,
         },
         encryption_material: Some(material),
@@ -228,6 +246,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
         presigned_url: None,
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
+        unsafe_file_write: false,
     };
 
     let result = sf_core::file_manager::download_single_file(
@@ -331,6 +350,20 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
     });
 
     let (h_digest, h_enc, h_mat) = cloud.meta_headers();
+    let cipher_len = ciphertext.len();
+    // Azure HEADs the blob first (Get Blob Properties) for size + metadata, so
+    // mock it with the metadata headers and a Content-Length-bearing body. GCS
+    // never HEADs, so this mock is harmless on that path.
+    Mock::given(method("HEAD"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(vec![0u8; cipher_len])
+                .insert_header(h_digest, digest.as_str())
+                .insert_header(h_enc, enc_data_json.to_string().as_str())
+                .insert_header(h_mat, mat_desc_json.to_string().as_str()),
+        )
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .respond_with(
             ResponseTemplate::new(200)
@@ -362,6 +395,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_regional_url: false,
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
+                crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
                 storage_account: None,
             };
             sf_core::file_manager::internal::download_from_gcs_streaming(
@@ -375,7 +409,11 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     DEFAULT_PUT_GET_MAX_ATTEMPTS,
                 ),
                 0,
+                MultipartParams::default(),
                 &mut None,
+                sf_core::file_manager::internal::CloudSpillTarget::Temp(
+                    std::env::temp_dir().as_path(),
+                ),
             )
             .await
             .expect("GCS streaming download must succeed")
@@ -397,17 +435,23 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_regional_url: false,
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
+                crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
                 storage_account: Some("mystorageaccount".to_string()),
             };
             sf_core::file_manager::internal::download_from_azure_streaming(
                 &stage,
                 "azure-blob",
+                MultipartParams::default(),
                 // Success-path roundtrip; no retries exercised, so the default
                 // policy is sufficient.
                 &RetryPolicy {
                     max_attempts: DEFAULT_PUT_GET_MAX_ATTEMPTS,
                     ..RetryPolicy::default()
                 },
+                sf_core::file_manager::internal::CloudSpillTarget::Temp(
+                    std::env::temp_dir().as_path(),
+                ),
+                &mut None,
             )
             .await
             .expect("Azure streaming download must succeed")
@@ -417,7 +461,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
     let cse = dl
         .cse_info
         .expect("CSE info (metadata + digest) must be present");
-    let reader = dl.reader;
+    let reader = dl.body.into_reader().expect("into_reader");
     let mat_clone = material.clone();
 
     // --- 4. Decrypt in spawn_blocking (mirrors mod.rs) ---
@@ -518,6 +562,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
         storage_account: None,
     };
 
@@ -536,7 +581,9 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             0,
+            MultipartParams::default(),
             &mut None,
+            sf_core::file_manager::internal::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
         ),
     )
     .await
@@ -545,7 +592,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
 
     // Reading the body must error, and there is no retry — the failure
     // propagates straight out of the reader.
-    let reader = dl.reader;
+    let reader = dl.body.into_reader().expect("into_reader");
     let read_result = tokio::time::timeout(
         Duration::from_secs(30),
         tokio::task::spawn_blocking(move || {

@@ -75,7 +75,14 @@ impl OdbcGlobals {
         F: std::future::Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.runtime.spawn(f)
+        // Tokio worker threads do not inherit the caller's tracing dispatch, so
+        // (unlike `block_on`, which runs on the calling thread) a spawned task
+        // must set it on every event it emits.
+        let dispatch = self.dispatch.clone();
+        self.runtime.spawn(async move {
+            let _guard = tracing::dispatcher::set_default(&dispatch);
+            f.await
+        })
     }
 
     pub fn client(&self) -> Arc<DatabaseDriverClient> {
@@ -221,5 +228,69 @@ fn load_ini_config() {
         Err(e) => {
             eprintln!("Failed to load sf.odbc.ini: {e:?}; using defaults");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::api::handle_registry::HandleManager;
+    use crate::api::runtime::OdbcGlobals;
+    use sf_core::apis::database_driver_v1::DriverProviders;
+    use sf_core::protobuf::apis::database_driver_v1::database_driver_client_with;
+    use std::sync::{Arc, Mutex as StdMutex};
+    use tracing::Subscriber;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+
+    struct CaptureLayer {
+        messages: Arc<StdMutex<Vec<String>>>,
+    }
+
+    impl<S: Subscriber> Layer<S> for CaptureLayer {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let normalized = sf_core::logging::normalize_event(event);
+            self.messages
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(normalized.message);
+        }
+    }
+
+    fn test_globals(dispatch: tracing::dispatcher::Dispatch) -> OdbcGlobals {
+        OdbcGlobals {
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("test runtime"),
+            client: Arc::new(database_driver_client_with(DriverProviders::default())),
+            dispatch,
+            env_registry: HandleManager::new(),
+            dbc_registry: HandleManager::new(),
+            stmt_registry: HandleManager::new(),
+            desc_manager: HandleManager::new(),
+        }
+    }
+
+    #[test]
+    fn spawn_propagates_tracing_dispatch_to_task() {
+        let messages = Arc::new(StdMutex::new(Vec::new()));
+        let dispatch =
+            tracing::dispatcher::Dispatch::new(tracing_subscriber::registry().with(CaptureLayer {
+                messages: Arc::clone(&messages),
+            }));
+        let globals = test_globals(dispatch);
+
+        let handle = globals.spawn(async {
+            tracing::info!("spawned_task_event");
+        });
+        globals.block_on(async move |_c| handle.await.expect("spawned task"));
+
+        let captured = messages.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert!(
+            captured.iter().any(|m| m.contains("spawned_task_event")),
+            "event emitted inside OdbcGlobals::spawn must reach the globals' \
+             tracing dispatch; captured = {captured:?}"
+        );
     }
 }

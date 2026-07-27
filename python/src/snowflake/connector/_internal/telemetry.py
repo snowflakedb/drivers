@@ -6,12 +6,11 @@ propagate to the caller.
 
 from __future__ import annotations
 
-import logging
-
 from typing import TYPE_CHECKING
 
 from .api_client.client_api import async_core_driver, core_driver
 from .decorators import backward_compatibility
+from .logging import get_logger
 
 
 if TYPE_CHECKING:
@@ -19,7 +18,7 @@ if TYPE_CHECKING:
         ConnectionHandle,
     )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TelemetryClient:

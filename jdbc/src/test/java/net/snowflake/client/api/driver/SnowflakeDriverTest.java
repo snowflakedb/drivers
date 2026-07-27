@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.util.Properties;
 import java.util.stream.Stream;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.jdbc.utils.DriverCompatibility;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -46,7 +47,12 @@ public class SnowflakeDriverTest {
   @Test
   public void testDriverVersion() {
     SnowflakeDriver driver = new SnowflakeDriver();
-    assertTrue(driver.getMajorVersion() > 0, "Major version should be gt 0");
+    // Legacy snowflake-jdbc has major > 0; this module is 0.x.
+    if (DriverCompatibility.isOldDriver()) {
+      assertTrue(driver.getMajorVersion() > 0, "Legacy driver major version should be gt 0");
+    } else {
+      assertEquals(0, driver.getMajorVersion(), "New driver major version should be 0 (0.0.1)");
+    }
     assertTrue(driver.getMinorVersion() >= 0, "Minor version should be gte 0");
     assertFalse(driver.jdbcCompliant(), "Driver should not claim JDBC compliance");
   }

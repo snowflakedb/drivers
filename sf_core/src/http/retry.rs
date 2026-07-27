@@ -43,6 +43,7 @@ impl HttpContext {
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum HttpError {
     #[snafu(display("transport error"))]
+    #[snafu(visibility(pub(crate)))]
     Transport {
         source: reqwest::Error,
         #[snafu(implicit)]
@@ -69,26 +70,29 @@ pub enum HttpError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("response body of {size} bytes exceeds max {max_size} bytes"))]
+    ResponseTooLarge {
+        size: u64,
+        max_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 /// Calculate effective timeout for a request attempt.
 ///
-/// Returns the minimum of:
-/// - Configured per_request_timeout (if set)
-/// - Remaining time in total budget
-///
-/// This ensures:
-/// 1. Individual requests don't exceed per_request_timeout (if configured)
-/// 2. Total time never exceeds max_elapsed budget — even when per_request_timeout
-///    is None, the remaining budget is applied as the request timeout so that
-///    in-flight requests are cancelled when the budget expires.
+/// When `max_elapsed` is set, returns `min(per_request_timeout, remaining_budget)`.
+/// When `max_elapsed` is `None`, returns `per_request_timeout` directly (or `None`
+/// meaning no per-attempt timeout — the outer operation timeout is the only guard).
 fn calculate_request_timeout(
     per_request_timeout: Option<Duration>,
-    remaining: Duration,
-) -> Duration {
-    match per_request_timeout {
-        Some(configured) => configured.min(remaining),
-        None => remaining,
+    remaining: Option<Duration>,
+) -> Option<Duration> {
+    match (per_request_timeout, remaining) {
+        (Some(configured), Some(rem)) => Some(configured.min(rem)),
+        (Some(configured), None) => Some(configured),
+        (None, Some(rem)) => Some(rem),
+        (None, None) => None,
     }
 }
 
@@ -112,26 +116,46 @@ where
 
     loop {
         attempt += 1;
-        let elapsed = start.elapsed();
-        if elapsed >= policy.max_elapsed {
-            return DeadlineExceededSnafu {
-                configured: policy.max_elapsed,
-                elapsed,
-            }
-            .fail();
-        }
-        let remaining = policy.max_elapsed - elapsed;
 
-        // Calculate dynamic timeout: min(per_request_timeout, remaining_budget).
-        // Always set — ensures max_elapsed is a hard bound on in-flight requests.
+        // When max_elapsed is set, enforce the internal deadline.
+        let remaining = if let Some(budget) = policy.max_elapsed {
+            let elapsed = start.elapsed();
+            if elapsed >= budget {
+                return DeadlineExceededSnafu {
+                    configured: budget,
+                    elapsed,
+                }
+                .fail();
+            }
+            Some(budget - elapsed)
+        } else {
+            None
+        };
+
         let timeout = calculate_request_timeout(policy.per_request_timeout, remaining);
-        tracing::debug!(
+        let mut req_builder = build_request();
+        if let Some(t) = timeout {
+            tracing::debug!(
+                attempt,
+                timeout_secs = t.as_secs(),
+                remaining_secs = remaining.map(|r| r.as_secs()),
+                "Applying per-request timeout"
+            );
+            req_builder = req_builder.timeout(t);
+        }
+
+        // Every outbound HTTP call is logged at INFO so driver-generated traffic
+        // is always visible (ud-log-every-http-call-at-info). `ctx.path` may be a
+        // full URL for some callers (e.g. chunk downloads), so strip any query
+        // string / fragment — those can carry presigned auth tokens and the rule
+        // permits only host + path.
+        let log_path = ctx.path.split(['?', '#']).next().unwrap_or("");
+        tracing::info!(
+            method = %ctx.method,
+            path = %log_path,
             attempt,
-            timeout_secs = timeout.as_secs(),
-            remaining_secs = remaining.as_secs(),
-            "Applying dynamic per-request timeout"
+            "outbound HTTP call"
         );
-        let req_builder = build_request().timeout(timeout);
 
         let result = req_builder.send().await;
 
@@ -143,7 +167,6 @@ where
                 if !should_retry_status(resp.status(), &policy.extra_retryable_statuses)
                     || !allow_retry(ctx, &policy.http)
                 {
-                    // Non-retryable status: surface response to caller
                     return on_response(resp).await;
                 }
 
@@ -155,14 +178,15 @@ where
                     .fail();
                 }
 
-                // Honor Retry-After if present
                 let retry_after = parse_retry_after(&resp);
                 sleep_ms = next_delay_ms(sleep_ms, backoff);
                 let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
-                if delay > remaining {
+                if let Some(rem) = remaining
+                    && delay > rem
+                {
                     return RetryAfterExceededSnafu {
                         retry_after: delay,
-                        remaining,
+                        remaining: rem,
                     }
                     .fail();
                 }
@@ -178,10 +202,12 @@ where
                 }
                 sleep_ms = next_delay_ms(sleep_ms, backoff);
                 let delay = Duration::from_millis(sleep_ms as u64);
-                if delay > remaining {
+                if let Some(rem) = remaining
+                    && delay > rem
+                {
                     return RetryAfterExceededSnafu {
                         retry_after: delay,
-                        remaining,
+                        remaining: rem,
                     }
                     .fail();
                 }
@@ -261,53 +287,83 @@ where
     }
 }
 
+/// Like [`execute_bytes_with_retry`] but streams the response body and aborts
+/// with [`HttpError::ResponseTooLarge`] the moment the advertised
+/// `Content-Length` or the accumulated body size exceeds `max_size`. The size
+/// rejection is a property of the payload (not a transient failure), so it is
+/// surfaced without further retries. Transport/status failures still flow
+/// through the normal retry path.
+pub async fn execute_bytes_with_retry_capped<B>(
+    build: B,
+    ctx: &HttpContext,
+    policy: &RetryPolicy,
+    max_size: usize,
+) -> Result<Vec<u8>, HttpError>
+where
+    B: Fn() -> reqwest::RequestBuilder,
+{
+    use futures::StreamExt;
+    execute_with_retry(build, ctx, policy, |resp| async move {
+        let resp = resp.error_for_status().context(TransportSnafu)?;
+        if let Some(len) = resp.content_length()
+            && len > max_size as u64
+        {
+            return ResponseTooLargeSnafu {
+                size: len,
+                max_size,
+            }
+            .fail();
+        }
+        let mut stream = resp.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context(TransportSnafu)?;
+            if buf.len() + chunk.len() > max_size {
+                return ResponseTooLargeSnafu {
+                    size: (buf.len() + chunk.len()) as u64,
+                    max_size,
+                }
+                .fail();
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod timeout_tests {
     use super::*;
 
     #[test]
-    fn test_calculate_request_timeout_falls_back_to_remaining_when_not_configured() {
-        let result = calculate_request_timeout(None, Duration::from_secs(10));
-        assert_eq!(
-            result,
-            Duration::from_secs(10),
-            "Should fall back to remaining budget when per_request_timeout not configured"
-        );
+    fn no_timeout_when_both_none() {
+        assert_eq!(calculate_request_timeout(None, None), None);
     }
 
     #[test]
-    fn test_calculate_request_timeout_uses_configured_when_more_time_available() {
-        let configured = Duration::from_secs(5);
-        let remaining = Duration::from_secs(15);
-        let result = calculate_request_timeout(Some(configured), remaining);
-        assert_eq!(
-            result,
-            Duration::from_secs(5),
-            "Should use configured timeout when remaining is larger"
-        );
+    fn falls_back_to_remaining_when_per_request_not_configured() {
+        let result = calculate_request_timeout(None, Some(Duration::from_secs(10)));
+        assert_eq!(result, Some(Duration::from_secs(10)));
     }
 
     #[test]
-    fn test_calculate_request_timeout_uses_remaining_when_less_than_configured() {
-        let configured = Duration::from_secs(10);
-        let remaining = Duration::from_secs(3);
-        let result = calculate_request_timeout(Some(configured), remaining);
-        assert_eq!(
-            result,
-            Duration::from_secs(3),
-            "Should use remaining time when less than configured"
-        );
+    fn uses_per_request_when_no_budget() {
+        let result = calculate_request_timeout(Some(Duration::from_secs(5)), None);
+        assert_eq!(result, Some(Duration::from_secs(5)));
     }
 
     #[test]
-    fn test_calculate_request_timeout_last_attempt_gets_full_remaining() {
-        let configured = Duration::from_secs(5);
-        let remaining = Duration::from_millis(1500); // 1.5s remaining
-        let result = calculate_request_timeout(Some(configured), remaining);
-        assert_eq!(
-            result,
-            Duration::from_millis(1500),
-            "Last attempt should get all remaining time"
-        );
+    fn uses_configured_when_more_time_available() {
+        let result =
+            calculate_request_timeout(Some(Duration::from_secs(5)), Some(Duration::from_secs(15)));
+        assert_eq!(result, Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn uses_remaining_when_less_than_configured() {
+        let result =
+            calculate_request_timeout(Some(Duration::from_secs(10)), Some(Duration::from_secs(3)));
+        assert_eq!(result, Some(Duration::from_secs(3)));
     }
 }

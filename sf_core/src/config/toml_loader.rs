@@ -1,4 +1,5 @@
 use super::{ConfigError, ConfigFileReadSnafu, TomlParseSnafu};
+use crate::env_vars;
 use snafu::ResultExt;
 use std::fs;
 use std::path::Path;
@@ -85,7 +86,7 @@ pub fn check_file_permissions(
         }
 
         if mode & 0o044 != 0
-            && std::env::var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE").is_err()
+            && std::env::var(env_vars::SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE).is_err()
         {
             tracing::warn!(
                 "Config file {} is readable by group or others",
@@ -218,7 +219,12 @@ number = 42
 
         // Set env var to skip warning
         // SAFETY: Test-only, not run in parallel.
-        unsafe { std::env::set_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE", "1") };
+        unsafe {
+            std::env::set_var(
+                env_vars::SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE,
+                "1",
+            )
+        };
 
         // Should not print warning (we can't easily test stderr output,
         // but at least verify it doesn't error)
@@ -226,6 +232,8 @@ number = 42
         assert!(result.is_ok());
 
         // SAFETY: Test-only, not run in parallel.
-        unsafe { std::env::remove_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE") };
+        unsafe {
+            std::env::remove_var(env_vars::SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE)
+        };
     }
 }

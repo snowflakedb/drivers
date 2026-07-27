@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "test_macros.hpp"
@@ -251,40 +252,49 @@ TEST_CASE("should return HY024 for invalid SQL_ATTR_CP_MATCH value", "[odbc-api]
 
 TEST_CASE("should accept SQL_ATTR_OUTPUT_NTS set to SQL_TRUE", "[odbc-api][env_attr][output_nts]") {
   // Given An environment handle with ODBC version set
-  SQLHENV env = SQL_NULL_HENV;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // When SQL_ATTR_OUTPUT_NTS is set to SQL_TRUE
-  ret = SQLSetEnvAttr(env, SQL_ATTR_OUTPUT_NTS, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_OUTPUT_NTS, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
 
   // Then It should return SQL_SUCCESS
   REQUIRE(ret == SQL_SUCCESS);
+}
 
-  SQLFreeHandle(SQL_HANDLE_ENV, env);
+TEST_CASE("should get SQL_ATTR_OUTPUT_NTS as SQL_TRUE", "[odbc-api][env_attr][output_nts]") {
+  // Given An environment handle with ODBC version set
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When SQL_ATTR_OUTPUT_NTS is queried. The Driver Manager usually services
+  // this attribute itself (it always requests null-terminated strings), so the
+  // call may not reach the driver; either way the value must be SQL_TRUE. The
+  // driver's own behavior is pinned by the direct-driver test below.
+  SQLINTEGER nts = -1;
+  ret = SQLGetEnvAttr(env.getHandle(), SQL_ATTR_OUTPUT_NTS, &nts, 0, nullptr);
+  if (SQL_SUCCEEDED(ret)) {
+    CHECK(nts == SQL_TRUE);
+  }
 }
 
 TEST_CASE("should reject SQL_ATTR_OUTPUT_NTS set to SQL_FALSE with HYC00", "[odbc-api][env_attr][output_nts][error]") {
   // Given An environment handle with ODBC version set
-  SQLHENV env = SQL_NULL_HENV;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // When SQL_ATTR_OUTPUT_NTS is set to SQL_FALSE
-  ret = SQLSetEnvAttr(env, SQL_ATTR_OUTPUT_NTS, reinterpret_cast<SQLPOINTER>(SQL_FALSE), 0);
+  ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_OUTPUT_NTS, reinterpret_cast<SQLPOINTER>(SQL_FALSE), 0);
 
   // Then It should return SQL_ERROR — exact SQLSTATE depends on whether the Driver Manager
   // intercepts (HYC00) or forwards to the driver (HY092)
   REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(SQL_HANDLE_ENV, env);
+  auto records = get_diag_rec(SQL_HANDLE_ENV, env.getHandle());
   REQUIRE(!records.empty());
   CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
-
-  SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
 // ============================================================================
@@ -293,43 +303,35 @@ TEST_CASE("should reject SQL_ATTR_OUTPUT_NTS set to SQL_FALSE with HYC00", "[odb
 
 TEST_CASE("should return error when setting an unknown environment attribute", "[odbc-api][env_attr][error]") {
   // Given An environment handle with ODBC version set
-  SQLHENV env = SQL_NULL_HENV;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // When An unknown attribute ID is used in SQLSetEnvAttr
-  ret = SQLSetEnvAttr(env, 99999, reinterpret_cast<SQLPOINTER>(1), 0);
+  ret = SQLSetEnvAttr(env.getHandle(), 99999, reinterpret_cast<SQLPOINTER>(1), 0);
 
   // Then It should return SQL_ERROR
   REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(SQL_HANDLE_ENV, env);
+  auto records = get_diag_rec(SQL_HANDLE_ENV, env.getHandle());
   REQUIRE(!records.empty());
   CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
-
-  SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
 TEST_CASE("should return error when getting an unknown environment attribute", "[odbc-api][env_attr][error]") {
   // Given An environment handle with ODBC version set
-  SQLHENV env = SQL_NULL_HENV;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // When An unknown attribute ID is used in SQLGetEnvAttr
   SQLINTEGER value = 0;
-  ret = SQLGetEnvAttr(env, 99999, &value, 0, nullptr);
+  ret = SQLGetEnvAttr(env.getHandle(), 99999, &value, 0, nullptr);
 
   // Then It should return SQL_ERROR
   REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(SQL_HANDLE_ENV, env);
+  auto records = get_diag_rec(SQL_HANDLE_ENV, env.getHandle());
   REQUIRE(!records.empty());
   CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
-
-  SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
 // ============================================================================

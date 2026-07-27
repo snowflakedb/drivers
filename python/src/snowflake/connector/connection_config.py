@@ -60,6 +60,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     client_store_temporary_credential: bool | None = False
     """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""
 
+    connect_timeout: int | None = None
+    """TCP connect timeout in seconds for the HTTP client (0 or absent = system default)"""
+
     connection_diag_allowlist_path: str | None = None
     """Path to a pre-fetched allowlist.json; if absent the driver fetches it via system$allowlist()"""
 
@@ -72,8 +75,14 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_allow_certificates_without_crl_url: bool | None = False
     """Allow certificates that do not include a CRL distribution URL. Default: False"""
 
+    crl_cache_cleanup_interval: int | None = 3600
+    """Interval in seconds between background CRL cache cleanup passes. Default: 3600"""
+
     crl_cache_dir: str | None = None
     """Directory for CRL cache files"""
+
+    crl_cache_start_cleanup: bool | None = False
+    """Run the background CRL cache cleanup task. Default: False"""
 
     crl_check_mode: str | None = "DISABLED"
     """Certificate revocation check mode (DISABLED, ENABLED, ADVISORY). Default: 'DISABLED'"""
@@ -87,11 +96,20 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_enable_memory_caching: bool | None = True
     """Enable in-memory caching for CRL responses. Default: True"""
 
-    crl_http_timeout: int | None = 30
-    """HTTP timeout in seconds for CRL endpoint requests. Default: 30"""
+    crl_http_timeout: int | None = 10
+    """HTTP timeout in seconds for CRL endpoint requests. Default: 10"""
 
-    crl_validity_time: int | None = 10
-    """CRL cache validity time in days. Default: 10"""
+    crl_max_download_size: int | None = 20971520
+    """Maximum CRL download size in bytes before the download is aborted. Default: 20971520"""
+
+    crl_on_disk_cache_removal_delay: int | None = 604800
+    """Delay in seconds after a CRL's nextUpdate before it is purged from the on-disk cache. Default: 604800"""
+
+    crl_unsafe_skip_file_permissions_check: bool | None = False
+    """Skip verification that on-disk CRL cache files and directory are owner-only (0600/0700). Default: False"""
+
+    crl_validity_time: int | None = 86400
+    """Maximum age in seconds of a cached CRL before it is re-fetched. Default: 86400"""
 
     custom_root_store_path: str | None = None
     """Path to custom root certificate store"""
@@ -124,6 +142,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     log_query_text: bool | str | None = False
     """Include the (truncated) SQL text in INFO query logs. Default: False"""
+
+    login_timeout: int | None = 120
+    """Wall-clock timeout in seconds for the entire login operation including retries (0 = no timeout). Default: 120"""
 
     logout_error_strategy: str | None = None
     """Error handling strategy for logout: 'best_effort' or 'strict'"""
@@ -240,6 +261,16 @@ class ConnectionConfig(ConnectionConfigMixin):
     put_get_max_attempts: int | None = 6
     """Maximum total attempts for a single PUT/GET file transfer (1 = no retry). Default: 6"""
 
+    query_timeout: int | None = 0
+    """Wall-clock timeout in seconds for query execution including retries (0 = no timeout). Default: 0"""
+
+    request_timeout: int | None = 120
+    """Wall-clock timeout in seconds for all other operations (close session, heartbeat, etc.) including retries (0 = no
+    timeout).
+
+    Default: 120
+    """
+
     retry_backoff_base_ms: int | None = 250
     """Initial exponential-backoff delay in milliseconds between retry attempts. Default: 250"""
 
@@ -259,6 +290,11 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     retry_max_attempts: int | None = 6
     """Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry. Default: 6"""
+
+    retry_timeout: int | None = None
+    """Per-request timeout in seconds for a single HTTP attempt within a retry loop (0 or absent = no per-request
+    timeout)
+    """
 
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
@@ -281,6 +317,13 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+
+    unsafe_file_write: bool | None = False
+    """When true, GET downloads use the process umask permissions instead of owner-only (0600). Unix-only; ignored on
+    Windows.
+
+    Default: False
+    """
 
     unsafe_skip_config_file_permissions_check: bool | None = False
     """When true, skip file permission checks on config.toml and connections.toml during connection setup. Use in
@@ -330,6 +373,11 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     database: str | None = None
     """Default database to use"""
+
+    query_tag: str | None = None
+    """String label attached to queries and surfaced in QUERY_HISTORY. Settable at the session level (connection option
+    or session override, forwarded as a login session parameter) and overridable per-statement.
+    """
 
     role: str | None = None
     """Default role to use"""

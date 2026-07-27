@@ -46,7 +46,8 @@ pub(crate) mod timestamp;
 mod timestamp_tests;
 mod varchar;
 
-use arrow::array::Array;
+use crate::api::CDataType;
+use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use arrow::datatypes::{
     DataType, Date32Type, Decimal128Type, Field, Float64Type, Int8Type, Int16Type, Int32Type,
     Int64Type,
@@ -302,6 +303,71 @@ impl<
     }
 }
 
+/// Wraps the generic NUMBER converter, intercepting the hot `SQL_C_CHAR`
+/// range conversion with the batched [`number::convert_number_char_range`]
+/// (read + format + write inlined into one loop) and delegating every other
+/// target — and the single-cell `SQLGetData` path — to the generic per-cell
+/// converter unchanged. If the batched path declines (stride overflow, or a
+/// non-nullable column carrying nulls) it also falls back to the generic path,
+/// so behavior is identical in every case.
+struct NumberCharConverter<T: ArrowPrimitiveType> {
+    inner: Box<dyn ColumnConverter>,
+    scale: u32,
+    nullable: bool,
+    _phantom: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> ColumnConverter for NumberCharConverter<T>
+where
+    T: ArrowPrimitiveType + 'static,
+    T::Native: Into<i128>,
+{
+    fn convert_arrow_value(
+        &self,
+        array: &dyn Array,
+        row_idx: usize,
+        binding: &Binding,
+        get_data_offset: &mut Option<usize>,
+    ) -> Result<Warnings, ConversionError> {
+        self.inner
+            .convert_arrow_value(array, row_idx, binding, get_data_offset)
+    }
+
+    fn convert_arrow_range(
+        &self,
+        array: &dyn Array,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        if base_binding.target_type == CDataType::Char
+            && let Some(arr) = array.as_any().downcast_ref::<PrimitiveArray<T>>()
+            && number::convert_number_char_range(
+                self.scale,
+                self.nullable,
+                arr,
+                arrow_row_range.clone(),
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            )
+        {
+            return;
+        }
+        self.inner.convert_arrow_range(
+            array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+        );
+    }
+}
+
 macro_rules! make_converter {
     ($arrow_array_type:ty, $snowflake_type:expr, $nullable:expr) => {{
         if $nullable {
@@ -341,6 +407,19 @@ macro_rules! make_timestamp_converter {
             }
         }
     };
+}
+
+macro_rules! number_char_converter {
+    ($arrow_type:ty, $snowflake_type:expr, $nullable:expr) => {{
+        let scale = $snowflake_type.scale;
+        let inner = make_primitive_data_converter!($arrow_type, $snowflake_type, $nullable)?;
+        Ok(Box::new(NumberCharConverter::<$arrow_type> {
+            inner,
+            scale,
+            nullable: $nullable,
+            _phantom: std::marker::PhantomData,
+        }) as Box<dyn ColumnConverter>)
+    }};
 }
 
 fn get_field_metadata(field: &Field, key: &str) -> Result<u32, ConversionError> {
@@ -664,20 +743,12 @@ pub fn make_converter(
             )
         }
         SnowflakeFieldType::Number(snowflake_type) => match field.data_type() {
-            DataType::Int8 => {
-                make_primitive_data_converter!(Int8Type, snowflake_type, nullable)
-            }
-            DataType::Int16 => {
-                make_primitive_data_converter!(Int16Type, snowflake_type, nullable)
-            }
-            DataType::Int32 => {
-                make_primitive_data_converter!(Int32Type, snowflake_type, nullable)
-            }
-            DataType::Int64 => {
-                make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
-            }
+            DataType::Int8 => number_char_converter!(Int8Type, snowflake_type, nullable),
+            DataType::Int16 => number_char_converter!(Int16Type, snowflake_type, nullable),
+            DataType::Int32 => number_char_converter!(Int32Type, snowflake_type, nullable),
+            DataType::Int64 => number_char_converter!(Int64Type, snowflake_type, nullable),
             DataType::Decimal128(_, _) => {
-                make_primitive_data_converter!(Decimal128Type, snowflake_type, nullable)
+                number_char_converter!(Decimal128Type, snowflake_type, nullable)
             }
             dt => UnsupportedArrowDataTypeSnafu {
                 data_type: dt.clone(),
@@ -847,4 +918,360 @@ pub fn literal_suffix_from_field(
     numeric_settings: &NumericSettings,
 ) -> Result<&'static str, ConversionError> {
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.literal_suffix())
+}
+
+#[cfg(test)]
+mod number_char_batch_tests {
+    use super::{ColumnConverter, NumericSettings, make_converter};
+    use crate::api::CDataType;
+    use crate::conversion::error::ConversionError;
+    use crate::conversion::traits::{Binding, BindingStrides};
+    use crate::conversion::warning::Warnings;
+    use arrow::array::{Array, Decimal128Array, Int64Array};
+    use arrow::datatypes::{DataType, Field};
+    use odbc_sys as sql;
+    use std::collections::HashMap;
+
+    fn number_field(scale: &str, nullable: bool) -> Field {
+        let mut md = HashMap::new();
+        md.insert("logicalType".to_string(), "FIXED".to_string());
+        md.insert("scale".to_string(), scale.to_string());
+        md.insert("precision".to_string(), "18".to_string());
+        Field::new("c", DataType::Int64, nullable).with_metadata(md)
+    }
+
+    fn decimal_field(precision: u8, scale: i8, nullable: bool) -> Field {
+        let mut md = HashMap::new();
+        md.insert("logicalType".to_string(), "FIXED".to_string());
+        md.insert("scale".to_string(), (scale as i64).to_string());
+        md.insert("precision".to_string(), (precision as i64).to_string());
+        Field::new("c", DataType::Decimal128(precision, scale), nullable).with_metadata(md)
+    }
+
+    fn base(buf: &mut [u8], inds: &mut [sql::Len], cell: usize) -> Binding {
+        Binding {
+            target_type: CDataType::Char,
+            target_value_ptr: buf.as_mut_ptr() as sql::Pointer,
+            buffer_length: cell as sql::Len,
+            octet_length_ptr: inds.as_mut_ptr(),
+            indicator_ptr: inds.as_mut_ptr(),
+            ..Default::default()
+        }
+    }
+
+    /// Reference per-cell run, identical to `per_cell_convert_range`, using the
+    /// wrapper's `convert_arrow_value` (which delegates to the generic converter).
+    fn per_cell(
+        conv: &dyn ColumnConverter,
+        arr: &dyn arrow::array::Array,
+        cell: usize,
+        buf: &mut [u8],
+        inds: &mut [sql::Len],
+    ) -> Vec<Result<Warnings, ConversionError>> {
+        let n = arr.len();
+        let b = base(buf, inds, cell);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        for (i, slot) in outs.iter_mut().enumerate() {
+            if slot.is_err() {
+                continue;
+            }
+            let rb = strides.for_row(&b, i).unwrap();
+            match conv.convert_arrow_value(arr, i, &rb, &mut None) {
+                Ok(w) => {
+                    if !w.is_empty()
+                        && let Ok(e) = slot
+                    {
+                        e.extend(w);
+                    }
+                }
+                Err(e) => *slot = Err(e),
+            }
+        }
+        outs
+    }
+
+    fn batched(
+        conv: &dyn ColumnConverter,
+        arr: &dyn arrow::array::Array,
+        cell: usize,
+        buf: &mut [u8],
+        inds: &mut [sql::Len],
+    ) -> Vec<Result<Warnings, ConversionError>> {
+        let n = arr.len();
+        let b = base(buf, inds, cell);
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        conv.convert_arrow_range(
+            arr,
+            0..n,
+            &b,
+            0,
+            BindingStrides {
+                bind_type: 0,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        outs
+    }
+
+    fn scrub(s: &str) -> String {
+        // drop snafu `Location { .. }` spans so error comparison ignores capture site
+        let mut out = String::new();
+        let mut rest = s;
+        while let Some(pos) = rest.find("Location {") {
+            out.push_str(&rest[..pos]);
+            rest = &rest[pos..];
+            match rest.find('}') {
+                Some(end) => rest = &rest[end + 1..],
+                None => break,
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    fn assert_equiv(field: &Field, arr: &dyn arrow::array::Array, cell: usize) {
+        let conv = make_converter(field, &NumericSettings::default()).unwrap();
+        let n = arr.len();
+        let (mut bp, mut ip) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
+        let (mut bb, mut ib) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
+        let op = per_cell(conv.as_ref(), arr, cell, &mut bp, &mut ip);
+        let ob = batched(conv.as_ref(), arr, cell, &mut bb, &mut ib);
+        assert_eq!(bp, bb, "value buffers differ");
+        assert_eq!(ip, ib, "indicators differ");
+        for (i, (a, b)) in op.iter().zip(ob.iter()).enumerate() {
+            assert_eq!(
+                scrub(&format!("{a:?}")),
+                scrub(&format!("{b:?}")),
+                "output {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn batched_matches_per_cell_nullable_with_nulls_negatives_and_truncation() {
+        let arr = Int64Array::from(vec![
+            Some(0),
+            Some(101),
+            Some(-4599),
+            Some(12345),
+            None,
+            Some(99_999_999_999), // 12 chars formatted -> truncates in an 8-byte cell -> 22003
+            Some(7),
+        ]);
+        assert_equiv(&number_field("2", true), &arr, 8);
+        // wide cell: no truncation, exercises the pure fast path
+        assert_equiv(&number_field("2", true), &arr, 64);
+        // scale 0
+        assert_equiv(&number_field("0", true), &arr, 64);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_non_nullable_no_nulls() {
+        let arr = Int64Array::from(vec![0, 5, -12, 6789, 250]);
+        assert_equiv(&number_field("2", false), &arr, 64);
+    }
+
+    #[test]
+    fn batched_matches_per_cell_decimal128() {
+        // Decimal128 is a real Snowflake NUMBER representation and is also wired
+        // through the batched converter (Decimal128Type). Verify byte-identity
+        // to the generic path, including the truncation/overflow branch.
+        let arr = Decimal128Array::from(vec![
+            Some(0i128),
+            Some(101),
+            Some(-4599),
+            Some(1_234_567_890_123_456i128),
+            None,
+            Some(7),
+        ])
+        .with_precision_and_scale(38, 2)
+        .unwrap();
+        assert_equiv(&decimal_field(38, 2, true), &arr, 64);
+        // small cell -> exercises truncation + whole-digits 22003 error path
+        assert_equiv(&decimal_field(38, 2, true), &arr, 8);
+    }
+
+    /// Independent oracle: assert the batched path writes the exact bytes,
+    /// NUL terminator, and indicators for known inputs — not just parity with
+    /// the per-cell path. An equivalence-only test would pass even if a bug
+    /// shared by both paths produced wrong-but-identical output.
+    #[test]
+    fn batched_writes_expected_text_indicators_and_nul() {
+        let arr = Int64Array::from(vec![Some(0), Some(101), Some(-4599), None, Some(250)]);
+        let conv = make_converter(&number_field("2", true), &NumericSettings::default()).unwrap();
+        let cell = 16;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
+        let outs = batched(conv.as_ref(), &arr, cell, &mut buf, &mut inds);
+
+        // scale 2: value/100 with two fractional digits.
+        let expected = ["0.00", "1.01", "-45.99", "", "2.50"];
+        for (i, exp) in expected.iter().enumerate() {
+            if arr.is_null(i) {
+                assert_eq!(inds[i], -1, "row {i}: null cell must set SQL_NULL_DATA");
+                continue;
+            }
+            let cell_bytes = &buf[i * cell..(i + 1) * cell];
+            assert_eq!(&cell_bytes[..exp.len()], exp.as_bytes(), "row {i} text");
+            assert_eq!(cell_bytes[exp.len()], 0, "row {i} NUL terminator");
+            assert_eq!(inds[i], exp.len() as sql::Len, "row {i} indicator");
+            assert!(
+                outs[i].as_ref().unwrap().is_empty(),
+                "row {i} unexpected warnings"
+            );
+        }
+    }
+
+    /// A non-nullable column that unexpectedly carries a null must be declined
+    /// (return `false`) so the caller falls back to the generic per-cell path,
+    /// rather than the batched path inventing a null indicator.
+    #[test]
+    fn batched_declines_non_nullable_column_carrying_nulls() {
+        use arrow::datatypes::Int64Type;
+        let arr = Int64Array::from(vec![Some(1), None, Some(3)]);
+        let cell = 16;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0u8; n * cell], vec![0 as sql::Len; n]);
+        let b = base(&mut buf, &mut inds, cell);
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        let took = crate::conversion::number::convert_number_char_range::<Int64Type>(
+            2,
+            false, // non-nullable
+            &arr,
+            0..n,
+            &b,
+            0,
+            BindingStrides {
+                bind_type: 0,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        assert!(
+            !took,
+            "must decline so the caller falls back to the generic path"
+        );
+    }
+
+    /// A first-row binding-pointer overflow must be declined so overflow is
+    /// still reported per row by the generic path, exactly as before.
+    #[test]
+    fn batched_declines_on_first_row_stride_overflow() {
+        use arrow::datatypes::Int64Type;
+        let arr = Int64Array::from(vec![Some(1), Some(2)]);
+        let cell = 16;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0u8; n * cell], vec![0 as sql::Len; n]);
+        let b = base(&mut buf, &mut inds, cell);
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        // Row-wise stride of usize::MAX with a non-zero start row overflows the
+        // very first `for_row` pointer computation.
+        let took = crate::conversion::number::convert_number_char_range::<Int64Type>(
+            2,
+            true,
+            &arr,
+            0..n,
+            &b,
+            2, // out_row_start: 2 * usize::MAX overflows
+            BindingStrides {
+                bind_type: usize::MAX,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        assert!(!took, "first-row stride overflow must decline");
+    }
+
+    /// `out_row_start != 0` (a mid-block sub-range) must offset where each row
+    /// lands: range row `k` writes to bound slot `out_row_start + k`, leaving
+    /// earlier slots untouched.
+    #[test]
+    fn batched_honors_out_row_start_offset() {
+        use arrow::datatypes::Int64Type;
+        let arr = Int64Array::from(vec![Some(11), Some(22)]);
+        let cell = 8;
+        let slots = 4;
+        let (mut buf, mut inds) = (vec![0xAAu8; slots * cell], vec![-9 as sql::Len; slots]);
+        let b = base(&mut buf, &mut inds, cell);
+        let n = arr.len();
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        let took = crate::conversion::number::convert_number_char_range::<Int64Type>(
+            0, // scale 0
+            true,
+            &arr,
+            0..n,
+            &b,
+            2, // out_row_start
+            BindingStrides {
+                bind_type: 0,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        assert!(took);
+        // Rows landed at slots 2 and 3.
+        assert_eq!(&buf[2 * cell..2 * cell + 2], b"11");
+        assert_eq!(&buf[3 * cell..3 * cell + 2], b"22");
+        assert_eq!(inds[2], 2);
+        assert_eq!(inds[3], 2);
+        // Slots before out_row_start are untouched.
+        assert!(
+            buf[0..2 * cell].iter().all(|&x| x == 0xAA),
+            "slots before out_row_start must be untouched"
+        );
+    }
+
+    /// A row already carrying an error (as an earlier column in the same
+    /// segment would leave it) must be skipped, not overwritten — the batched
+    /// path preserves the "first error aborts the row" contract.
+    #[test]
+    fn batched_skips_rows_already_in_error() {
+        use arrow::datatypes::Int64Type;
+        let arr = Int64Array::from(vec![Some(1), Some(2), Some(3)]);
+        let cell = 16;
+        let n = arr.len();
+        let (mut buf, mut inds) = (vec![0xAAu8; n * cell], vec![-9 as sql::Len; n]);
+        let b = base(&mut buf, &mut inds, cell);
+        let mut outs: Vec<Result<Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+        // Pre-seed row 1 with an error, as an earlier column would.
+        outs[1] = Err(crate::conversion::error::MissingFieldMetadataSnafu {
+            key: "x".to_string(),
+            field_name: "c".to_string(),
+        }
+        .build());
+
+        let took = crate::conversion::number::convert_number_char_range::<Int64Type>(
+            0,
+            true,
+            &arr,
+            0..n,
+            &b,
+            0,
+            BindingStrides {
+                bind_type: 0,
+                bind_offset: 0,
+            },
+            &mut outs,
+        );
+        assert!(took);
+        assert!(outs[1].is_err(), "pre-existing error must be preserved");
+        // The errored row's buffer slot is left untouched, neighbors converted.
+        assert!(
+            buf[cell..2 * cell].iter().all(|&x| x == 0xAA),
+            "errored row buffer must be untouched"
+        );
+        assert_eq!(&buf[0..1], b"1");
+        assert_eq!(&buf[2 * cell..2 * cell + 1], b"3");
+    }
 }

@@ -1,11 +1,14 @@
 using System.Text.Json;
-using Xunit;
 
 namespace Snowflake.Data.Tests.Utilities;
 
 public static class ParametersReader
 {
     private static readonly Lazy<Dictionary<string, string>> Parameters = new(LoadParameters);
+    private const int MaxDirLevels = 10;
+    private static ITestOutputHelper? _testOutputHelper;
+
+    public static void Init(ITestOutputHelper? testOutputHelper) => _testOutputHelper = testOutputHelper;
 
     public static string? Get(string key)
     {
@@ -21,19 +24,22 @@ public static class ParametersReader
         {
             // Walk up from the test assembly to find the repo root parameters.json
             var dir = AppContext.BaseDirectory;
-            for (var i = 0; i < 8; i++)
+            var i = 0;
+            for (; ; )
             {
                 var candidate = Path.Combine(dir, "parameters.json");
-                TestContext.Current.TestOutputHelper?.WriteLine($"Looking for {candidate}..");
+                _testOutputHelper?.WriteLine($"Looking for {candidate}..");
                 if (File.Exists(candidate))
                 {
-                    TestContext.Current.TestOutputHelper?.WriteLine($"Found parameters at {dir}!");
+                    _testOutputHelper?.WriteLine($"Found parameters at {dir}!");
                     parameterPath = candidate;
                     break;
                 }
                 dir = Path.GetDirectoryName(dir) ?? dir;
+
+                if (i++ == MaxDirLevels)
+                    throw new FileNotFoundException("No parameters file!");
             }
-            TestContext.Current.TestOutputHelper?.WriteLine($"No parameters found!");
         }
 
         if (string.IsNullOrEmpty(parameterPath) || !File.Exists(parameterPath))

@@ -18,5 +18,7 @@ interface RowCursor extends AutoCloseable {
 
   boolean isFirst();
 
+  boolean isLast() throws SQLException;
+
   int getCurrentRow();
 }

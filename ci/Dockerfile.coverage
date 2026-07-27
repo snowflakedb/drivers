@@ -56,6 +56,15 @@ RUN dnf install -y unixODBC unixODBC-devel zlib-devel
 RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh -o /tmp/cmake.sh && \
     sh /tmp/cmake.sh --skip-license --prefix=/usr/local && \
     rm /tmp/cmake.sh
+    
+
+# ============================================================
+# dotnet (for dotnet tests)
+# ============================================================
+RUN dnf install -y \
+        dotnet-sdk-8.0 \
+        dotnet-sdk-9.0 \
+        dotnet-sdk-10.0
 
 # ============================================================
 # Go (required by aws-lc-fips-sys for FIPS-compliant crypto)

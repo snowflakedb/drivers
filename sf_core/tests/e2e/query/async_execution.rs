@@ -24,9 +24,6 @@ fn should_process_async_query_result() {
     for (i, row) in rows.iter().enumerate() {
         assert_eq!(row[0], i as i64);
     }
-
-    // And Statement should be released
-    client.release_statement(&stmt);
 }
 
 #[test]
@@ -67,10 +64,6 @@ fn should_match_blocking_results_when_async_execution_enabled() {
     for (i, row) in blocking_rows.iter().enumerate() {
         assert_eq!(row[0], i as i64);
     }
-
-    // And Both statements should be released
-    client.release_statement(&blocking_stmt);
-    client.release_statement(&async_stmt);
 }
 
 #[test]
@@ -97,7 +90,4 @@ fn should_use_async_by_default_when_no_execution_mode_specified() {
     for (i, row) in rows.iter().enumerate() {
         assert_eq!(row[0], i as i64);
     }
-
-    // And Statement should be released
-    client.release_statement(&stmt);
 }

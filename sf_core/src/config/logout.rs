@@ -246,7 +246,7 @@ mod tests {
     }
 
     fn make_logout_error(message: &str) -> ApiError {
-        ApiError::LogoutFailed {
+        ApiError::Logout {
             message: message.to_string(),
             location: Location::default(),
         }

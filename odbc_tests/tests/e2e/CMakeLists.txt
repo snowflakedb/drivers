@@ -18,9 +18,14 @@ add_custom_target(e2e_auth_browser DEPENDS
   e2e_authentication_mfa_auth
   e2e_authentication_oauth)
 
+# Build target for requires_no_mfa auth tests (ctest -L requires_no_mfa).
+add_custom_target(e2e_auth_no_mfa DEPENDS
+  e2e_authentication_user_password)
+
 # put_get
 add_odbc_test(e2e_put_get_put_get_auto_compress put_get/put_get_auto_compress.cpp)
 add_odbc_test(e2e_put_get_put_get_basic_operations put_get/put_get_basic_operations.cpp)
+add_odbc_test(e2e_put_get_put_get_missing_download_dir put_get/put_get_missing_download_dir.cpp)
 add_odbc_test(e2e_put_get_put_get_overwrite put_get/put_get_overwrite.cpp)
 add_odbc_test(e2e_put_get_put_get_source_compression put_get/put_get_source_compression.cpp)
 add_odbc_test(e2e_put_get_put_get_sse_stage put_get/put_get_sse_stage.cpp)
@@ -54,6 +59,7 @@ add_odbc_test(e2e_query_sql_bulk_operations query/sql_bulk_operations.cpp)
 add_odbc_test(e2e_query_attr_error_handling query/attr_error_handling.cpp)
 add_odbc_test(e2e_query_last_query_id query/last_query_id.cpp)
 add_odbc_test(e2e_query_sf_stmt_attrs query/sf_stmt_attrs.cpp)
+add_odbc_test(e2e_query_query_tag query/query_tag.cpp)
 add_odbc_test(e2e_query_async_execution query/async_execution.cpp)
 add_odbc_test(e2e_query_large_bindings query/large_bindings.cpp)
 

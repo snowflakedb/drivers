@@ -24,11 +24,19 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setDatabase(String database);
 
+  void setDatabaseName(String databaseName);
+
   void setSchema(String schema);
 
   void setRole(String role);
 
   void setWarehouse(String warehouse);
+
+  void setPortNumber(int portNumber);
+
+  void setServerName(String serverName);
+
+  void setSsl(boolean ssl);
 
   void setAuthenticator(String authenticator);
 

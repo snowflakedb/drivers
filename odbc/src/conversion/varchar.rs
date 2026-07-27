@@ -4,7 +4,7 @@ use arrow::array::{Array, GenericByteArray};
 use arrow::datatypes::Utf8Type;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -313,12 +313,10 @@ impl WriteODBCType for SnowflakeVarchar {
                         }
                         .build()
                     })?;
-                    date.and_hms_opt(0, 0, 0).ok_or_else(|| {
-                        InvalidValueSnafu {
+                    date.and_hms_opt(0, 0, 0)
+                        .with_context(|| InvalidValueSnafu {
                             reason: "Failed to create midnight timestamp".to_string(),
-                        }
-                        .build()
-                    })?
+                        })?
                 } else if is_valid_time_format(value) {
                     // Time-only string: default date to today
                     let time = NaiveTime::parse_from_str(value, "%H:%M:%S").map_err(|e| {

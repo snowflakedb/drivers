@@ -2,6 +2,8 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <string>
 
@@ -15,14 +17,20 @@
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
+namespace {
+std::string to_lower_copy(const std::string& s) {
+  std::string out = s;
+  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::tolower(c); });
+  return out;
+}
+}  // namespace
+
 // ============================================================================
 // SQLProcedureColumns - Result Set Structure
 // ============================================================================
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Result set has correct number of columns",
                  "[odbc-api][procedurecolumns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -36,8 +44,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Result set has cor
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][procedurecolumns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -75,8 +81,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Result set column 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Returns parameters for known procedure",
                  "[odbc-api][procedurecolumns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -89,10 +93,10 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Returns parameters
   // Return value is listed first with empty column name
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
-  SQLGetData(stmt_handle(), 1, SQL_C_CHAR, procCat, sizeof(procCat), nullptr);
-  SQLGetData(stmt_handle(), 2, SQL_C_CHAR, procSchem, sizeof(procSchem), nullptr);
-  SQLGetData(stmt_handle(), 3, SQL_C_CHAR, procName, sizeof(procName), nullptr);
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
+  REQUIRE(SQLGetData(stmt_handle(), 1, SQL_C_CHAR, procCat, sizeof(procCat), nullptr) == SQL_SUCCESS);
+  REQUIRE(SQLGetData(stmt_handle(), 2, SQL_C_CHAR, procSchem, sizeof(procSchem), nullptr) == SQL_SUCCESS);
+  REQUIRE(SQLGetData(stmt_handle(), 3, SQL_C_CHAR, procName, sizeof(procName), nullptr) == SQL_SUCCESS);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
   REQUIRE(std::string(procCat) == database_name());
   REQUIRE(std::string(procSchem) == schema_name());
   REQUIRE(std::string(procName) == readonly_db::MULTI_PARAM_PROC);
@@ -101,13 +105,13 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Returns parameters
   // Input parameter PNAME
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
   REQUIRE(std::string(colName) == "PNAME");
 
   // Input parameter PAGE
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
   REQUIRE(std::string(colName) == "PAGE");
 
   ret = SQLFetch(stmt_handle());
@@ -116,8 +120,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Returns parameters
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Non-existent procedure returns empty result set",
                  "[odbc-api][procedurecolumns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar("NONEXISTENTPROCXYZ99999"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -128,8 +130,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Non-existent proce
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Specific ColumnName filters results",
                  "[odbc-api][procedurecolumns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::PROC_FILTER), SQL_NTS, sqlchar("PNAME"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -138,8 +138,167 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Specific ColumnNam
   REQUIRE(ret == SQL_SUCCESS);
 
   char colName[256] = {};
-  SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
   REQUIRE(std::string(colName) == "PNAME");
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLProcedureColumns: COLUMN_TYPE and ORDINAL_POSITION order the return value before params",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  // MULTI_PARAM_PROC(pname VARCHAR, page FLOAT) RETURNS VARCHAR: the scalar
+  // return value comes first (COLUMN_TYPE=SQL_RETURN_VALUE, ordinal 0), followed
+  // by the input parameters in declaration order (SQL_PARAM_INPUT, ordinals 1..).
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT columnType = 0;
+  SQLINTEGER ordinalPos = -1;
+  SQLSMALLINT isResultSetCol = -1;
+  SQLLEN ind = 0;
+
+  // Row 1: return value.
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &columnType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(columnType == SQL_RETURN_VALUE);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 18, SQL_C_SLONG, &ordinalPos, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLINTEGER));
+  REQUIRE(ordinalPos == 0);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 20, SQL_C_SSHORT, &isResultSetCol, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(isResultSetCol == SQL_FALSE);
+
+  // Row 2: first input parameter.
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &columnType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(columnType == SQL_PARAM_INPUT);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 18, SQL_C_SLONG, &ordinalPos, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLINTEGER));
+  REQUIRE(ordinalPos == 1);
+
+  // Row 3: second input parameter.
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &columnType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(columnType == SQL_PARAM_INPUT);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 18, SQL_C_SLONG, &ordinalPos, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLINTEGER));
+  REQUIRE(ordinalPos == 2);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: DATA_TYPE reflects the VARCHAR return type",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  // BASIC_PROC(p1 VARCHAR) RETURNS VARCHAR: the return value row (fetched first)
+  // maps to SQL_VARCHAR and reports NULLABLE=SQL_NULLABLE / IS_NULLABLE="YES".
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT dataType = 0;
+  SQLLEN dataTypeInd = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 6, SQL_C_SSHORT, &dataType, 0, &dataTypeInd) == SQL_SUCCESS);
+  REQUIRE(dataTypeInd == sizeof(SQLSMALLINT));
+  REQUIRE(dataType == SQL_VARCHAR);
+
+  SQLSMALLINT nullable = -1;
+  SQLLEN nullableInd = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 12, SQL_C_SSHORT, &nullable, 0, &nullableInd) == SQL_SUCCESS);
+  REQUIRE(nullableInd == sizeof(SQLSMALLINT));
+  REQUIRE(nullable == SQL_NULLABLE);
+
+  char isNullable[8] = {};
+  REQUIRE(SQLGetData(stmt_handle(), 19, SQL_C_CHAR, isNullable, sizeof(isNullable), nullptr) == SQL_SUCCESS);
+  REQUIRE(std::string(isNullable) == "YES");
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLProcedureColumns: table-valued return emits SQL_RESULT_COL rows before params",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  // TABLE_PROC(pid INTEGER) RETURNS TABLE(id, name): the result-set columns come
+  // first (COLUMN_TYPE=SQL_RESULT_COL, IS RESULT SET COLUMN=SQL_TRUE, ordinals
+  // 1..), followed by the input parameter (SQL_PARAM_INPUT, IS RESULT SET
+  // COLUMN=SQL_FALSE). A table-valued procedure has no SQL_RETURN_VALUE row.
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::TABLE_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char colName[256] = {};
+  SQLSMALLINT columnType = 0;
+  SQLSMALLINT dataType = 0;
+  SQLINTEGER ordinalPos = -1;
+  SQLSMALLINT isResultSetCol = -1;
+  SQLLEN ind = 0;
+
+  // Row 1: first result-set column (ID).
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
+  REQUIRE(std::string(colName) == "ID");
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &columnType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(columnType == SQL_RESULT_COL);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 18, SQL_C_SLONG, &ordinalPos, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLINTEGER));
+  REQUIRE(ordinalPos == 1);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 20, SQL_C_SSHORT, &isResultSetCol, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(isResultSetCol == SQL_TRUE);
+
+  // Row 2: second result-set column (NAME), a VARCHAR.
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
+  REQUIRE(std::string(colName) == "NAME");
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &columnType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(columnType == SQL_RESULT_COL);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 18, SQL_C_SLONG, &ordinalPos, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLINTEGER));
+  REQUIRE(ordinalPos == 2);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 6, SQL_C_SSHORT, &dataType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(dataType == SQL_VARCHAR);
+
+  // Row 3: the input parameter (PID) follows the result columns.
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
+  REQUIRE(std::string(colName) == "PID");
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 5, SQL_C_SSHORT, &columnType, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(columnType == SQL_PARAM_INPUT);
+  ind = 0;
+  REQUIRE(SQLGetData(stmt_handle(), 20, SQL_C_SSHORT, &isResultSetCol, 0, &ind) == SQL_SUCCESS);
+  REQUIRE(ind == sizeof(SQLSMALLINT));
+  REQUIRE(isResultSetCol == SQL_FALSE);
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -150,10 +309,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Specific ColumnNam
 // ============================================================================
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Various parameter combinations are accepted",
-                 "[odbc-api][procedurecolumns][catalog]") {
-  SKIP("Long-running: multiple catalog round-trips cause timeout");
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+                 "[odbc-api][procedurecolumns][catalog][long_running]") {
   // Return value + 1 input parameter = 2 rows
   // Explicit catalog, schema, proc with SQL_NTS
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
@@ -186,10 +342,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Various parameter 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
                  "SQLProcedureColumns: Can call multiple times on same statement after close cursor",
-                 "[odbc-api][procedurecolumns][catalog]") {
-  SKIP("Long-running: multiple catalog round-trips cause timeout");
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+                 "[odbc-api][procedurecolumns][catalog][long_running]") {
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -213,8 +366,6 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: SQLRowCount after catalog function call",
                  "[odbc-api][procedurecolumns][catalog]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -238,8 +389,6 @@ TEST_CASE("SQLProcedureColumns: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative CatalogName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret =
       SQLProcedureColumns(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("PROC"), SQL_NTS, nullptr, 0);
   IODBC_ONLY {
@@ -258,8 +407,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative SchemaName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret =
       SQLProcedureColumns(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("PROC"), SQL_NTS, nullptr, 0);
   IODBC_ONLY {
@@ -278,8 +425,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative S
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ProcName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("PROC"), -999, nullptr, 0);
   IODBC_ONLY {
     // iODBC's DM-side length validator rejects the negative length with the
@@ -297,8 +442,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative P
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ColumnName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret =
       SQLProcedureColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("PROC"), SQL_NTS, sqlchar("COL"), -999);
   IODBC_ONLY {
@@ -315,10 +458,39 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
   }
 }
 
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: metadata_id=TRUE with NULL CatalogName returns HY009",
+                 "[odbc-api][procedurecolumns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // ColumnName may be NULL in identifier mode; the error comes from CatalogName.
+  ret = SQLProcedureColumns(stmt_handle(), nullptr, 0, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: metadata_id=TRUE with NULL SchemaName returns HY009",
+                 "[odbc-api][procedurecolumns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, nullptr, 0,
+                            sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: metadata_id=TRUE with NULL ProcName returns HY009",
+                 "[odbc-api][procedurecolumns][catalog][error]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS, nullptr,
+                            0, nullptr, 0);
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: 24000 - Cursor already open",
                  "[odbc-api][procedurecolumns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                       sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -331,11 +503,64 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: 24000 - Cursor alr
 
 TEST_CASE_METHOD(DbcFixture, "SQLProcedureColumns: Requires active connection",
                  "[odbc-api][procedurecolumns][catalog][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
 
   // Note: Reference driver refuses to allocate statement on disconnected handle
   REQUIRE(ret == SQL_ERROR);
+}
+
+// ============================================================================
+// SQLProcedureColumns - SQL_ATTR_METADATA_ID identifier matching (BD#91)
+// ============================================================================
+
+// In identifier mode, unquoted identifiers are case-insensitive (folded to
+// uppercase), so lowercase catalog/schema/procedure/column names must still
+// match the uppercase names Snowflake stores. The new driver folds unquoted
+// identifiers (ODBC-spec compliant) so the PNAME row matches; the legacy driver
+// compares case-sensitively and drops every row (BD#91).
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLProcedureColumns: metadata_id=TRUE matches unquoted identifiers case-insensitively",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::string cat = to_lower_copy(database_name());
+  const std::string sch = to_lower_copy(schema_name());
+  const std::string proc = to_lower_copy(readonly_db::PROC_FILTER);
+  const std::string col = to_lower_copy("PNAME");
+
+  ret = SQLProcedureColumns(stmt_handle(), sqlchar(cat.c_str()), SQL_NTS, sqlchar(sch.c_str()), SQL_NTS,
+                            sqlchar(proc.c_str()), SQL_NTS, sqlchar(col.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  NEW_DRIVER_ONLY("BD#91") {
+    REQUIRE(ret == SQL_SUCCESS);
+
+    char colName[256] = {};
+    REQUIRE(SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr) == SQL_SUCCESS);
+    REQUIRE(std::string(colName) == "PNAME");
+
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_NO_DATA);
+  }
+  OLD_DRIVER_ONLY("BD#91") { REQUIRE(ret == SQL_NO_DATA); }
+}
+
+// In pattern mode (default), the ColumnName argument is an ordinary
+// case-sensitive search value, so a lowercase column name must NOT match the
+// uppercase parsed column name. Both drivers are case-sensitive here, so this
+// needs no NEW/OLD split; it guards the client-side like_match (which is
+// intentionally case-sensitive) from over-reaching into pattern mode.
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: metadata_id=FALSE treats ColumnName case-sensitively",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  const std::string col = to_lower_copy("PNAME");
+
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::PROC_FILTER), SQL_NTS, sqlchar(col.c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
 }

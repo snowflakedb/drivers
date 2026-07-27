@@ -392,6 +392,8 @@ rules:
     rule: |
       **OBJECTIVE**: Use expressive JUnit assertions that produce actionable failure messages.
 
+      **SELF-CHECK BEFORE COMMENTING (mandatory)**: This rule is ONLY about the *phrasing* of an assertion, never about the values inside it. Before emitting a finding, confirm your suggested fix is one of the exact transformations listed below and that it rewrites `assertTrue`/`assertFalse`/`assertEquals` into a more expressive assertion form. If your comment is really about replacing a magic number/string with a named constant, deduplicating constants, or removing a vacuous check, it is NOT this rule — stay silent here (see OUT OF SCOPE). A finding whose subject is a literal like `200041` is a misfire and must not be posted under `ud-java-no-weak-null-assertions`.
+
       **SCOPE**: This rule covers ONLY assertion-style anti-patterns — the way a condition is asserted, not what it asserts about. Flag exactly these transformations:
       - `assertTrue(x != null)` / `assertTrue(null != x)` → `assertNotNull(x)`
       - `assertTrue(x == null)` / `assertTrue(null == x)` → `assertNull(x)`
@@ -401,7 +403,7 @@ rules:
       - Compound conditions buried in a single `assertTrue`/`assertFalse` (e.g. `assertTrue(msg != null && !msg.isEmpty())`) → split into separate typed assertions so a failure identifies which condition failed.
 
       **OUT OF SCOPE** — do NOT raise these under this rule:
-      - Magic numeric/string literals or constant duplication in assertions. This is a distinct concern (named-constant hygiene); if a dedicated rule for it exists, defer to that rule, otherwise stay silent here. Replacing `200041` with `ErrorCode.X.getMessageCode()` is NOT a weak-assertion finding.
+      - Magic numeric/string literals or constant duplication in assertions. This is a distinct concern (named-constant hygiene); if a dedicated rule for it exists, defer to that rule, otherwise stay silent here. Replacing `200041` with `ErrorCode.X.getMessageCode()` is NOT a weak-assertion finding — even when the literal appears inside an `assertEquals(...)`, the *phrasing* is already correct and only the value is in question, so this rule does not apply. This has been a recurring misfire; when tempted to comment on a literal, re-read the SELF-CHECK above and stay silent.
       - Redundant or vacuous assertions (e.g. `assertNotNull` on a value that cannot be null). See `ud-java-no-redundant-assertions`.
 
       **SEVERITY NOTE**: `assertTrue(x != null)`, `assertTrue(!cond)`, `assertTrue(a.equals(b))`, and compound-condition assertions are Medium — they materially degrade CI failure messages. `assertEquals(true/false, x)` is a Low-priority style suggestion: prefix the comment with "Style suggestion:" and never raise it above Low.
@@ -429,21 +431,49 @@ rules:
 
       **REQUIREMENT**: Flag assertions that are vacuous given the surrounding control flow. This is a scope split from `ud-java-no-weak-null-assertions`: those checks are not "weak" phrasings of a real condition — they are unnecessary. Common cases:
       - `assertNotNull(e)` on the value returned by `assertThrows(...)`. JUnit 5's `assertThrows` never returns null, so the check adds nothing — assert a meaningful property of the exception instead (`getSQLState()`, `getErrorCode()`, message content).
-      - `assertNotNull(x)` immediately after `x` was created with `new` or returned by an API contractually guaranteed non-null.
+      - `assertNotNull(x)` immediately after `x` was created with `new` or returned by an API contractually guaranteed non-null (e.g. a method whose body is `return new ByteArrayInputStream(...)` and which throws rather than returning null on failure).
       - Duplicate assertions on the same expression with no intervening state change.
 
-      **SEVERITY NOTE**: Medium — vacuous assertions mislead readers about coverage but never cause an incorrect pass. Always suggest the meaningful assertion that should replace the vacuous one.
+      **HOW TO FIX — decide in this order (do NOT skip to inventing a replacement):**
+      1. **Prefer removal when the value is already exercised.** If a later assertion in the same test already dereferences or compares the value (e.g. `assertArrayEquals(expected, readAll(stream))` reads the stream, `assertEquals(x, obj.field())` uses the object), the non-null / existence property is already covered. Recommend deleting the redundant assertion outright and say which existing assertion already covers it. Do NOT manufacture an extra assertion in this case.
+      2. **Only suggest a replacement when the value is otherwise unasserted.** If nothing else in the test inspects the value, suggest one assertion on a property that could realistically fail (`getSQLState()`, `getErrorCode()`, message content, field values, byte contents).
 
-      ❌ **BAD:**
+      **CONSTRAINTS ON ANY SUGGESTED REPLACEMENT** (a bad suggestion is worse than staying silent — the LLM judge penalizes it):
+      - The replacement MUST itself comply with `ud-java-no-weak-null-assertions`. Never suggest `assertFalse(x == 0)`, `assertTrue(x != 0)`, or `assertTrue(!cond)` — use the direct typed form (`assertTrue(x > 0)`, `assertNotEquals(0, x)`, `assertFalse(cond)`).
+      - Do NOT base a replacement on APIs that don't reliably reflect the property being tested. In particular, `InputStream.available()` is only a hint (it may legally return `0` for a non-empty stream), so never suggest `available()`-based checks to prove a stream is non-empty — compare the actual bytes read instead.
+      - Suggest exactly one replacement, not a menu. If removal is the right fix (case 1 above), recommend removal only and do not also offer a replacement.
+
+      **SEVERITY NOTE**: Medium — vacuous assertions mislead readers about coverage but never cause an incorrect pass.
+
+      ❌ **BAD (vacuous assertion):**
       ```java
       SQLException e = assertThrows(SQLException.class, () -> stmt.execute("SELECT * FROM missing"));
       assertNotNull(e);  // assertThrows already guarantees a non-null return
       ```
 
-      ✅ **GOOD:**
+      ✅ **GOOD (replace — value was otherwise unasserted):**
       ```java
       SQLException e = assertThrows(SQLException.class, () -> stmt.execute("SELECT * FROM missing"));
       assertEquals("42S02", e.getSQLState());
+      ```
+
+      ❌ **BAD (vacuous assertion whose value is already exercised below):**
+      ```java
+      InputStream result = conn.downloadStream(stage, file, false);  // never returns null; throws on failure
+      assertNotNull(result);                                         // redundant
+      assertArrayEquals(expected, result.readAllBytes());            // already reads/verifies the stream
+      ```
+
+      ✅ **GOOD (remove — do not invent a replacement):**
+      ```java
+      InputStream result = conn.downloadStream(stage, file, false);
+      assertArrayEquals(expected, result.readAllBytes());  // covers non-null and contents
+      ```
+
+      ❌ **BAD (reviewer suggestion that violates a sibling rule / uses an unreliable API):**
+      ```java
+      // "Replace assertNotNull(result) with assertFalse(result.available() == 0)"
+      // — assertFalse(x == 0) is a weak assertion, and available() may return 0 for a non-empty stream.
       ```
 
   - id: ud-java-no-bare-system-out-println
@@ -548,18 +578,33 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent accidental commit of secrets in JDBC test fixtures (spirit of `universal-driver-security.yaml`, adapted for Java tests).
 
-      **REQUIREMENT**: Test code MUST NOT contain hardcoded passwords, PATs, private keys, or session tokens. Load credentials from environment variables, CI-injected secrets, or existing test parameter files (`parameters.json` via test harness). Literal placeholder values (`"dummy"`, `"invalid"`) are fine when testing rejection paths.
+      **REQUIREMENT**: Test code MUST NOT contain hardcoded passwords, PATs, private keys, or session tokens that look like *real* secrets (high-entropy strings, PEM blocks, JWTs, base64 tokens). Load real credentials from environment variables, CI-injected secrets, or existing test parameter files (`parameters.json` via test harness).
 
-      ❌ **BAD:**
+      **PLACEHOLDER ALLOWLIST — do NOT flag these**: obvious throwaway test values are fine when the credential is never expected to authenticate. Treat as allowed any string that is (case-insensitively) or contains a recognizable test-placeholder token: `dummy`, `invalid`, `test`, `test_password`, `password`, `fake`, `mock`, `example`, `changeme`, `xxx`, `redacted`, or the empty string. A short, low-entropy, human-readable literal like `"test_password"` is a placeholder, not a leaked secret.
+
+      **MOCK-CONTEXT SUPPRESSION — do NOT flag when auth is not real**: suppress the finding entirely when the surrounding test never sends the credential to a live server, e.g.:
+      - the test class name contains `Mock`, `Wiremock`, `Stub`, or `Fake`, or the file lives under a `wiremock`/`mock` test package;
+      - the method wires up mocked authentication (WireMock stubs, mocked `HttpClient`/session, injected fake token endpoint) so the literal is only ever matched against a stub;
+      - the value is a `private static final` constant with a placeholder-style name (`INVALID_TOKEN`, `TEST_PASSWORD`, `FAKE_PAT`).
+
+      Only raise a finding when a plausibly-real secret is set on a connection/session that reaches a real Snowflake endpoint. When unsure whether a value is a real secret, weigh entropy and format — flag PEM/JWT/base64/high-entropy strings; stay silent on short dictionary-word placeholders.
+
+      ❌ **BAD (real-looking secret on a live connection):**
       ```java
       props.setProperty("password", "MySecretP@ssw0rd");
       props.setProperty("token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...");
       ```
 
-      ✅ **GOOD:**
+      ✅ **GOOD (real credential injected):**
       ```java
       props.setProperty("password", System.getenv("SNOWFLAKE_TEST_PASSWORD"));
       props.setProperty("token", INVALID_TOKEN_PLACEHOLDER);  // exercises auth rejection
+      ```
+
+      ✅ **ALSO FINE — do NOT flag (placeholder in a fully-mocked test):**
+      ```java
+      // class WiremockLoginTest — auth is stubbed, value never reaches a server
+      props.setProperty("password", "test_password");
       ```
 
   - id: ud-java-nullable-getter-file-audit
@@ -574,3 +619,84 @@ rules:
       **PRIORITY**: High when N >= 3 (systematic gap); Medium when N is 1-2.
 
       Do not emit per-line comments for the same file in the same PR.
+
+  - id: ud-java-sql-parameterization
+    rule: |
+      **OBJECTIVE**: Never interpolate variable values into SQL strings via `+` concatenation or
+      `String.format()`. Every variable value must reach the server as a binding, not as part of
+      the query text.
+
+      **REQUIREMENT**: Any `Statement.execute()`, `Statement.executeQuery()`,
+      `Statement.executeUpdate()`, `Connection.prepareStatement()`, or similar JDBC call that
+      includes a non-constant variable value in the SQL string is a finding. The correction
+      depends on position:
+
+      **Identifiers** (table, schema, stage, view, column name) in production code (`src/main/java`):
+      Use `IDENTIFIER(?)` with `PreparedStatement.setString(n, name)`.
+
+      **Data values** (WHERE clause values, INSERT data, option arguments):
+      Use `PreparedStatement` with `?` placeholders and `setString()` / `setInt()` / etc.
+
+      **Mixed case** — `PreparedStatement` already used for data `?` but a table/schema name is
+      still concatenated:
+      Flag the identifier concatenation; the data binding is correct but the fix is incomplete.
+
+      **When binding is not possible** (syntax does not support it — e.g. `PUT`/`GET` stage-path
+      arguments, `@stage` references in `COPY INTO FROM`):
+      Leave the interpolation in place but add an inline comment explaining why binding cannot
+      be used and noting the mitigating factor (e.g. internally-generated name, escaping
+      applied). Do not silently interpolate without justification.
+
+      **Exemptions** — raw interpolation is acceptable without a comment when:
+      - The interpolated token is a hard-coded string literal constant defined in the same file.
+      - A SQL structural keyword assembled purely from hard-coded string fragments with no
+        variable interpolation (e.g. `IF NOT EXISTS`, `CREATE TEMPORARY`).
+      - **Test code only** (`src/test/java`): an identifier produced by a test-harness helper
+        such as `generateUniqueName()` or `uniqueStageName()`. These are internally controlled
+        names with no user-supplied input; SQL injection is not the threat model for test
+        fixtures.
+
+      ❌ **BAD:**
+      ```java
+      // Identifier concatenated directly
+      stmt.executeQuery("SELECT COUNT(*), SUM(v) FROM " + tableName);
+      stmt.executeQuery("SELECT n, s FROM " + tableName + " ORDER BY n");
+      ddl.execute("CREATE TEMP TABLE " + table + " (col VECTOR(INT, 3))");
+
+      // Mixed: data values bound correctly, but identifier is still concatenated
+      conn.prepareStatement("INSERT INTO " + tableName + " (n, s) VALUES (?, ?)");
+
+      // String.format with variable
+      stmt.executeQuery(String.format("SELECT * FROM %s WHERE id = %d", tableName, userId));
+
+      // Session parameter name from a variable — flag unless the variable is a hard-coded constant
+      alter.execute("ALTER SESSION SET " + formatParam + " = '" + formatValue + "'");
+      ```
+
+      ✅ **GOOD:**
+      ```java
+      // Identifier via IDENTIFIER(?)
+      try (PreparedStatement ps = conn.prepareStatement(
+              "SELECT COUNT(*), SUM(v) FROM IDENTIFIER(?)")) {
+          ps.setString(1, tableName);
+          try (ResultSet rs = ps.executeQuery()) { ... }
+      }
+
+      // Mixed fix: bind the identifier too
+      try (PreparedStatement ps = conn.prepareStatement(
+              "INSERT INTO IDENTIFIER(?) (n, s) VALUES (?, ?)")) {
+          ps.setString(1, tableName);
+          ps.setInt(2, n);
+          ps.setString(3, s);
+          ps.executeBatch();
+      }
+
+      // DDL with hard-coded parameter name — exempt, no variable interpolation
+      stmt.execute("ALTER SESSION SET ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE = TRUE");
+
+      // PUT: binding not supported — comment required
+      stmt.execute("PUT 'file://" + escapedUri + "' @" + stageName + " PARALLEL=4 ...");
+      // PUT syntax does not support IDENTIFIER(?) or ? bindings for stage paths or file URIs.
+      // stageName is a connector-internal name produced by generateUniqueName();
+      // escapedUri is produced by escapePathForSql() which escapes backslashes and quotes.
+      ```

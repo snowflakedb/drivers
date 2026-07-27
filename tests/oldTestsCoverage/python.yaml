@@ -3696,15 +3696,20 @@ tests:
   - test_name: test_cache_dir_incorrect_permissions
     ud_tests: []
   - test_name: test_cache_dir_incorrect_permissions_with_skip_file_permissions_check
-    ud_tests:
-      - python/tests/integ/config/test_config_manager.py::TestSkipFilePermissionsCheck::test_world_writable_connections_toml_succeeds_with_skip
+    ud_tests: []
+    notes: |
+      UD does not validate token-cache directory permissions; the directory is
+      used as-is regardless of its mode. No bypass flag is needed or exposed.
   - test_name: test_cache_dir_is_not_a_directory
     ud_tests: []
   - test_name: test_cache_dir_xdg_cache_home
     ud_tests: []
   - test_name: test_cache_file_incorrect_permission_with_skip_file_permissions_check
     ud_tests:
-      - python/tests/integ/config/test_config_manager.py::TestSkipFilePermissionsCheck::test_world_writable_config_file_succeeds_with_skip
+      - sf_core/src/token_cache/file_cache.rs::tests::file_token_cache_tests::remediates_file_with_wrong_permissions
+    notes: |
+      UD auto-remediates token-cache file permissions to 0o600 instead of
+      refusing; no bypass flag is needed.
   - test_name: test_cache_file_incorrect_permissions
     ud_tests: []
   - test_name: test_delete_specific_item

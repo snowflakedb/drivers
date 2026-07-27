@@ -47,4 +47,13 @@ public class SnowflakeSQLException extends SQLException {
     }
     return new SnowflakeSQLException(error, exception);
   }
+
+  /**
+   * Canonical {@code SFException -> SnowflakeSQLException} conversion. The cause is intentionally
+   * dropped: the {@code (ErrorCode, message)} constructor already carries the SQLState and vendor
+   * code, and legacy parity rendering depends on the absence of a cause chain.
+   */
+  public static SnowflakeSQLException fromSFException(SFException e) {
+    return new SnowflakeSQLException(e.getErrorCode(), e.getMessage());
+  }
 }

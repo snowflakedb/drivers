@@ -9,12 +9,12 @@ from __future__ import annotations
 import decimal
 
 from datetime import datetime, timedelta, timezone, tzinfo
-from logging import getLogger
 from sys import byteorder
 from typing import TYPE_CHECKING
 
 import pytz
 
+from .logging import get_logger
 from .extras import numpy as np
 from .extras import tzlocal, MissingOptionalDependency
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 PARAMETER_TIMEZONE = "TIMEZONE"
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _generate_tzinfo_from_tzoffset(tzoffset_minutes: int) -> tzinfo:

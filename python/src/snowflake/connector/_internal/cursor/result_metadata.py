@@ -66,7 +66,7 @@ class ResultMetadataV2:
     ``.vector_dimension``, and ``.fields`` without connector-version guards.
 
     ``fields`` is always ``None`` — the UD proto ``ColumnMetadata`` carries no
-    nested column list for structured types (OBJECT/ARRAY/MAP). BD#39 tracks
+    nested column list for structured types (OBJECT/ARRAY/MAP). BD#43 tracks
     that gap; ``vector_dimension`` is fully populated from the ``dimension``
     proto field.
 
@@ -199,7 +199,7 @@ class ResultMetadataV2:
             precision=precision,
             scale=scale,
             vector_dimension=vector_dimension,
-            fields=None,  # proto has no nested field list — BD#39
+            fields=None,  # proto has no nested field list — BD#43
         )
 
     @classmethod

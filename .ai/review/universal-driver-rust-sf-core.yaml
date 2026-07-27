@@ -2,14 +2,21 @@ id: universal-driver-rust-sf-core
 friendly_name: "Universal Driver Rust & sf_core Guidelines"
 status: enabled
 allowed_folders:
+  # Shipped driver code governed by these Rust guidelines. Build-time /
+  # debug-only tooling crates are intentionally NOT listed, so the bot never
+  # holds them to the driver rules (e.g. ud-no-unwrap-in-production): a panic
+  # in a dev tool aborts a developer's build or tool run, not a customer's
+  # connection. Deliberately omitted for this reason: proto_generator (protobuf
+  # code generator) and odbc_trace_tool (ODBC capture/replay debug tool).
   - "sf_core/src"
   - "odbc/src"
   - "jdbc_bridge/src"
   - "error_trace/src"
   - "error_trace_derive/src"
   - "proto_utils/src"
-  - "proto_generator/src"
 excluded_folders:
+  # Dev tooling that lives *inside* an allowed folder must be carved out here
+  # (whole dev-tool crates are handled by omission from allowed_folders above).
   - "sf_core/src/bin"
 allowed_file_extensions:
   - ".rs"
@@ -85,24 +92,64 @@ rules:
     rule: |
       **OBJECTIVE**: Prevent panics in production code by prohibiting `.unwrap()` and `.expect()` on fallible operations.
 
-      **REQUIREMENT**: Never use `.unwrap()` or `.expect()` on `Result` or `Option` in non-test code. Always propagate errors with `?`, use `.context(MySnafu)?` for `Result`, or use `ensure!()` / `XxxSnafu.fail()` for explicit error construction. The only exception is when the invariant is mathematically provable from the surrounding code (e.g., a regex literal), and even then a comment explaining why it cannot fail is required.
+      **REQUIREMENT**: Never use `.unwrap()` or `.expect()` on `Result` or `Option` in non-test code. Always propagate errors with `?`, use `.context(MySnafu)?` for `Result`, or use `ensure!()` / `XxxSnafu.fail()` for explicit error construction.
 
-      Mutex lock poisoning must also be handled with `.map_err()` or `.context()` instead of `.unwrap()` on `.lock()` calls.
+      Mutex/RwLock poisoning must never be handled with `.unwrap()`/`.expect()` on `.lock()`/`.read()`/`.write()`. Handle poisoning one of two ways:
+      1. **Propagate** the poison — `.map_err(...)` / `.context(MutexPoisonedSnafu { ... })?` — when the enclosing function returns a `Result`.
+      2. **Recover and log** — use the `sf_core::utils::sync` extension trait (`lock_recover` / `read_recover` / `write_recover`), which recovers the guard via `PoisonError::into_inner()` and logs the poison at ERROR with the call site. Prefer this when the function cannot return an error (accessors, `Deref`, `Display`, `Drop`, etc.).
+
+      Do NOT recover *silently*: a bare `.unwrap_or_else(|e| e.into_inner())` hides that a thread panicked and left the data possibly-inconsistent. Route recovery through the extension trait so every poison is logged.
+
+      **PREFER ELIMINATION OVER JUSTIFICATION**: When an `.unwrap()`/`.expect()` is "provably safe" because an earlier check guarantees it, the correct fix is almost always to **restructure so the `.unwrap()` disappears**, NOT to keep it with a `// SAFETY:` comment. Recommend the refactor first; only fall back to suggesting a commented exception when the value genuinely cannot be obtained fallibly (see EXCEPTION below).
+
+      **CHECK-THEN-UNWRAP SMELL (flag this)**: A guard such as `if x.is_empty() { return ... }` / `ensure!(!x.is_empty(), ...)` followed later by `x.into_iter().next().unwrap()`, `x.first().unwrap()`, `x[0]`, or `x.get(i).unwrap()` splits one idea into two lines whose agreement is enforced only by a human. This is fragile: a future edit to the code between the guard and the `.unwrap()` can silently turn it into a live panic, and the comment can go stale because the compiler never checks it. Collapse the guard and the access into a single fallible operation so the compiler enforces the invariant:
+
+      ```rust
+      // ❌ BAD: guard at line 202, unwrap at line 232 — 30 lines apart, enforced only by a comment
+      if src_locations.is_empty() {
+          return NoSrcLocationsSnafu.fail();
+      }
+      // ...
+      let first = src_locations.into_iter().next().unwrap(); // SAFETY: non-empty checked above
+
+      // ✅ GOOD: one fallible step, no unwrap, no comment, compiler-enforced
+      let first = src_locations
+          .into_iter()
+          .next()
+          .context(NoSrcLocationsSnafu)?;
+      ```
+
+      Other common eliminations: prefer `if let Some(v) = opt { ... }` / `let Some(v) = opt else { ... }`, `match`, `.ok_or_else(...)?`, or slice patterns (`let [first, ..] = xs else { ... }`) over check-then-`.unwrap()`.
+
+      **EXCEPTION (rare)**: Keeping the panic is acceptable ONLY when the value cannot be obtained through a fallible API and the invariant is local and mathematically provable at the call site — e.g. a compile-time-constant regex literal, or `.next()` on an iterator constructed one line above with known-nonzero length. In that case prefer **`.expect("stated invariant")` over `.unwrap()` + a separate `// SAFETY:` comment**: `.expect()` puts the justification in the panic message itself, so a violated invariant surfaces in the crash output instead of relying on a neighboring comment the compiler never checks. The invariant MUST hold within a few lines of the call. If the guaranteeing check is far away or in a different function, treat it as the check-then-unwrap smell above and require the refactor instead.
+
+      ```rust
+      // ✅ GOOD (rare exception): value can't be obtained fallibly, invariant is local + provable
+      // str::split always yields at least one element, so next() is never None here.
+      let locator = account.split('.').next().expect("split always yields at least one element");
+      ```
 
       ❌ **BAD:**
       ```rust
       let config = load_config(&path).unwrap();
       let value = map.get("key").expect("key must exist");
-      let guard = self.cache.lock().unwrap();
+      let guard = self.cache.lock().unwrap();                       // panics on poison
+      let guard = self.cache.lock().unwrap_or_else(|e| e.into_inner()); // recovers, but SILENTLY
       ```
 
       ✅ **GOOD:**
       ```rust
       let config = load_config(&path).context(ConfigLoadSnafu { path })?;
       let value = map.get("key").context(MissingKeySnafu { key: "key" })?;
+
+      // Poisoned lock, option 1 — propagate when the fn returns Result:
       let guard = self.cache.lock().map_err(|e| {
           MutexPoisonedSnafu { message: format!("cache lock poisoned: {e}") }.build()
       })?;
+
+      // Poisoned lock, option 2 — recover + log via the extension trait when it can't:
+      use sf_core::utils::sync::MutexRecoverExt;
+      let guard = self.cache.lock_recover();
       ```
 
   - id: ud-domain-specific-error-types
@@ -111,9 +158,13 @@ rules:
 
       **REQUIREMENT**: Each module/domain MUST define its own error enum rather than propagating or reusing error types from unrelated layers. Do not use `RestError` for encryption failures, `ConfigError` for TLS issues, or `ApiError` for internal parsing logic. Create a focused error type for the domain (e.g., `EncryptionError`, `CrlError`) and wrap it via a Snafu variant in the parent error type.
 
-      Error variant naming MUST use past-tense failure descriptions: `Base64DecodeFailed`, `ConfigFileRead`, `CrlDownload` -- NOT gerunds or generic suffixes like `Base64Error`, `ConfigReadError`, `DownloadError`.
+      **VARIANT NAMING**: Name a variant after the operation or condition it represents, as a noun phrase. Never append an `Error` suffix -- the enum is already an error -- and skip the `Failed` suffix; the operation name alone conveys the failure.
 
-      **SCOPE SEPARATION**: Distinguish behavioral violations (wrong error type reused across layers, incorrect error mapping semantics) from naming-only violations (variant suffix like `HttpError` vs `HttpRequestFailed`). Behavioral violations are High priority. Naming-only violations are Low priority style feedback.
+      - **Operation failures**: name after the operation/process. Examples: `CrlDownload`, `ConfigFileRead`, `Base64Decode`, `Communication`, `Decompression`. Prefer the verb-object form (`CrlParse`) over the gerund (`CrlParsing`) so a domain stays consistent.
+      - **Condition/state errors**: use a descriptive noun, usually with an adjective. Examples: `InvalidArgument`, `MissingParameter`, `UnsupportedType`, `TokenExpired`, `PermissionDenied`.
+      - Avoid generic suffixes like `Base64Error`, `ConfigReadError`, `DownloadError`.
+
+      **SCOPE SEPARATION**: Distinguish behavioral violations (wrong error type reused across layers, incorrect error mapping semantics) from naming-only violations (variant suffix like `HttpError` vs `HttpRequest`). Behavioral violations are High priority. Naming-only violations are Low priority style feedback.
 
       **PRE-EXISTING PATTERN CHECK**: Before flagging a naming-only violation, check sibling modules in the same directory and parent module for the same pattern. If the identical naming convention already exists in pre-existing code (not introduced in the current PR), do NOT flag the new code in isolation. Either skip the comment entirely, or note: "This matches the existing pattern in `<sibling-file>.rs`; consider fixing both together in a follow-up."
 
@@ -134,7 +185,7 @@ rules:
       #[derive(Debug, Snafu, error_trace::ErrorTrace)]
       pub enum EncryptionError {
           #[snafu(display("Base64 decode failed: {source}"))]
-          Base64DecodeFailed {
+          Base64Decode {
               source: base64::DecodeError,
               #[snafu(implicit)]
               location: Location,
@@ -359,6 +410,41 @@ rules:
       }
       ```
 
+  - id: ud-env-vars-registry
+    rule: |
+      **OBJECTIVE**: Ensure every environment variable name used in `sf_core` is declared as a `pub const` in `sf_core/src/env_vars.rs` so that the full set of env vars the driver reads is discoverable in one place.
+
+      **REQUIREMENT**: Any call to `std::env::var`, `std::env::var_os`, `std::env::set_var`, `std::env::remove_var`, or any other `std::env` accessor that takes an env-var name string MUST pass a constant from `crate::env_vars` (or `sf_core::env_vars`), not a raw string literal.
+
+      When a new env var is introduced in a PR:
+      1. Add a `pub const` for it in `sf_core/src/env_vars.rs` with a doc comment explaining its purpose and who sets it.
+      2. Reference `env_vars::THE_CONSTANT` at every call site instead of the raw string.
+
+      **EXEMPTIONS**: External / third-party env vars that are not Snowflake-specific and are read from a dynamic key (e.g., a function that iterates over an arbitrary key list passed in at runtime) are exempt from the constant requirement, but must still be called out with an inline comment explaining why no constant is appropriate.
+
+      ❌ **BAD** (raw string literal at the call site):
+      ```rust
+      // sf_core/src/rest/snowflake/workload_identity/azure.rs
+      let client_id = std::env::var("MANAGED_IDENTITY_CLIENT_ID").ok();
+      let endpoint  = std::env::var("IDENTITY_ENDPOINT")?;
+      ```
+
+      ✅ **GOOD** (constant declared in env_vars.rs, referenced at call site):
+      ```rust
+      // sf_core/src/env_vars.rs
+      /// Azure Managed Identity client ID, set by the Azure runtime environment.
+      pub const MANAGED_IDENTITY_CLIENT_ID: &str = "MANAGED_IDENTITY_CLIENT_ID";
+
+      /// Azure IMDS endpoint for Managed Identity, set by the Azure runtime.
+      pub const IDENTITY_ENDPOINT: &str = "IDENTITY_ENDPOINT";
+
+      // sf_core/src/rest/snowflake/workload_identity/azure.rs
+      use crate::env_vars;
+
+      let client_id = std::env::var(env_vars::MANAGED_IDENTITY_CLIENT_ID).ok();
+      let endpoint  = std::env::var(env_vars::IDENTITY_ENDPOINT)?;
+      ```
+
   - id: ud-box-large-error-sources
     rule: |
       **OBJECTIVE**: Keep Snafu error enum sizes small by boxing large source error types.
@@ -394,4 +480,78 @@ rules:
               source: Box<QueryResponseProcessingError>,
           },
       }
+      ```
+
+  - id: ud-rs-sql-parameterization
+    rule: |
+      **OBJECTIVE**: Never interpolate raw user-supplied strings into SQL via `format!()` or
+      string concatenation. Every user-controlled value must be escaped or constructed through
+      a type-safe builder before it reaches the query text.
+
+      **REQUIREMENT**: Any `format!()`, `+`, or `push_str` that produces a SQL string and
+      includes a non-constant runtime value is a finding unless one of the safe patterns below
+      applies.
+
+      **Identifiers** (database, schema, table, column, stage, file format names):
+      Wrap in double quotes AND apply `escape_sql_identifier()` (preferred) or `escape_dq()`.
+      Both functions escape embedded double quotes so the result is safe inside `"…"`.
+
+      **LIKE / pattern values** (filter strings passed to `SHOW … LIKE`):
+      Apply `escape_show_like()` before interpolation.
+
+      **Scope / clause values built by typed helpers** (e.g. `build_show_in_scope()`):
+      The helper validates and constructs the clause from typed inputs; its return value may be
+      interpolated directly. Do not bypass the helper to concatenate raw strings.
+
+      **When binding is not possible** (syntax does not support it — e.g. `PUT` stage paths,
+      `@stage` references):
+      Leave the interpolation in place but add an inline comment explaining why binding cannot
+      be used and noting the mitigating factor (e.g. internally-generated name, type-safe
+      value). Do not silently interpolate without justification.
+
+      **Exemptions** — raw interpolation is acceptable without a comment when:
+      - The value is a `const` or `static` defined in the same crate.
+      - The value's type structurally cannot produce SQL metacharacters — e.g. `Uuid` (only
+        hex and dashes), `u64` / `i64` / `bool` (numeric / keyword literals). The type system
+        is the guarantee, not a runtime assertion.
+      - The value is a hard-coded string literal with no variable parts.
+
+      ❌ **BAD:**
+      ```rust
+      // Raw identifier — double-quote escaping missing
+      format!("USE DATABASE {db}")
+      format!("SHOW TABLES IN SCHEMA {schema}")
+
+      // Skipping the typed scope builder in favour of raw concat
+      let scope = format!("TABLE \"{}\".\"{}\"", catalog, table);  // no escape_dq
+      format!("SHOW PRIMARY KEYS IN {scope}")
+
+      // LIKE value without escape_show_like
+      format!("SHOW TABLES LIKE '{pattern}'")
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      // Identifier: escape_sql_identifier + double-quote wrap (connection.rs pattern)
+      let escaped = escape_sql_identifier(db);
+      format!("USE DATABASE \"{escaped}\"")
+
+      // Identifier: escape_dq + double-quote wrap (get_objects.rs pattern)
+      format!("SHOW SCHEMAS IN DATABASE \"{}\"", escape_dq(&literal))
+
+      // Scope from typed builder — safe to interpolate directly
+      let scope = build_show_in_scope(catalog_raw.as_deref(), schema_raw.as_deref(), table_raw.as_deref());
+      format!("SHOW PRIMARY KEYS IN {scope}")
+
+      // LIKE pattern
+      format!("LIKE '{}'", escape_show_like(&pattern))
+
+      // Const + UUID — exempt: no SQL metacharacters possible
+      format!("@{BIND_STAGE_NAME}/{request_id}")
+      // BIND_STAGE_NAME is a compile-time const; request_id: Uuid formats to hex+dashes only.
+
+      // PUT: binding not supported — comment required
+      format!("PUT 'file:///tmp/placeholder/0' '@{BIND_STAGE_NAME}/{request_id}' overwrite=true")
+      // PUT syntax does not support parameterized stage paths.
+      // BIND_STAGE_NAME is a compile-time const; request_id is Uuid (hex+dashes, no metacharacters).
       ```

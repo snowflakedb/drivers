@@ -1,5 +1,6 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
+use snafu::OptionExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -73,12 +74,19 @@ pub enum TzOffsetFormatCache {
 }
 
 impl NumericSettings {
-    /// The cached offset token to use for TZ -> CHAR/WCHAR rendering.
-    /// `None` until the first successful load and whenever the parameter
-    /// is unset; this is what the fetch path consumes.
+    /// The offset token the TZ -> CHAR/WCHAR fetch path should use.
+    ///
+    /// Always `None`: TIMESTAMP_TZ fetched into `SQL_C_CHAR` / `SQL_C_WCHAR`
+    /// renders as the bare UTC wall-clock and never carries an offset suffix,
+    /// regardless of `TIMESTAMP_TZ_OUTPUT_FORMAT`. The format is still parsed
+    /// and cached (and the offset-aware renderer stays unit tested), so
+    /// enabling offset-aware fetch later is a one-line change here.
     pub fn tz_offset_format(&self) -> Option<crate::conversion::timestamp::TzOffsetFormat> {
         match self.tz_offset_format_cache {
-            TzOffsetFormatCache::Loaded(format) => format,
+            TzOffsetFormatCache::Loaded(cached) => {
+                let _ = cached;
+                None
+            }
             TzOffsetFormatCache::Unloaded => None,
         }
     }
@@ -202,28 +210,28 @@ const POW10_U128: [u128; (MAX_DECIMAL_SCALE + 1) as usize] = {
 /// is 38 and `0 ≤ scale ≤ precision`), so the error branch is not expected
 /// on well-formed server output.
 fn pow10_i128(scale: u32) -> Result<i128, WriteOdbcError> {
-    POW10_I128.get(scale as usize).copied().ok_or_else(|| {
-        NumericValueOutOfRangeSnafu {
+    POW10_I128
+        .get(scale as usize)
+        .copied()
+        .with_context(|| NumericValueOutOfRangeSnafu {
             reason: format!(
                 "DECIMAL scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}"
             ),
-        }
-        .build()
-    })
+        })
 }
 
 /// `u128` counterpart to [`pow10_i128`], used for re-scaling in the
 /// `SQL_C_NUMERIC` arm where the scale difference comes from the
 /// application-supplied ARD and is not otherwise validated.
 fn pow10_u128(scale: u32) -> Result<u128, WriteOdbcError> {
-    POW10_U128.get(scale as usize).copied().ok_or_else(|| {
-        NumericValueOutOfRangeSnafu {
+    POW10_U128
+        .get(scale as usize)
+        .copied()
+        .with_context(|| NumericValueOutOfRangeSnafu {
             reason: format!(
                 "scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE} for SQL_C_NUMERIC"
             ),
-        }
-        .build()
-    })
+        })
 }
 
 impl SnowflakeNumber {
@@ -452,7 +460,7 @@ impl WriteODBCType for SnowflakeNumber {
                 let scale_diff = target_scale as i32 - self.scale as i32;
                 let (unscaled, truncated): (u128, bool) = if scale_diff >= 0 {
                     let multiplier = pow10_u128(scale_diff as u32)?;
-                    let unscaled = abs_value.checked_mul(multiplier).ok_or_else(|| {
+                    let unscaled = abs_value.checked_mul(multiplier).with_context(|| {
                         NumericValueOutOfRangeSnafu {
                             reason: format!(
                                 "Re-scaling numeric from scale {} to {target_scale} overflows u128 \
@@ -460,7 +468,6 @@ impl WriteODBCType for SnowflakeNumber {
                                 self.scale
                             ),
                         }
-                        .build()
                     })?;
                     (unscaled, false)
                 } else {
@@ -572,11 +579,10 @@ impl ReadODBC for SnowflakeNumber {
             CDataType::Numeric => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 if scale > 0 {
-                    let divisor = 10i128.checked_pow(scale as u32).ok_or_else(|| {
+                    let divisor = 10i128.checked_pow(scale as u32).with_context(|| {
                         NumericMagnitudeOverflowSnafu {
                             reason: format!("10^{scale} overflows i128 (positive scale too large)"),
                         }
-                        .build()
                     })?;
                     mantissa / divisor
                 } else if scale < 0 {
@@ -585,19 +591,17 @@ impl ReadODBC for SnowflakeNumber {
                     } else {
                         (-scale) as u32
                     };
-                    let multiplier = 10i128.checked_pow(abs_scale).ok_or_else(|| {
+                    let multiplier = 10i128.checked_pow(abs_scale).with_context(|| {
                         NumericMagnitudeOverflowSnafu {
                             reason: format!(
                                 "10^{abs_scale} overflows i128 (negative scale too large)"
                             ),
                         }
-                        .build()
                     })?;
-                    mantissa.checked_mul(multiplier).ok_or_else(|| {
+                    mantissa.checked_mul(multiplier).with_context(|| {
                         NumericMagnitudeOverflowSnafu {
                             reason: format!("mantissa * 10^{abs_scale} overflows i128"),
                         }
-                        .build()
                     })?
                 } else {
                     mantissa
@@ -860,4 +864,114 @@ mod pow10_tests {
         assert!(pow10_i128(100).is_err());
         assert!(pow10_u128(u32::MAX).is_err());
     }
+}
+
+/// Batched `NUMBER → SQL_C_CHAR` conversion over a whole Arrow segment.
+///
+/// This is the specialised, inlined counterpart to the generic per-cell
+/// `Converter::convert_arrow_range`: it downcasts once (the caller passes the
+/// concrete `PrimitiveArray<T>`), then reads, formats
+/// (`SnowflakeNumber::format_decimal_into`), and writes
+/// (`Binding::write_char_string`) in one tight loop with no per-cell
+/// `write_odbc_type` match, `validate_value` call, or trait indirection.
+///
+/// It is byte-for-byte equivalent to the generic path for the `SQL_C_CHAR`
+/// target (value buffer, indicators, warnings, and the whole-digits-overflow
+/// `22003` error), verified by `number_char_batch_tests`.
+///
+/// Returns `false` (having written nothing) to *decline* the batch — on
+/// first-row stride overflow, or when a non-nullable column unexpectedly
+/// contains nulls — so the caller can fall back to the generic per-cell path
+/// and reproduce its exact behavior for those cold cases.
+// 8 args mirrors `Converter::convert_arrow_range`'s contract (binding + strides
+// + outputs); grouping them into a struct would just move the noise.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_number_char_range<T>(
+    scale: u32,
+    nullable: bool,
+    array: &PrimitiveArray<T>,
+    arrow_row_range: std::ops::Range<usize>,
+    base_binding: &Binding,
+    out_row_start: usize,
+    strides: crate::conversion::BindingStrides,
+    outputs: &mut [Result<Warnings, crate::conversion::error::ConversionError>],
+) -> bool
+where
+    T: ArrowPrimitiveType,
+    T::Native: Into<i128>,
+{
+    use crate::conversion::traits::LengthOrNull;
+    use snafu::ResultExt;
+
+    // A non-nullable NUMBER column should never carry nulls; if one somehow
+    // does, decline so the generic path reproduces its read-error behavior
+    // exactly rather than us inventing a null indicator.
+    if !nullable && array.null_count() > 0 {
+        return false;
+    }
+
+    // Materialize the first row's binding + the constant per-row stride, exactly
+    // as the generic path does. On the pathological first-row overflow, decline.
+    let Ok(mut binding) = strides.for_row(base_binding, out_row_start) else {
+        return false;
+    };
+    let (value_stride, indicator_stride) =
+        strides.row_step(base_binding.target_type, base_binding.buffer_length);
+    // Reused across rows; `format_decimal_into` fully writes the portion it
+    // returns, so no need to re-zero per row.
+    let mut num_buf = [0u8; 48];
+
+    for (i, batch_idx) in arrow_row_range.enumerate() {
+        if i > 0 {
+            binding = binding.stepped(value_stride, indicator_stride);
+        }
+        if outputs[i].is_err() {
+            continue;
+        }
+
+        // NULL cell (nullable columns only — see the null_count guard above):
+        // mirrors `Nullable::write_odbc_type`'s `None` arm.
+        if array.is_null(batch_idx) {
+            if let Err(e) = binding
+                .write_length_or_null(LengthOrNull::Null)
+                .context(crate::conversion::error::WriteOdbcValueSnafu)
+            {
+                outputs[i] = Err(e);
+            }
+            continue;
+        }
+
+        let value: i128 = array.value(batch_idx).into();
+        let result = (|| {
+            let num_str = SnowflakeNumber::format_decimal_into(value, scale, &mut num_buf)?;
+            let warnings = binding.write_char_string(num_str, &mut None);
+            // `write_char_string` flags truncation whenever `num_str` does not
+            // fit, and `whole_digits_len(num_str) <= num_str.len()`, so a whole-
+            // digit overflow always implies truncation — the length check alone
+            // is sufficient (the truncation warning would be redundant here).
+            if whole_digits_len(num_str) >= binding.buffer_length as usize {
+                return NumericValueOutOfRangeSnafu {
+                    reason: format!(
+                        "Whole digits of '{num_str}' do not fit in buffer of {} bytes",
+                        binding.buffer_length
+                    ),
+                }
+                .fail();
+            }
+            Ok(warnings)
+        })()
+        .context(crate::conversion::error::WriteOdbcValueSnafu);
+
+        match result {
+            Ok(w) => {
+                if !w.is_empty()
+                    && let Ok(existing) = &mut outputs[i]
+                {
+                    existing.extend(w);
+                }
+            }
+            Err(e) => outputs[i] = Err(e),
+        }
+    }
+    true
 }

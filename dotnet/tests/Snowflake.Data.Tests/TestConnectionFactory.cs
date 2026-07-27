@@ -11,9 +11,9 @@ public static class TestConnectionFactory
     private static readonly bool UseOldDriver =
         Environment.GetEnvironmentVariable("SNOWFLAKE_DOTNET_USE_OLD_DRIVER") == "1";
 
-    public static DbConnection Create(string? connectionStringOverride = null)
+    public static DbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null)
     {
-        var connStr = connectionStringOverride ?? BuildConnectionString();
+        var connStr = connectionStringOverride ?? BuildConnectionString(testOutputHelper);
         if (UseOldDriver)
             return new OldSnowflakeDbConnection { ConnectionString = connStr };
         else
@@ -22,8 +22,9 @@ public static class TestConnectionFactory
 
     public static bool IsRunningForOldDriver() => UseOldDriver;
 
-    private static string BuildConnectionString()
+    private static string BuildConnectionString(ITestOutputHelper? testOutputHelper)
     {
+        ParametersReader.Init(testOutputHelper);
         var account = ParametersReader.Get("SNOWFLAKE_TEST_ACCOUNT") ?? "";
         var user = ParametersReader.Get("SNOWFLAKE_TEST_USER") ?? "";
         var password = ParametersReader.Get("SNOWFLAKE_TEST_PASSWORD") ?? "";
@@ -34,8 +35,8 @@ public static class TestConnectionFactory
         var pat = ParametersReader.Get("SNOWFLAKE_TEST_PAT") ?? "";
 
         if (!string.IsNullOrEmpty(pat))
-            return $"account={account};role={role};db={database};schema={schema};warehouse={warehouse};authenticator=PROGRAMMATIC_ACCESS_TOKEN;user={user};token={pat}";
+            return $"account={account};role={role};db={database};database={database};schema={schema};warehouse={warehouse};authenticator=PROGRAMMATIC_ACCESS_TOKEN;user={user};token={pat}";
 
-        return $"account={account};user={user};password={password};warehouse={warehouse};db={database};schema={schema};role={role}";
+        return $"account={account};user={user};password={password};warehouse={warehouse};db={database};database={database};schema={schema};role={role}";
     }
 }

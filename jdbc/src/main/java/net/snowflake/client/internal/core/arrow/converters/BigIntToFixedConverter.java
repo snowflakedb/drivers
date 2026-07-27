@@ -117,6 +117,9 @@ public class BigIntToFixedConverter extends AbstractArrowVectorConverter {
     if (bigIntVector.isNull(index)) {
       return null;
     }
+    if (!shouldTreatDecimalAsInt()) {
+      return toBigDecimal(index);
+    }
     return getLong(index);
   }
 

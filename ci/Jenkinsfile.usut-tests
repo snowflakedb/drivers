@@ -1,0 +1,444 @@
+/*
+ * Jenkinsfile for UD tests against uSUT.
+ *
+ * Flow:
+ *   1. Detect which drivers have relevant changes — runs on the controller via
+ *      currentBuild.changeSets, no node allocation.
+ *   2. For each changed driver in parallel, on a separate node:
+ *      a. Provision uSUT  — outside Docker, using the sf CLI (DevEnvUtils.withSfCli) and
+ *                           ci_usut_helpers.sh from the snowflake monorepo at sut-stable.
+ *      b. Build and test  — inside rhel8-universal-driver-coverage Docker image.
+ *
+ * Change detection mirrors the GHA detect-changes.yml rules:
+ *   - JDBC, ODBC, Python cascade on core/shared Rust changes.
+ *
+ * Parallelism: JDBC, ODBC, and Python run on separate nodes, each with its own uSUT.
+ * Wall-clock time is bounded by the slowest driver.
+ */
+
+@Library('pipeline-utils') _
+import groovy.transform.Field
+import com.snowflake.DevEnvUtils
+
+// ── Docker image ──────────────────────────────────────────────────────────────
+@Field String DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+
+// ── JDBC test configuration ───────────────────────────────────────────────────
+// Gradle task + optional --tests filter; empty string runs the full suite.
+@Field String JDBC_GRADLE_TASK = 'test'
+@Field String JDBC_TEST_FILTER = '--tests "net.snowflake.jdbc.e2e.query.BasicExecuteQueryTests"'
+
+// ── ODBC test configuration ───────────────────────────────────────────────────
+// ctest -R include regex; empty string runs the full suite.
+@Field String ODBC_INCLUDE_TESTS = 'e2e_query_basic_execute_query'
+
+// ── Python test configuration ─────────────────────────────────────────────────
+@Field String PYTHON_HATCH_ENV = 'test.py3.11'
+@Field String PYTHON_TEST_PATH = 'tests/e2e/query/test_basic_execute_query.py'
+
+// ── Force-push fallback ───────────────────────────────────────────────────────
+// Populated by the 'Detect Changes' stage when currentBuild.changeSets is empty
+// (force-push / rebase). null means "use currentBuild.changeSets instead".
+@Field List _gitChangedFiles = null
+
+// ── Reusable shell preambles ──────────────────────────────────────────────────
+// Interpolated into sh steps via ${...} to avoid repeating boilerplate.
+@Field String ACTIVATE_GCC  = 'source /opt/rh/gcc-toolset-11/enable\nexport CC=gcc CXX=g++'
+@Field String LOAD_USUT_ENV = '[ -f .usut-env ] && source .usut-env || true'
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+pipeline {
+  agent none
+  options {
+    timestamps()
+    disableResume()   // REQUIRED: prevents PRs getting stuck after controller restart
+    buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))  // REQUIRED
+    timeout(time: 2, unit: 'HOURS')  // REQUIRED
+  }
+  stages {
+    // Runs only on PRs where currentBuild.changeSets is empty (force-push / rebase).
+    // Uses git diff to populate _gitChangedFiles so isDriverRelevant() can still
+    // make per-driver decisions instead of running everything.
+    stage('Detect Changes') {
+      when {
+        beforeAgent true
+        allOf {
+          expression { !isMergeQueue() }
+          expression { env.CHANGE_ID != null }
+          expression { currentBuild.changeSets.collectMany { it.items.toList() }.isEmpty() }
+        }
+      }
+      agent { label 'regular-memory-node' }
+      steps {
+        script {
+          _gitChangedFiles = sh(
+            returnStdout: true,
+            script: "git diff --name-only origin/${env.CHANGE_TARGET}...HEAD"
+          ).trim().split('\n').findAll { it }.toList()
+          echo "Force-push detected — changed files (${_gitChangedFiles.size()}):"
+          _gitChangedFiles.each { echo "  ${it}" }
+        }
+      }
+    }
+    // Change detection runs on the controller via currentBuild.changeSets —
+    // no node allocation. Each parallel branch guards itself with beforeAgent true
+    // so nodes are only allocated for drivers with relevant changes.
+    stage('uSUT Tests') {
+      when {
+        beforeAgent true
+        allOf {
+          expression { !isMergeQueue() }
+          expression { anyDriverRelevant() }
+        }
+      }
+      parallel {
+        stage('JDBC') {
+          when {
+            beforeAgent true
+            expression { isDriverRelevant(['jdbc/', 'jdbc_bridge/']) }
+          }
+          agent { label 'regular-memory-node' }
+          steps {
+            script {
+              provisionUsut()
+              pullDockerImage()
+              docker.image(DOCKER_IMAGE).inside('-u root') {
+                installSystemDeps()
+                runJdbcTests()
+              }
+            }
+          }
+          post {
+            always {
+              junit allowEmptyResults: true, testResults: 'jdbc/build/test-results/test/**/*.xml'
+            }
+          }
+        }
+        stage('ODBC') {
+          when {
+            beforeAgent true
+            expression { isDriverRelevant(['odbc/', 'odbc_tests/']) }
+          }
+          agent { label 'regular-memory-node' }
+          steps {
+            script {
+              provisionUsut()
+              pullDockerImage()
+              docker.image(DOCKER_IMAGE).inside('-u root') {
+                installSystemDeps()
+                runOdbcTests()
+              }
+            }
+          }
+          post {
+            always {
+              junit allowEmptyResults: true, testResults: 'odbc-usut-results.xml'
+            }
+          }
+        }
+        stage('Python') {
+          when {
+            beforeAgent true
+            expression { isDriverRelevant(['python/', 'pep249_dbapi/']) }
+          }
+          agent { label 'regular-memory-node' }
+          steps {
+            script {
+              provisionUsut()
+              pullDockerImage()
+              docker.image(DOCKER_IMAGE).inside('-u root') {
+                installSystemDeps()
+                runPythonTests()
+              }
+            }
+          }
+          post {
+            always {
+              junit allowEmptyResults: true, testResults: 'python/reports/python-usut-results.xml'
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    failure {
+      script {
+        node {
+          checkout scm
+          def slackFailure = load("${env.WORKSPACE}/ci/lib/jenkins_slack_failure.groovy")
+          slackFailure.notifyFailure()
+        }
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+def isMergeQueue() {
+  return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
+
+// Returns true if the given driver-specific paths (or any cascade path) changed.
+//
+// Runs on the controller via currentBuild.changeSets — no node allocation needed.
+// On non-PR builds (CHANGE_ID == null): always returns true (run everything).
+// On PRs: mirrors the cascading rules from .github/workflows/detect-changes.yml.
+//
+// "cascade" = shared Cargo workspace files + sf_core — trigger all drivers.
+def isDriverRelevant(List driverPatterns) {
+  if (isMergeQueue()) return false
+  if (env.CHANGE_ID == null) return true
+
+  def cascadePatterns = [
+    'Cargo.toml', 'Cargo.lock', 'build_common.rs', 'rust-toolchain.toml',
+    'error_trace/', 'error_trace_derive/', 'odbc_trace_tool/',
+    'ci/Jenkinsfile.usut-tests',
+    'sf_core/', 'sf_mini_core/', 'sf_mini_core_static/',
+    'proto_utils/', 'proto_generator/', 'protobuf/', 'thrift/',
+  ]
+
+  // Use git diff output when available (set by the force-push fallback stage),
+  // otherwise derive the file list from the changeset.
+  def changedFiles = _gitChangedFiles != null
+    ? _gitChangedFiles
+    : currentBuild.changeSets
+        .collectMany { cs -> cs.items.toList() }
+        .collectMany { item -> item.affectedFiles.collect { af -> af.path } }
+
+  // If still empty (unexpected), run everything to be safe.
+  if (changedFiles.isEmpty()) return true
+
+  def allPatterns = cascadePatterns + driverPatterns
+  return changedFiles.any { f -> allPatterns.any { p -> f == p || f.startsWith(p) } }
+}
+
+// True if any driver has relevant changes — used to skip the entire uSUT Tests stage.
+def anyDriverRelevant() {
+  return isDriverRelevant(['jdbc/', 'jdbc_bridge/', 'odbc/', 'odbc_tests/', 'python/', 'pep249_dbapi/'])
+}
+
+// Stage A: clone the monorepo at sut-stable, start uSUT, and write parameters.json.
+// Must run outside Docker so the sf CLI and vault credentials are available.
+def provisionUsut() {
+  withCredentials([
+    usernamePassword(
+      credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+      usernameVariable: 'AWS_ACCESS_KEY_ID',
+      passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+    ),
+    string(credentialsId: '55183f9d-c16e-4ca9-91ca-fcc9c3fbcd27', variable: 'VAULT_ROLE_ID'),
+    string(credentialsId: 'af8bd629-7cac-4456-a3bf-a1410fc1c8e6', variable: 'VAULT_SECRET_ID'),
+    file(credentialsId: 'snowidentity', variable: 'SID_TOKEN_PATH'),
+    usernamePassword(
+      credentialsId: 'jenkins-snowflake-github-app-3-emu',
+      usernameVariable: 'GITHUB_USER_EMU',
+      passwordVariable: 'GITHUB_TOKEN_EMU'
+    )
+  ]) {
+    new DevEnvUtils().withSfCli {
+      sh label: 'Clone monorepo scripts at sut-stable', script: '''
+        set -euo pipefail
+        git clone \
+          --depth=1 \
+          --filter=blob:none \
+          --no-checkout \
+          --branch sut-stable \
+          https://${GITHUB_USER_EMU}:${GITHUB_TOKEN_EMU}@github.com/snowflake-eng/snowflake.git \
+          snowflake-monorepo
+        cd snowflake-monorepo
+        git sparse-checkout init --cone
+        git sparse-checkout set RegressionTests/scripts RegressionTests/scripts/bin
+        git checkout
+      '''
+
+      sh label: 'Start uSUT', script: '''
+        set -euo pipefail
+        export SUTTYPE=REG_AWS_PROD_PARAMETERS_SNOWFORT_BAZEL_X86
+        export job_purpose=drivers_pipeline
+
+        source snowflake-monorepo/RegressionTests/scripts/bin/b-log.sh
+        source snowflake-monorepo/RegressionTests/scripts/ci_usut_helpers.sh
+
+        if is_usut_killswitch_enabled; then
+          echo "uSUT kill-switch is active — skipping uSUT setup." >&2
+          exit 1
+        fi
+
+        # Required by run_usut_setup_command; normally set by regress_setenv.sh
+        export SF_DEPLOYMENTS_ROOT="${HOME}/sf/deployments"
+        mkdir -p "${SF_DEPLOYMENTS_ROOT}"
+
+        # Pin uSUT to the version recorded on the sut-stable branch (same as other drivers).
+        export USUT_VERSION=$(cat snowflake-monorepo/.sut-version | xargs)
+
+        # sut-stable is a tag pointing to a main-branch commit.
+        # run_usut_setup_command builds the S3 artifact path from branch+commit:
+        #   main → s3://.../rt-artifacts/snowos/main/<SHA>/build_bazel_main_<SHA>.tar.zst
+        # That artifact exists (main CI publishes it). Using "sut-stable" as the
+        # branch name would hit a non-existent path (sut-stable/HEAD/...).
+        export branch="main"
+        export svn_revision=$(git -C snowflake-monorepo rev-parse HEAD)
+
+        run_usut_setup_command "${SUTTYPE}"
+        export_usut_env_variables
+
+        # Persist uSUT env vars for Docker steps (each sh step gets a fresh shell).
+        printenv | grep -E '^(SF_REGRESS_|SFTEST_)' \
+          | awk -F= '{print "export " $1 "=" $2}' \
+          > .usut-env || true
+      '''
+
+      sh label: 'Write parameters.json', script: '''
+        set -euo pipefail
+        # Re-load the uSUT env written by the previous step.
+        source .usut-env
+
+        # sf sut secrets only returns cloud-provider credentials (AWS keys etc.),
+        # not Snowflake connection params. Derive the latter from known uSUT defaults:
+        #   host    = snowflake.<deployment>.local  (SF_REGRESS_DEPLOYMENT_NAME=reg)
+        #   port    = SF_NGINX_PORT_8082 from nginx.env, or 8082
+        #   account = s3testaccount  (REG_AWS_* SUTTYPE always uses this)
+        SF_DEPLOYMENTS_ROOT="${HOME}/sf/deployments"
+        USUT_DEPLOY="${SF_REGRESS_DEPLOYMENT_NAME:-reg}"
+        USUT_HOST="snowflake.${USUT_DEPLOY}.local"
+        NGINX_ENV="${SF_DEPLOYMENTS_ROOT}/${USUT_DEPLOY}/nginx.env"
+        if [ -f "${NGINX_ENV}" ]; then
+          source "${NGINX_ENV}"
+          USUT_PORT="${SF_NGINX_PORT_8082:-8082}"
+        else
+          USUT_PORT=8082
+        fi
+
+        # sf sut secrets transiently returns {"secrets":null} on infra hiccups.
+        # Retry up to 3 times; fail fast only if still null after all attempts.
+        CLOUD_SECRETS=''
+        for attempt in 1 2 3; do
+          RAW=$(sf sut secrets --output json -q)
+          if [ "$(echo "${RAW}" | jq '.secrets == null')" = 'true' ]; then
+            echo "sf sut secrets returned null secrets (attempt ${attempt}/3); retrying in 10s..." >&2
+            sleep 10
+            continue
+          fi
+          CLOUD_SECRETS=$(echo "${RAW}" \
+            | jq '.secrets | map({key: (.name | ascii_upcase), value: .value}) | from_entries')
+          break
+        done
+        if [ -z "${CLOUD_SECRETS}" ]; then
+          echo "sf sut secrets failed to return valid secrets after 3 attempts" >&2
+          exit 1
+        fi
+
+        jq -n \
+          --arg host     "${USUT_HOST}" \
+          --arg port     "${USUT_PORT}" \
+          --arg account  "s3testaccount" \
+          --arg user     "snowman" \
+          --arg password "test" \
+          --arg role     "sysadmin" \
+          --arg warehouse "regress" \
+          --arg database  "testdb" \
+          --arg schema    "PUBLIC" \
+          --arg protocol  "http" \
+          --argjson cloud "${CLOUD_SECRETS}" \
+          '{testconnection: (
+            {
+              SNOWFLAKE_TEST_IS_USUT:   "true",
+              SNOWFLAKE_TEST_HOST:      $host,
+              SNOWFLAKE_TEST_PORT:      ($port | tonumber),
+              SNOWFLAKE_TEST_ACCOUNT:   $account,
+              SNOWFLAKE_TEST_USER:      $user,
+              SNOWFLAKE_TEST_PASSWORD:  $password,
+              SNOWFLAKE_TEST_ROLE:      $role,
+              SNOWFLAKE_TEST_WAREHOUSE: $warehouse,
+              SNOWFLAKE_TEST_DATABASE:  $database,
+              SNOWFLAKE_TEST_SCHEMA:    $schema,
+              SNOWFLAKE_TEST_PROTOCOL:  $protocol
+            } + $cloud
+          )}' > parameters.json
+      '''
+    }
+  }
+}
+
+// Stage B: authenticate to the Docker registry and pull the build image.
+def pullDockerImage() {
+  new DevEnvUtils().withSfCli {
+    sh 'sf artifact oci auth'
+  }
+  sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
+}
+
+// Shared: refresh package metadata and install OS-level test dependencies.
+// Rocky Linux rotates metadata hashes weekly, breaking pre-built image caches.
+def installSystemDeps() {
+  sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
+  sh label: 'Install system dependencies', script: '''
+    yum install -y unixODBC-devel unzip \
+                   perl-Time-Piece perl-IPC-Cmd perl-Data-Dumper
+  '''
+}
+
+def runJdbcTests() {
+  sh label: 'Build jdbc_bridge', script: 'cargo build --package jdbc_bridge'
+  sh label: 'Run JDBC tests', script: """
+    set -euo pipefail
+    ${LOAD_USUT_ENV}
+    export PARAMETER_PATH=\$(pwd)/parameters.json
+    export CORE_PATH=\$(pwd)/target/debug/libjdbc_bridge.so
+    chmod +x jdbc/gradlew
+    cd jdbc && ./gradlew ${JDBC_GRADLE_TASK} ${JDBC_TEST_FILTER}
+  """
+}
+
+def runOdbcTests() {
+  sh label: 'Build ODBC driver and test harness', script: """
+    ${ACTIVATE_GCC}
+    RUSTFLAGS="-C link-arg=-Wl,--undefined-version" cargo build --package odbc
+    cd odbc_tests
+    mkdir -p cmake-build
+    cmake -B cmake-build \\
+      -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \\
+      -D ODBC_INCLUDE_DIR="/usr/include" \\
+      -D DRIVER_TYPE=NEW \\
+      .
+    cmake --build cmake-build -- -j \$(nproc)
+  """
+  sh label: 'Run ODBC tests', script: """
+    set -euo pipefail
+    ${LOAD_USUT_ENV}
+    WORKSPACE_ROOT=\$(pwd)
+    export DRIVER_PATH=\${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+    export PARAMETER_PATH=\${WORKSPACE_ROOT}/parameters.json
+    cd odbc_tests
+    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure \\
+      -R "${ODBC_INCLUDE_TESTS}" \\
+      --output-junit "\${WORKSPACE_ROOT}/odbc-usut-results.xml"
+  """
+}
+
+def runPythonTests() {
+  sh label: 'Build Python wheel', script: """
+    ${ACTIVATE_GCC}
+    cd python && HATCH_PYTHON=3.11 hatch build -t wheel
+  """
+  sh label: 'Install Python wheel', script: """
+    cd python
+    export WHEEL_PATH=\$(ls dist/*.whl | head -1)
+    hatch run ${PYTHON_HATCH_ENV}:install-wheel
+  """
+  sh label: 'Run Python tests', script: """
+    set -euo pipefail
+    ${LOAD_USUT_ENV}
+    export PARAMETER_PATH=\$(pwd)/parameters.json
+    mkdir -p python/reports
+    cd python
+    hatch run ${PYTHON_HATCH_ENV}:python -m pytest \\
+      --no-cov \\
+      ${PYTHON_TEST_PATH} \\
+      --junitxml=reports/python-usut-results.xml
+  """
+}
+

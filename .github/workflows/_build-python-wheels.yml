@@ -13,6 +13,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  UV_DEFAULT_INDEX: "https://pypi.org/simple"
+  # Requests 6 retries from uv's internal HTTP client (default: 3).
+  UV_HTTP_RETRIES: "6"
 
 jobs:
   # ── Expand targets into per-platform build matrices ────────────────

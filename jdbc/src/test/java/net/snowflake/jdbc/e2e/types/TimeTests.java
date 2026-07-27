@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,16 +11,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class TimeTests extends SnowflakeIntegrationTestBase {
+public class TimeTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final int LARGE_RESULT_SET_SIZE = 100_000;
+  private static final ColumnExpectation TIME_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.TIME,
+          "TIME",
+          Time.class.getName(),
+          8,
+          9,
+          8,
+          false,
+          false,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastTimeValuesToAppropriateType() throws Exception {
@@ -40,6 +58,17 @@ public class TimeTests extends SnowflakeIntegrationTestBase {
             assertInstanceOf(Time.class, obj, "Column " + i + " getObject should return Time");
             assertFalse(resultSet.wasNull());
           }
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  TIME_COLUMN.withColumnName("'10:30:00'::TIME"),
+                  TIME_COLUMN.withColumnName("'00:00:00'::TIME"),
+                  TIME_COLUMN.withColumnName("'23:59:59'::TIME")));
+
           assertFalse(resultSet.next());
         });
   }

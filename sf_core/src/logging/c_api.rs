@@ -1,12 +1,22 @@
 use crate::apis::database_driver_v1::WrapperPresets;
-use crate::logging;
-use crate::logging::callback_layer::WRAPPER_TARGET;
 use crate::logging::{LogManager, LoggingConfig};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
+use crate::{logging, wrapper_event};
 use std::ffi::{CStr, c_char};
 use std::sync::OnceLock;
 
 static LOG_DISPATCH: OnceLock<tracing::dispatcher::Dispatch> = OnceLock::new();
+
+/// Configuration returned to the wrapper from [`sf_core_init`].
+///
+/// Wrappers use this to seed their own state without calling back into core.
+#[repr(C)]
+pub struct SfCoreInitResult {
+    /// 0 = success, non-zero = failure.
+    pub status: u32,
+    /// 1 if troubleshooting mode is active at init time, 0 otherwise.
+    pub troubleshooting_enabled: u32,
+}
 
 fn cstr_or_empty<'a>(ptr: *const c_char) -> &'a str {
     if ptr.is_null() {
@@ -16,24 +26,12 @@ fn cstr_or_empty<'a>(ptr: *const c_char) -> &'a str {
     unsafe { CStr::from_ptr(ptr).to_str().unwrap_or("") }
 }
 
-/// `tracing::event!` requires a compile-time level; dispatch at runtime via match.
-macro_rules! wrapper_event {
-    ($level:expr, $($fields:tt)*) => {
-        match $level {
-            0 => tracing::event!(target: WRAPPER_TARGET, tracing::Level::ERROR, $($fields)*),
-            1 => tracing::event!(target: WRAPPER_TARGET, tracing::Level::WARN, $($fields)*),
-            2 => tracing::event!(target: WRAPPER_TARGET, tracing::Level::INFO, $($fields)*),
-            _ => tracing::event!(target: WRAPPER_TARGET, tracing::Level::DEBUG, $($fields)*),
-        }
-    };
-}
-
 /// Initialise the core state: logging, tokio runtime, and transport.
 ///
 /// Called by the Python connector at import time, before any API call.
-/// Returns 0 on success, 1 on failure.
+/// Returns an [`SfCoreInitResult`] with the status and initial configuration.
 #[unsafe(no_mangle)]
-pub extern "C" fn sf_core_init(callback: logging::CLogCallback) -> u32 {
+pub extern "C" fn sf_core_init(callback: logging::CLogCallback) -> SfCoreInitResult {
     let wrapper_presets = WrapperPresets::python();
 
     let layer = logging::CallbackLayer::new(callback);
@@ -41,16 +39,23 @@ pub extern "C" fn sf_core_init(callback: logging::CLogCallback) -> u32 {
 
     match LogManager::with_app_sink(LoggingConfig::default(), layer, sessions) {
         Ok(lm) => {
+            let troubleshooting_enabled = u32::from(lm.is_troubleshooting());
             let _ = LOG_DISPATCH.set(lm.dispatch().clone());
             #[cfg(feature = "protobuf")]
             crate::protobuf::c_api::init_core_state(lm, wrapper_presets);
             #[cfg(not(feature = "protobuf"))]
             drop((lm, wrapper_presets));
-            0
+            SfCoreInitResult {
+                status: 0,
+                troubleshooting_enabled,
+            }
         }
         Err(e) => {
             eprintln!("Failed to initialize core: {e:?}");
-            1
+            SfCoreInitResult {
+                status: 1,
+                troubleshooting_enabled: 0,
+            }
         }
     }
 }

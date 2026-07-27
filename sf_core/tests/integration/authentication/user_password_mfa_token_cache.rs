@@ -1,7 +1,9 @@
 use crate::common::mocks::mfa;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
-use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
+use sf_core::token_cache::{
+    CacheKey, KeyringTokenCache, TokenCache, TokenType, normalize_identifier, normalize_url,
+};
 
 // =============================================================================
 // Test Fixture - Reduces boilerplate for MFA token cache integration tests
@@ -57,13 +59,16 @@ fn should_authenticate_with_cached_mfa_token_via_wiremock() {
     fixture.mock.mount(mfa::login_success_with_cached_token());
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&fixture.mock.http_url())
-        .expect("mock URL should be valid")
-        .host_str()
-        .expect("mock URL should have a host")
-        .to_string();
+    let server_url = fixture.mock.http_url();
+    let key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: normalize_url(&server_url),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
     cache
-        .add_token(&host, user, TokenType::MfaToken, "cached_mfa_token")
+        .add_token(&key, "cached_mfa_token")
         .expect("failed to seed token cache");
 
     // When Trying to Connect
@@ -72,7 +77,7 @@ fn should_authenticate_with_cached_mfa_token_via_wiremock() {
     // Then Login is successful
     fixture.expecting_success_result(result, "MFA cached token login to succeed");
 
-    let _ = cache.remove_token(&host, user, TokenType::MfaToken);
+    let _ = cache.remove_token(&key);
 }
 
 // =============================================================================
@@ -90,13 +95,16 @@ fn assert_ext_authn_error_evicts_cached_mfa_token(
     fixture.mock.mount(mfa::login_failure_duo_push());
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&fixture.mock.http_url())
-        .expect("mock URL should be valid")
-        .host_str()
-        .expect("mock URL should have a host")
-        .to_string();
+    let server_url = fixture.mock.http_url();
+    let key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: normalize_url(&server_url),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
     cache
-        .add_token(&host, user, TokenType::MfaToken, "cached_mfa_token")
+        .add_token(&key, "cached_mfa_token")
         .expect("failed to seed token cache");
 
     let result = fixture.connect();
@@ -107,9 +115,7 @@ fn assert_ext_authn_error_evicts_cached_mfa_token(
         &format!("login error after retry for EXT_AUTHN code {code}"),
     );
 
-    let cached = cache
-        .get_token(&host, user, TokenType::MfaToken)
-        .expect("get_token should not fail");
+    let cached = cache.get_token(&key).expect("get_token should not fail");
     assert!(
         cached.is_none(),
         "Expected cached MFA token to be removed after EXT_AUTHN error {code}, but it still exists"
@@ -181,13 +187,16 @@ fn should_retry_with_duo_push_when_cached_mfa_token_fails_ext_authn() {
     fixture.mock.mount(mfa::login_success_with_mfa_token());
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&fixture.mock.http_url())
-        .expect("mock URL should be valid")
-        .host_str()
-        .expect("mock URL should have a host")
-        .to_string();
+    let server_url = fixture.mock.http_url();
+    let key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: normalize_url(&server_url),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
     cache
-        .add_token(&host, user, TokenType::MfaToken, "cached_mfa_token")
+        .add_token(&key, "cached_mfa_token")
         .expect("failed to seed token cache");
 
     // When Trying to Connect
@@ -196,15 +205,13 @@ fn should_retry_with_duo_push_when_cached_mfa_token_fails_ext_authn() {
     // Then Login is successful
     fixture.expecting_success_result(result, "MFA login retry via DUO push to succeed");
 
-    let cached = cache
-        .get_token(&host, user, TokenType::MfaToken)
-        .expect("get_token should not fail");
+    let cached = cache.get_token(&key).expect("get_token should not fail");
     assert!(
         cached.is_some(),
         "Expected new MFA token to be cached after successful retry"
     );
 
-    let _ = cache.remove_token(&host, user, TokenType::MfaToken);
+    let _ = cache.remove_token(&key);
 }
 
 #[test]
@@ -218,13 +225,16 @@ fn should_fail_with_retry_error_when_both_cached_token_and_duo_push_fail() {
     fixture.mock.mount(mfa::login_failure_duo_push());
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    let host = url::Url::parse(&fixture.mock.http_url())
-        .expect("mock URL should be valid")
-        .host_str()
-        .expect("mock URL should have a host")
-        .to_string();
+    let server_url = fixture.mock.http_url();
+    let key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: normalize_url(&server_url),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
     cache
-        .add_token(&host, user, TokenType::MfaToken, "cached_mfa_token")
+        .add_token(&key, "cached_mfa_token")
         .expect("failed to seed token cache");
 
     // When Trying to Connect
@@ -237,9 +247,7 @@ fn should_fail_with_retry_error_when_both_cached_token_and_duo_push_fail() {
         "login error from retry (not EXT_AUTHN code)",
     );
 
-    let cached = cache
-        .get_token(&host, user, TokenType::MfaToken)
-        .expect("get_token should not fail");
+    let cached = cache.get_token(&key).expect("get_token should not fail");
     assert!(
         cached.is_none(),
         "Expected cached MFA token to be removed after EXT_AUTHN error and failed retry"

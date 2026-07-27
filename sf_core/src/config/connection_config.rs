@@ -18,7 +18,7 @@ use crate::config::rest_parameters::{
 use crate::config::settings::{Setting, Settings};
 use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
-    ValidationFailedSnafu,
+    ValidationSnafu,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig, TlsVersion};
@@ -479,13 +479,12 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .context(MissingParameterSnafu {
                     parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
                 })?;
-            let provider = WifProvider::parse_str(&provider_str).ok_or_else(|| {
+            let provider = WifProvider::parse_str(&provider_str).with_context(|| {
                 InvalidParameterValueSnafu {
                     parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
                     value: provider_str.clone(),
                     explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
                 }
-                .build()
             })?;
             let entra_resource = settings
                 .get_string(WORKLOAD_IDENTITY_ENTRA_RESOURCE)
@@ -528,7 +527,7 @@ impl ConnectionConfig {
     ///
     /// The input should come from `resolver::resolve` or `resolver::resolve_with_paths`.
     /// Runs `validate_settings` first and returns all validation errors
-    /// collected (not just the first) via `ConfigError::ValidationFailed`.
+    /// collected (not just the first) via `ConfigError::Validation`.
     /// Runtime errors that go beyond static validation (e.g. base64
     /// decoding failures, file I/O) are still returned individually.
     pub fn build(settings: &ParamStore) -> Result<Self, ConfigError> {
@@ -538,7 +537,7 @@ impl ConnectionConfig {
             .filter(|i| i.severity == ValidationSeverity::Error)
             .collect();
         if !errors.is_empty() {
-            return ValidationFailedSnafu { issues: errors }.fail();
+            return ValidationSnafu { issues: errors }.fail();
         }
 
         let account = settings
@@ -648,28 +647,11 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             username: user.clone(),
             token: token.clone(),
         },
-        AuthConfig::OAuthAuthorizationCode(cfg) => {
-            LoginMethod::OAuthAuthorizationCode(Box::new(OAuthAuthorizationCodeConfig {
-                username: cfg.username.clone(),
-                client_id: cfg.client_id.clone(),
-                client_secret: cfg.client_secret.clone(),
-                authorization_url: cfg.authorization_url.clone(),
-                token_url: cfg.token_url.clone(),
-                redirect_uri: cfg.redirect_uri.clone(),
-                scope: cfg.scope.clone(),
-                enable_single_use_refresh_tokens: cfg.enable_single_use_refresh_tokens,
-                disable_pkce: cfg.disable_pkce,
-                client_store_temporary_credential: cfg.client_store_temporary_credential,
-                flow_options: OAuthFlowOptions {
-                    enable_dpop: cfg.flow_options.enable_dpop,
-                    authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
-                },
-                // Cheap Arc clone — the launcher factory rides with the
-                // config through the LoginMethod projection (test builds
-                // carry a no-op factory; production carries `None`).
-                browser_launcher: cfg.browser_launcher.clone(),
-            }))
-        }
+        // Clone the whole config in one shot: the source and target are the
+        // same `OAuthAuthorizationCodeConfig` type, so a field-by-field copy
+        // would only add change-amplification risk (silently dropping any
+        // future field). The launcher factory is a cheap `Arc` clone.
+        AuthConfig::OAuthAuthorizationCode(cfg) => LoginMethod::OAuthAuthorizationCode(cfg.clone()),
         AuthConfig::OAuthClientCredentials(cfg) => {
             LoginMethod::OAuthClientCredentials(OAuthClientCredentialsConfig {
                 username: cfg.username.clone(),
@@ -804,19 +786,26 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
 
+    // Session token auth is detected by the presence of `session_token` rather than
+    // an authenticator string (build_auth_config checks SESSION_TOKEN first). Skip all
+    // user/password requirements when both tokens are present.
+    let has_session_token = non_empty_string(settings, SESSION_TOKEN).is_some();
+
     // --- MissingRequired: user ---
     // SNOW-3647715: token-based authenticators waive the `user`
     // requirement — the principal is encoded in the IdP-issued token
     // (or PAT) and resolved by GS at login time. WIF also waives the
     // user requirement since the cloud identity is resolved server-side.
-    let user_optional = matches!(
-        auth_upper.as_str(),
-        "OAUTH"
-            | "OAUTH_AUTHORIZATION_CODE"
-            | "OAUTH_CLIENT_CREDENTIALS"
-            | "PROGRAMMATIC_ACCESS_TOKEN"
-            | "WORKLOAD_IDENTITY"
-    );
+    // Session token auth likewise carries no user identity requirement.
+    let user_optional = has_session_token
+        || matches!(
+            auth_upper.as_str(),
+            "OAUTH"
+                | "OAUTH_AUTHORIZATION_CODE"
+                | "OAUTH_CLIENT_CREDENTIALS"
+                | "PROGRAMMATIC_ACCESS_TOKEN"
+                | "WORKLOAD_IDENTITY"
+        );
     if !user_optional && non_empty_string(settings, USER).is_none() {
         issues.push(ValidationIssue {
             severity: ValidationSeverity::Error,
@@ -826,6 +815,9 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         });
     }
     match auth_upper.as_str() {
+        _ if has_session_token => {
+            // Session token auth: user/password not required; build_auth_config handles it.
+        }
         "" if has_private_key_params(settings) => {
             // Empty authenticator + private key params → auto-JWT, no password needed
         }
@@ -1263,7 +1255,7 @@ mod tests {
         ]);
         let err = ConnectionConfig::build(&settings).unwrap_err();
         match err {
-            ConfigError::ValidationFailed { ref issues, .. } => {
+            ConfigError::Validation { ref issues, .. } => {
                 assert!(
                     issues
                         .iter()
@@ -1272,7 +1264,7 @@ mod tests {
                     "Expected MissingRequired for 'account', got: {issues:?}"
                 );
             }
-            other => panic!("Expected ValidationFailed, got: {other}"),
+            other => panic!("Expected Validation, got: {other}"),
         }
     }
 
@@ -1340,7 +1332,7 @@ mod tests {
         ]);
         let err = ConnectionConfig::build(&settings).unwrap_err();
         match err {
-            ConfigError::ValidationFailed { ref issues, .. } => {
+            ConfigError::Validation { ref issues, .. } => {
                 assert!(
                     issues
                         .iter()
@@ -1349,7 +1341,7 @@ mod tests {
                     "Expected ConflictingParameters for ssl + protocol, got: {issues:?}"
                 );
             }
-            other => panic!("Expected ValidationFailed, got: {other}"),
+            other => panic!("Expected Validation, got: {other}"),
         }
     }
 
@@ -1671,6 +1663,50 @@ mod tests {
     }
 
     #[test]
+    fn build_session_token_auth_without_user_succeeds() {
+        // session_token + master_token bypass the user/password requirement;
+        // no --user flag is needed (mirrors snowflake-cli's --session-token usage).
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("session_token", Setting::String("sess_tok".into())),
+            ("master_token", Setting::String("mstr_tok".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::SessionToken {
+                session_token,
+                master_token,
+                ..
+            } => {
+                assert_eq!(session_token.reveal(), "sess_tok");
+                assert_eq!(master_token.reveal(), "mstr_tok");
+            }
+            _ => panic!("Expected SessionToken auth"),
+        }
+    }
+
+    #[test]
+    fn build_session_token_auth_with_user_succeeds() {
+        // user is accepted but not required for session token auth.
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "host",
+                Setting::String("acct.snowflakecomputing.com".into()),
+            ),
+            ("user", Setting::String("alice".into())),
+            ("session_token", Setting::String("sess_tok".into())),
+            ("master_token", Setting::String("mstr_tok".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(matches!(config.auth, AuthConfig::SessionToken { .. }));
+    }
+
+    #[test]
     fn build_password_auth_with_snowflake_lowercase() {
         let settings = settings_from(&[
             ("account", Setting::String("acct".into())),
@@ -1917,7 +1953,7 @@ mod tests {
         ]);
         let err = ConnectionConfig::build(&settings).unwrap_err();
         match err {
-            ConfigError::ValidationFailed { ref issues, .. } => {
+            ConfigError::Validation { ref issues, .. } => {
                 assert!(
                     issues
                         .iter()
@@ -1925,7 +1961,7 @@ mod tests {
                     "Expected ConflictingParameters issue, got: {issues:?}"
                 );
             }
-            other => panic!("Expected ValidationFailed, got: {other}"),
+            other => panic!("Expected Validation, got: {other}"),
         }
     }
 

@@ -103,9 +103,10 @@ impl FetchConverterCache {
         for (&column_number, binding) in &bindings_snapshot {
             // ODBC reserves column 0 for bookmarks; `checked_sub` also guards
             // debug-mode panics if `SQLBindCol` accepted a 0.
-            let arrow_col = (column_number as usize).checked_sub(1);
-            let in_range = arrow_col.is_some_and(|idx| idx < schema.fields().len());
-            if !in_range {
+            let arrow_col = (column_number as usize)
+                .checked_sub(1)
+                .filter(|&idx| idx < schema.fields().len());
+            let Some(arrow_col) = arrow_col else {
                 // Log once per batch rebuild, not once per fetched row.
                 tracing::error!(
                     "fetch converter cache: column_number {} is out of range \
@@ -119,8 +120,7 @@ impl FetchConverterCache {
                     converter: None,
                 });
                 continue;
-            }
-            let arrow_col = arrow_col.unwrap();
+            };
             let field = schema.field(arrow_col);
             let converter = make_converter(field, numeric_settings).context(ConversionSnafu)?;
             self.entries.push(CachedColumn {

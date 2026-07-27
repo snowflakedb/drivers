@@ -1,13 +1,25 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
+import static java.sql.ClientInfoStatus.REASON_UNKNOWN_PROPERTY;
+import static java.sql.Connection.TRANSACTION_NONE;
+import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
+import static java.sql.ResultSet.CLOSE_CURSORS_AT_COMMIT;
+import static java.sql.ResultSet.CONCUR_READ_ONLY;
+import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
+import static java.util.Collections.emptyMap;
+import static java.util.Collections.emptySet;
+import static java.util.Collections.singleton;
+import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_CLOSED;
 import static net.snowflake.client.api.exception.ErrorCode.FEATURE_UNSUPPORTED;
+import static net.snowflake.client.api.exception.ErrorCode.INVALID_PARAMETER_VALUE;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
+import java.sql.ClientInfoStatus;
 import java.sql.Clob;
-import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
@@ -20,7 +32,6 @@ import java.sql.SQLXML;
 import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -34,6 +45,7 @@ import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
+import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
@@ -42,6 +54,7 @@ import net.snowflake.client.internal.api.implementation.resultset.ResultSetFacto
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.log.Jdk14LoggerBootstrap;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
@@ -53,6 +66,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
@@ -74,6 +88,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private boolean autoCommit;
   private String catalog;
   private String schema;
+  private int transactionIsolation = TRANSACTION_NONE;
 
   private SQLWarning sqlWarnings;
 
@@ -86,6 +101,12 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
       throws SQLException {
+    try {
+      Jdk14LoggerBootstrap.initFromConnectionIfConfigured(url, properties);
+    } catch (IOException e) {
+      throw new SQLException("Failed to initialize JDBC logging", e);
+    }
+
     this.coreDriverApi = coreDriverApi;
 
     DatabaseHandle dbHandle = null;
@@ -103,7 +124,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
       this.sqlWarnings = sqlWarnings;
-      this.parametersRegistry = new ParametersRegistry(coreDriverApi, connHandle);
+      this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
     } catch (SQLException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
@@ -115,7 +136,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     Builder identityBuilder =
         WrapperIdentity.newBuilder()
             .setDriverName("JDBC")
-            .setDriverVersion(SnowflakeDriver.DRIVER_VERSION);
+            .setDriverVersion(SnowflakeDriver.CLIENT_APP_VERSION);
     String runtimeName = System.getProperty("java.vm.name");
     if (runtimeName != null && !runtimeName.trim().isEmpty()) {
       identityBuilder.setLanguageRuntime(runtimeName);
@@ -337,20 +358,17 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public void setTransactionIsolation(int level) throws SQLException {
     checkClosed();
-    // Snowflake always runs at READ COMMITTED and ignores the requested level, so this is a
-    // no-op. We still reject levels the driver doesn't advertise, deferring to
-    // DatabaseMetaData.supportsTransactionIsolationLevel so the accepted set (NONE,
-    // READ_COMMITTED) lives in a single place rather than being duplicated here.
-    if (!getMetaData().supportsTransactionIsolationLevel(level)) {
-      throw new SQLFeatureNotSupportedException(
-          "Transaction Isolation " + level + " not supported.");
+    if (level == TRANSACTION_NONE || level == TRANSACTION_READ_COMMITTED) {
+      this.transactionIsolation = level;
+      return;
     }
+    throw featureNotSupported("Transaction Isolation " + level + " not supported.");
   }
 
   @Override
   public int getTransactionIsolation() throws SQLException {
     checkClosed();
-    return Connection.TRANSACTION_READ_COMMITTED;
+    return transactionIsolation;
   }
 
   @Override
@@ -368,63 +386,68 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public Statement createStatement(int resultSetType, int resultSetConcurrency)
       throws SQLException {
-    return createStatement(resultSetType, resultSetConcurrency, ResultSet.CLOSE_CURSORS_AT_COMMIT);
+    return createStatement(resultSetType, resultSetConcurrency, CLOSE_CURSORS_AT_COMMIT);
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency)
       throws SQLException {
-    return prepareStatement(
-        sql, resultSetType, resultSetConcurrency, ResultSet.CLOSE_CURSORS_AT_COMMIT);
+    return prepareStatement(sql, resultSetType, resultSetConcurrency, CLOSE_CURSORS_AT_COMMIT);
   }
 
   @Override
   public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
       throws SQLException {
-    return prepareCall(sql, resultSetType, resultSetConcurrency, ResultSet.CLOSE_CURSORS_AT_COMMIT);
+    return prepareCall(sql, resultSetType, resultSetConcurrency, CLOSE_CURSORS_AT_COMMIT);
   }
 
   @Override
   public Map<String, Class<?>> getTypeMap() throws SQLException {
     checkClosed();
-    return Collections.emptyMap(); // nop
+    return emptyMap();
   }
 
   @Override
   public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setTypeMap not supported");
+    throw featureNotSupported("setTypeMap not supported");
   }
 
   @Override
   public void setHoldability(int holdability) throws SQLException {
-    throw new SQLFeatureNotSupportedException(
-        "Holdability other than ResultSet.CLOSE_CURSORS_AT_COMMIT is not supported");
+    checkClosed();
+    if (holdability != CLOSE_CURSORS_AT_COMMIT
+        && holdability != ResultSet.HOLD_CURSORS_OVER_COMMIT) {
+      throw new SQLException("The given parameter is not a ResultSet holdability constant.");
+    }
+    if (holdability == ResultSet.HOLD_CURSORS_OVER_COMMIT) {
+      throw featureNotSupported("Holdability not supported");
+    }
   }
 
   @Override
   public int getHoldability() throws SQLException {
     checkClosed();
-    return ResultSet.CLOSE_CURSORS_AT_COMMIT;
+    return CLOSE_CURSORS_AT_COMMIT;
   }
 
   @Override
   public Savepoint setSavepoint() throws SQLException {
-    throw new SQLFeatureNotSupportedException("setSavepoint not supported");
+    throw featureNotSupported("setSavepoint not supported");
   }
 
   @Override
   public Savepoint setSavepoint(String name) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setSavepoint not supported");
+    throw featureNotSupported("setSavepoint not supported");
   }
 
   @Override
   public void rollback(Savepoint savepoint) throws SQLException {
-    throw new SQLFeatureNotSupportedException("rollback to savepoint not supported");
+    throw featureNotSupported("rollback to savepoint not supported");
   }
 
   @Override
   public void releaseSavepoint(Savepoint savepoint) throws SQLException {
-    throw new SQLFeatureNotSupportedException("releaseSavepoint not supported");
+    throw featureNotSupported("releaseSavepoint not supported");
   }
 
   @Override
@@ -456,41 +479,39 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       return prepareStatement(sql);
     }
 
-    throw new SQLFeatureNotSupportedException(
+    throw featureNotSupported(
         String.format("autoGeneratedKeys %s not supported", autoGeneratedKeys));
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException {
-    throw new SQLFeatureNotSupportedException("prepareStatement with columnIndexes not supported");
+    throw featureNotSupported("prepareStatement with columnIndexes not supported");
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException {
-    throw new SQLFeatureNotSupportedException("prepareStatement with columnNames not supported");
+    throw featureNotSupported("prepareStatement with columnNames not supported");
+  }
+
+  @Override
+  public Blob createBlob() throws SQLException {
+    throw featureNotSupported("createBlob not supported");
   }
 
   @Override
   public Clob createClob() throws SQLException {
     checkClosed();
-    // A growable Clob: callers build content via setString(1, ...). The JDK SerialClob cannot be
-    // used because it is fixed-length and rejects writes past its (zero) initial length.
     return new SnowflakeClob();
   }
 
   @Override
-  public Blob createBlob() throws SQLException {
-    throw new SQLFeatureNotSupportedException("createBlob not supported");
-  }
-
-  @Override
   public NClob createNClob() throws SQLException {
-    throw new SQLFeatureNotSupportedException("createNClob not supported");
+    throw featureNotSupported("createNClob not supported");
   }
 
   @Override
   public SQLXML createSQLXML() throws SQLException {
-    throw new SQLFeatureNotSupportedException("createSQLXML not supported");
+    throw featureNotSupported("createSQLXML not supported");
   }
 
   @Override
@@ -512,32 +533,70 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void setClientInfo(String name, String value) throws SQLClientInfoException {
-    throw new NotImplementedException();
+    throwClientInfoIfClosed(singleton(name));
+    Map<String, ClientInfoStatus> failedProps = new HashMap<>();
+    failedProps.put(name, REASON_UNKNOWN_PROPERTY);
+    raiseSetClientInfoException(failedProps);
   }
 
   @Override
   public void setClientInfo(Properties properties) throws SQLClientInfoException {
-    throw new NotImplementedException();
+    Set<String> names = properties == null ? emptySet() : properties.stringPropertyNames();
+    throwClientInfoIfClosed(names);
+    if (names.isEmpty()) {
+      return;
+    }
+    Map<String, ClientInfoStatus> failedProps = new HashMap<>();
+    for (String name : names) {
+      failedProps.put(name, REASON_UNKNOWN_PROPERTY);
+    }
+    raiseSetClientInfoException(failedProps);
+  }
+
+  private void throwClientInfoIfClosed(Set<String> names) throws SQLClientInfoException {
+    if (closed.get()) {
+      Map<String, ClientInfoStatus> failedProps = new HashMap<>();
+      for (String name : names) {
+        failedProps.put(name, REASON_UNKNOWN_PROPERTY);
+      }
+      throw new SQLClientInfoException(
+          "The connection is not opened.",
+          CONNECTION_CLOSED.getSqlState(),
+          CONNECTION_CLOSED.getMessageCode(),
+          failedProps);
+    }
+  }
+
+  private static void raiseSetClientInfoException(Map<String, ClientInfoStatus> failedProps)
+      throws SQLClientInfoException {
+    throw new SQLClientInfoException(
+        "The client property cannot be set by setClientInfo.",
+        INVALID_PARAMETER_VALUE.getSqlState(),
+        INVALID_PARAMETER_VALUE.getMessageCode(),
+        failedProps);
   }
 
   @Override
   public String getClientInfo(String name) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return null;
   }
 
   @Override
   public Properties getClientInfo() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return new Properties();
   }
 
   @Override
   public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
+    checkClosed();
     throw new NotImplementedException();
   }
 
   @Override
   public Struct createStruct(String typeName, Object[] attributes) throws SQLException {
-    throw new SQLFeatureNotSupportedException("createStruct not supported");
+    throw featureNotSupported("createStruct not supported");
   }
 
   @Override
@@ -569,31 +628,91 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    // TODO: [retries&timeouts epic] delegate to sf_core once connection network timeout APIs land;
+    // do not keep a JDBC-local cache here (legacy parity is out of scope for this PR).
   }
 
   @Override
   public int getNetworkTimeout() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    // TODO: [retries&timeouts epic] read from sf_core once connection network timeout APIs land.
+    return 0;
   }
 
   public void checkClosed() throws SQLException {
     if (isClosed()) {
-      throw new SQLException("Connection is closed");
+      throw new SQLException(
+          "Connection is closed",
+          CONNECTION_CLOSED.getSqlState(),
+          CONNECTION_CLOSED.getMessageCode());
     }
   }
 
   @Override
   public void uploadStream(String stageName, String destFileName, InputStream inputStream)
       throws SQLException {
-    throw new NotImplementedException();
+    uploadStream(stageName, destFileName, inputStream, UploadStreamConfig.builder().build());
   }
 
   @Override
   public void uploadStream(
       String stageName, String destFileName, InputStream inputStream, UploadStreamConfig config)
       throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    logger.info("uploadStream: entry");
+    try {
+      byte[] data;
+      try {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = inputStream.read(buf)) != -1) {
+          baos.write(buf, 0, n);
+        }
+        data = baos.toByteArray();
+      } catch (java.io.IOException e) {
+        throw new net.snowflake.client.api.exception.SnowflakeSQLException(
+            "Failed to read input stream: " + e.getMessage(), e);
+      }
+      String destPrefix = config != null ? config.getDestPrefix() : null;
+      boolean compressData = config == null || config.isCompressData();
+      String sql = buildPutSql(stageName, destFileName, destPrefix, compressData);
+      coreDriverApi.connectionUploadStream(connectionHandle, sql, data);
+    } finally {
+      logger.info("uploadStream: exit");
+    }
+  }
+
+  /**
+   * Synthesize a PUT SQL from the structured uploadStream parameters. The stage path is the user's
+   * stage reference with {@code destPrefix} appended (so the file lands at {@code
+   * <stage>/<prefix>/<destFile>}). The local file URI carries only the destination filename — its
+   * basename is what GS uses to identify the stage object. {@code OVERWRITE = TRUE} mirrors the
+   * reference JDBC contract that uploadStream always overwrites.
+   *
+   * <p>{@code compressData} maps to the server-side {@code AUTO_COMPRESS} clause rather than JDBC's
+   * historical client-side gzip: when true (default) the clause is omitted so GS auto-compresses
+   * and the object lands with a {@code .gz} suffix — functionally the same end state as the legacy
+   * driver.
+   */
+  static String buildPutSql(
+      String stageName, String destFileName, String destPrefix, boolean compressData) {
+    String stagePath = stageName;
+    if (destPrefix != null && !destPrefix.isEmpty()) {
+      String trimmed = stagePath.endsWith("/") ? stagePath : stagePath + "/";
+      stagePath = trimmed + destPrefix;
+    }
+    StringBuilder sql = new StringBuilder();
+    // PUT syntax does not support IDENTIFIER(?) or ? bindings for stage paths or file
+    // URIs; destFileName and stageName are caller-controlled values passed directly by
+    // the JDBC user.
+    sql.append("PUT 'file:///").append(destFileName).append("' ").append(stagePath);
+    if (!compressData) {
+      sql.append(" AUTO_COMPRESS = FALSE");
+    }
+    sql.append(" OVERWRITE = TRUE");
+    return sql.toString();
   }
 
   @Override
@@ -604,7 +723,19 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public InputStream downloadStream(
       String stageName, String sourceFileName, DownloadStreamConfig config) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    logger.info("downloadStream: entry");
+    try {
+      boolean decompress = config != null && config.isDecompress();
+      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1
+              .ConnectionDownloadStreamResponse
+          response =
+              coreDriverApi.connectionDownloadStream(
+                  connectionHandle, stageName, sourceFileName, decompress);
+      return new java.io.ByteArrayInputStream(response.getData().toByteArray());
+    } finally {
+      logger.info("downloadStream: exit");
+    }
   }
 
   @Override
@@ -651,7 +782,20 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   @Override
   public String[] getChildQueryIds(String queryID) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    QueryStatus status = getQueryStatus(queryID);
+    if (status.isStillRunning()) {
+      throw new SQLException(
+          "Status of query associated with resultSet is "
+              + status.getDescription()
+              + ". Results not generated.");
+    }
+    ExecuteQueryResponse result = coreDriverApi.connectionGetQueryResult(connectionHandle, queryID);
+    // A single-statement query has no children; return the query ID itself.
+    if (result.hasMulti() && result.getMulti().getQueryIdsCount() > 0) {
+      return result.getMulti().getQueryIdsList().toArray(new String[0]);
+    }
+    return new String[] {queryID};
   }
 
   @Override
@@ -664,7 +808,6 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 1);
   }
 
-  /** Issues a single {@code SELECT CURRENT_VERSION()} on first call per connection; cached. */
   @Override
   public String getDatabaseVersion() throws SQLException {
     checkClosed();
@@ -694,7 +837,6 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     }
   }
 
-  // The server returns e.g. "8.46.1 abcdef"; the build suffix is not part of the public version.
   static String stripVersionSuffix(String raw) {
     if (raw == null) {
       return null;
@@ -707,25 +849,24 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private static void validateStmtType(
       int resultSetType, int resultSetConcurrency, int resultSetHoldability)
       throws SQLFeatureNotSupportedException {
-    if (resultSetType != ResultSet.TYPE_FORWARD_ONLY) {
-      throw new SQLFeatureNotSupportedException(
-          String.format("ResultSet type %d is not supported.", resultSetType),
-          FEATURE_UNSUPPORTED.getSqlState(),
-          FEATURE_UNSUPPORTED.getMessageCode());
+    if (resultSetType != TYPE_FORWARD_ONLY) {
+      throw featureNotSupported(
+          String.format("ResultSet type %d is not supported.", resultSetType));
     }
 
-    if (resultSetConcurrency != ResultSet.CONCUR_READ_ONLY) {
-      throw new SQLFeatureNotSupportedException(
-          String.format("ResultSet concurrency %d is not supported.", resultSetConcurrency),
-          FEATURE_UNSUPPORTED.getSqlState(),
-          FEATURE_UNSUPPORTED.getMessageCode());
+    if (resultSetConcurrency != CONCUR_READ_ONLY) {
+      throw featureNotSupported(
+          String.format("ResultSet concurrency %d is not supported.", resultSetConcurrency));
     }
 
-    if (resultSetHoldability != ResultSet.CLOSE_CURSORS_AT_COMMIT) {
-      throw new SQLFeatureNotSupportedException(
-          String.format("ResultSet holdability %d is not supported.", resultSetHoldability),
-          FEATURE_UNSUPPORTED.getSqlState(),
-          FEATURE_UNSUPPORTED.getMessageCode());
+    if (resultSetHoldability != CLOSE_CURSORS_AT_COMMIT) {
+      throw featureNotSupported(
+          String.format("ResultSet holdability %d is not supported.", resultSetHoldability));
     }
+  }
+
+  private static SQLFeatureNotSupportedException featureNotSupported(String message) {
+    return new SQLFeatureNotSupportedException(
+        message, FEATURE_UNSUPPORTED.getSqlState(), FEATURE_UNSUPPORTED.getMessageCode());
   }
 }

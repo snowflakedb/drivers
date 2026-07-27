@@ -500,7 +500,6 @@ TEST_CASE_METHOD(ConnSchemaFixture,
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should use stage binding at exact threshold boundary", "[query][large_bindings]") {
-  SKIP_OLD_DRIVER("BD#78", "Old driver does the comparison with > instead of >=");
   // Given Snowflake client is logged in
 
   // And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -517,7 +516,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should use stage binding at exact threshold
   // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
   auto after = list_system_bind_file_count(conn);
   INFO("INSERT query_id: " << qid);
-  CHECK(after > before);
+  // At the exact boundary (20 bound cells == threshold) the new driver uses >= and takes the
+  // stage-binding path (bind file uploaded); the old driver uses > and stays on inline JSON (BD#78).
+  NEW_DRIVER_ONLY("BD#78") { CHECK(after > before); }
+  OLD_DRIVER_ONLY("BD#78") { CHECK(after == before); }
 
   // And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
   auto verify = conn.execute_fetch("SELECT id, name FROM " + table.name() + " WHERE id IN (0, 9) ORDER BY id");
@@ -529,4 +531,137 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should use stage binding at exact threshold
   check_id_name_row(verify, 9, "stage-9");
   ret = SQLFetch(verify.getHandle());
   CHECK(ret == SQL_NO_DATA);
+}
+
+// SNOW-3235553: SQL_ATTR_PARAM_OPERATION_PTR — parameter sets marked
+// SQL_PARAM_IGNORE are skipped during array execution and reported as
+// SQL_PARAM_UNUSED, while still counting toward SQL_ATTR_PARAMS_PROCESSED_PTR.
+TEST_CASE_METHOD(ConnSchemaFixture, "should skip SQL_PARAM_IGNORE sets during array execution",
+                 "[query][large_bindings][param_operation_ptr]") {
+  // Given Snowflake client is logged in
+  // And A temporary table with an id column exists
+  ScopedTable table(conn, "lb_param_ignore", "id BIGINT");
+
+  constexpr SQLULEN num_rows = 5;
+  SQLBIGINT ids[num_rows] = {10, 20, 30, 40, 50};
+  SQLLEN indicators[num_rows] = {0, 0, 0, 0, 0};
+  // Ignore the 2nd and 4th sets (20 and 40); 10/30/50 are inserted.
+  SQLUSMALLINT param_ops[num_rows] = {SQL_PARAM_PROCEED, SQL_PARAM_IGNORE, SQL_PARAM_PROCEED, SQL_PARAM_IGNORE,
+                                      SQL_PARAM_PROCEED};
+  // Pre-fill with a non-zero sentinel so an entry left unwritten (or set to
+  // SQL_PARAM_ERROR) is distinguishable from SQL_PARAM_SUCCESS (which is 0).
+  SQLUSMALLINT param_status[num_rows];
+  memset(param_status, 0xFF, sizeof(param_status));
+  SQLULEN params_processed = 0;
+
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, param_ops, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Bind with an explicit BufferLength (sizeof) so column-wise striding is
+  // unambiguous — this test targets SQL_PARAM_IGNORE semantics, not the
+  // BufferLength=0 fixed-size stride path (that is covered by SNOW-3720841).
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, ids, sizeof(SQLBIGINT),
+                         indicators);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When 5 sets {10, 20, 30, 40, 50} are inserted with the 2nd and 4th marked SQL_PARAM_IGNORE
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar(("INSERT INTO " + table.name() + " VALUES (?)").c_str()), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then SQL_ATTR_PARAMS_PROCESSED_PTR reports all 5 sets and the status array marks ignored sets SQL_PARAM_UNUSED
+  CHECK(params_processed == num_rows);
+  CHECK(param_status[0] == SQL_PARAM_SUCCESS);
+  CHECK(param_status[1] == SQL_PARAM_UNUSED);
+  CHECK(param_status[2] == SQL_PARAM_SUCCESS);
+  CHECK(param_status[3] == SQL_PARAM_UNUSED);
+  CHECK(param_status[4] == SQL_PARAM_SUCCESS);
+
+  // And Query "SELECT id FROM {table} ORDER BY id" is executed
+  auto verify = conn.execute_fetch("SELECT id FROM " + table.name() + " ORDER BY id");
+  // Then Result should contain only the proceeded rows [10, 30, 50]
+  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 10);
+  REQUIRE(SQLFetch(verify.getHandle()) == SQL_SUCCESS);
+  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 30);
+  REQUIRE(SQLFetch(verify.getHandle()) == SQL_SUCCESS);
+  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 50);
+  CHECK(SQLFetch(verify.getHandle()) == SQL_NO_DATA);
+}
+
+// SNOW-3235553: SQL_PARAM_IGNORE must be honored during array execution even
+// when the application supplies an explicit SQL_ATTR_APP_PARAM_DESC. The binding
+// path reads the *effective* APD, so PARAM_OPERATION_PTR must land there — before
+// the effective-APD routing fix it was written to the inactive implicit APD, so
+// the ignore array was dropped and every set (including 20/40) was inserted.
+TEST_CASE_METHOD(ConnSchemaFixture, "should skip SQL_PARAM_IGNORE sets with an explicit APP_PARAM_DESC",
+                 "[query][large_bindings][param_operation_ptr]") {
+  // Given Snowflake client is logged in
+  // And A temporary table with an id column exists
+  ScopedTable table(conn, "lb_param_ignore_explicit", "id BIGINT");
+
+  // And An explicit SQL_ATTR_APP_PARAM_DESC is assigned to the statement
+  auto stmt = conn.createStatement();
+  // RAII: the descriptor is freed on scope exit even if an assertion below
+  // throws; per the ODBC spec, freeing an explicit descriptor reverts the
+  // statement to its implicit APD, so no manual reset/free is needed.
+  HandleWrapper explicit_apd(conn.handleWrapper().getHandle(), SQL_HANDLE_DESC);
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, explicit_apd.getHandle(), 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  constexpr SQLULEN num_rows = 5;
+  SQLBIGINT ids[num_rows] = {10, 20, 30, 40, 50};
+  SQLLEN indicators[num_rows] = {0, 0, 0, 0, 0};
+  // Ignore the 2nd and 4th sets (20 and 40); 10/30/50 are inserted.
+  SQLUSMALLINT param_ops[num_rows] = {SQL_PARAM_PROCEED, SQL_PARAM_IGNORE, SQL_PARAM_PROCEED, SQL_PARAM_IGNORE,
+                                      SQL_PARAM_PROCEED};
+  // Pre-fill with a non-zero sentinel so an entry left unwritten (or set to
+  // SQL_PARAM_ERROR) is distinguishable from SQL_PARAM_SUCCESS (which is 0).
+  SQLUSMALLINT param_status[num_rows];
+  memset(param_status, 0xFF, sizeof(param_status));
+  SQLULEN params_processed = 0;
+
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_OPERATION_PTR, param_ops, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, ids, sizeof(SQLBIGINT),
+                         indicators);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When 5 sets {10, 20, 30, 40, 50} are inserted with the 2nd and 4th marked SQL_PARAM_IGNORE
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar(("INSERT INTO " + table.name() + " VALUES (?)").c_str()), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then SQL_ATTR_PARAMS_PROCESSED_PTR reports all 5 sets and the status array marks ignored sets SQL_PARAM_UNUSED
+  CHECK(params_processed == num_rows);
+  CHECK(param_status[0] == SQL_PARAM_SUCCESS);
+  CHECK(param_status[1] == SQL_PARAM_UNUSED);
+  CHECK(param_status[2] == SQL_PARAM_SUCCESS);
+  CHECK(param_status[3] == SQL_PARAM_UNUSED);
+  CHECK(param_status[4] == SQL_PARAM_SUCCESS);
+
+  // And Query "SELECT id FROM {table} ORDER BY id" is executed
+  auto verify = conn.execute_fetch("SELECT id FROM " + table.name() + " ORDER BY id");
+  // Then Result should contain only the proceeded rows [10, 30, 50]
+  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 10);
+  REQUIRE(SQLFetch(verify.getHandle()) == SQL_SUCCESS);
+  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 30);
+  REQUIRE(SQLFetch(verify.getHandle()) == SQL_SUCCESS);
+  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 50);
+  CHECK(SQLFetch(verify.getHandle()) == SQL_NO_DATA);
 }

@@ -153,6 +153,10 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
     return valueVector.isNull(index);
   }
 
+  protected boolean shouldTreatDecimalAsInt() {
+    return context == null || context.isTreatDecimalAsInt();
+  }
+
   @Override
   public abstract Object toObject(int index) throws SFException;
 

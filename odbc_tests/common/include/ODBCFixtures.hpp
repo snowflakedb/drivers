@@ -50,6 +50,7 @@ class EnvFixture {
   [[nodiscard]] SQLHENV env_handle() const { return env_wrapper->getHandle(); }
   [[nodiscard]] std::string dsn_name() const { return config.value().dsn_name(); }
   [[nodiscard]] std::string connection_string() const { return config.value().connection_string(); }
+  [[nodiscard]] std::string expected_user_name() const { return config.value().user_name(); }
 
  protected:
   [[nodiscard]] ConnectionHandleWrapper create_connection_handle() { return env_wrapper->createConnectionHandle(); }
