@@ -2180,19 +2180,12 @@ where
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
         }
+        // Do not embed the raw body in the error message, as this JSON may contain sensitive data.
         let body = response_text.unwrap_or("Unknown error".to_string());
-        let truncated = if body.len() > 1024 {
-            let mut end = 1024;
-            while !body.is_char_boundary(end) {
-                end -= 1;
-            }
-            format!("{}… ({} bytes total)", &body[..end], body.len())
-        } else {
-            body
-        };
+        let message = format!("Unexpected response, body length {}.", body.len());
         return ResponseStatusSnafu {
             status: response_status,
-            message: truncated,
+            message,
         }
         .fail();
     }
@@ -3534,6 +3527,48 @@ mod tests {
         assert!(
             matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
             "expected SessionExpired, got {result:?}"
+        );
+    }
+
+    /// Non-2xx bodies can carry tokens in JSON `data`; the error Display must
+    /// not embed raw body content — only status and a generic body-length hint.
+    #[tokio::test]
+    async fn read_response_json_error_omits_raw_body_from_display() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let secret_token = "super-secret-token-12345";
+        let body = format!(
+            r#"{{"success":false,"code":"390100","message":"Auth failed","data":{{"token":"{secret_token}"}}}}"#
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/login"))
+            .respond_with(ResponseTemplate::new(403).set_body_string(body.clone()))
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .post(format!("{}/login", server.uri()))
+            .send()
+            .await
+            .expect("mock request sends");
+
+        let err = read_response_json::<serde_json::Value>(response)
+            .await
+            .expect_err("non-2xx should fail");
+        let display = err.to_string();
+        assert!(
+            display.contains("403") && display.contains(&format!("body length {}.", body.len())),
+            "expected status and body length in display, got: {display}"
+        );
+        assert!(
+            !display.contains(secret_token),
+            "raw body must not appear in error display, got: {display}"
+        );
+        assert!(
+            !display.contains("390100") && !display.contains("Auth failed"),
+            "server error payload must not appear in display, got: {display}"
         );
     }
 }
