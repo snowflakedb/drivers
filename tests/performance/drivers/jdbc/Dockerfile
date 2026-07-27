@@ -27,12 +27,12 @@ ENV JENKINS_HOME=${JENKINS_HOME}
 
 RUN cd /workdir/jdbc && \
     ./gradlew --no-daemon --console=plain shadowJar && \
-    cp build/libs/snowflake-jdbc-v2-standalone-*.jar /workdir/snowflake-jdbc-v2-standalone.jar
+    cp build/libs/snowflake-jdbc-native-all-*.jar /workdir/snowflake-jdbc-native-all.jar
 
 # Compile the perf app against the fat jar (which also supplies the shaded org.json it uses).
 COPY tests/performance/drivers/jdbc/app/ /workdir/app/
 RUN mkdir -p /workdir/app-classes && \
-    javac -cp "/workdir/snowflake-jdbc-v2-standalone.jar" \
+    javac -cp "/workdir/snowflake-jdbc-native-all.jar" \
       -d /workdir/app-classes \
       $(find /workdir/app/src -name '*.java')
 
@@ -56,7 +56,7 @@ RUN REPO=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory
     curl -fsSL -o /workdir/snowflake-jdbc-old.jar "${REPO}/${VERSION}/snowflake-jdbc-${VERSION}.jar"
 
 RUN mkdir -p /workdir/shaded-json && cd /workdir/shaded-json && \
-    unzip -q /workdir/snowflake-jdbc-v2-standalone.jar \
+    unzip -q /workdir/snowflake-jdbc-native-all.jar \
       'net/snowflake/client/jdbc/internal/org/json/*' && \
     jar --create --file /workdir/shaded-json.jar -C /workdir/shaded-json .
 
@@ -69,12 +69,12 @@ WORKDIR /opt/jdbc
 
 RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
 
-COPY --from=jar_builder /workdir/snowflake-jdbc-v2-standalone.jar /opt/jdbc/snowflake-jdbc-v2-standalone.jar
+COPY --from=jar_builder /workdir/snowflake-jdbc-native-all.jar /opt/jdbc/snowflake-jdbc-native-all.jar
 COPY --from=jar_builder /workdir/app-classes/ /opt/jdbc/app/
 
 # Arrow requires nio access and native access on modern JDKs (mirrors the JDBC test task).
 ENV JDBC_JAVA_OPTS="--add-opens=java.base/java.nio=ALL-UNNAMED --enable-native-access=ALL-UNNAMED"
-ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-v2-standalone.jar"
+ENV JDBC_CLASSPATH="/opt/jdbc/app:/opt/jdbc/snowflake-jdbc-native-all.jar"
 
 # ============================================================================
 # Universal driver image
