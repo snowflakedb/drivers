@@ -2707,7 +2707,7 @@ class TestCursorDescribeInternal:
 
     Focus: properties that only a live server can confirm — ``vector_dimension``
     propagation end-to-end, ``display_size``/``internal_size`` proto-field mapping
-    (BD#43), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
+    (BD#46), ``_to_result_metadata_v1()`` round-trip, and cursor-state side effects.
     """
 
     def test_returns_result_metadata_v2(self, cursor):
@@ -2772,9 +2772,9 @@ class TestCursorDescribeInternal:
         assert result[0].vector_dimension == 3
 
     def test_display_size_and_internal_size_for_varchar(self, cursor):
-        """display_size carries char length; internal_size carries byte length (BD#43).
+        """display_size carries char length; internal_size carries byte length (BD#46).
 
-        Also confirms BD#43: the V1 describe() path returns display_size=None while
+        Also confirms BD#46: the V1 describe() path returns display_size=None while
         the V2 _describe_internal path returns display_size=100 for the same column.
         """
         sql = "SELECT 'x'::VARCHAR(100) AS s"
@@ -2786,7 +2786,7 @@ class TestCursorDescribeInternal:
         assert v2_result[0].internal_size is not None
         assert v2_result[0].internal_size >= 100  # byte length ≥ char length
 
-        # BD#43: V1 describe() always returns display_size=None.
+        # BD#46: V1 describe() always returns display_size=None.
         assert v1_result[0].display_size is None
 
     def test_to_v1_round_trip(self, cursor):

@@ -149,7 +149,7 @@ jobs:
         id: run_odbc_ref_tests_linux
         run: |
           REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
-          ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running" $REPEAT_ARGS
+          ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running|requires_no_mfa" $REPEAT_ARGS
         env:
           DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -174,7 +174,7 @@ jobs:
         id: run_odbc_ref_tests_macos
         run: |
           REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
-          ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running" $REPEAT_ARGS
+          ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running|requires_no_mfa" $REPEAT_ARGS
         env:
           DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -201,7 +201,7 @@ jobs:
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
           $env:DRIVER_TYPE = "OLD"
           $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
-          .\scripts\odbc\run_tests_windows.ps1 -LE "flaky|long_running" @repeatArgs
+          .\scripts\odbc\run_tests_windows.ps1 -LE "flaky|long_running|requires_no_mfa" @repeatArgs
 
       - name: Run flaky Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'

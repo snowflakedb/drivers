@@ -349,7 +349,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE after DML",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQLNumResultCols after SQL_CLOSE on prepared statement",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1, 2, 3"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -359,21 +358,29 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQLNumResultCols after SQL
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLSMALLINT col_count = 0;
+  // BD#20: SQL_CLOSE transitions a prepared statement back to the Prepared state (S2/S3), where the
+  // column metadata is still defined per the ODBC spec. The new driver reports the correct count; the
+  // old driver drops prepared-statement metadata across SQL_CLOSE and reports 0.
+  SQLSMALLINT col_count = -1;
   ret = SQLNumResultCols(stmt_handle(), &col_count);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(col_count == 3);
+  NEW_DRIVER_ONLY("BD#20") { CHECK(col_count == 3); }
+  OLD_DRIVER_ONLY("BD#20") { CHECK(col_count == 0); }
 
-  ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  // The statement is still prepared, so it can be re-executed and fetched. Asserted on the new driver;
+  // the old driver's re-execution after SQL_CLOSE is outside BD#20's reviewed scope (the column count).
+  NEW_DRIVER_ONLY("BD#20") {
+    ret = SQLExecute(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
 
-  SQLINTEGER val = 0;
-  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(val == 1);
+    SQLINTEGER val = 0;
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(val == 1);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE from Done state",

@@ -16,6 +16,7 @@ pub mod path_resolver;
 pub mod resolver;
 pub mod rest_parameters;
 pub mod retry;
+pub use retry::TimeoutConfig;
 pub mod settings;
 pub mod toml_loader;
 
@@ -101,7 +102,7 @@ pub enum ConfigError {
             .map(|i| format!("{}: {}", i.parameter, i.message))
             .unwrap_or_default()
     ))]
-    ValidationFailed {
+    Validation {
         issues: Vec<crate::config::connection_config::ValidationIssue>,
         #[snafu(implicit)]
         location: Location,

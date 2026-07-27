@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -19,10 +20,12 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class NumberTests extends SnowflakeIntegrationTestBase {
+public class NumberTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final String NUMBER_TYPE = "NUMBER";
   private static final int LARGE_RESULT_SET_SIZE = 30_000;
   private static final BigDecimal DECIMAL_INCREMENT = new BigDecimal("0.12345");
@@ -30,6 +33,32 @@ public class NumberTests extends SnowflakeIntegrationTestBase {
   private static final String MIN_38_DIGIT = "-99999999999999999999999999999999999999";
   private static final BigDecimal LONG_MIN_DECIMAL = BigDecimal.valueOf(Long.MIN_VALUE);
   private static final BigDecimal LONG_MAX_DECIMAL = BigDecimal.valueOf(Long.MAX_VALUE);
+  private static final ColumnExpectation NUMBER_SCALE_ZERO =
+      new ColumnExpectation(
+          null,
+          Types.BIGINT,
+          "NUMBER",
+          Long.class.getName(),
+          10,
+          0,
+          11,
+          true,
+          false,
+          columnNoNulls,
+          null);
+  private static final ColumnExpectation NUMBER_SCALE_TWO =
+      new ColumnExpectation(
+          null,
+          Types.DECIMAL,
+          "NUMBER",
+          BigDecimal.class.getName(),
+          10,
+          2,
+          12,
+          true,
+          false,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastNumberValuesToAppropriateTypeForNumberAndSynonyms() throws Exception {
@@ -56,6 +85,17 @@ public class NumberTests extends SnowflakeIntegrationTestBase {
                   new BigDecimal("123"),
                   new BigDecimal("0.00"),
                   new BigDecimal("123.45")));
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  NUMBER_SCALE_ZERO.withColumnName("0::NUMBER(10,0)"),
+                  NUMBER_SCALE_ZERO.withColumnName("123::NUMBER(10,0)"),
+                  NUMBER_SCALE_TWO.withColumnName("0.00::NUMBER(10,2)"),
+                  NUMBER_SCALE_TWO.withColumnName("123.45::NUMBER(10,2)")));
         });
   }
 

@@ -17,18 +17,18 @@ class SessionParametersTests {
 
   @Test
   void shouldForwardUnrecognizedConnectionOptionAsSessionParameter() throws Exception {
-    // Given Snowflake client is logged in with connection option QUERY_TAG set to
-    // "session_param_e2e_test"
+    // Given Snowflake client is logged in with connection option TIMEZONE set to
+    // "Europe/Warsaw"
     Properties props = withDefaultAuth(loadDefaultConnectionProperties());
-    props.setProperty("QUERY_TAG", "session_param_e2e_test");
+    props.setProperty("TIMEZONE", "Europe/Warsaw");
     String url = buildJdbcUrl(props);
     try (Connection conn = DriverManager.getConnection(url, props);
-        // When Query "SELECT CURRENT_QUERY_TAG()" is executed
+        // When Query "SHOW PARAMETERS LIKE 'TIMEZONE'" is executed
         Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT CURRENT_QUERY_TAG()")) {
-      // Then the result should contain value "session_param_e2e_test"
+        ResultSet rs = stmt.executeQuery("SHOW PARAMETERS LIKE 'TIMEZONE'")) {
+      // Then the session parameter value should be "Europe/Warsaw"
       assertTrue(rs.next(), "Expected one row");
-      assertEquals("session_param_e2e_test", rs.getString(1));
+      assertEquals("Europe/Warsaw", rs.getString("value"));
     }
   }
 

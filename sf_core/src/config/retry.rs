@@ -1,6 +1,8 @@
+use super::logout::LogoutConfig;
 use super::param_registry::{
-    DEFAULT_PUT_GET_MAX_ATTEMPTS, DEFAULT_RETRY_BACKOFF_BASE_MS, DEFAULT_RETRY_BACKOFF_CAP_MS,
-    DEFAULT_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_MAX_ATTEMPTS, param_names,
+    DEFAULT_LOGIN_TIMEOUT_SECS, DEFAULT_PUT_GET_MAX_ATTEMPTS, DEFAULT_QUERY_TIMEOUT_SECS,
+    DEFAULT_RETRY_BACKOFF_BASE_MS, DEFAULT_RETRY_BACKOFF_CAP_MS, DEFAULT_RETRY_BACKOFF_FACTOR,
+    DEFAULT_RETRY_MAX_ATTEMPTS, param_names,
 };
 use super::param_store::ParamStore;
 use std::collections::BTreeSet;
@@ -19,11 +21,31 @@ pub struct RetryPolicy {
     pub max_attempts: u32,
     /// Configuration for exponential backoff between attempts.
     pub backoff: BackoffConfig,
-    /// Maximum total duration spent on the operation before we stop retrying.
-    pub max_elapsed: Duration,
+    /// Optional total-duration budget enforced within the retry loop itself.
+    ///
+    /// When `None`, the retry loop retries up to `max_attempts` with no
+    /// internal deadline — the caller is expected to enforce a wall-clock
+    /// budget via `tokio::time::timeout` (operation-level timeout). This is the
+    /// `login`/`query` path, whose budgets span multiple HTTP requests.
+    ///
+    /// When `Some`, the retry loop checks the budget at the top of each
+    /// iteration and applies `min(per_request_timeout, remaining_budget)` as
+    /// the per-attempt timeout. Used by general HTTP ops (`request_timeout` via
+    /// [`http`](Self::http)), logout (`logout_total_timeout`), and PUT/GET cloud
+    /// transfer (self-contained 600s budget).
+    ///
+    /// `Some(Duration::ZERO)` means the budget is already exhausted on the first
+    /// iteration, so the loop returns `DeadlineExceeded` immediately without
+    /// issuing a request. The constructors never produce this: a configured
+    /// timeout of `0` is interpreted as "no timeout" (`None`) when read from the
+    /// [`ParamStore`], so `Some(0)` can only arise from a hand-built policy.
+    pub max_elapsed: Option<Duration>,
     /// Optional per-request socket timeout. If Some, each HTTP request gets
-    /// timeout = min(this, remaining_budget). If None, each request gets the
-    /// remaining budget as its timeout (so max_elapsed is still enforced).
+    /// this timeout (clamped to remaining budget when `max_elapsed` is also
+    /// set). If None and `max_elapsed` is also None, no per-attempt timeout
+    /// is applied — the outer operation timeout is the only guard.
+    /// Note: `cloud_http` enforces a `REQUEST_TIMEOUT_SECS` fallback in the
+    /// `(None, None)` case regardless.
     pub per_request_timeout: Option<Duration>,
     /// Additional HTTP status codes to treat as retryable beyond the built-in set
     /// (408, 429, 307, 308, and 5xx). Cloud-specific policies extend this set
@@ -81,7 +103,7 @@ impl Default for RetryPolicy {
             },
             max_attempts: 6,
             backoff: default_backoff(),
-            max_elapsed: Duration::from_secs(120),
+            max_elapsed: None,
             per_request_timeout: None,
             extra_retryable_statuses: BTreeSet::new(),
         }
@@ -142,14 +164,14 @@ fn backoff_from_params(params: &ParamStore) -> BackoffConfig {
 }
 
 impl RetryPolicy {
-    /// Builds the retry policy for general HTTP calls (login, query, logout, etc.).
+    /// Shared builder for the operation-level HTTP policies.
     ///
-    /// Reads `retry_max_attempts` from the [`ParamStore`] (falling back to
-    /// [`DEFAULT_RETRY_MAX_ATTEMPTS`]), the shared `retry_backoff_*` curve via
-    /// [`backoff_from_params`], and `retry_extra_status_codes` for any
-    /// user-configured extra retryable statuses; remaining fields stay at their
-    /// defaults.
-    pub fn http(params: &ParamStore) -> Self {
+    /// Reads the common retry knobs — `retry_max_attempts`, the `retry_backoff_*`
+    /// curve, `retry_extra_status_codes`, and `retry_timeout` (as
+    /// `per_request_timeout`) — and applies the caller-supplied `max_elapsed`.
+    /// The four public constructors ([`http`](Self::http), [`login`](Self::login),
+    /// [`query`](Self::query), [`logout`](Self::logout)) differ only in that budget.
+    fn operation(params: &ParamStore, max_elapsed: Option<Duration>) -> Self {
         let max_attempts = params
             .get_int(param_names::RETRY_MAX_ATTEMPTS)
             .filter(|v| *v > 0 && *v <= u32::MAX as i64)
@@ -159,9 +181,66 @@ impl RetryPolicy {
         Self {
             max_attempts,
             backoff: backoff_from_params(params),
+            max_elapsed,
+            per_request_timeout: read_optional_duration_secs(params, param_names::RETRY_TIMEOUT),
             extra_retryable_statuses: parse_extra_statuses(params),
             ..Self::default()
         }
+    }
+
+    /// Retry policy for general HTTP operations — token refresh, `SHOW`,
+    /// result-chunk fetch, query-status polling, and other non-login, non-query
+    /// REST calls.
+    ///
+    /// `max_elapsed` is set to `request_timeout` (0/absent ⇒ `None`), giving the
+    /// retry loop a self-contained wall-clock budget per request. Login and query
+    /// deliberately use their own constructors so they do NOT inherit this budget
+    /// (their operation-level budgets span multiple HTTP requests and are enforced
+    /// by outer `tokio::time::timeout` wraps instead).
+    ///
+    /// Reads `retry_max_attempts`, `retry_backoff_*`, `retry_extra_status_codes`,
+    /// `retry_timeout` (as `per_request_timeout`), and `request_timeout` (as
+    /// `max_elapsed`) from the [`ParamStore`].
+    pub fn http(params: &ParamStore) -> Self {
+        Self::operation(
+            params,
+            read_optional_duration_secs(params, param_names::REQUEST_TIMEOUT),
+        )
+    }
+
+    /// Retry policy for the login operation.
+    ///
+    /// `max_elapsed` is `None`: login is bounded by an outer
+    /// `tokio::time::timeout(login_timeout)` that spans the whole login flow
+    /// (which may issue several HTTP requests). A per-request `max_elapsed`
+    /// cannot express that, and would also wrongly inherit `request_timeout`.
+    /// Same knobs as [`http`](Self::http) otherwise.
+    pub fn login(params: &ParamStore) -> Self {
+        Self::operation(params, None)
+    }
+
+    /// Retry policy for query execution.
+    ///
+    /// `max_elapsed` is `None` for the same reason as [`login`](Self::login): the
+    /// query poll loop is bounded by an outer `tokio::time::timeout_at(query_deadline)`
+    /// spanning submit + status polls + token refreshes. Same knobs as
+    /// [`http`](Self::http) otherwise.
+    pub fn query(params: &ParamStore) -> Self {
+        Self::operation(params, None)
+    }
+
+    /// Retry policy for the logout operation.
+    ///
+    /// Starts from the common knobs but overrides the budget with the validated
+    /// [`LogoutConfig`] values: `logout_total_timeout` as `max_elapsed`, its own
+    /// per-request timeout, and (optionally) attempt count.
+    pub fn logout(params: &ParamStore, config: &LogoutConfig) -> Self {
+        let mut policy = Self::operation(params, Some(config.logout_total_timeout));
+        if let Some(max_attempts) = config.max_attempts {
+            policy.max_attempts = max_attempts;
+        }
+        policy.per_request_timeout = config.logout_request_timeout;
+        policy
     }
 
     /// Builds the base put/get retry policy from connection parameters.
@@ -185,7 +264,7 @@ impl RetryPolicy {
         Self {
             max_attempts,
             backoff: backoff_from_params(params),
-            max_elapsed: Duration::from_secs(600),
+            max_elapsed: Some(Duration::from_secs(600)),
             extra_retryable_statuses: parse_extra_statuses(params),
             ..Self::default()
         }
@@ -217,6 +296,80 @@ fn parse_extra_statuses(params: &ParamStore) -> BTreeSet<u16> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ── Timeout configuration helpers ──────────────────────────────────────
+
+/// Read an optional positive-seconds duration from the [`ParamStore`].
+///
+/// Returns `None` when absent, zero, or negative — zero semantically means
+/// "no timeout" throughout the timeout configuration surface.
+fn read_optional_duration_secs(
+    params: &ParamStore,
+    key: super::param_registry::ParamKey,
+) -> Option<Duration> {
+    params
+        .get_int(key)
+        .filter(|v| *v > 0)
+        .map(|v| Duration::from_secs(v as u64))
+}
+
+/// Resolved operation-level timeout configuration.
+///
+/// Built from the `ParamStore` once and carried through the connection
+/// lifetime so each operation site can apply the right wall-clock budget
+/// via `tokio::time::timeout`.
+#[derive(Clone, Debug)]
+pub struct TimeoutConfig {
+    /// Wall-clock budget for the whole login operation, including every auth
+    /// request and retry. The timer starts when login begins and ends when login
+    /// succeeds or the budget elapses (enforced by an outer `tokio::time::timeout`
+    /// wrapping the login future). `None` means no timeout; a configured value of
+    /// `0` is read as `None`.
+    pub login_timeout: Option<Duration>,
+    /// Wall-clock budget for the whole query execution, spanning the initial
+    /// submit plus the status-poll / token-refresh loop. The timer starts when
+    /// execution begins and ends when the query returns or the budget elapses
+    /// (enforced by `tokio::time::timeout_at` around the poll loop). `None` means
+    /// no timeout; a configured value of `0` is read as `None`. Defaults to no
+    /// timeout, matching the legacy drivers — queries can legitimately run for
+    /// hours, so any finite default risks breaking existing clients.
+    pub query_timeout: Option<Duration>,
+    /// TCP connect timeout for the HTTP client. `None` means the system default.
+    pub connect_timeout: Option<Duration>,
+}
+
+impl TimeoutConfig {
+    /// Resolve the timeout configuration from connection parameters.
+    ///
+    /// Each field interprets a configured `0` (or an absent parameter) as
+    /// "no timeout" (`None`) via [`read_optional_duration_secs`]. Note that
+    /// `request_timeout` is not here — it is a retry-loop budget consumed as
+    /// [`RetryPolicy::http`]'s `max_elapsed`, not an outer-wrap operation timeout.
+    pub fn from_params(params: &ParamStore) -> Self {
+        Self {
+            login_timeout: read_optional_duration_secs(params, param_names::LOGIN_TIMEOUT),
+            query_timeout: read_optional_duration_secs(params, param_names::QUERY_TIMEOUT),
+            connect_timeout: read_optional_duration_secs(params, param_names::CONNECT_TIMEOUT),
+        }
+    }
+}
+
+impl Default for TimeoutConfig {
+    /// Defaults used when no `ParamStore` is available — chiefly tests, and the
+    /// pre-connect state of the `Connection` before [`from_params`](Self::from_params)
+    /// resolves the configured values.
+    fn default() -> Self {
+        Self {
+            login_timeout: Some(Duration::from_secs(DEFAULT_LOGIN_TIMEOUT_SECS)),
+            query_timeout: if DEFAULT_QUERY_TIMEOUT_SECS == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(DEFAULT_QUERY_TIMEOUT_SECS))
+            },
+            connect_timeout: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -294,8 +447,6 @@ mod tests {
 
     #[test]
     fn http_and_put_get_derive_from_the_common_backoff() {
-        // Empty params: both pipelines share the common default curve and
-        // differ only in their total budget.
         let http = RetryPolicy::http(&ParamStore::new());
         let put_get = RetryPolicy::put_get(&ParamStore::new());
         for b in [&http.backoff, &put_get.backoff] {
@@ -304,8 +455,10 @@ mod tests {
             assert_eq!(b.factor, 2.0);
             assert!(matches!(b.jitter, Jitter::Decorrelated));
         }
-        assert_eq!(http.max_elapsed, Duration::from_secs(120));
-        assert_eq!(put_get.max_elapsed, Duration::from_secs(600));
+        // http() has no internal deadline when request_timeout is unset (as here).
+        assert_eq!(http.max_elapsed, None);
+        // put_get() keeps a self-contained 600s budget for cloud transfer modules.
+        assert_eq!(put_get.max_elapsed, Some(Duration::from_secs(600)));
 
         // A configured override (single shared param set) reaches both.
         let store = params(&[(
@@ -351,9 +504,7 @@ mod tests {
     fn put_get_reads_extra_status_codes() {
         let policy = RetryPolicy::put_get(&store_with_status_codes("404,425"));
         assert_eq!(policy.extra_retryable_statuses, status_set(&[404, 425]));
-        // put_get keeps its larger total budget; the backoff shape is covered
-        // by `http_and_put_get_derive_from_the_common_backoff`.
-        assert_eq!(policy.max_elapsed, Duration::from_secs(600));
+        assert_eq!(policy.max_elapsed, Some(Duration::from_secs(600)));
     }
 
     #[test]
@@ -367,5 +518,97 @@ mod tests {
         // Empty tokens, garbage, out-of-range (<100 and >599), and overflow are dropped.
         let policy = RetryPolicy::http(&store_with_status_codes("404,abc,,600,99,700000"));
         assert_eq!(policy.extra_retryable_statuses, status_set(&[404]));
+    }
+
+    #[test]
+    fn timeout_config_zero_means_no_timeout() {
+        let store = params(&[
+            (param_names::LOGIN_TIMEOUT.as_str(), Setting::Int(0)),
+            (param_names::QUERY_TIMEOUT.as_str(), Setting::Int(0)),
+        ]);
+        let tc = TimeoutConfig::from_params(&store);
+        assert_eq!(tc.login_timeout, None);
+        assert_eq!(tc.query_timeout, None);
+    }
+
+    #[test]
+    fn http_reads_retry_timeout_as_per_request_timeout() {
+        let store = params(&[(param_names::RETRY_TIMEOUT.as_str(), Setting::Int(30))]);
+        let policy = RetryPolicy::http(&store);
+        assert_eq!(policy.per_request_timeout, Some(Duration::from_secs(30)));
+
+        // Zero means no per-request timeout.
+        let store = params(&[(param_names::RETRY_TIMEOUT.as_str(), Setting::Int(0))]);
+        let policy = RetryPolicy::http(&store);
+        assert_eq!(policy.per_request_timeout, None);
+    }
+
+    #[test]
+    fn timeout_config_from_params_reads_all_timeouts() {
+        let store = params(&[
+            (param_names::LOGIN_TIMEOUT.as_str(), Setting::Int(60)),
+            (param_names::QUERY_TIMEOUT.as_str(), Setting::Int(300)),
+            (param_names::CONNECT_TIMEOUT.as_str(), Setting::Int(10)),
+        ]);
+        let tc = TimeoutConfig::from_params(&store);
+        assert_eq!(tc.login_timeout, Some(Duration::from_secs(60)));
+        assert_eq!(tc.query_timeout, Some(Duration::from_secs(300)));
+        assert_eq!(tc.connect_timeout, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn http_reads_request_timeout_as_max_elapsed() {
+        let store = params(&[(param_names::REQUEST_TIMEOUT.as_str(), Setting::Int(90))]);
+        assert_eq!(
+            RetryPolicy::http(&store).max_elapsed,
+            Some(Duration::from_secs(90))
+        );
+
+        // Zero (and absent) means no internal deadline.
+        let zero = params(&[(param_names::REQUEST_TIMEOUT.as_str(), Setting::Int(0))]);
+        assert_eq!(RetryPolicy::http(&zero).max_elapsed, None);
+        assert_eq!(RetryPolicy::http(&ParamStore::new()).max_elapsed, None);
+    }
+
+    #[test]
+    fn login_and_query_opt_out_of_request_timeout() {
+        // Even when request_timeout is set, login/query keep max_elapsed None:
+        // their operation budget is owned by an outer tokio::time::timeout wrap.
+        let store = params(&[
+            (param_names::REQUEST_TIMEOUT.as_str(), Setting::Int(90)),
+            (param_names::RETRY_TIMEOUT.as_str(), Setting::Int(15)),
+        ]);
+        for policy in [RetryPolicy::login(&store), RetryPolicy::query(&store)] {
+            assert_eq!(policy.max_elapsed, None);
+            // Still read the shared knobs (retry_timeout -> per_request_timeout).
+            assert_eq!(policy.per_request_timeout, Some(Duration::from_secs(15)));
+        }
+    }
+
+    #[test]
+    fn logout_uses_config_budget() {
+        let config = LogoutConfig {
+            logout_total_timeout: Duration::from_secs(45),
+            logout_request_timeout: Some(Duration::from_secs(9)),
+            max_attempts: Some(3),
+            ..LogoutConfig::default()
+        };
+        let policy = RetryPolicy::logout(&ParamStore::new(), &config);
+        assert_eq!(policy.max_elapsed, Some(Duration::from_secs(45)));
+        assert_eq!(policy.per_request_timeout, Some(Duration::from_secs(9)));
+        assert_eq!(policy.max_attempts, 3);
+    }
+
+    #[test]
+    fn logout_without_max_attempts_keeps_retry_default() {
+        let config = LogoutConfig {
+            logout_total_timeout: Duration::from_secs(15),
+            logout_request_timeout: None,
+            max_attempts: None,
+            ..LogoutConfig::default()
+        };
+        let policy = RetryPolicy::logout(&ParamStore::new(), &config);
+        assert_eq!(policy.max_attempts, DEFAULT_RETRY_MAX_ATTEMPTS);
+        assert_eq!(policy.per_request_timeout, None);
     }
 }

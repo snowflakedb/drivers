@@ -1623,6 +1623,676 @@ pub fn procedures<E: OdbcEncoding>(
 }
 
 // ============================================================================
+// SQLProcedureColumns — information_schema.procedures + signature parsing
+// ============================================================================
+
+// ODBC `COLUMN_TYPE` (pseudo-column kind) values from the SQLProcedureColumns
+// spec. `SQL_PARAM_INPUT` (1) — Snowflake procedures take only IN parameters;
+// `SQL_RESULT_COL` (3) — a column of a table-valued return; `SQL_RETURN_VALUE`
+// (5) — the scalar return value.
+const SQL_PARAM_INPUT: i16 = 1;
+const SQL_RESULT_COL: i16 = 3;
+const SQL_RETURN_VALUE: i16 = 5;
+// `IS RESULT SET COLUMN` (driver-specific col 20) carries ODBC SQL_TRUE/FALSE.
+const SQL_TRUE: i16 = 1;
+const SQL_FALSE: i16 = 0;
+// `NULLABLE` (col 12): Snowflake procedure parameters/results are always
+// nullable (ODBC `SQL_NULLABLE`).
+const SQL_NULLABLE: i16 = 1;
+
+/// Default scale Snowflake applies to TIME/TIMESTAMP* when the type string omits
+/// it (mirrors the reference driver's `TIMESTAMP_SCALE_DEFAULT`).
+const SNOWFLAKE_DEFAULT_FRACTIONAL_SCALE: i32 = 9;
+/// Default precision Snowflake applies to NUMBER/DECIMAL when omitted (mirrors
+/// the reference driver's `NUMBER_PRECISION_DEFAULT`).
+const SNOWFLAKE_DEFAULT_NUMBER_PRECISION: i32 = 38;
+
+/// The 21-column `SQLProcedureColumns` result set: 19 ODBC 3.x spec columns plus
+/// the two driver-specific trailing columns (`IS RESULT SET COLUMN`,
+/// `USER_DATA_TYPE`) the reference driver appends. Numeric columns are emitted as
+/// text and converted at `SQLGetData` time, matching the `SQLColumns` schema.
+fn procedure_columns_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        catalog_text_field("PROCEDURE_CAT", 255),       // 1
+        catalog_text_field("PROCEDURE_SCHEM", 255),     // 2
+        catalog_text_field("PROCEDURE_NAME", 255),      // 3
+        catalog_text_field("COLUMN_NAME", 255),         // 4 (NOT NULL; "" for return value)
+        catalog_text_field("COLUMN_TYPE", 20),          // 5 SMALLINT
+        catalog_text_field("DATA_TYPE", 20),            // 6 SMALLINT
+        catalog_text_field("TYPE_NAME", 255),           // 7
+        catalog_text_field("COLUMN_SIZE", 20),          // 8 INTEGER nullable
+        catalog_text_field("BUFFER_LENGTH", 20),        // 9 INTEGER nullable
+        catalog_text_field("DECIMAL_DIGITS", 20),       // 10 SMALLINT nullable
+        catalog_text_field("NUM_PREC_RADIX", 20),       // 11 SMALLINT nullable
+        catalog_text_field("NULLABLE", 20),             // 12 SMALLINT
+        catalog_text_field("REMARKS", 65535),           // 13 nullable
+        catalog_text_field("COLUMN_DEF", 65535),        // 14 nullable
+        catalog_text_field("SQL_DATA_TYPE", 20),        // 15 SMALLINT
+        catalog_text_field("SQL_DATETIME_SUB", 20),     // 16 SMALLINT nullable
+        catalog_text_field("CHAR_OCTET_LENGTH", 20),    // 17 INTEGER nullable
+        catalog_text_field("ORDINAL_POSITION", 20),     // 18 INTEGER
+        catalog_text_field("IS_NULLABLE", 20),          // 19
+        catalog_text_field("IS RESULT SET COLUMN", 20), // 20 driver-specific SMALLINT
+        catalog_text_field("USER_DATA_TYPE", 20),       // 21 driver-specific SMALLINT
+    ]))
+}
+
+/// A parsed procedure parameter or result-set column: its ODBC `COLUMN_NAME`
+/// plus the raw Snowflake type string. `name` is empty for a scalar return value.
+struct ProcColumn {
+    name: String,
+    type_str: String,
+}
+
+/// The shape of a procedure's `data_type` return descriptor.
+enum ReturnShape {
+    /// Scalar return value; carries the return type string.
+    Scalar(String),
+    /// Table-valued return (`RETURNS TABLE(...)`); carries the result-set columns.
+    Table(Vec<ProcColumn>),
+}
+
+/// Splits one `NAME TYPE` token (e.g. `PAGE FLOAT`, `V DOUBLE PRECISION`) on the
+/// first ASCII whitespace so multi-word type names stay intact. Returns `None`
+/// for a token missing either half.
+fn parse_named_column(token: &str) -> Option<ProcColumn> {
+    let token = token.trim();
+    let split = token.find(char::is_whitespace)?;
+    let name = token[..split].trim();
+    let type_str = token[split..].trim();
+    if name.is_empty() || type_str.is_empty() {
+        return None;
+    }
+    Some(ProcColumn {
+        name: name.to_string(),
+        type_str: type_str.to_string(),
+    })
+}
+
+/// Parses an `argument_signature` (e.g. `(PNAME VARCHAR, PAGE FLOAT)`) into
+/// ordered (name, type) pairs, tolerating nested `(...)` in a type via the
+/// depth-aware comma split.
+fn parse_argument_columns(argument_signature: &str) -> Vec<ProcColumn> {
+    let inner = parenthesized_inner(argument_signature);
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    split_top_level_commas(inner)
+        .into_iter()
+        .filter_map(parse_named_column)
+        .collect()
+}
+
+/// Classifies a procedure's `data_type` as a scalar return value or a
+/// table-valued return, extracting the result-set columns in the latter case.
+fn parse_return_shape(data_type: &str) -> ReturnShape {
+    if returns_table(data_type) {
+        let inner = parenthesized_inner(data_type);
+        // SNOW-1232955: a `RETURNS TABLE()` with an empty column list is valid.
+        let cols = if inner.is_empty() {
+            Vec::new()
+        } else {
+            split_top_level_commas(inner)
+                .into_iter()
+                .filter_map(parse_named_column)
+                .collect()
+        };
+        ReturnShape::Table(cols)
+    } else {
+        ReturnShape::Scalar(data_type.trim().to_string())
+    }
+}
+
+/// Splits a Snowflake type string such as `NUMBER(38,0)` / `VARCHAR(16777216)` /
+/// `FLOAT` into (base, inner-args). Uses the last `)` so any nested parens are
+/// tolerated.
+fn split_type_and_args(type_str: &str) -> (&str, Option<&str>) {
+    let ts = type_str.trim();
+    match (ts.find('('), ts.rfind(')')) {
+        (Some(o), Some(c)) if o < c => (ts[..o].trim(), Some(ts[o + 1..c].trim())),
+        _ => (ts, None),
+    }
+}
+
+/// Parses up to two comma-separated integer args (`precision[, scale]`) from a
+/// type argument list. Absent or non-integer entries yield `None`.
+fn parse_two_int_args(inner: Option<&str>) -> (Option<i32>, Option<i32>) {
+    let Some(inner) = inner else {
+        return (None, None);
+    };
+    let mut it = inner.split(',');
+    let first = it.next().and_then(|s| s.trim().parse::<i32>().ok());
+    let second = it.next().and_then(|s| s.trim().parse::<i32>().ok());
+    (first, second)
+}
+
+/// Maps a Snowflake SQL type string (as it appears in `argument_signature` or
+/// the `data_type` return column) to an Arrow [`Field`] carrying the
+/// `logicalType`/precision/scale/length metadata the shared `*_from_field`
+/// helpers consume. Routing through [`rehydrate_field`] keeps SQLProcedureColumns
+/// type reporting identical to SQLColumns/SQLDescribeCol (one mapping, no drift).
+fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings) -> Field {
+    let (base, inner) = split_type_and_args(type_str);
+    let default_varchar = numeric_settings.max_varchar_size.min(i64::MAX as u64) as i64;
+    // Timestamp/time scale: explicit arg, else Snowflake's default of 9.
+    let fractional_scale = || {
+        parse_two_int_args(inner)
+            .0
+            .unwrap_or(SNOWFLAKE_DEFAULT_FRACTIONAL_SCALE)
+    };
+    match base.to_ascii_uppercase().as_str() {
+        "VARCHAR" | "CHAR" | "CHARACTER" | "STRING" | "TEXT" | "NVARCHAR" | "NCHAR"
+        | "NVARCHAR2" | "CHAR VARYING" | "NCHAR VARYING" | "CHARACTER VARYING" => {
+            let char_len = parse_two_int_args(inner)
+                .0
+                .map(i64::from)
+                .unwrap_or(default_varchar);
+            rehydrate_field("TEXT", None, None, Some(char_len), None, true)
+        }
+        "NUMBER" | "DECIMAL" | "NUMERIC" => {
+            let (p, s) = parse_two_int_args(inner);
+            rehydrate_field(
+                "FIXED",
+                Some(p.unwrap_or(SNOWFLAKE_DEFAULT_NUMBER_PRECISION)),
+                Some(s.unwrap_or(0)),
+                None,
+                None,
+                true,
+            )
+        }
+        "INT" | "INTEGER" | "BIGINT" | "SMALLINT" | "TINYINT" | "BYTEINT" => rehydrate_field(
+            "FIXED",
+            Some(SNOWFLAKE_DEFAULT_NUMBER_PRECISION),
+            Some(0),
+            None,
+            None,
+            true,
+        ),
+        "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION" | "REAL" => {
+            rehydrate_field("REAL", None, None, None, None, true)
+        }
+        "BOOLEAN" | "BOOL" => rehydrate_field("BOOLEAN", None, None, None, None, true),
+        "DATE" => rehydrate_field("DATE", None, None, None, None, true),
+        "TIME" => rehydrate_field("TIME", None, Some(fractional_scale()), None, None, true),
+        "TIMESTAMP_LTZ" | "TIMESTAMPLTZ" => rehydrate_field(
+            "TIMESTAMP_LTZ",
+            None,
+            Some(fractional_scale()),
+            None,
+            None,
+            true,
+        ),
+        "TIMESTAMP_TZ" | "TIMESTAMPTZ" => rehydrate_field(
+            "TIMESTAMP_TZ",
+            None,
+            Some(fractional_scale()),
+            None,
+            None,
+            true,
+        ),
+        "TIMESTAMP_NTZ" | "TIMESTAMPNTZ" | "TIMESTAMP" | "DATETIME" => rehydrate_field(
+            "TIMESTAMP_NTZ",
+            None,
+            Some(fractional_scale()),
+            None,
+            None,
+            true,
+        ),
+        "BINARY" | "VARBINARY" => {
+            let byte_len = parse_two_int_args(inner).0.map(i64::from);
+            rehydrate_field("BINARY", None, None, None, byte_len, true)
+        }
+        "VARIANT" => rehydrate_field("VARIANT", None, None, Some(default_varchar), None, true),
+        "OBJECT" => rehydrate_field("OBJECT", None, None, Some(default_varchar), None, true),
+        "ARRAY" => rehydrate_field("ARRAY", None, None, Some(default_varchar), None, true),
+        // GEOGRAPHY/GEOMETRY and anything unrecognized fall back to a character
+        // type, matching the reference driver's treatment of unmapped types.
+        _ => rehydrate_field("TEXT", None, None, Some(default_varchar), None, true),
+    }
+}
+
+/// Minimal SQL `LIKE` matcher supporting `%` (any run, incl. empty), `_` (any
+/// single char), and `\` as the escape char — matching `escape_like_wildcards`
+/// and `catalog_arg_to_pattern`, which feed this.
+///
+/// Intentionally **case-sensitive**, mirroring `SQLPrimaryKeys`/the reference
+/// driver rather than core's case-insensitive `like_pattern::matches`. The
+/// `ColumnName` argument is pre-processed by `catalog_arg_to_pattern`, which
+/// already folds unquoted identifiers to uppercase in identifier mode
+/// (`METADATA_ID=TRUE`) while passing search patterns through verbatim in
+/// pattern mode (`METADATA_ID=FALSE`). Because that upstream step performs the
+/// ODBC-mandated case-folding, a case-sensitive matcher yields the correct,
+/// spec-aligned result: identifier mode matches case-insensitively (the pattern
+/// is already upper-cased and column names come upper-folded from
+/// `information_schema`), while pattern mode stays case-sensitive like Snowflake
+/// `LIKE`. Do not "align" this with core's case-insensitive matcher — that would
+/// silently make pattern mode case-insensitive (the `SQLTables`/`SQLColumns`
+/// divergence tracked separately).
+fn like_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (mut pi, mut ti) = (0usize, 0usize);
+    // Backtrack point for the most recent `%`: the pattern index just past it and
+    // the text index it is currently assumed to consume up to.
+    let (mut star_pi, mut star_ti): (Option<usize>, usize) = (None, 0);
+    while ti < t.len() {
+        let matched = if pi < p.len() {
+            match p[pi] {
+                '\\' if pi + 1 < p.len() => {
+                    if p[pi + 1] == t[ti] {
+                        pi += 2;
+                        ti += 1;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                '%' => {
+                    star_pi = Some(pi);
+                    star_ti = ti;
+                    pi += 1;
+                    // `%` consumes nothing yet; re-loop without advancing `ti`.
+                    continue;
+                }
+                '_' => {
+                    pi += 1;
+                    ti += 1;
+                    true
+                }
+                c => {
+                    if c == t[ti] {
+                        pi += 1;
+                        ti += 1;
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        } else {
+            false
+        };
+        if matched {
+            continue;
+        }
+        // Mismatch: extend the last `%` by one text char, or fail.
+        match star_pi {
+            Some(sp) => {
+                star_ti += 1;
+                ti = star_ti;
+                pi = sp + 1;
+            }
+            None => return false,
+        }
+    }
+    // Trailing `%` in the pattern match the empty remainder.
+    while pi < p.len() && p[pi] == '%' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+/// One output row of the 21-column `SQLProcedureColumns` result set. Named
+/// fields (all text, converted at `SQLGetData` time) avoid the change
+/// amplification of parallel-Vec builders.
+struct FlatProcColumnRow {
+    cat: Option<String>,
+    schem: Option<String>,
+    proc: Option<String>,
+    col_name: Option<String>,
+    column_type: Option<String>,
+    data_type: Option<String>,
+    type_name: Option<String>,
+    col_size: Option<String>,
+    buf_len: Option<String>,
+    dec_digits: Option<String>,
+    num_prec_radix: Option<String>,
+    nullable: Option<String>,
+    remarks: Option<String>,
+    col_def: Option<String>,
+    sql_data_type: Option<String>,
+    sql_dt_sub: Option<String>,
+    char_octet: Option<String>,
+    ordinal: Option<String>,
+    is_nullable: Option<String>,
+    is_result_set_col: Option<String>,
+    user_data_type: Option<String>,
+}
+
+/// Appends the SQLProcedureColumns rows for one `information_schema.procedures`
+/// row, honoring the ODBC ordering: for a scalar procedure the return value
+/// comes first (`ORDINAL_POSITION` 0) then the input parameters (1..); for a
+/// table-valued procedure the result-set columns come first (1..) then the input
+/// parameters (1..). The `column_pattern` `LIKE` filter is applied to
+/// `COLUMN_NAME` — a non-`%` pattern therefore drops the empty-named return value.
+#[allow(clippy::too_many_arguments)]
+fn append_procedure_column_rows(
+    rows: &mut Vec<FlatProcColumnRow>,
+    cat: &Option<String>,
+    schem: &Option<String>,
+    proc_name: &Option<String>,
+    argument_signature: &str,
+    data_type: &str,
+    column_pattern: Option<&str>,
+    numeric_settings: &NumericSettings,
+) {
+    let params = parse_argument_columns(argument_signature);
+    // (name, type_str, COLUMN_TYPE, ORDINAL_POSITION) in ODBC emit order.
+    let mut entries: Vec<(String, String, i16, i32)> = Vec::new();
+    match parse_return_shape(data_type) {
+        ReturnShape::Scalar(ret_type) => {
+            entries.push((String::new(), ret_type, SQL_RETURN_VALUE, 0));
+            for (i, p) in params.iter().enumerate() {
+                entries.push((
+                    p.name.clone(),
+                    p.type_str.clone(),
+                    SQL_PARAM_INPUT,
+                    (i + 1) as i32,
+                ));
+            }
+        }
+        ReturnShape::Table(cols) => {
+            for (i, c) in cols.iter().enumerate() {
+                entries.push((
+                    c.name.clone(),
+                    c.type_str.clone(),
+                    SQL_RESULT_COL,
+                    (i + 1) as i32,
+                ));
+            }
+            for (i, p) in params.iter().enumerate() {
+                entries.push((
+                    p.name.clone(),
+                    p.type_str.clone(),
+                    SQL_PARAM_INPUT,
+                    (i + 1) as i32,
+                ));
+            }
+        }
+    }
+
+    for (col_name, type_str, column_type, ordinal) in entries {
+        if let Some(pat) = column_pattern
+            && !like_match(pat, &col_name)
+        {
+            continue;
+        }
+        let field = field_from_sql_type_string(&type_str, numeric_settings);
+        let logical_type = field
+            .metadata()
+            .get("logicalType")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        let data_type_val = sql_type_from_field(&field, numeric_settings)
+            .ok()
+            .map(|t| t.0.to_string());
+        let type_name_val = type_name_from_field(&field, numeric_settings)
+            .ok()
+            .map(|s| s.to_string());
+        let col_size_val = column_size_from_field(&field, numeric_settings)
+            .ok()
+            .map(|s| s.to_string());
+        let buf_len_val = octet_length_from_field(&field, numeric_settings)
+            .ok()
+            .map(|s| s.to_string());
+        let dec_digits_val = decimal_digits_from_field(&field, numeric_settings)
+            .ok()
+            .map(|s| s.to_string());
+        let num_prec_radix_val = num_prec_radix_from_field(&field, numeric_settings)
+            .ok()
+            .and_then(|s| if s == 0 { None } else { Some(s.to_string()) });
+        let sql_data_type_val = verbose_sql_type_from_field(&field, numeric_settings)
+            .ok()
+            .map(|t| t.0.to_string());
+        let sql_dt_sub_val =
+            sql_datetime_sub_from_logical_type(logical_type).map(|s| s.to_string());
+        let char_octet_val = match logical_type {
+            "TEXT" | "BINARY" => octet_length_from_field(&field, numeric_settings)
+                .ok()
+                .map(|s| s.to_string()),
+            _ => None,
+        };
+        let is_result_set_col = if column_type == SQL_RESULT_COL {
+            SQL_TRUE
+        } else {
+            SQL_FALSE
+        };
+
+        rows.push(FlatProcColumnRow {
+            cat: cat.clone(),
+            schem: schem.clone(),
+            proc: proc_name.clone(),
+            // COLUMN_NAME is NOT NULL per spec; the return value carries "".
+            col_name: Some(col_name),
+            column_type: Some(column_type.to_string()),
+            data_type: data_type_val,
+            type_name: type_name_val,
+            col_size: col_size_val,
+            buf_len: buf_len_val,
+            dec_digits: dec_digits_val,
+            num_prec_radix: num_prec_radix_val,
+            // Snowflake procedure parameters and results are always nullable.
+            nullable: Some(SQL_NULLABLE.to_string()),
+            remarks: None,
+            col_def: None,
+            sql_data_type: sql_data_type_val,
+            sql_dt_sub: sql_dt_sub_val,
+            char_octet: char_octet_val,
+            ordinal: Some(ordinal.to_string()),
+            is_nullable: Some("YES".to_string()),
+            is_result_set_col: Some(is_result_set_col.to_string()),
+            user_data_type: Some("0".to_string()),
+        });
+    }
+}
+
+/// Maps the `information_schema.procedures` result to the 21-column
+/// `SQLProcedureColumns` result set, parsing each procedure's argument signature
+/// and return type into per-column rows. Preserves server/union order.
+fn map_procedure_columns_to_odbc(
+    batch: RecordBatch,
+    column_pattern: Option<&str>,
+    numeric_settings: &NumericSettings,
+) -> OdbcResult<RecordBatch> {
+    let schema = procedure_columns_schema();
+    if batch.num_rows() == 0 {
+        return Ok(RecordBatch::new_empty(schema));
+    }
+
+    let input = batch.schema();
+    let idx_cat = procedures_column_index(&input, "procedure_catalog")?;
+    let idx_schema = procedures_column_index(&input, "procedure_schema")?;
+    let idx_name = procedures_column_index(&input, "procedure_name")?;
+    let idx_args = procedures_column_index(&input, "argument_signature")?;
+    let idx_data_type = procedures_column_index(&input, "data_type")?;
+
+    let mut rows: Vec<FlatProcColumnRow> = Vec::new();
+    for row in 0..batch.num_rows() {
+        let cat = utf8_value_at(&batch, idx_cat, row);
+        let schem = utf8_value_at(&batch, idx_schema, row);
+        let name = utf8_value_at(&batch, idx_name, row);
+        let arg_sig = utf8_value_at(&batch, idx_args, row).unwrap_or_default();
+        let dtype = utf8_value_at(&batch, idx_data_type, row).unwrap_or_default();
+        append_procedure_column_rows(
+            &mut rows,
+            &cat,
+            &schem,
+            &name,
+            &arg_sig,
+            &dtype,
+            column_pattern,
+            numeric_settings,
+        );
+    }
+
+    build_procedure_columns_batch(schema, rows)
+}
+
+fn build_procedure_columns_batch(
+    schema: SchemaRef,
+    rows: Vec<FlatProcColumnRow>,
+) -> OdbcResult<RecordBatch> {
+    fn to_array(v: Vec<Option<String>>) -> ArrayRef {
+        Arc::new(StringArray::from(v)) as ArrayRef
+    }
+    let n = rows.len();
+    macro_rules! col {
+        ($field:ident) => {{
+            let mut v = Vec::with_capacity(n);
+            for r in &rows {
+                v.push(r.$field.clone());
+            }
+            to_array(v)
+        }};
+    }
+    RecordBatch::try_new(
+        schema,
+        vec![
+            col!(cat),
+            col!(schem),
+            col!(proc),
+            col!(col_name),
+            col!(column_type),
+            col!(data_type),
+            col!(type_name),
+            col!(col_size),
+            col!(buf_len),
+            col!(dec_digits),
+            col!(num_prec_radix),
+            col!(nullable),
+            col!(remarks),
+            col!(col_def),
+            col!(sql_data_type),
+            col!(sql_dt_sub),
+            col!(char_octet),
+            col!(ordinal),
+            col!(is_nullable),
+            col!(is_result_set_col),
+            col!(user_data_type),
+        ],
+    )
+    .context(crate::api::error::RecordBatchBuildSnafu)
+}
+
+/// Implements `SQLProcedureColumns`: lists the input parameters, return value,
+/// and result-set columns of stored procedures from
+/// `information_schema.procedures`. Shares the query builder, database
+/// enumeration, connection-context resolution, and silent-empty-on-error
+/// handling with [`procedures`].
+#[allow(clippy::too_many_arguments)]
+pub fn procedure_columns<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    catalog_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    schema_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    proc_name: *const E::Char,
+    name_length3: sql::SmallInt,
+    column_name: *const E::Char,
+    name_length4: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::info!("SQLProcedureColumns: entry");
+    let _exit = ApiExitLog("SQLProcedureColumns");
+
+    let catalog_raw = read_opt_str::<E>(catalog_name, name_length1)?;
+    let schema_raw = read_opt_str::<E>(schema_name, name_length2)?;
+    let proc_raw = read_opt_str::<E>(proc_name, name_length3)?;
+    let column_raw = read_opt_str::<E>(column_name, name_length4)?;
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    validate_catalog_stmt_ready(&inner)?;
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    let metadata_id = inner.metadata_id;
+    let numeric_settings = conn.numeric_settings;
+    let stmt_handle = guard.stmt_handle;
+    drop(conn);
+
+    // Identifier mode (SQL_ATTR_METADATA_ID = TRUE): catalog, schema, and proc
+    // name are all required identifiers — a NULL pointer is HY009. ColumnName may
+    // still be NULL (means "all columns").
+    if metadata_id && (catalog_raw.is_none() || schema_raw.is_none() || proc_raw.is_none()) {
+        return NullPointerSnafu.fail();
+    }
+
+    let mut db_name: Option<String> = if metadata_id {
+        catalog_raw.as_deref().map(fold_identifier)
+    } else {
+        catalog_raw.clone()
+    };
+    let mut schema_pattern = catalog_arg_to_pattern(schema_raw.as_deref(), metadata_id)?;
+    let proc_pattern = catalog_arg_to_pattern(proc_raw.as_deref(), metadata_id)?;
+    // ColumnName is a pattern-value arg; it filters COLUMN_NAME client-side after
+    // the signature is parsed (the type strings never reach the server query).
+    let column_pattern = catalog_arg_to_pattern(column_raw.as_deref(), metadata_id)?;
+
+    if catalog_raw.is_none() && metadata_request_use_connection_ctx(conn_handle)? {
+        let rt = global().context(OdbcRuntimeSnafu)?;
+        let info = rt.block_on(async |c| {
+            c.connection_get_info(ConnectionGetInfoRequest {
+                conn_handle: Some(conn_handle),
+                info_codes: vec![],
+                include_master_token: false,
+            })
+            .await
+        })?;
+        db_name = info.database;
+        if schema_raw.is_none() {
+            schema_pattern = info.schema;
+        }
+    }
+
+    let db_names = match db_name {
+        Some(db) => vec![db],
+        None => enumerate_databases(stmt_handle)?,
+    };
+
+    if db_names.is_empty() {
+        return set_static_empty_catalog_result(&mut inner, procedure_columns_schema());
+    }
+
+    let sql = build_procedures_query(
+        &db_names,
+        schema_pattern.as_deref(),
+        proc_pattern.as_deref(),
+    );
+
+    let batch = match execute_show_query_collect_batch(stmt_handle, &sql) {
+        Ok(batch) => batch,
+        Err(e) => {
+            if e.server_sql_state()
+                .is_some_and(is_procedures_empty_result_sql_state)
+            {
+                return set_static_empty_catalog_result(&mut inner, procedure_columns_schema());
+            }
+            return Err(e);
+        }
+    };
+
+    let flat_batch =
+        map_procedure_columns_to_odbc(batch, column_pattern.as_deref(), &numeric_settings)?;
+    let schema = flat_batch.schema();
+    let reader = reader_from_record_batch(flat_batch, schema)?;
+    set_state_for_catalog(
+        &mut inner,
+        StatementState::QueryExecuted {
+            reader,
+            rows_affected: Some(-1),
+            origin: ExecutionOrigin::Direct,
+        },
+    );
+    Ok(())
+}
+
+// ============================================================================
 // Call core ConnectionGetObjects, fetch stream, flatten, set state
 // ============================================================================
 
@@ -3749,5 +4419,221 @@ mod procedures_tests {
 
         let proc_type = out.column(7).as_any().downcast_ref::<Int16Array>().unwrap();
         assert_eq!(proc_type.value(0), SQL_PT_FUNCTION);
+    }
+}
+
+#[cfg(test)]
+mod procedure_columns_tests {
+    use super::*;
+    use crate::conversion::NumericSettings;
+
+    // Column indices into the 21-column SQLProcedureColumns result set.
+    const COL_NAME: usize = 3;
+    const COL_TYPE: usize = 4;
+    const DATA_TYPE: usize = 5;
+    const ORDINAL: usize = 17;
+    const IS_NULLABLE: usize = 18;
+    const IS_RESULT_SET_COL: usize = 19;
+
+    fn cell(batch: &RecordBatch, col: usize, row: usize) -> Option<String> {
+        utf8_value_at(batch, col, row)
+    }
+
+    fn meta<'a>(field: &'a Field, key: &str) -> Option<&'a str> {
+        field.metadata().get(key).map(|s| s.as_str())
+    }
+
+    #[test]
+    fn parse_named_column_splits_on_first_whitespace() {
+        let c = parse_named_column("PNAME VARCHAR").unwrap();
+        assert_eq!(c.name, "PNAME");
+        assert_eq!(c.type_str, "VARCHAR");
+        // Multi-word type names stay intact.
+        let c = parse_named_column("V DOUBLE PRECISION").unwrap();
+        assert_eq!(c.name, "V");
+        assert_eq!(c.type_str, "DOUBLE PRECISION");
+        assert!(parse_named_column("NAKED").is_none());
+    }
+
+    #[test]
+    fn parse_argument_columns_extracts_ordered_params() {
+        let cols = parse_argument_columns("(PNAME VARCHAR, PAGE FLOAT)");
+        assert_eq!(cols.len(), 2);
+        assert_eq!(cols[0].name, "PNAME");
+        assert_eq!(cols[1].name, "PAGE");
+        assert!(parse_argument_columns("()").is_empty());
+    }
+
+    #[test]
+    fn parse_return_shape_distinguishes_scalar_and_table() {
+        match parse_return_shape("VARCHAR(16777216)") {
+            ReturnShape::Scalar(t) => assert_eq!(t, "VARCHAR(16777216)"),
+            ReturnShape::Table(_) => panic!("expected scalar"),
+        }
+        match parse_return_shape("TABLE (ID NUMBER, NAME VARCHAR)") {
+            ReturnShape::Table(cols) => {
+                assert_eq!(cols.len(), 2);
+                assert_eq!(cols[0].name, "ID");
+                assert_eq!(cols[1].name, "NAME");
+            }
+            ReturnShape::Scalar(_) => panic!("expected table"),
+        }
+        // SNOW-1232955: an empty return-table column list is valid.
+        match parse_return_shape("TABLE ()") {
+            ReturnShape::Table(cols) => assert!(cols.is_empty()),
+            ReturnShape::Scalar(_) => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn field_from_sql_type_string_maps_logical_types() {
+        let ns = NumericSettings::default();
+        let f = field_from_sql_type_string("VARCHAR(100)", &ns);
+        assert_eq!(meta(&f, "logicalType"), Some("TEXT"));
+        assert_eq!(meta(&f, "charLength"), Some("100"));
+
+        // Bare VARCHAR (as in argument_signature) falls back to the max size.
+        let f = field_from_sql_type_string("VARCHAR", &ns);
+        assert_eq!(meta(&f, "logicalType"), Some("TEXT"));
+        assert!(meta(&f, "charLength").is_some());
+
+        let f = field_from_sql_type_string("NUMBER(38,0)", &ns);
+        assert_eq!(meta(&f, "logicalType"), Some("FIXED"));
+        assert_eq!(meta(&f, "precision"), Some("38"));
+        assert_eq!(meta(&f, "scale"), Some("0"));
+
+        // INTEGER normalizes to NUMBER(38,0).
+        let f = field_from_sql_type_string("INTEGER", &ns);
+        assert_eq!(meta(&f, "logicalType"), Some("FIXED"));
+        assert_eq!(meta(&f, "precision"), Some("38"));
+
+        assert_eq!(
+            meta(&field_from_sql_type_string("FLOAT", &ns), "logicalType"),
+            Some("REAL")
+        );
+        assert_eq!(
+            meta(&field_from_sql_type_string("BOOLEAN", &ns), "logicalType"),
+            Some("BOOLEAN")
+        );
+
+        let f = field_from_sql_type_string("TIMESTAMP_NTZ(9)", &ns);
+        assert_eq!(meta(&f, "logicalType"), Some("TIMESTAMP_NTZ"));
+        assert_eq!(meta(&f, "scale"), Some("9"));
+
+        // Bare TIMESTAMP defaults to NTZ with scale 9.
+        let f = field_from_sql_type_string("TIMESTAMP", &ns);
+        assert_eq!(meta(&f, "logicalType"), Some("TIMESTAMP_NTZ"));
+        assert_eq!(meta(&f, "scale"), Some("9"));
+    }
+
+    #[test]
+    fn like_match_supports_wildcards_and_escape() {
+        // "%" (and NULL upstream) match everything, including the empty return
+        // value name — so the return value is only dropped by a specific pattern.
+        assert!(like_match("%", ""));
+        assert!(like_match("%", "PNAME"));
+        assert!(like_match("PNAME", "PNAME"));
+        assert!(!like_match("PNAME", ""));
+        assert!(!like_match("PNAME", "PAGE"));
+        assert!(like_match("P%", "PAGE"));
+        assert!(like_match("P_GE", "PAGE"));
+        assert!(!like_match("P_AGE", "PAGE"));
+        // Escaped wildcard is a literal (identifier-mode inputs are pre-escaped).
+        assert!(like_match("A\\%B", "A%B"));
+        assert!(!like_match("A\\%B", "AXB"));
+    }
+
+    fn procedures_batch() -> RecordBatch {
+        let input_schema = Arc::new(Schema::new(vec![
+            Field::new("procedure_catalog", DataType::Utf8, true),
+            Field::new("procedure_schema", DataType::Utf8, true),
+            Field::new("procedure_name", DataType::Utf8, true),
+            Field::new("argument_signature", DataType::Utf8, true),
+            Field::new("data_type", DataType::Utf8, true),
+            Field::new("comment", DataType::Utf8, true),
+        ]));
+        RecordBatch::try_new(
+            input_schema,
+            vec![
+                Arc::new(StringArray::from(vec![Some("DB"), Some("DB")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("S"), Some("S")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![Some("SCALARP"), Some("TABLEP")])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("(PNAME VARCHAR, PAGE FLOAT)"),
+                    Some("(X NUMBER)"),
+                ])) as ArrayRef,
+                Arc::new(StringArray::from(vec![
+                    Some("VARCHAR(16777216)"),
+                    Some("TABLE (ID NUMBER, NAME VARCHAR)"),
+                ])) as ArrayRef,
+                Arc::new(StringArray::from(vec![None::<&str>, None::<&str>])) as ArrayRef,
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn map_procedure_columns_emits_twenty_one_columns_and_orders_rows() {
+        let ns = NumericSettings::default();
+        let out = map_procedure_columns_to_odbc(procedures_batch(), None, &ns).expect("map failed");
+        assert_eq!(out.num_columns(), 21);
+        // SCALARP: return value + 2 params (3) ; TABLEP: 2 result cols + 1 param (3).
+        assert_eq!(out.num_rows(), 6);
+
+        // Scalar procedure: return value first, empty name, COLUMN_TYPE=RETURN_VALUE,
+        // ORDINAL=0; its DATA_TYPE is populated (VARCHAR return type).
+        assert_eq!(cell(&out, COL_NAME, 0).as_deref(), Some(""));
+        assert_eq!(cell(&out, COL_TYPE, 0), Some(SQL_RETURN_VALUE.to_string()));
+        assert_eq!(cell(&out, ORDINAL, 0).as_deref(), Some("0"));
+        assert!(cell(&out, DATA_TYPE, 0).is_some());
+        assert_eq!(cell(&out, IS_NULLABLE, 0).as_deref(), Some("YES"));
+        assert_eq!(
+            cell(&out, IS_RESULT_SET_COL, 0),
+            Some(SQL_FALSE.to_string())
+        );
+
+        // Input parameters follow in declaration order (ordinals 1, 2).
+        assert_eq!(cell(&out, COL_NAME, 1).as_deref(), Some("PNAME"));
+        assert_eq!(cell(&out, COL_TYPE, 1), Some(SQL_PARAM_INPUT.to_string()));
+        assert_eq!(cell(&out, ORDINAL, 1).as_deref(), Some("1"));
+        assert_eq!(cell(&out, COL_NAME, 2).as_deref(), Some("PAGE"));
+        assert_eq!(cell(&out, ORDINAL, 2).as_deref(), Some("2"));
+
+        // Table-valued procedure: result columns first (COLUMN_TYPE=RESULT_COL,
+        // ordinals 1..), then the input parameter (ordinal 1).
+        assert_eq!(cell(&out, COL_NAME, 3).as_deref(), Some("ID"));
+        assert_eq!(cell(&out, COL_TYPE, 3), Some(SQL_RESULT_COL.to_string()));
+        assert_eq!(cell(&out, ORDINAL, 3).as_deref(), Some("1"));
+        assert_eq!(cell(&out, IS_RESULT_SET_COL, 3), Some(SQL_TRUE.to_string()));
+        assert_eq!(cell(&out, COL_NAME, 4).as_deref(), Some("NAME"));
+        assert_eq!(cell(&out, COL_TYPE, 4), Some(SQL_RESULT_COL.to_string()));
+        assert_eq!(cell(&out, COL_NAME, 5).as_deref(), Some("X"));
+        assert_eq!(cell(&out, COL_TYPE, 5), Some(SQL_PARAM_INPUT.to_string()));
+        assert_eq!(cell(&out, ORDINAL, 5).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn map_procedure_columns_applies_column_name_filter() {
+        let ns = NumericSettings::default();
+        // A specific ColumnName pattern drops the empty-named return value and
+        // keeps only matching parameters/result columns.
+        let out = map_procedure_columns_to_odbc(procedures_batch(), Some("PNAME"), &ns)
+            .expect("map failed");
+        assert_eq!(out.num_rows(), 1);
+        assert_eq!(cell(&out, COL_NAME, 0).as_deref(), Some("PNAME"));
+
+        // "%" keeps everything (including the return value).
+        let out =
+            map_procedure_columns_to_odbc(procedures_batch(), Some("%"), &ns).expect("map failed");
+        assert_eq!(out.num_rows(), 6);
+    }
+
+    #[test]
+    fn map_procedure_columns_empty_batch_yields_empty_result() {
+        let ns = NumericSettings::default();
+        let empty = RecordBatch::new_empty(procedures_batch().schema());
+        let out = map_procedure_columns_to_odbc(empty, None, &ns).expect("map failed");
+        assert_eq!(out.num_columns(), 21);
+        assert_eq!(out.num_rows(), 0);
     }
 }

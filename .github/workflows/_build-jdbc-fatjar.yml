@@ -1,0 +1,303 @@
+name: Build JDBC JARs
+
+# Builds the release JARs (unsigned; gated on jdbc_tests via test-jdbc.yml):
+#   - fat (snowflake-jdbc-native-all): every platform's jdbc_bridge + shaded deps in one JAR (assemble).
+#   - thin bundle (snowflake-jdbc-native, assemble_thin): native-free plain jar + deps POM +
+#     sources/javadoc, plus one per-platform classifier jar (thin Java + that platform's native).
+#
+# windows-aarch64 omitted: arrow-c-data 17.0.0 ships no arrow_cdata_jni for it.
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_native:
+    strategy:
+      fail-fast: false
+      # cargo_extra_args mirrors the Python wheel build: vendored-openssl, opt-level=2, strip=false
+      # on Windows. Linux ships one native per libc (glibc via manylinux, musl via musllinux/Alpine)
+      # since a .so won't load across libcs; `dir` is the staging subdir (matches
+      # NativeLibraryLoader.osArchDir()), `pkg_setup` the in-container build deps (yum vs apk).
+      matrix:
+        include:
+          - { name: linux-x86_64-gnu,   os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-gnu,   lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_x86_64",  rust_host: x86_64-unknown-linux-gnu,   pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
+          - { name: linux-aarch64-gnu,  os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-gnu,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_aarch64", rust_host: aarch64-unknown-linux-gnu,  pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
+          - { name: linux-x86_64-musl,  os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-musl,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_x86_64",   rust_host: x86_64-unknown-linux-musl,  pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
+          - { name: linux-aarch64-musl, os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-musl, lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_aarch64",  rust_host: aarch64-unknown-linux-musl, pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2" }
+          - { name: darwin-x86_64,      os: macos-15-intel,   os_token: darwin,  arch: x86_64,  dir: darwin-x86_64,      lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2", macos_deployment_target: "10.14" }
+          - { name: darwin-aarch64,     os: macos-latest,     os_token: darwin,  arch: aarch64, dir: darwin-aarch64,     lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2", macos_deployment_target: "11.0" }
+          - { name: windows-x86_64,     os: windows-latest,   os_token: windows, arch: x86_64,  dir: windows-x86_64,     lib: jdbc_bridge.dll,      container: "",                                    cargo_extra_args: "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false" }
+    runs-on: ${{ matrix.os }}
+    name: build_native (${{ matrix.name }})
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # On Linux the host cargo/rustup dirs are mounted into the container. rustup is
+      # cached separately so Cargo.lock churn doesn't evict it.
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-bridge-release-${{ matrix.name }}
+
+      - name: Restore rustup toolchain cache (Linux)
+        if: runner.os == 'Linux'
+        id: rustup-cache-linux
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          # No restore-keys: a prefix fallback can restore a cache saved under a different libc,
+          # whose cargo then can't execute. Exact-match only, so a key bump forces a clean reinstall.
+          key: ${{ runner.os }}-${{ matrix.name }}-rustup-stable-minimal-v3
+
+      # manylinux_2_28 pins an old glibc floor; musllinux_1_2 (Alpine) links musl. Needs a JDK
+      # (jdbc_bridge's `jni` feature links libjvm at build time), installed via matrix.pkg_setup.
+      - name: Build jdbc_bridge in manylinux/musllinux container (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git" \
+                   "$HOME/.cargo/bin" "$HOME/.rustup"
+          docker run --rm \
+            -v "$HOME/.cargo/registry:/root/.cargo/registry" \
+            -v "$HOME/.cargo/git:/root/.cargo/git" \
+            -v "$HOME/.cargo/bin:/root/.cargo/bin" \
+            -v "$HOME/.rustup:/root/.rustup" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e CARGO_TERM_COLOR=always \
+            -e RUSTUP_HOME=/root/.rustup \
+            -e CARGO_HOME=/root/.cargo \
+            ${{ matrix.container }} \
+            bash -c '
+              set -e
+              ${{ matrix.pkg_setup }}
+              export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+              echo "JAVA_HOME=$JAVA_HOME"
+              export PATH="/root/.cargo/bin:$PATH"
+              # Verify the cached cargo runs, not just that -x passes: a cache restored across a
+              # libc boundary has no matching ELF loader, so exec fails with 127. Reinstall then.
+              if ! /root/.cargo/bin/cargo --version >/dev/null 2>&1; then
+                echo "No runnable cached cargo; installing rustup for ${{ matrix.rust_host }}..."
+                # Fetch the host-triple rustup-init directly; sh.rustup.rs misdetects libc as gnu
+                # inside the musl container and installs a cargo that cannot execute here.
+                curl --proto "=https" --tlsv1.2 -sSf \
+                  "https://static.rust-lang.org/rustup/dist/${{ matrix.rust_host }}/rustup-init" \
+                  -o /tmp/rustup-init
+                chmod +x /tmp/rustup-init
+                /tmp/rustup-init -y --default-toolchain stable --profile minimal \
+                  --default-host ${{ matrix.rust_host }}
+              else
+                echo "Using cached rustup toolchain"
+              fi
+              cargo build --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
+            '
+
+      # Container writes target/ as root; chown so the cache save can read it (always(), so
+      # it runs on build failure too).
+      - name: Fix ownership of cached dirs (Linux)
+        if: always() && runner.os == 'Linux'
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            target/ \
+            "$HOME/.cargo/registry" "$HOME/.cargo/git" \
+            "$HOME/.cargo/bin" "$HOME/.rustup" 2>/dev/null || true
+
+      # JDK 21, not 8: Temurin ships no JDK 8 for macOS aarch64, and the JNI ABI is stable.
+      - name: Set up Java (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build jdbc_bridge (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
+
+      - name: Build jdbc_bridge (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: cargo build --release --package jdbc_bridge ${{ matrix.cargo_extra_args }}
+
+      # Stage under matrix.dir (e.g. linux-x86_64-gnu) to match the JAR resource layout
+      # (build.gradle -PnativeLibsDir) and NativeLibraryLoader.osArchDir().
+      - name: Stage native lib
+        shell: bash
+        run: |
+          mkdir -p "out/${{ matrix.dir }}"
+          cp "target/release/${{ matrix.lib }}" "out/${{ matrix.dir }}/"
+          ls -l "out/${{ matrix.dir }}/"
+
+      - name: Upload native lib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # `path: out` keeps the <os>-<arch>/ prefix so merge-multiple rebuilds the tree.
+          name: jdbc-native-${{ matrix.name }}
+          path: out
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: jdbc-bridge-release-${{ matrix.name }}
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      # Skip the save when the key already exists, to avoid "Unable to reserve cache" races.
+      - name: Save rustup toolchain cache (Linux)
+        if: always() && runner.os == 'Linux' && steps.rustup-cache-linux.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          key: ${{ runner.os }}-${{ matrix.name }}-rustup-stable-minimal-v3
+
+  assemble:
+    needs: build_native
+    runs-on: ubuntu-latest
+    name: assemble fat jar
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        # shadow requires JDK 11+; bytecode stays Java 8 via targetCompatibility in build.gradle.
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download all native libs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jdbc-native-*
+          merge-multiple: true
+          path: jdbc/build/native-staging
+
+      - name: Show staged native tree
+        run: find jdbc/build/native-staging -type f | sort
+
+      # generateProtobuf runs cargo, so cache like the native builds.
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-assemble-proto
+
+      # shadowJar finalizes with verifyShadowJar (build.gradle), so no separate verify step.
+      - name: Build fat JAR + sources/javadoc/pom
+        working-directory: jdbc
+        run: |
+          ./gradlew --no-daemon \
+            shadowJar sourcesJar javadocJar generatePomFileForMavenPublication \
+            -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
+
+      - name: Upload fat JAR bundle (unsigned, ready for signing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-fatjar
+          path: |
+            jdbc/build/libs/*.jar
+            jdbc/build/publications/maven/pom-default.xml
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: jdbc-assemble-proto
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  assemble_thin:
+    # The thin publication attaches the per-platform classifier jars, so it needs every platform's
+    # native staged (-PnativeLibsDir); verifyThinPlatformJars requires them all in enforce-all mode.
+    needs: build_native
+    runs-on: ubuntu-latest
+    name: assemble thin jar
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        # shadow requires JDK 11+; bytecode stays Java 8 via targetCompatibility in build.gradle.
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download all native libs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jdbc-native-*
+          merge-multiple: true
+          path: jdbc/build/native-staging
+
+      - name: Show staged native tree
+        run: find jdbc/build/native-staging -type f | sort
+
+      # generateProtobuf runs cargo; cache with its own key (avoid save races with fat assemble).
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-assemble-thin-proto
+
+      # publishThinPublicationToStagingRepository triggers jar (finalized by verifyThinJar), the
+      # per-platform classifier jars (finalized by verifyThinPlatformJars), sources/javadoc/POM,
+      # and stages the whole bundle under the thin coordinate.
+      - name: Build + stage thin JAR bundle (unsigned)
+        working-directory: jdbc
+        run: |
+          ./gradlew --no-daemon publishThinPublicationToStagingRepository \
+            -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
+
+      - name: Upload thin JAR bundle (unsigned, ready for signing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-thin
+          # Staged Maven-repo layout: native-free main jar + per-platform classifier jars +
+          # sources + javadoc + pom (+ checksums/module metadata).
+          path: jdbc/build/staging-deploy/**
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: jdbc-assemble-thin-proto
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}

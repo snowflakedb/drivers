@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 from ..connection_config_mixin import ConnectionConfigMixin, OptionsModifier
-from .connection import ConnectionMixin
+from .connection import ConnectionMixin, clamp_client_prefetch_threads
 from .connection_types import ConnectionParameters, ConnectionParamValue, F, SessionParameters
 from .constants import APPLICATION_NAME, CLIENT_NAME, DEFAULT_CONFIGURATION, LOG_MAX_QUERY_LENGTH
 from .decorators import requires_open
-from .queries import COMMIT_SQL, CURRENT_VERSION_SQL, ROLLBACK_SQL, SET_AUTOCOMMIT_SQL
+from .queries import (
+    COMMIT_SQL,
+    CURRENT_VERSION_SQL,
+    ROLLBACK_SQL,
+    SET_AUTOCOMMIT_SQL,
+    SET_CLIENT_PREFETCH_THREADS_SQL,
+)
 
 
 __all__ = [
     "APPLICATION_NAME",
     "CLIENT_NAME",
+    "clamp_client_prefetch_threads",
     "COMMIT_SQL",
     "ConnectionMixin",
     "ConnectionConfigMixin",
@@ -26,5 +33,6 @@ __all__ = [
     "ROLLBACK_SQL",
     "SessionParameters",
     "SET_AUTOCOMMIT_SQL",
+    "SET_CLIENT_PREFETCH_THREADS_SQL",
     "requires_open",
 ]

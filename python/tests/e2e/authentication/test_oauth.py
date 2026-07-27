@@ -68,6 +68,7 @@ class TestLegacyOAuthAccessToken:
         with connection:
             verify_simple_query_execution(connection)
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_legacy_authentication_with_invalid_token(self, connection_factory, legacy_oauth_params):
         # Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
         connect_params = {
@@ -184,6 +185,7 @@ class TestOAuthAuthorizationCode:
         with connection:
             verify_simple_query_execution(connection)
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_authorization_code_flow_with_bad_client_secret(
         self, connection_factory, authorization_code_params
     ):
@@ -242,7 +244,6 @@ def client_credentials_params():
     token_url = params.get("SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL")
     client_id = params.get("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID")
     client_secret = params.get("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET")
-    scope = "session:role:public"
 
     if not all([token_url, client_id, client_secret]):
         pytest.fail("OAuth parameters not configured.")
@@ -251,7 +252,6 @@ def client_credentials_params():
         "token_url": token_url,
         "client_id": client_id,
         "client_secret": client_secret,
-        "scope": scope,
     }
 
 
@@ -269,7 +269,6 @@ class TestOAuthClientCredentials:
             "oauth_client_id": client_credentials_params["client_id"],
             "oauth_client_secret": client_credentials_params["client_secret"],
             "oauth_token_request_url": client_credentials_params["token_url"],
-            "oauth_scope": client_credentials_params["scope"],
         }
 
         # When Trying to Connect
@@ -290,7 +289,6 @@ class TestOAuthClientCredentials:
             "oauth_client_id": client_credentials_params["client_id"],
             "oauth_client_secret": client_credentials_params["client_secret"],
             "oauth_token_request_url": client_credentials_params["token_url"],
-            "oauth_scope": client_credentials_params["scope"],
             "user": None,
         }
 
@@ -301,6 +299,7 @@ class TestOAuthClientCredentials:
         with connection:
             verify_simple_query_execution(connection)
 
+    @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_client_credentials_flow_with_bad_client_secret(
         self, connection_factory, client_credentials_params
     ):
@@ -312,7 +311,6 @@ class TestOAuthClientCredentials:
             "oauth_client_id": client_credentials_params["client_id"],
             "oauth_client_secret": "invalid_client_secret_12345",
             "oauth_token_request_url": client_credentials_params["token_url"],
-            "oauth_scope": client_credentials_params["scope"],
         }
 
         # When Trying to Connect

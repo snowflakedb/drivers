@@ -31,8 +31,6 @@ fn should_maintain_session_across_multiple_queries() {
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], i as i64);
-
-        client.release_statement(&stmt);
     }
 }
 
@@ -54,8 +52,6 @@ fn should_execute_queries_with_delay_between_them() {
         let mut helper = ArrowResultHelper::from_result(rs);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows[0][0], i as i64);
-
-        client.release_statement(&stmt);
 
         // Short delay between queries - session should remain valid
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -105,8 +101,11 @@ fn should_refresh_session_proactively() {
             disable_parallel_user_prompt: false,
         };
 
-        let http_client = create_tls_client_with_config(TlsConfig::insecure())
-            .expect("Failed to create HTTP client");
+        let http_client = create_tls_client_with_config(
+            TlsConfig::insecure(),
+            sf_core::crl::CrlWorker::shared_lazy(),
+        )
+        .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
         let policy = sf_core::config::retry::RetryPolicy::default();

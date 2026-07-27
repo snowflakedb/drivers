@@ -1,0 +1,65 @@
+# Routing-accuracy eval set for: run-nodejs-ud-tests
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "how do I run the nodejs ud unit tests?"
+    notes: "Direct request naming Node.js UD unit tests — core use case."
+
+  - prompt: "need to run the node e2e tests for the universal driver"
+    notes: "Names both Node.js and e2e context within the UD project."
+
+  - prompt: "npm run test:unit is failing, how do I debug"
+    notes: "References the exact npm script defined in the skill."
+
+  - prompt: "vitest keeps timing out on the e2e suite, what's the timeout setting?"
+    notes: "Vitest is the Node.js UD test runner; timeout tables are in the skill."
+
+  - prompt: "wanna compare old snowflake-sdk driver against the new ud — how do I run that"
+    notes: "Old-driver reference e2e suite is a Node.js-specific feature in this skill."
+
+  - prompt: "set up node deps and run tests"
+    notes: "Abbreviated 'install and run' request in Node.js context — indirect but valid trigger."
+
+  - prompt: "SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER — what does this env var do and how do I use it"
+    notes: "Asking about the Node.js-specific env var documented only in this skill."
+
+  - prompt: "the nodejs new driver e2e tests are all skipped, is that expected?"
+    notes: "Directly matches the troubleshooting note about skipped new-driver e2e tests; 'nodejs' pins it."
+
+  - prompt: "nodejs unit tests, no credentials, what do I need to set up"
+    notes: "No-credential unit test path is a distinctive Node.js UD scenario."
+
+  - prompt: "run only connection.test.ts in the e2e project"
+    notes: "Specific vitest file filter syntax matching examples in the skill."
+
+  - prompt: "install node deps and run test:e2e-old-driver"
+    notes: "References the exact npm script for old-driver e2e comparison."
+
+  - prompt: "watch mode for node unit tests while I iterate on a fix"
+    notes: "Watch mode is a documented Node.js UD dev workflow; borderline but valid."
+
+should_not_trigger:
+  - prompt: "how do I run the jdbc unit tests, do I need to build the rust bridge first?"
+    reason: "run-jdbc-ud-tests — explicitly asks about JDBC and the Rust jdbc_bridge build step."
+
+  - prompt: "python ud tests are failing with RuntimeError: Couldn't load core driver dependency"
+    reason: "run-python-ud-tests — error message and language are Python-specific."
+
+  - prompt: "build and run the odbc tests with ctest"
+    reason: "run-odbc-ud-tests — ctest and ODBC are the ODBC skill's domain."
+
+
+  - prompt: "does the jdbc driver cover SNOW-12345? check bug regression"
+    reason: "bug-regression-coverage — asking about bug coverage for JDBC, not running Node.js tests."
+
+  - prompt: "npm install is hanging, how do I clear the cache"
+    reason: "general conversation / no skill — npm problem without any UD or Node.js driver framing."
+
+  - prompt: "run the e2e tests for the python connector and check which ones need credentials"
+    reason: "run-python-ud-tests — explicitly Python connector e2e tests."
+
+  - prompt: "review this jdbc test file for flakiness"
+    reason: "jdbc-test-reviewer — test review task, not running Node.js UD tests."

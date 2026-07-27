@@ -1,30 +1,69 @@
 name: dotnet CI
 
 on:
+# TODO later milestones
+#  schedule:
+#    - cron: '0 3 * * *'  # Nightly at 03:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
     branches: [ "main" ]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     types: [ checks_requested ]
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 jobs:
-  detect-changes:
+  scope-label-gate:
     if: >-
-      github.repository_owner != 'snowflakedb'
-      || github.event_name == 'workflow_dispatch'
-      || startsWith(github.ref, 'refs/heads/release/')
+      (github.repository_owner != 'snowflakedb'
+       || github.event_name == 'workflow_dispatch'
+       || startsWith(github.ref, 'refs/heads/release/'))
+      && (github.event.action != 'labeled'
+          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+
+  detect-changes:
+    needs: scope-label-gate
     uses: ./.github/workflows/detect-changes.yml
 
-  dotnet_tests:
+  load-dotnet-matrix:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_dotnet == 'true'
-    name: dotnet Tests (new driver)
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_dotnet == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          LEVEL_ARG=""
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+            LEVEL_ARG="--level nightly"
+          fi
+          python ci/test_matrix/generate_matrix.py \
+            --driver dotnet --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active $LEVEL_ARG \
+            >> "$GITHUB_OUTPUT"
+
+  dotnet_tests:
+    needs: load-dotnet-matrix
+    if: needs.load-dotnet-matrix.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.load-dotnet-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: dotnet tests (${{ matrix.name }})
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,18 +113,20 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Build Rust components
-        run: cargo build --package sf_core
+        run: cargo build --package sf_core ${{ matrix.cargo_flags }}
+
+      - name: Copy native lib to test output directory
+        if: matrix.copy_native_lib
+        run: |
+          cp "${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}" \
+             "dotnet/tests/Snowflake.Data.Tests/bin/Debug/${{ matrix.dotnet_version }}/"
 
       - name: Run tests (new driver)
-        run: dotnet run --no-build
+        run: ${{ matrix.test_runner }}
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
-           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so # TODO test-matrix support will need this hardcoded extension changed
-
-      - name: Check formatting
-        run: dotnet format Snowflake.Data.sln --verify-no-changes
-        working-directory: dotnet
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
 
   dotnet_tests_reference:
     needs: detect-changes
@@ -140,14 +181,18 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Run e2e tests (old driver reference)
-        run: dotnet run --no-build
+        run: dotnet run --no-build --framework net10.0
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
 
+      - name: Check formatting
+        run: dotnet format Snowflake.Data.sln --verify-no-changes
+        working-directory: dotnet
+
   dotnet-status:
-    needs: [detect-changes, dotnet_tests, dotnet_tests_reference]
+    needs: [detect-changes, load-dotnet-matrix, dotnet_tests, dotnet_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -155,26 +200,25 @@ jobs:
         run: |
           echo "=== dotnet CI Status ==="
 
-          NEW_RESULT="${{ needs.dotnet_tests.result }}"
+          MATRIX_RESULT="${{ needs.dotnet_tests.result }}"
           REFERENCE_RESULT="${{ needs.dotnet_tests_reference.result }}"
 
           # Check if tests were skipped
-          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
+          if [[ "$MATRIX_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
             echo "✓ dotnet jobs were SKIPPED (no relevant changes detected)"
-            echo "  - run_dotnet: ${{ needs.detect-changes.outputs.run_dotnet }}"
             exit 0
           fi
 
           # Check if any job failed or was cancelled
-          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
+          if [[ "$MATRIX_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ dotnet CI FAILED or CANCELLED"
-            echo "  - dotnet Tests (new): $NEW_RESULT"
-            echo "  - dotnet Reference (old): $REFERENCE_RESULT"
+            echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
+            echo "  - dotnet_tests_reference: $REFERENCE_RESULT"
             exit 1
           fi
 
           # Tests ran and passed
           echo "✓ dotnet jobs were RUN and PASSED"
-          echo "  - dotnet Tests (new): $NEW_RESULT"
-          echo "  - dotnet Reference (old): $REFERENCE_RESULT"
+          echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
+          echo "  - dotnet_tests_reference: $REFERENCE_RESULT"
           exit 0

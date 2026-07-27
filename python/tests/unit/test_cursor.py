@@ -20,6 +20,8 @@ from snowflake.connector._internal.extras import (
     check_dependency as _real_check_dependency,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ABORT_QUERY_OUTCOME_ABORTED,
+    ABORT_QUERY_OUTCOME_NOT_RUNNING,
     ConnectionHandle,
     ResultSetHandle,
     StatementHandle,
@@ -1059,6 +1061,7 @@ class TestCreateRowIteratorNumpyFlag:
 
     def test_passes_numpy_true_from_connection(self, mock_connection):
         mock_connection.config.numpy = True
+        mock_connection._session_parameters = {"TIMEZONE": "UTC"}
         cursor = SnowflakeCursor(mock_connection)
         cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
 
@@ -1068,13 +1071,14 @@ class TestCreateRowIteratorNumpyFlag:
 
         mock_create.assert_called_once_with(
             stream_ptr=42,
-            connection=mock_connection,
+            context=ANY,
             use_dict_result=False,
             use_numpy=True,
         )
 
     def test_passes_numpy_false_from_connection(self, mock_connection):
         mock_connection.config.numpy = False
+        mock_connection._session_parameters = {"TIMEZONE": "UTC"}
         cursor = SnowflakeCursor(mock_connection)
         cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
 
@@ -1084,7 +1088,7 @@ class TestCreateRowIteratorNumpyFlag:
 
         mock_create.assert_called_once_with(
             stream_ptr=42,
-            connection=mock_connection,
+            context=ANY,
             use_dict_result=False,
             use_numpy=False,
         )
@@ -1212,7 +1216,7 @@ class TestFetchArrowBatches:
             list(cursor.fetch_arrow_batches(force_microsecond_precision=True))
 
         mock_get.assert_called_once_with(
-            stream_ptr=42, connection=mock_connection, force_microsecond_precision=True, number_to_decimal=ANY
+            stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
         )
 
 
@@ -1294,7 +1298,7 @@ class TestFetchArrowAll:
             cursor.fetch_arrow_all(force_microsecond_precision=True)
 
         mock_get.assert_called_once_with(
-            stream_ptr=42, connection=mock_connection, force_microsecond_precision=True, number_to_decimal=ANY
+            stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
         )
 
 
@@ -2044,7 +2048,7 @@ class TestAbortQuery:
 
     def test_abort_query_returns_true_on_success(self, cursor, mock_core_client):
         """abort_query sends correct RPC args and returns True on success."""
-        mock_core_client.connection_abort_query.return_value.success = True
+        mock_core_client.connection_abort_query.return_value.outcome = ABORT_QUERY_OUTCOME_ABORTED
 
         result = cursor.abort_query("01234567-abcd-ef01-0000-000000000001")
 
@@ -2055,7 +2059,7 @@ class TestAbortQuery:
 
     def test_abort_query_returns_false_on_failure(self, cursor, mock_core_client):
         """abort_query returns False when the server reports failure."""
-        mock_core_client.connection_abort_query.return_value.success = False
+        mock_core_client.connection_abort_query.return_value.outcome = ABORT_QUERY_OUTCOME_NOT_RUNNING
 
         result = cursor.abort_query("some-qid")
 
@@ -2063,7 +2067,7 @@ class TestAbortQuery:
 
     def test_abort_query_does_not_mutate_cursor_state(self, cursor, mock_core_client):
         """abort_query does not modify description, rowcount, or execute_result."""
-        mock_core_client.connection_abort_query.return_value.success = True
+        mock_core_client.connection_abort_query.return_value.outcome = ABORT_QUERY_OUTCOME_ABORTED
 
         cursor.abort_query("some-qid")
 

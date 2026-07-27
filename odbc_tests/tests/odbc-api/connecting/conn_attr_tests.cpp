@@ -12,6 +12,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "sf_odbc.h"
 #include "test_macros.hpp"
 
 // ============================================================================
@@ -402,4 +403,143 @@ TEST_CASE("should set and get SQL_ATTR_METADATA_ID on a live connection",
   ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID, &metadata_id, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(metadata_id == value);
+}
+
+// ============================================================================
+// SQL_ATTR_LOGIN_TIMEOUT (103) — pre-connect only (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should set and get SQL_ATTR_LOGIN_TIMEOUT before connect", "[odbc-api][conn_attr][login_timeout]") {
+  // Given An allocated but unconnected DBC handle
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  // When SQL_ATTR_LOGIN_TIMEOUT is set before connecting
+  ret = SQLSetConnectAttr(dbc.getHandle(), SQL_ATTR_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(42), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then it round-trips on GET when the DM forwards the value to the driver.
+  // Some Driver Managers manage login timeout internally and may not return the
+  // driver's value, so only assert the value when the read succeeds.
+  SQLULEN timeout = 0;
+  ret = SQLGetConnectAttr(dbc.getHandle(), SQL_ATTR_LOGIN_TIMEOUT, &timeout, 0, nullptr);
+  if (SQL_SUCCEEDED(ret)) {
+    NON_IODBC { CHECK(timeout == 42); }
+  }
+}
+
+TEST_CASE("should reject SQL_ATTR_LOGIN_TIMEOUT set after connect with HY011",
+          "[odbc-api][conn_attr][login_timeout][error][connecting]") {
+  // Given A connected DBC handle
+  Connection conn;
+
+  // When SQL_ATTR_LOGIN_TIMEOUT (settable only before connect) is set post-connect
+  SQLRETURN ret =
+      SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(30), 0);
+
+  OLD_DRIVER_ONLY("BD#94") {
+    // Old driver silently accepts and returns SQL_SUCCESS.
+    CHECK(SQL_SUCCEEDED(ret));
+  }
+  NEW_DRIVER_ONLY("BD#94") {
+    // New driver returns HY011 where the DM forwards the call; a DM that manages
+    // login timeout itself (e.g. Windows DM) may intercept and return SQL_SUCCESS.
+    if (!SQL_SUCCEEDED(ret)) {
+      auto records = get_diag_rec(SQL_HANDLE_DBC, conn.handleWrapper().getHandle());
+      REQUIRE(!records.empty());
+      CHECK(records[0].sqlState == "HY011");
+    }
+  }
+}
+
+// ============================================================================
+// SQL_ATTR_CURRENT_CATALOG (109) — string truncation (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should truncate SQL_ATTR_CURRENT_CATALOG into a small buffer with 01004",
+          "[odbc-api][conn_attr][current_catalog][connecting]") {
+  // Given A connected DBC handle whose current catalog is a non-empty string
+  Connection conn;
+  char full[256] = {};
+  SQLINTEGER full_len = 0;
+  SQLRETURN ret =
+      SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG, full, sizeof(full), &full_len);
+  REQUIRE(SQL_SUCCEEDED(ret));
+  REQUIRE(full_len > 1);
+
+  // When the catalog is fetched into a buffer too small to hold it
+  char small[2] = {'\xFF', '\xFF'};
+  SQLINTEGER out_len = -1;
+  ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG, small, sizeof(small), &out_len);
+
+  // Then It should signal truncation (SQL_SUCCESS_WITH_INFO / 01004) and
+  // null-terminate the buffer. The exact StringLengthPtr value is
+  // driver-manager-dependent — iODBC reports the truncated byte count (1)
+  // while the Windows DM reports the full length in wide bytes (32) — so we
+  // assert only that a positive length was written, not its precise value.
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  auto records = get_diag_rec(SQL_HANDLE_DBC, conn.handleWrapper().getHandle());
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "01004");
+  CHECK(small[1] == '\0');
+  CHECK(out_len > 0);
+}
+
+// ============================================================================
+// SQL_SF_CONN_ATTR_APPLICATION — custom Snowflake attribute, pre-connect (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should set and get custom SQL_SF_CONN_ATTR_APPLICATION before connect",
+          "[odbc-api][conn_attr][application]") {
+  // Given An allocated but unconnected DBC handle
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  NEW_DRIVER_ONLY("BD#97") {
+    // When the Snowflake-custom Application attribute is set before connecting
+    char application[] = "my-odbc-app";
+    ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_APPLICATION, reinterpret_cast<SQLPOINTER>(application),
+                            SQL_NTS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    // Then it round-trips on GET.
+    char result[64] = {};
+    SQLINTEGER result_len = 0;
+    ret = SQLGetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_APPLICATION, result, sizeof(result), &result_len);
+    NON_IODBC {
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(std::string(result) == "my-odbc-app");
+    }
+    // iODBC's DM does not route a get of a driver-defined connection attribute
+    // on an unconnected handle (it returns SQL_ERROR); the successful set above
+    // is what we assert on that path.
+  }
+}
+
+// ============================================================================
+// Unknown connection attribute (SNOW-3235558)
+// ============================================================================
+
+TEST_CASE("should return HY092 when getting an unknown connection attribute",
+          "[odbc-api][conn_attr][error][connecting]") {
+  SKIP_OLD_DRIVER("BD#95", "New driver classifies out-of-range attribute identifiers as HY092");
+  // Given A connected DBC handle
+  Connection conn;
+
+  // When an attribute identifier outside the ODBC-defined range is queried
+  SQLULEN value = 0;
+  SQLRETURN ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), 99999, &value, 0, nullptr);
+
+  // Then It should return SQL_ERROR with SQLSTATE HY092.
+  // Unlike SQL_ATTR_LOGIN_TIMEOUT (a known attribute intercepted by some DMs), attribute
+  // 99999 is completely out of range and no DM returns SQL_SUCCESS for it — the error
+  // path is unconditional.
+  REQUIRE(!SQL_SUCCEEDED(ret));
+  auto records = get_diag_rec(SQL_HANDLE_DBC, conn.handleWrapper().getHandle());
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "HY092");
 }

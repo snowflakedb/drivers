@@ -15,6 +15,8 @@ import com.google.protobuf.ByteString;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Arrays;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
@@ -41,6 +43,9 @@ class ResultSetFactoryTest {
   void setUp() throws Exception {
     mockCoreApi = mock(CoreDriverApi.class);
     mockStatement = mock(SnowflakeStatementImpl.class);
+    InternalSnowflakeConnection mockConnection = mock(InternalSnowflakeConnection.class);
+    when(mockStatement.getConnectionInternal()).thenReturn(mockConnection);
+    when(mockConnection.getParameters()).thenReturn(FrozenParametersRegistry.EMPTY);
     when(mockCoreApi.resultSetRelease(any()))
         .thenReturn(ResultSetReleaseResponse.getDefaultInstance());
   }

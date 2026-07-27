@@ -138,12 +138,11 @@ fn validate_config(config: &LogoutConfig) -> Result<(), ApiError> {
     if let Some(timeout) = config.logout_request_timeout
         && timeout.is_zero()
     {
-        return Err(InvalidArgumentSnafu {
+        return InvalidArgumentSnafu {
             argument:
                 "logout_request_timeout: 0s. Zero timeout means immediate failure. Must be positive."
                     .to_string(),
-        }
-        .build());
+        }.fail();
     }
     Ok(())
 }
@@ -187,12 +186,7 @@ pub(super) fn prepare_logout_from_conn(
         (Some(client), Some(url), Some(info)) => {
             let refresh_ctx = RefreshContext::new(conn)?;
 
-            let mut retry_policy = conn.retry_policy.clone();
-            if let Some(max_attempts) = config.max_attempts {
-                retry_policy.max_attempts = max_attempts;
-            }
-            retry_policy.max_elapsed = config.logout_total_timeout;
-            retry_policy.per_request_timeout = config.logout_request_timeout;
+            let retry_policy = RetryPolicy::logout(&conn.connection_seed, config);
 
             tracing::debug!(
                 total_timeout_secs = config.logout_total_timeout.as_secs(),
@@ -240,9 +234,9 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
         })
         .await;
 
-    // Remap ApiError::Query (from RefreshContext) to ApiError::LogoutFailed
+    // Remap ApiError::Query (from RefreshContext) to ApiError::Logout
     result.map_err(|e| match e {
-        ApiError::Query { source, .. } => LogoutFailedSnafu {
+        ApiError::Query { source, .. } => LogoutSnafu {
             message: format!("{source}"),
         }
         .build(),

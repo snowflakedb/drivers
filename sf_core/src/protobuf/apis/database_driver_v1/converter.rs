@@ -2,14 +2,13 @@ use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::ExecuteQueryResult as NativeExecuteQueryResult;
-use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::InlineData;
 use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescriptor;
 use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
-    ConfigError, InlineJsonEncodingSnafu, InvalidColumnMetadataSnafu, RestError,
+    ConfigError, InlineJsonEncodeSnafu, InvalidColumnMetadataSnafu, RestError,
 };
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -17,11 +16,13 @@ use crate::apis::database_driver_v1::{
     ValidationSeverity as CoreValidationSeverity,
 };
 use crate::chunks::{
-    ArrowIpcEncodingSnafu, ChunkError, ChunkFormatKind, ChunkReadingSnafu,
-    convert_string_rowset_to_arrow_reader,
+    ArrowIpcEncodeSnafu, ChunkDownloadData, ChunkError, ChunkFormatKind, ChunkReadSnafu,
+    FetchChunkInput, convert_string_rowset_to_arrow_reader,
 };
+use crate::protobuf::generated::database_driver_v1::result_chunk::Data;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::query_types::RowType;
+use crate::rest::snowflake::AbortOutcome;
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::array::RecordBatchReader;
@@ -190,6 +191,19 @@ pub(super) fn proto_chunk_format_to_kind(value: i32) -> Option<ChunkFormatKind> 
     }
 }
 
+// ---------------------------------------------------------------------------
+// Abort-query outcome conversion (native ↔ proto)
+// ---------------------------------------------------------------------------
+
+impl From<AbortOutcome> for AbortQueryOutcome {
+    fn from(value: AbortOutcome) -> Self {
+        match value {
+            AbortOutcome::Aborted => AbortQueryOutcome::Aborted,
+            AbortOutcome::NotRunning => AbortQueryOutcome::NotRunning,
+        }
+    }
+}
+
 /// Encode a JSON rowset as a base64 Arrow IPC stream so inline chunks ship uniformly over the proto boundary.
 pub(super) fn json_rowset_to_arrow_ipc_base64(
     rowset: &[Vec<Option<String>>],
@@ -200,13 +214,13 @@ pub(super) fn json_rowset_to_arrow_ipc_base64(
     let mut buf: Vec<u8> = Vec::new();
     {
         let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
-            .context(ArrowIpcEncodingSnafu)?;
+            .context(ArrowIpcEncodeSnafu)?;
         for batch in reader {
             // Iterator error = JSON rowset read/decode failure, not IPC encoding.
-            let batch = batch.context(ChunkReadingSnafu)?;
-            writer.write(&batch).context(ArrowIpcEncodingSnafu)?;
+            let batch = batch.context(ChunkReadSnafu)?;
+            writer.write(&batch).context(ArrowIpcEncodeSnafu)?;
         }
-        writer.finish().context(ArrowIpcEncodingSnafu)?;
+        writer.finish().context(ArrowIpcEncodeSnafu)?;
     }
     Ok(BASE64.encode(&buf))
 }
@@ -215,20 +229,26 @@ pub(super) fn json_rowset_to_arrow_ipc_base64(
 // Result / chunk / column conversions
 // ---------------------------------------------------------------------------
 
-impl From<result_chunk::Data> for FetchChunkInput {
-    fn from(data: result_chunk::Data) -> Self {
-        match data {
-            result_chunk::Data::Inline(bytes) => FetchChunkInput::Inline(bytes),
-            result_chunk::Data::Remote(remote) => {
-                FetchChunkInput::Remote(crate::chunks::ChunkDownloadData {
-                    url: remote.url,
-                    row_count: 0,
-                    uncompressed_size: 0,
-                    compressed_size: 0,
-                    headers: remote.headers,
-                })
-            }
-        }
+impl TryFrom<&ResultChunk> for FetchChunkInput {
+    type Error = DriverException;
+
+    fn try_from(chunk: &ResultChunk) -> Result<Self, Self::Error> {
+        let data = chunk.data.clone().ok_or_else(|| DriverException {
+            message: "Chunk data is required".to_string(),
+            status_code: StatusCode::InvalidArgument as i32,
+            ..Default::default()
+        })?;
+
+        Ok(match data {
+            Data::Inline(inline) => FetchChunkInput::Inline(inline),
+            Data::Remote(remote_chunk) => FetchChunkInput::Remote(ChunkDownloadData {
+                url: remote_chunk.url,
+                row_count: 0, // row count is not needed for fetching
+                uncompressed_size: remote_chunk.uncompressed_size,
+                compressed_size: remote_chunk.compressed_size,
+                headers: remote_chunk.headers,
+            }),
+        })
     }
 }
 
@@ -333,6 +353,7 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
             query_id: d.query_id,
             columns: d.columns.into_iter().map(ColumnMetadata::from).collect(),
             rows_affected: d.rows_affected,
+            row_count: d.row_count,
             statement_type_id: d.statement_type_id,
             sql_state: d.sql_state,
             stats: native_stats_to_proto(&d.stats),
@@ -415,7 +436,7 @@ impl TryFrom<ChunkDataWithDescriptor> for ResultSetGetChunksResponse {
                     .to_protobuf()?;
                 Some(
                     json_rowset_to_arrow_ipc_base64(rowset, &row_types)
-                        .context(InlineJsonEncodingSnafu)
+                        .context(InlineJsonEncodeSnafu)
                         .to_protobuf()?,
                 )
             }
@@ -478,6 +499,11 @@ impl ConnectionGetInfoResponse {
                 None
             },
             user_agent: info.user_agent,
+            proxy_host: info.proxy_host,
+            proxy_port: info.proxy_port,
+            proxy_user: info.proxy_user,
+            proxy_password: info.proxy_password.map(|p| p.reveal().to_string()),
+            no_proxy: info.no_proxy,
         }
     }
 }
@@ -632,7 +658,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             )),
         },
         ApiError::Configuration {
-            source: ConfigError::ValidationFailed { issues, .. },
+            source: ConfigError::Validation { issues, .. },
             ..
         } => {
             let summary = issues
@@ -688,7 +714,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 })),
             },
         },
-        ApiError::ConnectionLocking { .. } => DriverError {
+        ApiError::ConnectionLock { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::StatementLocking { .. } => DriverError {
@@ -697,7 +723,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::DatabaseLocking { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::QueryResponseProcessing { .. } => DriverError {
+        ApiError::QueryResponseProcess { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::ConnectionNotInitialized { .. } => DriverError {
@@ -730,13 +756,16 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ChunkFetch { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::ArrowParsing { .. } => DriverError {
+        ApiError::ArrowParse { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::JsonChunkDecoding { .. } => DriverError {
+        ApiError::JsonChunkDecode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::InlineJsonEncoding { .. } => DriverError {
+        ApiError::BlockingTaskJoin { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::InlineJsonEncode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::InvalidColumnMetadata { column, .. } => DriverError {
@@ -748,15 +777,15 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 },
             )),
         },
-        ApiError::Base64Decoding { .. } => DriverError {
+        ApiError::Base64Decode { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::StageBindingFailed { .. } => DriverError {
+        ApiError::StageBinding { .. } => DriverError {
             // Surface as `GenericError` for now: the wrapper-side fallback
-            // (catch `ApiError::StageBindingFailed`, re-issue with inline JSON
+            // (catch `ApiError::StageBinding`, re-issue with inline JSON
             // bindings) lives in a separate PR. A dedicated proto variant
             // for stage-binding failures can land alongside that work —
             // the underlying snafu source-chain (logged via the
@@ -816,7 +845,10 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ConnectionClosed { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
-        ApiError::LogoutFailed { .. } => DriverError {
+        ApiError::Logout { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
+        ApiError::QueryTimeout { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
     }
@@ -920,7 +952,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             ..
         } => StatusCode::MissingParameter,
         ApiError::Configuration {
-            source: ConfigError::ValidationFailed { issues, .. },
+            source: ConfigError::Validation { issues, .. },
             ..
         } if issues
             .iter()
@@ -929,7 +961,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             StatusCode::MissingParameter
         }
         ApiError::Configuration {
-            source: ConfigError::ValidationFailed { .. },
+            source: ConfigError::Validation { .. },
             ..
         } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
@@ -937,10 +969,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             RestError::LoginError { .. } => StatusCode::LoginError,
             _ => StatusCode::AuthenticationError,
         },
-        ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
+        ApiError::ConnectionLock { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
-        ApiError::QueryResponseProcessing {
+        ApiError::QueryResponseProcess {
             source: boxed_error,
             ..
         } => {
@@ -956,6 +988,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
                         source: CompressionTypeError::UnsupportedCompressionType { .. },
                         ..
                     } => StatusCode::UnsupportedCompression,
+                    // A too-large source file / stage object is an input
+                    // error, not a driver fault — surface it as
+                    // `InvalidArgument` rather than `InternalError`.
+                    s if s.is_file_too_large() => StatusCode::InvalidArgument,
                     _ => StatusCode::InternalError,
                 },
                 QueryResponseProcessingError::RemoteFileNotFound { .. } => {
@@ -973,22 +1009,26 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
         ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
-        ApiError::ArrowParsing { .. } => StatusCode::InternalError,
-        ApiError::JsonChunkDecoding { .. } => StatusCode::InternalError,
-        ApiError::InlineJsonEncoding { .. } => StatusCode::InternalError,
+        ApiError::ArrowParse { .. } => StatusCode::InternalError,
+        ApiError::JsonChunkDecode { .. } => StatusCode::InternalError,
+        ApiError::BlockingTaskJoin { .. } => StatusCode::InternalError,
+        ApiError::InlineJsonEncode { .. } => StatusCode::InternalError,
         ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
-        ApiError::Base64Decoding { .. } => StatusCode::InternalError,
+        ApiError::Base64Decode { .. } => StatusCode::InternalError,
         ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
         ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
-        ApiError::LogoutFailed { .. } => StatusCode::InternalError,
+        ApiError::Logout { .. } => StatusCode::InternalError,
         // Stage-binding failures are surfaced as a transport-layer
         // generic error for now (no dedicated proto status code yet);
         // the wrapper-side fallback work will add a dedicated variant and
         // map to it. Until then, `GenericError` is the right bucket — the
         // error trace carries enough detail for diagnostics.
-        ApiError::StageBindingFailed { .. } => StatusCode::GenericError,
+        ApiError::StageBinding { .. } => StatusCode::GenericError,
+        // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
+        // language wrappers can surface HYT00 / OperationalError correctly.
+        ApiError::QueryTimeout { .. } => StatusCode::GenericError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);

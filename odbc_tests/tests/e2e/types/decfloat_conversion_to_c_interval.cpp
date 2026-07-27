@@ -191,35 +191,40 @@ TEST_CASE("DECFLOAT sub-microsecond truncation to interval second", "[decfloat][
 // ============================================================================
 
 TEST_CASE("DECFLOAT to interval - no negative zero", "[decfloat][conversion][c_interval][edge]") {
-  SKIP_OLD_DRIVER("BD#17", "Old driver produces negative zero for interval types");
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Negative fractional DECFLOAT values truncate to zero for non-second intervals
   (void)0;
-  // Then Interval sign is positive when the integer part truncates to zero
+  // Then The magnitude and truncation warning (01S07) match on both drivers, but the sign differs:
+  //      BD#98 - the old driver keeps the literal minus (negative zero, SQL_TRUE) while the new
+  //      driver normalizes a zero-magnitude interval to +0 (SQL_FALSE).
   {
-    INFO("SQL_C_INTERVAL_YEAR -0.5 truncates to +0");
+    INFO("SQL_C_INTERVAL_YEAR -0.5 truncates to zero");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(conn.execute_fetch("SELECT '-0.5'::DECFLOAT"), 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.interval_sign == SQL_FALSE);
+    OLD_DRIVER_ONLY("BD#98") { CHECK(interval.interval_sign == SQL_TRUE); }
+    NEW_DRIVER_ONLY("BD#98") { CHECK(interval.interval_sign == SQL_FALSE); }
     CHECK(interval.intval.year_month.year == 0);
   }
   {
-    INFO("SQL_C_INTERVAL_MONTH -0.3 truncates to +0");
+    INFO("SQL_C_INTERVAL_MONTH -0.3 truncates to zero");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(conn.execute_fetch("SELECT '-0.3'::DECFLOAT"), 1);
     CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);
+    OLD_DRIVER_ONLY("BD#98") { CHECK(interval.interval_sign == SQL_TRUE); }
+    NEW_DRIVER_ONLY("BD#98") { CHECK(interval.interval_sign == SQL_FALSE); }
     CHECK(interval.intval.year_month.month == 0);
   }
   {
-    INFO("SQL_C_INTERVAL_DAY -0.9 truncates to +0");
+    INFO("SQL_C_INTERVAL_DAY -0.9 truncates to zero");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(conn.execute_fetch("SELECT '-0.9'::DECFLOAT"), 1);
     CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.interval_sign == SQL_FALSE);
+    OLD_DRIVER_ONLY("BD#98") { CHECK(interval.interval_sign == SQL_TRUE); }
+    NEW_DRIVER_ONLY("BD#98") { CHECK(interval.interval_sign == SQL_FALSE); }
     CHECK(interval.intval.day_second.day == 0);
   }
   {
+    // -0.5 seconds is a real negative value (fraction is nonzero), so both drivers agree: SQL_TRUE.
     INFO("SQL_C_INTERVAL_SECOND -0.5 keeps negative (fraction nonzero)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(conn.execute_fetch("SELECT '-0.5'::DECFLOAT"), 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);

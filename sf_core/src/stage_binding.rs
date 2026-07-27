@@ -81,7 +81,7 @@ pub enum StageBindingError {
     },
 
     #[snafu(display("Failed to create the SYSTEM$BIND temporary stage"))]
-    CreateStageFailed {
+    CreateStage {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
         #[snafu(implicit)]
@@ -89,7 +89,7 @@ pub enum StageBindingError {
     },
 
     #[snafu(display("PUT query to @SYSTEM$BIND failed"))]
-    PutQueryFailed {
+    PutQuery {
         #[snafu(source(from(RestError, Box::new)))]
         source: Box<RestError>,
         #[snafu(implicit)]
@@ -105,7 +105,7 @@ pub enum StageBindingError {
     },
 
     #[snafu(display("Failed to upload CSV bind data to the stage"))]
-    UploadFailed {
+    Upload {
         #[snafu(source(from(file_manager::FileManagerError, Box::new)))]
         source: Box<file_manager::FileManagerError>,
         #[snafu(implicit)]
@@ -181,7 +181,7 @@ async fn ensure_stage(
             flags
                 .stage_state
                 .store(StageState::Disabled, Ordering::Relaxed);
-            Err(e).context(CreateStageFailedSnafu)
+            Err(e).context(CreateStageSnafu)
         }
     }
 }
@@ -211,7 +211,7 @@ async fn issue_put_query(
         QueryExecutionMode::Blocking,
     )
     .await
-    .context(PutQueryFailedSnafu)
+    .context(PutQuerySnafu)
 }
 
 async fn upload_blob(
@@ -235,7 +235,7 @@ async fn upload_blob(
     // adr/tls_version_enforcement_implementation_notes.md, "Known gaps").
     upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, &mut None)
         .await
-        .context(UploadFailedSnafu)?;
+        .context(UploadSnafu)?;
     Ok(())
 }
 

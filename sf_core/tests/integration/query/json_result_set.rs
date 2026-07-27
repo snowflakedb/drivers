@@ -252,8 +252,8 @@ fn should_handle_empty_result_set_for_arrow_and_json() {
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, select_query);
@@ -285,7 +285,6 @@ fn should_handle_empty_result_set_for_arrow_and_json() {
             );
         }
     }
-    client.release_statement(&stmt);
 }
 
 fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, select_query: &str) {
@@ -304,7 +303,6 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
         let stmt = client.new_statement();
         client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
         client.execute_statement_query(&stmt);
-        client.release_statement(&stmt);
     });
     let stmt = client.new_statement();
 
@@ -336,8 +334,8 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
     };
     assert_eq!(
         desc.result_descriptor.as_ref().unwrap().rows_affected,
-        Some(1),
-        "Cannot force JSON result set"
+        None,
+        "ALTER SESSION is a no-result statement; rows_affected should be None, not a generic success count"
     );
 
     client.set_sql_query(&stmt, &select_query);
@@ -356,6 +354,4 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
     let json_columns = json_result_helper.next_batch().unwrap();
 
     assert_record_batches_match(&arrow_columns, &json_columns);
-
-    client.release_statement(&stmt);
 }

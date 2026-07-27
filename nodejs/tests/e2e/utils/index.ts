@@ -26,15 +26,28 @@ export function getSnowflakeSDK() {
   }
 }
 
-export const TEST_CONNECTION_OPTIONS: ConnectionOptions = {
+const _baseConnectionOptions = {
   account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
   username: getTestParameter('SNOWFLAKE_TEST_USER'),
-  password: getTestParameter('SNOWFLAKE_TEST_PASSWORD'),
   warehouse: getTestParameter('SNOWFLAKE_TEST_WAREHOUSE'),
   database: getTestParameter('SNOWFLAKE_TEST_DATABASE'),
   schema: getTestParameter('SNOWFLAKE_TEST_SCHEMA'),
   role: getTestParameter('SNOWFLAKE_TEST_ROLE'),
 };
+
+// uSUT (local Snowflake test instance) only provisions password credentials for the test user
+// — no RSA key is registered. Use password auth when SNOWFLAKE_TEST_IS_USUT is set.
+export const TEST_CONNECTION_OPTIONS: ConnectionOptions = getTestParameter('SNOWFLAKE_TEST_IS_USUT')
+  ? {
+      ..._baseConnectionOptions,
+      password: getTestParameter('SNOWFLAKE_TEST_PASSWORD'),
+    }
+  : {
+      ..._baseConnectionOptions,
+      authenticator: 'SNOWFLAKE_JWT',
+      privateKey: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS'),
+      privateKeyPass: getTestParameter('SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD'),
+    };
 
 export function createTestConnection(
   snowflake: typeof oldSnowflakeSDK,

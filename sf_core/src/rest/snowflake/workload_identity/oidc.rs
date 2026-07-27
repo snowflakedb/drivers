@@ -18,7 +18,7 @@ pub enum OidcAttestationError {
     #[snafu(display(
         "OIDC provider requires a pre-acquired token set via the 'token' connection parameter"
     ))]
-    TokenMissing {
+    MissingToken {
         #[snafu(implicit)]
         location: Location,
     },
@@ -28,7 +28,7 @@ pub enum OidcAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to base64-decode JWT payload"))]
-    PayloadDecodeFailed {
+    PayloadDecode {
         source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
@@ -53,7 +53,7 @@ pub(super) fn get_token(
         .oidc_token
         .as_ref()
         .map(|s| s.reveal().to_string())
-        .context(TokenMissingSnafu)?;
+        .context(MissingTokenSnafu)?;
 
     validate_and_log_claims(&token)?;
 
@@ -73,7 +73,7 @@ fn validate_and_log_claims(token: &str) -> Result<(), OidcAttestationError> {
 
     let payload_bytes = URL_SAFE_NO_PAD
         .decode(payload_b64)
-        .context(PayloadDecodeFailedSnafu)?;
+        .context(PayloadDecodeSnafu)?;
 
     let payload: serde_json::Value =
         serde_json::from_slice(&payload_bytes).context(PayloadNotJsonSnafu)?;

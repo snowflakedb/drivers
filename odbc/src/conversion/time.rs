@@ -2,6 +2,7 @@ use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::ArrowPrimitiveType;
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
+use snafu::OptionExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
@@ -94,11 +95,10 @@ where
         let secs = secs_i64 as u32;
         let frac = (raw % divisor) as u32;
         let nanos = frac * 10u32.pow(9 - self.scale);
-        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or_else(|| {
+        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).with_context(|| {
             InvalidArrowValueSnafu {
                 reason: format!("out-of-range TIME: secs={secs}, nanos={nanos}"),
             }
-            .build()
         })
     }
 }
@@ -229,15 +229,12 @@ impl ReadODBC for SnowflakeTime {
             CDataType::Time | CDataType::TypeTime => {
                 let time = read_unaligned::<sql::Time>(binding);
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
-                    .ok_or_else(|| {
-                        InvalidDatetimeValueSnafu {
-                            reason: format!(
-                                "invalid time in SQL_C_TYPE_TIME for TIME target: \
+                    .with_context(|| InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIME for TIME target: \
                                  hour={}, minute={}, second={}",
-                                time.hour, time.minute, time.second
-                            ),
-                        }
-                        .build()
+                            time.hour, time.minute, time.second
+                        ),
                     })
             }
             CDataType::Char | CDataType::WChar => {
@@ -250,14 +247,11 @@ impl ReadODBC for SnowflakeTime {
             CDataType::Binary => {
                 let time = read_binary_struct::<sql::Time>(binding, "SQL_TIME_STRUCT")?;
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
-                    .ok_or_else(|| {
-                        BindingNumericOutOfRangeSnafu {
-                            reason: format!(
-                                "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}",
-                                time.hour, time.minute, time.second
-                            ),
-                        }
-                        .build()
+                    .with_context(|| BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}",
+                            time.hour, time.minute, time.second
+                        ),
                     })
             }
             // Bind SQL_C_TYPE_TIMESTAMP into a TIME column by extracting the
@@ -277,15 +271,12 @@ impl ReadODBC for SnowflakeTime {
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
                 NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
-                    .ok_or_else(|| {
-                        InvalidDatetimeValueSnafu {
-                            reason: format!(
-                                "invalid date in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                    .with_context(|| InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_TIMESTAMP for TIME target: \
                                  year={}, month={}, day={}",
-                                ts.year, ts.month, ts.day
-                            ),
-                        }
-                        .build()
+                            ts.year, ts.month, ts.day
+                        ),
                     })?;
                 let time = NaiveTime::from_hms_nano_opt(
                     ts.hour as u32,
@@ -293,15 +284,12 @@ impl ReadODBC for SnowflakeTime {
                     ts.second as u32,
                     ts.fraction,
                 )
-                .ok_or_else(|| {
-                    InvalidDatetimeValueSnafu {
-                        reason: format!(
-                            "invalid time in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                .with_context(|| InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid time in SQL_C_TYPE_TIMESTAMP for TIME target: \
                              hour={}, minute={}, second={}, fraction={}",
-                            ts.hour, ts.minute, ts.second, ts.fraction
-                        ),
-                    }
-                    .build()
+                        ts.hour, ts.minute, ts.second, ts.fraction
+                    ),
                 })?;
                 if ts.fraction != 0 {
                     return DatetimeFieldOverflowSnafu {

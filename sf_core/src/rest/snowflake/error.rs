@@ -1,4 +1,5 @@
 use crate::http::retry::HttpError;
+use crate::logging::url_for_log;
 use reqwest::StatusCode;
 use snafu::{Location, Snafu};
 use std::panic::Location as StdLocation;
@@ -79,7 +80,7 @@ pub enum SfError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to parse getResultUrl: {url}"))]
+    #[snafu(display("Failed to parse getResultUrl ({url_safe})", url_safe = url_for_log(url)))]
     ResultUrlParse {
         url: String,
         source: ParseError,
@@ -145,6 +146,12 @@ pub(crate) fn map_http_error(err: HttpError) -> SfError {
         } => SfError::RetryBudgetExceeded {
             retry_after,
             remaining,
+            location,
+        },
+        // Not produced by the Snowflake REST path (only the size-capped CRL
+        // fetch emits it), but the match must stay exhaustive.
+        HttpError::ResponseTooLarge { .. } => SfError::HttpStatus {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
             location,
         },
     }

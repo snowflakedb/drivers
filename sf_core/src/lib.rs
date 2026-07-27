@@ -3,6 +3,7 @@ extern crate tracing_subscriber;
 
 pub mod apis;
 pub mod diagnostic;
+pub mod env_vars;
 
 pub mod arrow_utils;
 mod auth;
@@ -12,6 +13,7 @@ mod compression;
 mod compression_types;
 pub mod config;
 pub mod crl;
+mod fs_lock;
 // Public for integration tests; only `types` and specific transfer functions are re-exported.
 pub mod file_manager;
 pub mod fs_adapter;
@@ -27,6 +29,7 @@ pub mod stage_binding;
 pub mod telemetry;
 pub mod tls;
 pub mod token_cache;
+pub mod utils;
 
 #[cfg(feature = "protobuf")]
 pub mod protobuf;

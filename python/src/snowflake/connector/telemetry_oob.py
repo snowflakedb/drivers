@@ -14,7 +14,7 @@ from .errors import NotSupportedError
 class TelemetryService:
     """Singleton stub for the out-of-band telemetry service.
 
-    OOB telemetry is not implemented in the Universal Driver (BD#42).
+    OOB telemetry is not implemented in the Universal Driver (BD#45).
     get_instance(), enable(), disable(), and close() are no-ops because
     Snowpark calls them bare (no surrounding try/except). The operation
     methods raise NotSupportedError — Snowpark always wraps those in a
@@ -56,13 +56,13 @@ class TelemetryService:
         return self._queue
 
     def add_log_to_batch(self, telemetry_data: Any) -> None:
-        raise NotSupportedError("OOB telemetry is not implemented in the Universal Driver (BD#42).")
+        raise NotSupportedError("OOB telemetry is not implemented in the Universal Driver (BD#45).")
 
     def report_client_failure_event(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("OOB telemetry is not implemented in the Universal Driver (BD#42).")
+        raise NotSupportedError("OOB telemetry is not implemented in the Universal Driver (BD#45).")
 
     def flush_batch(self, *args: Any, **kwargs: Any) -> None:
-        raise NotSupportedError("OOB telemetry is not implemented in the Universal Driver (BD#42).")
+        raise NotSupportedError("OOB telemetry is not implemented in the Universal Driver (BD#45).")
 
     def close(self, *args: Any, **kwargs: Any) -> None:
         pass

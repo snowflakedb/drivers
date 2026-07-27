@@ -2,10 +2,15 @@
 
 ## Upcoming Release
 
+Bug fixes:
+
+- Fixed server-side SQL errors (e.g. Snowflake code 002003 "object does not exist") surfacing as the opaque "Received core protobuf error" with native code 0. The driver now forwards the server's original message, numeric error code (`vendor_code`), and SQLSTATE to `SQLGetDiagRec`. (snowflake-eng/universal-driver#773)
+
 New features:
 
 - Added `SQLColumns` and `SQLColumnsW` support for querying column metadata via ODBC catalog functions. (snowflakedb/universal-driver#369)
 - Implemented `SQLSpecialColumns`, `SQLColumnPrivileges`, `SQLTablePrivileges`, and `SQLStatistics` catalog functions. Snowflake does not expose row identifiers, version columns, column/table-level privilege metadata, or index statistics over ODBC, so all four return a correctly-structured empty result set matching the reference driver's behavior. (snowflakedb/universal-driver#386)
 - Implemented `SQLPrimaryKeys` and `SQLPrimaryKeysW` catalog functions using `SHOW PRIMARY KEYS`. (snowflakedb/universal-driver#455)
 - Implemented `SQLForeignKeys` and `SQLForeignKeysW` catalog functions using `SHOW IMPORTED KEYS` / `SHOW EXPORTED KEYS`. (snowflakedb/universal-driver#456)
-- Implemented `SQLProcedures` and `SQLProceduresW` catalog functions using `information_schema.procedures`. (snowflakedb/universal-driver#TBD)
+- Implemented `SQLProcedures` and `SQLProceduresW` catalog functions using `information_schema.procedures`. (snowflakedb/universal-driver#534)
+- Implemented `SQLProcedureColumns` and `SQLProcedureColumnsW` catalog functions using `information_schema.procedures`, parsing the argument signature and return type into per-column metadata. (snowflakedb/universal-driver#535)

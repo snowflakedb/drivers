@@ -40,9 +40,9 @@ public class SnowflakeResultSetMetaDataImpl
   public static SnowflakeResultSetMetaDataImpl from(
       String queryId, List<ColumnMetadata> columns, DataConversionContext conversionContext)
       throws SnowflakeSQLException {
-    // TODO(SNOW-3740746): source jdbcTreatDecimalAsInt, isResultColumnCaseInsensitive,
-    //  and enableReturnTimestampWithTimeZone from connection parameters
-    boolean jdbcTreatDecimalAsInt = false;
+    // TODO(SNOW-3740746): source isResultColumnCaseInsensitive and
+    //  enableReturnTimestampWithTimeZone from connection parameters
+    boolean jdbcTreatDecimalAsInt = conversionContext.isTreatDecimalAsInt();
     List<SnowflakeColumnMetadata> columnMetadata = new ArrayList<>(columns.size());
     for (ColumnMetadata column : columns) {
       columnMetadata.add(new SnowflakeColumnMetadata(column, jdbcTreatDecimalAsInt));

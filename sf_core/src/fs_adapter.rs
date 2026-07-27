@@ -27,6 +27,7 @@ pub mod mock {
     use std::sync::Mutex;
 
     use super::FsAdapter;
+    use crate::utils::sync::MutexRecoverExt;
 
     #[derive(Default)]
     pub struct MockFs {
@@ -47,8 +48,7 @@ pub mod mock {
         /// Register (or overwrite) the contents at `path`.
         pub fn insert(&self, path: impl Into<PathBuf>, contents: impl Into<String>) {
             self.files
-                .lock()
-                .unwrap()
+                .lock_recover()
                 .insert(path.into(), contents.into());
         }
     }
@@ -56,8 +56,7 @@ pub mod mock {
     impl FsAdapter for MockFs {
         fn read_to_string(&self, path: &Path) -> io::Result<String> {
             self.files
-                .lock()
-                .unwrap()
+                .lock_recover()
                 .get(path)
                 .cloned()
                 .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
