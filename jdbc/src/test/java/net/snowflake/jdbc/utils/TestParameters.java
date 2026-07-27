@@ -138,10 +138,15 @@ public class TestParameters {
   }
 
   /**
-   * Returns props configured with key pair (SNOWFLAKE_JWT) auth using
-   * SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS.
+   * Returns props configured with the best available auth method. Uses key pair (SNOWFLAKE_JWT)
+   * auth by default; falls back to password auth (SNOWFLAKE_TEST_USER / SNOWFLAKE_TEST_PASSWORD)
+   * when SNOWFLAKE_TEST_IS_USUT is set, because uSUT only provisions password credentials for the
+   * test user — no RSA key is registered.
    */
   public static Properties withDefaultAuth(Properties props) {
+    if (has("SNOWFLAKE_TEST_IS_USUT")) {
+      return withSnowflakeAuth(props);
+    }
     return withPrivateKeyAuth(props);
   }
 
