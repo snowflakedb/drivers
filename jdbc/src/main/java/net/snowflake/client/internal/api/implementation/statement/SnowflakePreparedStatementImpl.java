@@ -39,6 +39,7 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
@@ -508,8 +509,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     PrepareResult result = getPrepareResult();
-    return SnowflakeResultSetMetaDataImpl.from(
-        result.getQueryId(), result.getColumnsList(), conversionContext());
+    return new DecoratedSnowflakeResultSetMetaDataImpl(
+        SnowflakeResultSetMetaDataImpl.from(
+            result.getQueryId(), result.getColumnsList(), conversionContext()));
   }
 
   @Override
