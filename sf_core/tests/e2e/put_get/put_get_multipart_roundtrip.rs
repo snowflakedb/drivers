@@ -1,16 +1,16 @@
 //! Real-account multipart round-trip: a file larger than the server's 200 MiB
 //! PUT/GET threshold, so the upload uses cloud multipart and the download uses
 //! parallel ranged GETs — the genuinely end-to-end counterpart to the fast,
-//! deterministic wiremock coverage in `integration/http/s3_multipart.rs` and
-//! `integration/http/azure_multipart.rs`.
+//! deterministic wiremock coverage in `integration/http/s3_multipart.rs`,
+//! `integration/http/azure_multipart.rs`, and `integration/http/gcs_multipart.rs`.
 //!
 //! Cloud-agnostic by design, not by branching: `connect_with_default_auth`
 //! connects to whichever account each CI `cloud_provider` matrix lane decoded
 //! (see `scripts/decode_secrets.sh` — a distinct dedicated account per cloud),
-//! so this single test exercises S3 multipart on the `aws` lane and Azure
-//! block-blob multipart on the `azure` lane without any per-cloud test code.
-//! CI scopes it to those two lanes today (nightly "Run long-running tests"
-//! step); add `gcp` once the GCS multipart PR lands.
+//! so this single test exercises S3 multipart on the `aws` lane, Azure
+//! block-blob multipart on the `azure` lane, and GCS resumable multipart on
+//! the `gcp` lane without any per-cloud test code. CI scopes it to all three
+//! lanes (nightly "Run long-running tests" step).
 //!
 //! Gated `#[ignore]`: it generates and round-trips ~210 MiB over the network, so
 //! it does not run in the normal `e2e` lane. Run it explicitly with:
@@ -58,7 +58,7 @@ fn file_digest(path: &Path) -> String {
 }
 
 #[test]
-#[ignore = "~210 MiB real-cloud multipart round-trip; belongs to the `large_` CI category, run with --ignored. Fast coverage: integration::http::s3_multipart, integration::http::azure_multipart"]
+#[ignore = "~210 MiB real-cloud multipart round-trip; belongs to the `large_` CI category, run with --ignored. Fast coverage: integration::http::s3_multipart, integration::http::azure_multipart, integration::http::gcs_multipart"]
 fn should_upload_and_download_large_file_via_multipart_roundtrip() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_MULTIPART_LARGE";

@@ -34,6 +34,8 @@ use sf_core::sensitive::SensitiveString;
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
+use crate::http::multipart_test_support::{make_payload, parse_range};
+
 /// Azure Blob Storage user-metadata header carrying Snowflake's SHA-256
 /// digest. Mirrors the private constant of the same name in `azure_transfer.rs`.
 const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
@@ -46,18 +48,6 @@ const PART_SIZE: usize = 4 * 1024 * 1024;
 const PAYLOAD_LEN: usize = 20 * 1024 * 1024;
 /// Below `PAYLOAD_LEN`, so both upload and download take the multipart path.
 const THRESHOLD_BYTES: i64 = 4 * 1024 * 1024;
-
-/// Deterministic, position-dependent payload (a tiny LCG) so that a mis-ordered
-/// block or range on reassembly cannot still compare equal to the original.
-fn make_payload(len: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(len);
-    let mut state: u32 = 0x9e37_79b9;
-    for _ in 0..len {
-        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        out.push((state >> 24) as u8);
-    }
-    out
-}
 
 #[derive(Default)]
 struct AzureMockState {
@@ -74,20 +64,6 @@ struct AzureMockState {
 #[derive(Clone)]
 struct AzureMock {
     state: Arc<AzureMockState>,
-}
-
-/// Parse an inclusive `Range: bytes=START-END` header against `total`.
-fn parse_range(value: &str, total: usize) -> (usize, usize) {
-    let spec = value.trim().trim_start_matches("bytes=");
-    let mut it = spec.split('-');
-    let start: usize = it.next().unwrap().trim().parse().unwrap();
-    let end: usize = it
-        .next()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.parse().unwrap())
-        .unwrap_or(total - 1);
-    (start, end.min(total - 1))
 }
 
 impl Respond for AzureMock {
