@@ -29,6 +29,10 @@ class TestConnectionConfigDefaults:
         assert config.role is None
         assert config.numpy is None
         assert config.arrow_number_to_decimal is None
+        # enable_connection_diag must default to None (not False) so that a
+        # connections.toml profile setting `enable_connection_diag = true` is
+        # not silently overridden by a Python-side False forwarded as Layer 1.
+        assert config.enable_connection_diag is None
 
     def test_extra_defaults_to_empty_dict(self):
         config = ConnectionConfig()
@@ -327,6 +331,19 @@ class TestToOptions:
         opts = config.to_options()
         assert "account" not in opts
         assert "user" in opts
+
+    def test_enable_connection_diag_not_forwarded_when_unset(self):
+        # enable_connection_diag must default to None (not False) so that a
+        # connections.toml profile `enable_connection_diag = true` is not
+        # silently overridden by a Python-side False sent as a Layer-1 option.
+        config = ConnectionConfig(user="u")
+        opts = config.to_options()
+        assert "enable_connection_diag" not in opts
+
+    def test_enable_connection_diag_forwarded_when_explicitly_set(self):
+        config = ConnectionConfig(user="u", enable_connection_diag=True)
+        opts = config.to_options()
+        assert opts["enable_connection_diag"] is True
 
     def test_excludes_python_only(self):
         config = ConnectionConfig(user="u", numpy=True, arrow_number_to_decimal=True)
