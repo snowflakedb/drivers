@@ -386,7 +386,7 @@ async fn try_get_cached_token(
     let cache = token_cache?;
     let key = CacheKey {
         token_type,
-        idp: normalize_url(server_url),
+        idp: String::new(),
         snowflake: normalize_url(server_url),
         username: normalize_identifier(username),
         role: normalize_identifier(role),
@@ -423,7 +423,7 @@ async fn store_token_in_cache(
     };
     let key = CacheKey {
         token_type,
-        idp: normalize_url(server_url),
+        idp: String::new(),
         snowflake: normalize_url(server_url),
         username: normalize_identifier(username),
         role: normalize_identifier(role),
@@ -455,7 +455,7 @@ async fn remove_token_from_cache(
     };
     let key = CacheKey {
         token_type,
-        idp: normalize_url(server_url),
+        idp: String::new(),
         snowflake: normalize_url(server_url),
         username: normalize_identifier(username),
         role: normalize_identifier(role),
@@ -572,10 +572,11 @@ pub async fn auth_request_data(
             }
 
             let cached_id_token = if *client_store_temporary_credential {
+                // `build_cache_key` drops `role` for ID tokens; empty is intentional.
                 try_get_cached_token(
                     &login_parameters.server_url,
                     username,
-                    login_parameters.role.as_deref().unwrap_or(""),
+                    "",
                     TokenType::IdToken,
                     token_cache.clone(),
                 )
@@ -965,12 +966,14 @@ pub async fn snowflake_login_with_client(
             ) =>
             {
                 tracing::debug!(%username, "Acquiring external-browser prompt lock");
+                // ID-token keys hash only `snowflake` + `username`; `idp` and
+                // `role` are excluded by `build_cache_key`, so leave them empty.
                 let lock_key = CacheKey {
                     token_type: TokenType::IdToken,
-                    idp: normalize_url(&login_parameters.server_url),
+                    idp: String::new(),
                     snowflake: normalize_url(&login_parameters.server_url),
                     username: normalize_identifier(username),
-                    role: normalize_identifier(login_parameters.role.as_deref().unwrap_or("")),
+                    role: String::new(),
                 };
                 Some(prompt_lock::acquire(locks, &lock_key).await)
             }
@@ -987,7 +990,7 @@ pub async fn snowflake_login_with_client(
                 tracing::debug!(%username, "Acquiring MFA prompt lock");
                 let lock_key = CacheKey {
                     token_type: TokenType::MfaToken,
-                    idp: normalize_url(&login_parameters.server_url),
+                    idp: String::new(),
                     snowflake: normalize_url(&login_parameters.server_url),
                     username: normalize_identifier(username),
                     role: String::new(),
@@ -1193,14 +1196,12 @@ pub async fn snowflake_login_with_client(
                 client_store_temporary_credential: true,
                 ..
             } if login_request.data.consent_cache_id_token != Some(false) => {
-                auth_response.data.id_token.as_ref().map(|t| {
-                    (
-                        username.as_str(),
-                        login_parameters.role.as_deref().unwrap_or(""),
-                        TokenType::IdToken,
-                        t,
-                    )
-                })
+                // `build_cache_key` drops `role` for ID tokens; empty is intentional.
+                auth_response
+                    .data
+                    .id_token
+                    .as_ref()
+                    .map(|t| (username.as_str(), "", TokenType::IdToken, t))
             }
             _ => None,
         };
@@ -2582,6 +2583,7 @@ mod tests {
         /// friends derive from `(server_url, username, role, token_type)`. `server_url`
         /// is a full URL (e.g. `"https://host.example.com"`) that is passed directly into
         /// `normalize_url`, matching how production helpers pass the full server URL.
+        /// MFA and ID token flows use `idp: String::new()` per spec.
         fn with_token(
             server_url: &str,
             username: &str,
@@ -2592,7 +2594,7 @@ mod tests {
             let cache = Self::new();
             let key = CacheKey {
                 token_type,
-                idp: normalize_url(server_url),
+                idp: String::new(),
                 snowflake: normalize_url(server_url),
                 username: normalize_identifier(username),
                 role: normalize_identifier(role),
@@ -2634,7 +2636,7 @@ mod tests {
     fn key_for(server_url: &str, username: &str, role: &str, token_type: TokenType) -> CacheKey {
         CacheKey {
             token_type,
-            idp: normalize_url(server_url),
+            idp: String::new(),
             snowflake: normalize_url(server_url),
             username: normalize_identifier(username),
             role: normalize_identifier(role),
