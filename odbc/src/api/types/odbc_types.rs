@@ -1725,6 +1725,7 @@ impl Dbc {
                 child_statements: vec![],
                 child_descriptors: vec![],
                 cached_autocommit: AutocommitValue::On,
+                open_transaction: false,
                 current_catalog: None,
                 metadata_id: false,
                 driver_section: None,
@@ -1760,6 +1761,14 @@ pub struct Connection {
     /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
     /// when the server session parameter is unavailable.
     pub cached_autocommit: AutocommitValue,
+    /// Whether an ODBC-managed (manual-commit) transaction is currently open on
+    /// this connection. Set when a statement executes while autocommit is OFF;
+    /// cleared by `SQLEndTran` (commit/rollback), by switching autocommit ON, and
+    /// on a fresh connect (`connect_with_params`) to guard against a stale flag
+    /// left on a reused handle. Read by `SQLDisconnect` to return SQLSTATE 25000
+    /// per the ODBC spec when a transaction is still in process. Guarded by the
+    /// enclosing `Connection` mutex (no atomics needed).
+    pub open_transaction: bool,
     /// Cached SQL_ATTR_CURRENT_CATALOG value. Populated after connect and updated
     /// after each successful USE DATABASE (SET). SQLGetConnectAttr always refreshes
     /// this from the server per spec; the field is used to track the catalog for

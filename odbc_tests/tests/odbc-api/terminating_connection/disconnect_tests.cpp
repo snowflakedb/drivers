@@ -18,8 +18,6 @@
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Successfully disconnects from data source",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect first
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -31,6 +29,44 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Successfully disconnects 
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Autocommit OFF with no open transaction succeeds",
+                 "[odbc-api][disconnect][terminating_connection]") {
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // No statement executed -> no transaction in process.
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Autocommit OFF after commit succeeds",
+                 "[odbc-api][disconnect][terminating_connection]") {
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Can reconnect after disconnect",
@@ -113,8 +149,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactions",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect with manual commit mode
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -133,13 +167,92 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactio
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 
-  // Note: Reference driver requires explicit transaction cleanup before disconnecting
+  // 25000: transaction still in process. Both drivers refuse and keep the
+  // connection open.
   ret = SQLDisconnect(dbc_handle());
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_EXPECTED_ERROR(ret, "25000", dbc_handle(), SQL_HANDLE_DBC);
+
+  // Connection is still usable: end the transaction, then disconnect succeeds.
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_ROLLBACK);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Autocommit OFF after rollback succeeds",
+                 "[odbc-api][disconnect][terminating_connection]") {
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_ROLLBACK);
   REQUIRE(ret == SQL_SUCCESS);
 
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Switching autocommit back ON clears open transaction",
+                 "[odbc-api][disconnect][terminating_connection]") {
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Opens an ODBC-managed transaction while autocommit is OFF.
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Switching autocommit back ON commits and clears the open transaction, so
+  // SQLDisconnect must no longer be refused with 25000. Exercises the third
+  // open_transaction clearing path (SQL_ATTR_AUTOCOMMIT -> ON) in set_connect_attr.
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Explicit BEGIN TRANSACTION under autocommit ON succeeds",
+                 "[odbc-api][disconnect][terminating_connection]") {
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt, sqlchar("BEGIN TRANSACTION"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Autocommit is ON, so no ODBC-managed transaction is tracked: disconnect is
+  // allowed on both drivers even though a server-side transaction is open.
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 }
