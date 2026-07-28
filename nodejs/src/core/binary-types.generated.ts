@@ -7,4 +7,10 @@
 export declare class Connection {
   constructor(options: Record<string, string>)
   connect(): Promise<void>
+  execute(query: string): Promise<Statement>
+}
+
+export declare class Statement {
+  getNextRow(): Promise<Record<string, number> | null>
+  close(): void
 }
