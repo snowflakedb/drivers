@@ -6,6 +6,7 @@ mod database;
 pub(crate) mod error;
 pub(crate) mod get_objects;
 mod global_state;
+mod inflight;
 // Gated public visibility so integration tests (via the `test-utils` feature) can reach
 // `spawn_heartbeat_task` / `HeartbeatHandle` without widening the production surface of `sf_core`.
 // Runtime callers in `connection.rs` only need crate-level visibility.

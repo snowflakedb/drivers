@@ -249,6 +249,7 @@ impl DatabaseDriverV1 {
                 query_input.clone(),
                 &retry_policy,
                 QueryExecutionMode::Blocking,
+                None,
             )
             .await
             {
