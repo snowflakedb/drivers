@@ -1,0 +1,67 @@
+# Routing-accuracy eval set for: run-python-ud-tests
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "how do I run the python UD tests?"
+    notes: "Direct, canonical request matching the skill's primary purpose"
+
+  - prompt: "run python unit tests for the connector"
+    notes: "Direct task request naming python unit tests in the UD connector context"
+
+  - prompt: "hatch run dev:unit is failing, libsf_core not found"
+    notes: "Error scenario referencing hatch and the core library — maps directly to troubleshooting section"
+
+  - prompt: "RuntimeError: Couldn't load core driver dependency — how do I fix this?"
+    notes: "Exact error string from the troubleshooting section; should route to this skill"
+
+  - prompt: "need to compile sf_core and run integ tests for python"
+    notes: "Explicitly mentions sf_core compilation + integration tests, core workflow of this skill"
+
+  - prompt: "python connector e2e tests, do i need credentials?"
+    notes: "Contextual question about prerequisites for e2e tests; skill covers credential setup"
+
+  - prompt: "set up hatch env and run all python tests"
+    notes: "Names hatch environment setup, the primary toolchain step in this skill"
+
+  - prompt: "cargo build sf_core for python, then run unit tests"
+    notes: "Explicitly asks to build the Rust core for python and run unit tests"
+
+  - prompt: "python tests keep failing even without a live connection, whats wrong"
+    notes: "Borderline: user doesn't name hatch/core but the symptom (unit tests fail without connection) matches the missing libsf_core scenario in the skill"
+
+  - prompt: "SKIP_CORE_BUILD=1 is set and my python hatch tests fail, how do i unset it"
+    notes: "References a Python-specific env var from the troubleshooting section; 'hatch' pins this to Python"
+
+  - prompt: "RuntimeError: Couldn't load libsf_core.so — how do I rebuild the Rust core?"
+    notes: "Exact error pattern from troubleshooting section; sf_core and libsf_core are Python-specific"
+
+should_not_trigger:
+  - prompt: "how do I run the JDBC UD tests?"
+    reason: "run-jdbc-ud-tests — same structure as a positive prompt but for a different driver language"
+
+  - prompt: "odbc tests are failing after my rust changes, how do i rebuild and rerun?"
+    reason: "run-odbc-ud-tests — shares 'Rust rebuild' vocabulary but targets the ODBC driver"
+
+  - prompt: "run the nodejs connector unit tests"
+    reason: "run-nodejs-ud-tests — same UD test runner pattern but for Node.js/Vitest"
+
+  - prompt: "does SNOW-12345 have regression coverage in the python connector?"
+    reason: "bug-regression-coverage — asks about coverage existence for a Jira ticket, not about running tests"
+
+  - prompt: "how does hatch work in general? what's the difference between hatch envs and virtualenvs?"
+    reason: "general conversation / no skill — shares 'hatch' keyword but is a Python tooling question, not a runbook invocation"
+
+  - prompt: "review this python test file for flakiness"
+    reason: "no skill (or general conversation) — review/quality analysis, not building and running tests; analogous to jdbc-test-reviewer but for Python"
+
+  - prompt: "write an adhoc script to test this pure python function without importing the connector"
+    reason: "no skill — writing a standalone script that bypasses the connector entirely is not a UD test-running task"
+
+  - prompt: "py unit tests plz"
+    reason: "add-tests — ambiguous terse request; 'unit tests' without run/execute framing reads as a request to write tests"
+
+  - prompt: "check if SNOW-9876 is covered by python UD tests"
+    reason: "bug-regression-coverage — asks about coverage status, not how to execute tests"

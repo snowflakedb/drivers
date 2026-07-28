@@ -113,6 +113,44 @@ rules:
       }
       ```
 
+  - id: ud-log-never-log-client-data
+    rule: |
+      **OBJECTIVE**: Query result data is customer data and must never appear in logs — on any log level, in any code path, with no opt-in flag. See `doc/logging/logging-guidelines.md` § "Query result data". Query text and bindings are **not** result data; they are opt-in separately (see `ud-log-query-text-and-params-gated` and the guidelines § "Query logging").
+
+      **REQUIREMENT**: No logging call (any level) may emit query **result** payloads: row/cell values, Arrow/JSON rowsets, record batches, base64 chunk bodies, file-transfer result bodies, or result-set schema metadata (column names, types, rowtype/field descriptors returned with a result). Metadata about a result (row/column counts, `queryId`, chunk count, rowset variant/type) is safe.
+
+      **EXCEPTIONS** (this rule does not apply — see `ud-log-query-text-and-params-gated` instead):
+      - **Query text**, including column names that appear in the SQL statement, may be logged when gated behind `log_query_text`.
+      - **Query parameter/bindings** values may be logged when gated behind `log_query_parameters`.
+
+      Flag, in any language's logging call:
+      1. Interpolating or formatting a variable/field whose name or type indicates result payload (`rowset`, `batch`, `batches`, `record_batch`, `chunk_base64`, `rowtype`, `RowsetData`, `results` holding rows, etc.) with `:?`, `%`, `str()`, `toString()`, or equivalent — unless the value is query text or bindings and the corresponding `log_query_text` / `log_query_parameters` flag is checked.
+      2. Logging a whole result/rowset/chunk/result-schema object without a redacting representation that omits cell values and result column/field names.
+      3. Any opt-in flag or DEBUG-level rationale that would dump **result payloads** — there is no supported opt-in for result data. (Query text and bindings are opt-in via `log_query_text` / `log_query_parameters`; that is a separate rule.)
+
+      ❌ **BAD:**
+      ```rust
+      debug!("read_batches called {:?}", data);              // RowsetData holds row values / chunk bodies
+      info!("fetched rows: {rowset:?}");                       // JSON rowset cell values
+      debug!(?rowtype, "parsed result schema");                // result column names and types
+      ```
+      ```python
+      logger.debug("record batch: %s", batch.to_pydict())     # column values
+      logger.debug("columns: %s", [f.name for f in schema])   # result column names
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      debug!(variant = ?std::mem::discriminant(data), "read_batches called");
+      info!(row_count, column_count, %query_id, "fetched result");
+      if config.log_query_text {
+          info!(query = %sql, "executing query");              // query text — gated opt-in
+      }
+      if config.log_query_parameters {
+          info!(?bindings, "query bindings");                  // bindings — gated opt-in
+      }
+      ```
+
   - id: ud-log-public-api-entry-and-exit
     rule: |
       **OBJECTIVE**: Public API entry points are logged on both entry and exit so a single call can be traced end to end. See `doc/logging/logging-guidelines.md` § "Public API".

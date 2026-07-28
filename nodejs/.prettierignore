@@ -1,2 +1,3 @@
 # https://oxc.rs/docs/guide/usage/formatter/ignore-files
 tests/_old-driver-reference
+src/core/*.generated.ts

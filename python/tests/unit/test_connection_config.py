@@ -531,3 +531,33 @@ class TestUnsafeSkipFilePermissionsCheck:
         opts = config.to_proto_options()
         assert "unsafe_skip_config_file_permissions_check" in opts
         assert opts["unsafe_skip_config_file_permissions_check"].bool_value is False
+
+
+class TestLegacySkipFilePermissionsCheck:
+    """Tests for the bare skip_file_permissions_check legacy connection kwarg."""
+
+    def test_fans_out_to_both_new_params_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="unsafe_skip_file_permissions_check"):
+            config = ConnectionConfig.from_kwargs(skip_file_permissions_check=True)
+        assert config.unsafe_skip_config_file_permissions_check is True
+        assert config.crl_unsafe_skip_file_permissions_check is True
+
+    def test_false_value_fans_out_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="unsafe_skip_file_permissions_check"):
+            config = ConnectionConfig.from_kwargs(skip_file_permissions_check=False)
+        assert config.unsafe_skip_config_file_permissions_check is False
+        assert config.crl_unsafe_skip_file_permissions_check is False
+
+    def test_explicit_new_param_wins_over_legacy(self):
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(
+                skip_file_permissions_check=True,
+                unsafe_skip_config_file_permissions_check=False,
+            )
+        assert config.unsafe_skip_config_file_permissions_check is False
+        assert config.crl_unsafe_skip_file_permissions_check is True
+
+    def test_not_forwarded_to_extra(self):
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(skip_file_permissions_check=True)
+        assert "skip_file_permissions_check" not in config._extra

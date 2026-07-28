@@ -1,17 +1,17 @@
 //! SPCS authentication probe — the in-container workload for the SPCS e2e test.
 //!
-//! Runs inside a Snowpark Container Services (SPCS) job service. SPCS injects
-//! connection details as environment variables (`SNOWFLAKE_ACCOUNT`,
-//! `SNOWFLAKE_HOST`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`), sets
-//! `SNOWFLAKE_RUNNING_INSIDE_SPCS`, and writes two tokens under
-//! `/snowflake/session/`:
+//! Runs inside a Snowpark Container Services (SPCS) job service. SPCS injects:
 //!
-//! - `token`: the OAuth access token used as the login credential.
-//! - `spcs_token`: an opaque service-identifier token the driver attaches to the
-//!   login request as `SPCS_TOKEN` so the backend can identify service requests
-//!   (SNOW-3007075). This is additive identification, NOT a primary credential,
-//!   and the driver attaches it automatically (read_spcs_token) — the probe does
-//!   nothing for it.
+//! - `SNOWFLAKE_RUNNING_INSIDE_SPCS` — gate env var; also triggers the driver's
+//!   SPCS token side-channel.
+//! - `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_HOST`, `SNOWFLAKE_DATABASE`,
+//!   `SNOWFLAKE_SCHEMA` — connection details; read automatically by the resolver
+//!   when the gate var is set (no explicit passing required).
+//! - `/snowflake/session/token` — OAuth access token used as the login
+//!   credential; the probe reads this and passes it to `connect()`.
+//! - `/snowflake/session/spcs_token` — service-identifier token attached to the
+//!   login request as `SPCS_TOKEN` automatically by the driver (SNOW-3007075);
+//!   the probe does nothing for it.
 //!
 //! The probe authenticates with `authenticator=OAUTH` + the OAuth token and NO
 //! user (made optional for token auth by SNOW-3647715), then runs a query. It
@@ -26,15 +26,13 @@ use sf_core::protobuf::generated::database_driver_v1::*;
 /// Path to the OAuth access token SPCS injects for the login credential.
 const OAUTH_TOKEN_PATH: &str = "/snowflake/session/token";
 
-/// Reads connection details from the SPCS-injected environment, connects with
-/// the injected OAuth token (no user), and runs a query to prove the session works.
+/// Connects using the SPCS-injected OAuth token and runs a query to prove
+/// the session works.
+///
+/// `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_HOST`, `SNOWFLAKE_DATABASE`, and
+/// `SNOWFLAKE_SCHEMA` are read automatically by the driver's resolver because
+/// `SNOWFLAKE_RUNNING_INSIDE_SPCS` is set — no explicit passing required.
 fn run() -> Result<String, String> {
-    // SPCS-injected connection details. The driver core does not auto-read these
-    // env vars (matching every reference driver) — the caller passes them through.
-    let account = require_env("SNOWFLAKE_ACCOUNT")?;
-    let host = require_env("SNOWFLAKE_HOST")?;
-    let database = std::env::var("SNOWFLAKE_DATABASE").ok();
-    let schema = std::env::var("SNOWFLAKE_SCHEMA").ok();
     let token = std::fs::read_to_string(OAUTH_TOKEN_PATH)
         .map_err(|e| format!("reading OAuth token {OAUTH_TOKEN_PATH}: {e}"))?
         .trim()
@@ -60,24 +58,17 @@ fn run() -> Result<String, String> {
         .conn_handle
         .ok_or("connection_new returned no handle")?;
 
-    // OAuth token auth, no user/password (user optional via SNOW-3647715). The
-    // driver also attaches SPCS_TOKEN automatically (read_spcs_token) because
-    // SNOWFLAKE_RUNNING_INSIDE_SPCS is set and /snowflake/session/spcs_token exists.
-    let mut options: Vec<(&str, String)> = vec![
-        ("account", account),
-        ("host", host),
+    // OAuth token auth, no user/password (user optional via SNOW-3647715).
+    // account/host/database/schema come from the SPCS-injected env vars via
+    // the resolver (SNOWFLAKE_RUNNING_INSIDE_SPCS is set by the platform).
+    // The driver also attaches SPCS_TOKEN automatically (read_spcs_token).
+    let options: Vec<(&str, String)> = vec![
         ("authenticator", "OAUTH".to_string()),
         ("token", token),
         // Identify as PythonConnector so the server enables the usual feature gates.
         ("client_app_id", "PythonConnector".to_string()),
         ("client_app_version", "5.0.0".to_string()),
     ];
-    if let Some(database) = database {
-        options.push(("database", database));
-    }
-    if let Some(schema) = schema {
-        options.push(("schema", schema));
-    }
 
     for (name, value) in options {
         client
@@ -124,10 +115,6 @@ fn run() -> Result<String, String> {
         .map_err(|e| format!("execute_query failed: {e:?}"))?;
 
     Ok("connected via SPCS OAuth token and executed SELECT CURRENT_USER()".to_string())
-}
-
-fn require_env(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|_| format!("required env var {name} is not set"))
 }
 
 fn main() {

@@ -47,6 +47,7 @@ COPY odbc/ ./odbc/
 COPY proto_utils/ ./proto_utils/
 COPY proto_generator/ ./proto_generator/
 COPY jdbc_bridge/ ./jdbc_bridge/
+COPY nodejs_bridge/ ./nodejs_bridge/
 COPY protobuf/ ./protobuf/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
@@ -69,7 +70,7 @@ COPY odbc_trace_tool/ ./odbc_trace_tool/
 
 # Build dependencies - this is the caching layer
 # Compiles ALL external crates (AWS SDK, tokio, etc.)
-RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc
+RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc --package jdbc_bridge
 
 # Re-copy Cargo.toml files that cargo-chef may have overwritten from the recipe,
 # which can strip the [lib] section (e.g. proc-macro = true).
@@ -100,3 +101,9 @@ RUN cargo build --release --package sf_core --features perf_timing && \
 # Build ODBC wrapper (with perf_timing instrumentation for performance tests)
 RUN cargo build --release --package odbc --features perf_timing && \
     cp target/release/libsfodbc.so /workdir/libsfodbc.so
+
+# Build jdbc_bridge (JNI native lib loaded by the JDBC front-end via CORE_PATH).
+# jdbc_bridge has no perf_timing feature, so the JDBC driver app emits base
+# per-iteration metrics only (no core-instrumentation columns).
+RUN cargo build --release --package jdbc_bridge && \
+    cp target/release/libjdbc_bridge.so /workdir/libjdbc_bridge.so

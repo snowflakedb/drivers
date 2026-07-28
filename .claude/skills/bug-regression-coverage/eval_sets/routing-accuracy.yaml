@@ -1,0 +1,85 @@
+# Routing-accuracy eval set for: bug-regression-coverage
+# Updated by sf ai skills generate-eval.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "regression coverage for SNOW-2345678"
+    notes: "Exact trigger phrase from the skill description; includes a SNOW ticket key."
+
+  - prompt: "check bug regression for SNOW-1876543"
+    notes: "Direct trigger phrase from the skill description."
+
+  - prompt: "does UD cover this bug SNOW-3012456"
+    notes: "Exact trigger phrase variant from the skill description."
+
+  - prompt: "verify this bug is covered in UD — SNOW-9901234"
+    notes: "Close variant of 'verify bug in UD' trigger phrase."
+
+  - prompt: "bug coverage check for the ODBC fix, ticket is SNOW-5544321"
+    notes: "Trigger phrase 'bug coverage check' plus connector context."
+
+  - prompt: "we merged a fix for SNOW-4412345 in the Python connector last week, do we have equivalent tests in the UD repo?"
+    notes: "Indirect contextual request; no trigger keyword but clearly asks whether a bug fix has UD coverage."
+
+  - prompt: "the ODBC team just closed SNOW-6678901, does universal-driver have a test for it?"
+    notes: "Contextual — a ticket was closed and the user wants to confirm UD coverage exists."
+
+  - prompt: "SNOW-7723456 — is there a regression test for this in our test suite?"
+    notes: "Terse; implies checking whether a known bug has a regression test, which is the core task of this skill."
+
+  - prompt: "snow-2219876 check if covered"
+    notes: "Very abbreviated, lowercase ticket key; real engineers often type quickly like this."
+
+  - prompt: "I want to make sure the fix for SNOW-3345678 didn't get lost in the UD migration — can you check?"
+    notes: "Borderline indirect: user doesn't say 'regression' but is asking about coverage of a specific bug fix."
+
+  - prompt: "pull up SNOW-8812345 and see if we actually test that edge case in UD"
+    notes: "Borderline: describes the workflow (fetch ticket, check UD tests) without naming the skill or saying 'regression'."
+
+  - prompt: "the python connector has a fix for SNOW-1123456 but I don't think we ever wrote the UD tests, can you check the gaps?"
+    notes: "Indirect gap-analysis request that matches the skill's core workflow — find gaps between connector fix and UD tests."
+
+  - prompt: "analyze all bugs from python.yaml" # NEW
+    notes: "Exact batch phrase from feedback; user wants to run coverage analysis across every entry in the YAML file."
+
+  - prompt: "go through the odbc bugs_analysis file and check coverage for each one" # NEW
+    notes: "Batch workflow phrased as iterating over the ODBC YAML file; 'check coverage' maps directly to the skill's purpose."
+
+  - prompt: "pick the next not_analyzed bug from the list and work through it" # NEW
+    notes: "Borderline batch entry-point: user treats the bugs_analysis YAML as a queue and wants the skill to claim and analyze the next item."
+
+  - prompt: "work through all not_analyzed entries in jdbc.yaml" # NEW
+    notes: "Exact batch phrase from feedback; driver-specific YAML file reference makes it unambiguous."
+
+should_not_trigger:
+  - prompt: "review these JDBC tests for flakiness — BaseResultSetTest.java and PreparedStatementIT.java"
+    reason: "jdbc-test-reviewer — user wants code quality and flakiness review of test files, not coverage analysis of a bug ticket."
+
+  - prompt: "is this JDBC test well-structured? it's supposed to cover SNOW-2299000 but feels fragile"
+    reason: "jdbc-test-reviewer — the mention of SNOW ticket is incidental context; the actual request is test quality review, not coverage gap analysis."
+
+  - prompt: "I'm about to commit the ODBC auth fix, can you do a self-review before I push?"
+    reason: "end-of-task-self-review — user wants a pre-commit checklist on their own code change, not bug regression coverage analysis."
+
+  - prompt: "run the bug-regression evals and tell me how many skills pass"
+    reason: "run-skill-evals — user wants to execute the eval suite, not check UD coverage of a bug ticket."
+
+  - prompt: "what's our overall test coverage percentage for the ODBC driver?"
+    reason: "No skill / general question — this is about aggregate test coverage metrics, not whether a specific bug ticket has a regression test."
+
+  - prompt: "write a new regression test for the cursor fetchmany issue — I already know the gap, just need the test written"
+    reason: "No skill / general coding task — user is not asking to check coverage for a Jira ticket; they want a test authored directly without the analysis workflow."
+
+  - prompt: "SNOW-5544321 was resolved last sprint, can you update the Jira status to Done and add a comment?"
+    reason: "No skill / Jira update task — references a SNOW ticket but the intent is ticket management, not UD regression coverage analysis."
+
+  - prompt: "check if the ODBC OAuth tests cover the token refresh scenario"
+    reason: "No skill / exploratory test search — asks about coverage of a scenario (not a bug ticket), without a SNOW key; this is a general test-search question."
+
+  - prompt: "show me what's in tests/bugs_analysis/python.yaml" # NEW
+    reason: "No skill / file read — user wants to view the YAML contents, not run coverage analysis on the bugs listed inside it."
+
+  - prompt: "how many entries in odbc.yaml still have analysis_status: not_analyzed?" # NEW
+    reason: "No skill / data query — user is querying the YAML for counts or status, not asking to analyze or fill coverage gaps for any of those bugs."

@@ -6,6 +6,7 @@ use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 use crate::config::toml_loader::FilePermissionCheck;
+use crate::env_vars;
 
 /// If `account` is not explicitly set but `host` is available,
 /// derive the account identifier from the hostname — matching the legacy
@@ -76,6 +77,31 @@ pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
     store.insert(param_names::HOST.into(), Setting::String(host));
 }
 
+/// When running inside a Snowpark Container Services (SPCS) container, read
+/// the SPCS-injected connection env vars and populate the store. Only fires
+/// when `SNOWFLAKE_RUNNING_INSIDE_SPCS` is set. Empty values are ignored.
+///
+/// Priority: above registry defaults but below TOML profiles and explicit
+/// programmatic settings — a connection profile or explicit param overrides
+/// the container-injected values.
+fn apply_spcs_env_vars(store: &mut ParamStore) {
+    if std::env::var_os(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS).is_none() {
+        return;
+    }
+    for (env_var, param) in [
+        (env_vars::SNOWFLAKE_ACCOUNT, param_names::ACCOUNT),
+        (env_vars::SNOWFLAKE_HOST, param_names::HOST),
+        (env_vars::SNOWFLAKE_DATABASE, param_names::DATABASE),
+        (env_vars::SNOWFLAKE_SCHEMA, param_names::SCHEMA),
+    ] {
+        if let Ok(value) = std::env::var(env_var)
+            && !value.is_empty()
+        {
+            store.insert(param.into(), Setting::String(value));
+        }
+    }
+}
+
 /// Resolve final settings by merging explicit settings with file-based
 /// config and registry defaults.
 ///
@@ -83,6 +109,7 @@ pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
 /// 1. Explicit programmatic settings (from `SetOptions` / `SetOption*` RPCs)
 /// 2. TOML file: `connections.toml` `[connection_name]` section
 /// 3. TOML file: `config.toml` `[connections.connection_name]` section
+///    3.5. SPCS environment variables (`SNOWFLAKE_ACCOUNT` / `HOST` / `DATABASE` / `SCHEMA`)
 /// 4. Registry defaults (`ParamDef::default`)
 ///
 /// `explicit` contains values set via the programmatic API (already
@@ -119,6 +146,11 @@ pub fn resolve_with_paths(
             merged.insert(param.canonical_name.to_owned(), default_fn());
         }
     }
+
+    // Layer 3.5: SPCS environment variables — fills in connection details when
+    // running inside a Snowpark Container Services container.  Overrides
+    // registry defaults; overridden by TOML profiles and explicit params.
+    apply_spcs_env_vars(&mut merged);
 
     // Layer 3+2: TOML files.
     //
@@ -664,6 +696,187 @@ password = "profile_pwd"
         );
         // user must NOT have leaked in from [default]
         assert_eq!(get_str(&resolved, param_names::USER), None);
+    }
+
+    // --- apply_spcs_env_vars tests ---
+
+    static SPCS_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn spcs_env_vars_noop_when_gate_not_set() {
+        let _lock = SPCS_ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by SPCS_ENV_MUTEX.
+        unsafe {
+            std::env::remove_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS);
+            std::env::remove_var(env_vars::SNOWFLAKE_ACCOUNT);
+            std::env::remove_var(env_vars::SNOWFLAKE_HOST);
+        }
+        let mut store = ParamStore::new();
+        apply_spcs_env_vars(&mut store);
+        assert_eq!(store.get(param_names::ACCOUNT), None);
+        assert_eq!(store.get(param_names::HOST), None);
+    }
+
+    #[test]
+    fn spcs_env_vars_populate_account_and_host_when_gate_set() {
+        let _lock = SPCS_ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by SPCS_ENV_MUTEX.
+        unsafe {
+            std::env::set_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS, "true");
+            std::env::set_var(env_vars::SNOWFLAKE_ACCOUNT, "myaccount");
+            std::env::set_var(env_vars::SNOWFLAKE_HOST, "myaccount.snowflakecomputing.com");
+            std::env::remove_var(env_vars::SNOWFLAKE_DATABASE);
+            std::env::remove_var(env_vars::SNOWFLAKE_SCHEMA);
+        }
+        let mut store = ParamStore::new();
+        apply_spcs_env_vars(&mut store);
+        // SAFETY: cleanup.
+        unsafe {
+            std::env::remove_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS);
+            std::env::remove_var(env_vars::SNOWFLAKE_ACCOUNT);
+            std::env::remove_var(env_vars::SNOWFLAKE_HOST);
+        }
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("myaccount".into()))
+        );
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String("myaccount.snowflakecomputing.com".into()))
+        );
+        assert_eq!(store.get(param_names::DATABASE), None);
+        assert_eq!(store.get(param_names::SCHEMA), None);
+    }
+
+    #[test]
+    fn spcs_env_vars_database_and_schema_are_optional() {
+        let _lock = SPCS_ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by SPCS_ENV_MUTEX.
+        unsafe {
+            std::env::set_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS, "true");
+            std::env::set_var(env_vars::SNOWFLAKE_ACCOUNT, "acct");
+            std::env::set_var(env_vars::SNOWFLAKE_HOST, "acct.snowflakecomputing.com");
+            std::env::set_var(env_vars::SNOWFLAKE_DATABASE, "mydb");
+            std::env::set_var(env_vars::SNOWFLAKE_SCHEMA, "myschema");
+        }
+        let mut store = ParamStore::new();
+        apply_spcs_env_vars(&mut store);
+        // SAFETY: cleanup.
+        unsafe {
+            std::env::remove_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS);
+            std::env::remove_var(env_vars::SNOWFLAKE_ACCOUNT);
+            std::env::remove_var(env_vars::SNOWFLAKE_HOST);
+            std::env::remove_var(env_vars::SNOWFLAKE_DATABASE);
+            std::env::remove_var(env_vars::SNOWFLAKE_SCHEMA);
+        }
+        assert_eq!(
+            store.get(param_names::DATABASE),
+            Some(&Setting::String("mydb".into()))
+        );
+        assert_eq!(
+            store.get(param_names::SCHEMA),
+            Some(&Setting::String("myschema".into()))
+        );
+    }
+
+    #[test]
+    fn spcs_env_vars_overridden_by_explicit_in_full_resolve() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+
+        let _lock = SPCS_ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by SPCS_ENV_MUTEX.
+        unsafe {
+            std::env::set_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS, "true");
+            std::env::set_var(env_vars::SNOWFLAKE_ACCOUNT, "spcs-account");
+            std::env::set_var(
+                env_vars::SNOWFLAKE_HOST,
+                "spcs-account.snowflakecomputing.com",
+            );
+            std::env::set_var(env_vars::SNOWFLAKE_DATABASE, "spcs-db");
+            std::env::remove_var(env_vars::SNOWFLAKE_SCHEMA);
+        }
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            "account".to_owned(),
+            Setting::String("explicit-account".to_owned()),
+        );
+        let resolved = resolve_with_paths(&explicit, &paths, false);
+        // SAFETY: cleanup.
+        unsafe {
+            std::env::remove_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS);
+            std::env::remove_var(env_vars::SNOWFLAKE_ACCOUNT);
+            std::env::remove_var(env_vars::SNOWFLAKE_HOST);
+            std::env::remove_var(env_vars::SNOWFLAKE_DATABASE);
+        }
+        let resolved = resolved.unwrap();
+        // Explicit wins over SPCS env var.
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("explicit-account".to_owned())
+        );
+        // SPCS HOST env var still populates when not explicitly overridden.
+        assert_eq!(
+            get_str(&resolved, param_names::HOST),
+            Some("spcs-account.snowflakecomputing.com".to_owned())
+        );
+        // SPCS DATABASE env var populates.
+        assert_eq!(
+            get_str(&resolved, param_names::DATABASE),
+            Some("spcs-db".to_owned())
+        );
+    }
+
+    #[test]
+    fn spcs_env_vars_overridden_by_toml_profile() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[myconn]
+account = "toml-account"
+host = "toml-account.snowflakecomputing.com"
+database = "toml-db"
+"#,
+        );
+
+        let _lock = SPCS_ENV_MUTEX.lock().unwrap();
+        // SAFETY: test-only; serialised by SPCS_ENV_MUTEX.
+        unsafe {
+            std::env::set_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS, "true");
+            std::env::set_var(env_vars::SNOWFLAKE_ACCOUNT, "spcs-account");
+            std::env::set_var(
+                env_vars::SNOWFLAKE_HOST,
+                "spcs-account.snowflakecomputing.com",
+            );
+            std::env::set_var(env_vars::SNOWFLAKE_DATABASE, "spcs-db");
+            std::env::remove_var(env_vars::SNOWFLAKE_SCHEMA);
+        }
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            "connection_name".to_owned(),
+            Setting::String("myconn".to_owned()),
+        );
+        let resolved = resolve_with_paths(&explicit, &paths, false);
+        // SAFETY: cleanup.
+        unsafe {
+            std::env::remove_var(env_vars::SNOWFLAKE_RUNNING_INSIDE_SPCS);
+            std::env::remove_var(env_vars::SNOWFLAKE_ACCOUNT);
+            std::env::remove_var(env_vars::SNOWFLAKE_HOST);
+            std::env::remove_var(env_vars::SNOWFLAKE_DATABASE);
+        }
+        let resolved = resolved.unwrap();
+        // TOML wins over SPCS env vars.
+        assert_eq!(
+            get_str(&resolved, param_names::ACCOUNT),
+            Some("toml-account".to_owned())
+        );
+        assert_eq!(
+            get_str(&resolved, param_names::DATABASE),
+            Some("toml-db".to_owned())
+        );
     }
 
     #[test]

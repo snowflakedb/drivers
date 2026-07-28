@@ -131,7 +131,7 @@ jobs:
   # Label-gated lane for `[long_running]`-tagged ODBC tests (e.g. the
   # multi-round-trip catalog metadata suites that would otherwise time out on a
   # normal PR run). Those tests are excluded from the default gating runs via
-  # `-LE "flaky|long_running"` in _test-odbc.yml / _test-odbc-reference.yml; this
+  # `-LE "flaky|long_running|requires_no_mfa"` in _test-odbc.yml / _test-odbc-reference.yml; this
   # job opts them back in on demand.
   #
   # Triggers when the PR carries the `run_long_running_tests` label (applying the

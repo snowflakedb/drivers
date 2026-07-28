@@ -1,9 +1,10 @@
+use crate::logging::url_for_log;
 use snafu::{Location, Snafu};
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum CrlError {
-    #[snafu(display("Failed to download CRL from URL: {url}"))]
+    #[snafu(display("Failed to download CRL from {url_safe}", url_safe = url_for_log(url)))]
     CrlDownload {
         url: String,
         source: reqwest::Error,
@@ -11,7 +12,7 @@ pub enum CrlError {
         location: Location,
     },
     #[snafu(display("Failed to parse CRL data"))]
-    CrlParsing {
+    CrlDataParse {
         source: x509_parser::nom::Err<x509_parser::error::X509Error>,
         #[snafu(implicit)]
         location: Location,
@@ -75,7 +76,7 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to parse URL: {url}"))]
+    #[snafu(display("Failed to parse URL ({url_safe})", url_safe = url_for_log(url)))]
     InvalidUrl {
         url: String,
         source: url::ParseError,
@@ -87,6 +88,14 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("CRL download from {url} exceeded max size: {size} bytes > {max_size} bytes"))]
+    DownloadSizeExceeded {
+        url: String,
+        size: u64,
+        max_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Mutex poisoned: {message}"))]
     MutexPoisoned {
         message: String,
@@ -94,7 +103,7 @@ pub enum CrlError {
         location: Location,
     },
     #[snafu(display("CRL verification task did not complete"))]
-    VerificationTaskFailed {
+    VerificationTask {
         source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
@@ -127,8 +136,8 @@ pub enum CrlError {
     /// raised while verifying a specific CRL. Propagated from the multi-DP loop in
     /// CrlCache::check_revocation so callers can identify which URL failed without
     /// parsing log output. The inner error is boxed to keep the enum size small.
-    #[snafu(display("CRL verification failed for distribution point {url}: {source}"))]
-    CrlDistributionPointFailed {
+    #[snafu(display("CRL verification failed for distribution point {url_safe}: {source}", url_safe = url_for_log(url)))]
+    CrlDistributionPoint {
         url: String,
         source: Box<CrlError>,
         #[snafu(implicit)]

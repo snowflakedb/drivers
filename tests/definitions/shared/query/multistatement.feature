@@ -34,6 +34,26 @@ Feature: Multistatement query execution
     And the SELECT result contains expected data
 
   # ============================================================================
+  # CHILD QUERY IDS
+  # ============================================================================
+  # SnowflakeConnection.getChildQueryIds(queryID) maps a parent query ID to the
+  # query IDs of its sub-statements. A multistatement parent reports one child
+  # per sub-statement; a plain single-statement query reports itself. JDBC-only
+  # API — mirrors legacy snowflake-jdbc, which exposes it on SnowflakeConnection.
+
+  @jdbc_e2e
+  Scenario: should return child query ids for multistatement query
+    Given Snowflake client is logged in
+    When a multistatement query with 3 SELECTs is executed
+    Then getChildQueryIds returns one query ID per sub-statement
+
+  @jdbc_e2e
+  Scenario: should return query id itself for single statement query
+    Given Snowflake client is logged in
+    When a single-statement query is executed
+    Then getChildQueryIds returns an array containing only that query ID
+
+  # ============================================================================
   # ERROR HANDLING
   # ============================================================================
 

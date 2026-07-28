@@ -2,7 +2,7 @@ use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::encoding::{
     OdbcEncoding, read_pre_connection_string_attr, read_string_from_pointer, write_string_bytes,
-    write_string_bytes_i32, write_string_chars_i32,
+    write_string_bytes_i32, write_string_chars, write_string_chars_i32,
 };
 use crate::api::error::Required;
 use crate::api::error::{
@@ -13,17 +13,26 @@ use crate::api::error::{
     ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::get_info_bitmasks::{
-    AGGREGATE_FUNCTIONS, BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY,
-    CONVERT_BIT, CONVERT_CHAR, CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT,
-    CONVERT_FUNCTIONS, CONVERT_GUID, CONVERT_INTEGER, CONVERT_LONGVARBINARY, CONVERT_LONGVARCHAR,
-    CONVERT_NUMERIC, CONVERT_REAL, CONVERT_SMALLINT, CONVERT_TIME, CONVERT_TIMESTAMP,
-    CONVERT_TINYINT, CONVERT_VARBINARY, CONVERT_VARCHAR, CONVERT_WCHAR, CONVERT_WLONGVARCHAR,
-    CONVERT_WVARCHAR, DYNAMIC_CURSOR_ATTRIBUTES1, FORWARD_ONLY_CURSOR_ATTRIBUTES1,
-    FORWARD_ONLY_CURSOR_ATTRIBUTES2, KEYSET_CURSOR_ATTRIBUTES1, KEYSET_CURSOR_ATTRIBUTES2,
-    LOCK_TYPES, NUMERIC_FUNCTIONS, POS_OPERATIONS, SCHEMA_USAGE, SCROLL_CONCURRENCY,
-    SCROLL_OPTIONS, SQL92_PREDICATES, SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_VALUE_EXPRESSIONS,
-    STATIC_CURSOR_ATTRIBUTES1, STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS,
-    SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, synthesize,
+    AGGREGATE_FUNCTIONS, ALTER_DOMAIN, ALTER_TABLE, BATCH_ROW_COUNT, BATCH_SUPPORT,
+    BOOKMARK_PERSISTENCE, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY, CONVERT_BIT, CONVERT_CHAR,
+    CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT, CONVERT_FUNCTIONS, CONVERT_GUID,
+    CONVERT_INTEGER, CONVERT_INTERVAL_DAY_TIME, CONVERT_INTERVAL_YEAR_MONTH, CONVERT_LONGVARBINARY,
+    CONVERT_LONGVARCHAR, CONVERT_NUMERIC, CONVERT_REAL, CONVERT_SMALLINT, CONVERT_TIME,
+    CONVERT_TIMESTAMP, CONVERT_TINYINT, CONVERT_VARBINARY, CONVERT_VARCHAR, CONVERT_WCHAR,
+    CONVERT_WLONGVARCHAR, CONVERT_WVARCHAR, CREATE_ASSERTION, CREATE_CHARACTER_SET,
+    CREATE_COLLATION, CREATE_DOMAIN, CREATE_SCHEMA, CREATE_TABLE, CREATE_TRANSLATION, CREATE_VIEW,
+    DATETIME_LITERALS, DDL_INDEX, DROP_ASSERTION, DROP_CHARACTER_SET, DROP_COLLATION, DROP_DOMAIN,
+    DROP_SCHEMA, DROP_TABLE, DROP_TRANSLATION, DROP_VIEW, DYNAMIC_CURSOR_ATTRIBUTES1,
+    DYNAMIC_CURSOR_ATTRIBUTES2, FETCH_DIRECTION, FORWARD_ONLY_CURSOR_ATTRIBUTES1,
+    FORWARD_ONLY_CURSOR_ATTRIBUTES2, INFO_SCHEMA_VIEWS, INSERT_STATEMENT,
+    KEYSET_CURSOR_ATTRIBUTES1, KEYSET_CURSOR_ATTRIBUTES2, LOCK_TYPES, NUMERIC_FUNCTIONS,
+    OJ_CAPABILITIES, POS_OPERATIONS, POSITIONED_STATEMENTS, SCHEMA_USAGE, SCROLL_CONCURRENCY,
+    SCROLL_OPTIONS, SQL92_DATETIME_FUNCTIONS, SQL92_FOREIGN_KEY_DELETE_RULE,
+    SQL92_FOREIGN_KEY_UPDATE_RULE, SQL92_GRANT, SQL92_NUMERIC_VALUE_FUNCTIONS, SQL92_PREDICATES,
+    SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_REVOKE, SQL92_ROW_VALUE_CONSTRUCTOR,
+    SQL92_STRING_FUNCTIONS, SQL92_VALUE_EXPRESSIONS, STATIC_CURSOR_ATTRIBUTES1,
+    STATIC_CURSOR_ATTRIBUTES2, STATIC_SENSITIVITY, STRING_FUNCTIONS, SUBQUERIES, SYSTEM_FUNCTIONS,
+    TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, TXN_ISOLATION_OPTION, UNION, synthesize,
 };
 use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
@@ -36,7 +45,8 @@ use crate::api::{
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
-use snafu::ResultExt;
+use sf_core::sensitive::SensitiveString;
+use snafu::{OptionExt, ResultExt};
 use std::collections::HashMap;
 use tracing;
 
@@ -52,7 +62,7 @@ const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
 /// SQLSetConnectAttr provides a value.
-const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
+const DEFAULT_LOGIN_TIMEOUT_SECS: sql::UInteger = 300;
 
 /// Normalizes `CRL_ENABLED` values to the uppercase mode strings `sf_core` accepts for
 /// `crl_check_mode` (see `build_crl_config` in `connection_config.rs`).
@@ -286,11 +296,62 @@ fn parse_connection_string(connection_string: &str) -> OdbcResult<HashMap<String
     Ok(map)
 }
 
+/// Serialise a key=value parameter map back to a semicolon-separated
+/// connection string. Values that contain `;` are brace-quoted so the
+/// result round-trips through `parse_connection_string`. Keys are sorted
+/// for deterministic output.
+fn serialize_connection_string(params: &HashMap<String, String>) -> String {
+    let mut parts: Vec<String> = params
+        .iter()
+        .map(|(k, v)| {
+            if v.contains(';') {
+                format!("{k}={{{v}}}")
+            } else {
+                format!("{k}={v}")
+            }
+        })
+        .collect();
+    parts.sort();
+    parts.join(";")
+}
+
+/// Read, parse, and connect from a raw connection string — the pipeline shared
+/// by `SQLDriverConnect` and `SQLBrowseConnect`. On success the caller-supplied
+/// connection string is returned so it can be echoed into the output buffer.
+fn resolve_and_connect<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    in_connection_string: *const E::Char,
+    in_string_length: sql::SmallInt,
+) -> OdbcResult<String> {
+    let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
+    let params = parse_connection_string(&connection_string)?;
+    // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
+    // they get normalised away — they are needed later to resolve the
+    // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+    let driver_section = params.get("DRIVER").cloned();
+    let dsn_name = params.get("DSN").cloned();
+    // Expand any DSN-stored attributes (account, host, user, credentials)
+    // underneath the caller-supplied connection-string params so that a bare
+    // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
+    let params = merge_dsn_config(params, dsn_name.as_deref())?;
+    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
+    Ok(connection_string)
+}
+
 /// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
+///
+/// On success the completed connection string is written back to
+/// `out_connection_string` (character units, per the ODBC spec for
+/// `SQLDriverConnect`); a too-small buffer is truncated and reported as a
+/// `01004` warning via `warnings`.
 pub fn driver_connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     in_connection_string: *const E::Char,
     in_string_length: sql::SmallInt,
+    out_connection_string: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let params = parse_connection_string(&connection_string)?;
@@ -303,7 +364,87 @@ pub fn driver_connect<E: OdbcEncoding>(
     // underneath the caller-supplied connection-string params so that a bare
     // "DSN=<name>" string picks up everything stored in odbc.ini / registry.
     let params = merge_dsn_config(params, dsn_name.as_deref())?;
-    connect_with_params(connection_handle, params, driver_section, dsn_name)
+    // Build the completed connection string before params are consumed.
+    // The ODBC spec requires OutConnectionString to contain all attributes
+    // including those expanded from the DSN, and must include DSN= or DRIVER=.
+    let completed_conn_str = {
+        let mut out = params.clone();
+        if let Some(ref dsn) = dsn_name {
+            out.insert("DSN".to_owned(), dsn.clone());
+        }
+        if let Some(ref driver) = driver_section {
+            out.insert("DRIVER".to_owned(), driver.clone());
+        }
+        SensitiveString::from(serialize_connection_string(&out))
+    };
+    connect_with_params(connection_handle, params, driver_section, dsn_name)?;
+
+    // Per the ODBC spec, `SQLDriverConnect` returns the completed connection
+    // string — all attributes including those expanded from the DSN — so the
+    // application can persist it and reconnect without re-reading odbc.ini.
+    // Buffer/length units are characters; a short buffer truncates and posts
+    // a `01004` warning.
+    write_string_chars::<E>(
+        completed_conn_str.reveal(),
+        out_connection_string,
+        buffer_length,
+        string_length_ptr,
+        Some(warnings),
+    );
+    Ok(())
+}
+
+/// Outcome of a successful [`browse_connect`] call.
+///
+/// Snowflake does not implement iterative attribute discovery, so a completed
+/// connection is either fully established (`Complete`) or the output buffer was
+/// too small to receive the connection string (`NeedData`). The FFI shim maps
+/// `NeedData` to `SQL_NEED_DATA`.
+pub enum BrowseOutcome {
+    Complete,
+    NeedData,
+}
+
+/// Connect using connection string (SQLBrowseConnect / SQLBrowseConnectW).
+///
+/// Behaves like [`driver_connect`] — Snowflake requires a complete connection
+/// string up front and does not iteratively prompt for attributes — with one
+/// spec-mandated difference: when the output buffer is too small to hold the
+/// connection string (including `buffer_length == 0`), it returns
+/// `SQL_NEED_DATA` (via [`BrowseOutcome::NeedData`]) rather than the `01004`
+/// truncation warning `SQLDriverConnect` uses. `*string_length_ptr` always
+/// receives the full required length. An incomplete string, bad credentials, or
+/// an unknown DSN surface as the usual connect errors (`SQL_ERROR` / `28000` /
+/// `IM002`).
+///
+/// Note: on `NeedData` the connection has already been established (Snowflake
+/// connects in a single round-trip); a subsequent call on the same handle would
+/// therefore be rejected with `08002`.
+pub fn browse_connect<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    in_connection_string: *const E::Char,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> OdbcResult<BrowseOutcome> {
+    let connection_string =
+        resolve_and_connect::<E>(connection_handle, in_connection_string, in_string_length)?;
+
+    // `None` warnings: SQLBrowseConnect signals a short buffer via SQL_NEED_DATA,
+    // not a `01004` warning. `*string_length_ptr` still receives the full length.
+    let truncated = write_string_chars::<E>(
+        &connection_string,
+        out_connection_string,
+        buffer_length,
+        string_length_ptr,
+        None,
+    );
+    if truncated {
+        Ok(BrowseOutcome::NeedData)
+    } else {
+        Ok(BrowseOutcome::Complete)
+    }
 }
 
 /// Core connection logic shared by `driver_connect` and `connect`.
@@ -397,7 +538,7 @@ fn connect_with_params(
         if !login_timeout_in_options && !login_timeout_in_attrs {
             let follow_up = HashMap::from([(
                 "authentication_timeout".to_owned(),
-                DEFAULT_LOGIN_TIMEOUT_SECS.to_owned().into(),
+                DEFAULT_LOGIN_TIMEOUT_SECS.to_string().into(),
             )]);
             let response = c
                 .connection_set_options(ConnectionSetOptionsRequest {
@@ -988,23 +1129,21 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     let mut connection = dbc.connection.lock();
     match attr {
         ConnectionAttribute::AccessMode => {
-            let mode = AccessMode::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+            let mode = AccessMode::from_raw(value_ptr as sql::UInteger).with_context(|| {
                 InvalidAttributeValueSnafu {
                     attribute: attr.as_raw(),
                     value: value_ptr as i64,
                 }
-                .build()
             })?;
             connection.access_mode = mode;
             Ok(())
         }
         ConnectionAttribute::Autocommit => {
-            let val = AutocommitValue::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+            let val = AutocommitValue::from_raw(value_ptr as sql::UInteger).with_context(|| {
                 InvalidAttributeValueSnafu {
                     attribute: attr.as_raw(),
                     value: value_ptr as i64,
                 }
-                .build()
             })?;
             // NOTE: Per ODBC spec, HY011 must be returned if a transaction is currently open.
             // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.
@@ -1286,9 +1425,9 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                         "get_connect_attr: LoginTimeout value {s:?} is not a valid integer, \
                          returning default {DEFAULT_LOGIN_TIMEOUT_SECS}",
                     );
-                    DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
+                    DEFAULT_LOGIN_TIMEOUT_SECS
                 }),
-                None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
+                None => DEFAULT_LOGIN_TIMEOUT_SECS,
             };
             drop(connection);
             if !value_ptr.is_null() {
@@ -1461,18 +1600,24 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 /// Write an ODBC string value into the `SQLGetInfo` output buffers.
 /// Both pointers are individually null-guarded — the Driver Manager passes
 /// null for either side when it only wants the other.
+///
+/// `warnings` is only consulted when a truncation actually occurs (i.e. when
+/// `info_value_ptr` is non-null — see the `write_str` closure in
+/// [`get_info`], which omits it entirely for a NULL-buffer length probe so
+/// that case stays plain `SQL_SUCCESS` rather than `SQL_SUCCESS_WITH_INFO`).
 fn write_get_info_string<E: OdbcEncoding>(
     value: &str,
     info_value_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
+    warnings: Option<&mut Warnings>,
 ) {
     write_string_bytes::<E>(
         value,
         info_value_ptr as *mut E::Char,
         buffer_length,
         string_length_ptr,
-        None,
+        warnings,
     );
 }
 
@@ -1564,6 +1709,7 @@ pub fn get_info<E: OdbcEncoding>(
     info_value_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
@@ -1573,13 +1719,35 @@ pub fn get_info<E: OdbcEncoding>(
     tracing::debug!("get_info: info_type={info_type:?}");
 
     // Local aliases to keep each match arm a single readable line.
-    let write_str =
-        |s: &str| write_get_info_string::<E>(s, info_value_ptr, buffer_length, string_length_ptr);
+    //
+    // `write_str` only forwards `warnings` when `info_value_ptr` is non-null:
+    // a NULL-buffer call is a pure length probe with nothing to truncate, so
+    // it must stay plain `SQL_SUCCESS` rather than surfacing a spurious
+    // `SQL_SUCCESS_WITH_INFO` / 01004.
+    let mut write_str = |s: &str| {
+        let w = if info_value_ptr.is_null() {
+            None
+        } else {
+            Some(&mut *warnings)
+        };
+        write_get_info_string::<E>(s, info_value_ptr, buffer_length, string_length_ptr, w);
+    };
     let write_u16 = |v: u16| write_get_info_u16(v, info_value_ptr, string_length_ptr);
     let write_u32 = |v: u32| write_get_info_u32(v, info_value_ptr, string_length_ptr);
 
     match info_type {
         // ----- Strings -----------------------------------------------------
+        InfoType::DataSourceName => {
+            // Per ODBC spec, "the data source name used during connection".
+            // We captured this at connect time from `SQLConnect`'s server-name
+            // argument or `SQLDriverConnect`'s `DSN=...` (see `dsn_name`,
+            // also read by `SQL_DRIVER_NAME` above). On most platforms the
+            // Driver Manager intercepts this InfoType and answers it itself
+            // without ever calling into the driver, but Windows does not, so
+            // the driver must answer with the DSN it was handed.
+            let dsn_name = dbc.connection.lock().dsn_name.clone();
+            write_str(dsn_name.as_deref().unwrap_or(""));
+        }
         InfoType::DriverName => {
             // Per ODBC spec, `SQL_DRIVER_NAME` returns "a character string
             // with the file name of the driver used to access the data
@@ -1633,6 +1801,35 @@ pub fn get_info<E: OdbcEncoding>(
             };
             write_str(version.as_deref().unwrap_or(""));
         }
+        InfoType::UserName => {
+            // Login user for this connection. Sourced from the same
+            // connection-seed `USER` setting the legacy driver uses for
+            // `DSI_CONN_USER_NAME` — not a server round trip — via
+            // `connection_get_info`'s in-process session-state read (see
+            // `current_database` above for the same aggregation call).
+            //
+            // Before the connection is established there is no session to
+            // read; return an empty string rather than erroring so callers
+            // that probe this attribute pre-`SQLConnect` still succeed.
+            let conn_handle = match dbc.connection.lock().state {
+                ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            let user = match conn_handle {
+                Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                    let info = c
+                        .connection_get_info(ConnectionGetInfoRequest {
+                            conn_handle: Some(handle),
+                            info_codes: vec![],
+                            include_master_token: false,
+                        })
+                        .await?;
+                    Ok::<Option<String>, crate::api::OdbcError>(info.user)
+                })?,
+                None => None,
+            };
+            write_str(user.as_deref().unwrap_or(""));
+        }
         InfoType::DriverOdbcVer => {
             // ODBC 3.80 — matches the level the legacy Snowflake ODBC
             // driver advertises (`DriverODBCVer=03.52` in the .ini and
@@ -1658,6 +1855,28 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::SpecialCharacters => write_str(""),
         InfoType::NeedLongDataLen => write_str("N"),
         InfoType::CatalogName => write_str("Y"),
+        // New string InfoTypes
+        InfoType::ServerName => write_str("Snowflake"),
+        InfoType::RowUpdates => write_str("N"),
+        InfoType::AccessibleTables => write_str("Y"),
+        InfoType::AccessibleProcedures => write_str("Y"),
+        InfoType::Procedures => write_str("N"),
+        InfoType::ExpressionsInOrderby => write_str("Y"),
+        InfoType::MultipleActiveTxn => write_str("Y"),
+        InfoType::ProcedureTerm => write_str("procedure"),
+        InfoType::Integrity => write_str("N"),
+        InfoType::Keywords => write_str(""),
+        InfoType::MaxRowSizeIncludesLong => write_str("N"),
+        InfoType::LikeEscapeClause => write_str("Y"),
+        InfoType::XopenCliYear => write_str("1995"),
+        InfoType::DescribeParameter => write_str("Y"),
+        InfoType::CollationSeq => {
+            if cfg!(windows) {
+                write_str("UTF-16LE_BINARY")
+            } else {
+                write_str("UTF-32LE_BINARY")
+            }
+        }
 
         // ----- Scalar `SQLUSMALLINT` --------------------------------------
         InfoType::ActiveStatements => write_u16(0),
@@ -1674,6 +1893,23 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::CorrelationName => write_u16(2), // SQL_CN_ANY
         InfoType::NonNullableColumns => write_u16(0), // SQL_NNC_NULL
         InfoType::FileUsage => write_u16(0),  // SQL_FILE_NOT_SUPPORTED
+        // New SQLUSMALLINT InfoTypes
+        InfoType::MaxDriverConnections => write_u16(0),
+        InfoType::OdbcApiConformance => write_u16(2), // SQL_OAC_LEVEL2
+        InfoType::OdbcSqlConformance => write_u16(1), // SQL_OSC_CORE
+        InfoType::IdentifierCase => write_u16(1),     // SQL_IC_UPPER
+        InfoType::MaxColumnNameLen => write_u16(255),
+        InfoType::MaxCursorNameLen => write_u16(0),
+        InfoType::MaxProcedureNameLen => write_u16(0),
+        InfoType::MaxCatalogNameLen => write_u16(255),
+        InfoType::MaxTableNameLen => write_u16(255),
+        InfoType::NullCollation => write_u16(0), // SQL_NC_HIGH
+        InfoType::QuotedIdentifierCase => write_u16(3), // SQL_IC_SENSITIVE
+        InfoType::MaxColumnsInIndex => write_u16(0),
+        InfoType::MaxColumnsInTable => write_u16(65535),
+        InfoType::MaxTablesInSelect => write_u16(0),
+        InfoType::MaxUserNameLen => write_u16(0),
+        InfoType::ActiveEnvironments => write_u16(0),
 
         // ----- Scalar `SQLUINTEGER` ---------------------------------------
         InfoType::DefaultTxnIsolation => write_u32(SQL_TXN_READ_COMMITTED),
@@ -1683,6 +1919,18 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::MaxAsyncConcurrentStatements => write_u32(0),
         InfoType::AsyncDbcFunctions => write_u32(1), // SQL_ASYNC_DBC_CAPABLE
         InfoType::AsyncNotification => write_u32(0), // SQL_ASYNC_NOTIFICATION_NOT_CAPABLE
+        // New scalar SQLUINTEGER InfoTypes
+        InfoType::MaxBinaryLiteralLen => write_u32(0),
+        InfoType::MaxCharLiteralLen => write_u32(16_777_216),
+        InfoType::MaxIndexSize => write_u32(0),
+        InfoType::MaxRowSize => write_u32(16_777_216),
+        InfoType::MaxStatementLen => write_u32(0),
+        InfoType::CursorSensitivity => write_u32(0), // SQL_UNSPECIFIED
+        InfoType::DriverAwarePoolingSupported => write_u32(0),
+        InfoType::IndexKeywords => write_u32(0), // SQL_IK_NONE
+        InfoType::ParamArrayRowCounts => write_u32(2), // SQL_PARC_NO_BATCH
+        InfoType::ParamArraySelects => write_u32(2), // SQL_PAS_NO_BATCH
+        InfoType::StandardCliConformance => write_u32(2), // SQL_SCC_ISO92_CLI
 
         // ----- Bitmask `SQLUINTEGER` (with-slice families) -----------------
         InfoType::GetDataExtensions => write_u32(
@@ -1726,6 +1974,47 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::StaticCursorAttributes1 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES1)),
         InfoType::StaticCursorAttributes2 => write_u32(synthesize(STATIC_CURSOR_ATTRIBUTES2)),
         InfoType::DynamicCursorAttributes1 => write_u32(synthesize(DYNAMIC_CURSOR_ATTRIBUTES1)),
+        // New bitmask InfoTypes
+        InfoType::FetchDirection => write_u32(synthesize(FETCH_DIRECTION)),
+        InfoType::AlterTable => write_u32(synthesize(ALTER_TABLE)),
+        InfoType::AlterDomain => write_u32(synthesize(ALTER_DOMAIN)),
+        InfoType::OjCapabilities => write_u32(synthesize(OJ_CAPABILITIES)),
+        InfoType::DatetimeLiterals => write_u32(synthesize(DATETIME_LITERALS)),
+        InfoType::BatchRowCount => write_u32(synthesize(BATCH_ROW_COUNT)),
+        InfoType::BatchSupport => write_u32(synthesize(BATCH_SUPPORT)),
+        InfoType::CreateAssertion => write_u32(synthesize(CREATE_ASSERTION)),
+        InfoType::CreateCharacterSet => write_u32(synthesize(CREATE_CHARACTER_SET)),
+        InfoType::CreateCollation => write_u32(synthesize(CREATE_COLLATION)),
+        InfoType::CreateDomain => write_u32(synthesize(CREATE_DOMAIN)),
+        InfoType::CreateSchema => write_u32(synthesize(CREATE_SCHEMA)),
+        InfoType::CreateTable => write_u32(synthesize(CREATE_TABLE)),
+        InfoType::CreateTranslation => write_u32(synthesize(CREATE_TRANSLATION)),
+        InfoType::CreateView => write_u32(synthesize(CREATE_VIEW)),
+        InfoType::DropAssertion => write_u32(synthesize(DROP_ASSERTION)),
+        InfoType::DropCharacterSet => write_u32(synthesize(DROP_CHARACTER_SET)),
+        InfoType::DropCollation => write_u32(synthesize(DROP_COLLATION)),
+        InfoType::DropDomain => write_u32(synthesize(DROP_DOMAIN)),
+        InfoType::DropSchema => write_u32(synthesize(DROP_SCHEMA)),
+        InfoType::DropTable => write_u32(synthesize(DROP_TABLE)),
+        InfoType::DropTranslation => write_u32(synthesize(DROP_TRANSLATION)),
+        InfoType::DropView => write_u32(synthesize(DROP_VIEW)),
+        InfoType::DynamicCursorAttributes2 => write_u32(synthesize(DYNAMIC_CURSOR_ATTRIBUTES2)),
+        InfoType::InfoSchemaViews => write_u32(synthesize(INFO_SCHEMA_VIEWS)),
+        InfoType::PositionedStatements => write_u32(synthesize(POSITIONED_STATEMENTS)),
+        InfoType::Subqueries => write_u32(synthesize(SUBQUERIES)),
+        InfoType::Union => write_u32(synthesize(UNION)),
+        InfoType::Sql92DatetimeFunctions => write_u32(synthesize(SQL92_DATETIME_FUNCTIONS)),
+        InfoType::Sql92ForeignKeyDeleteRule => write_u32(synthesize(SQL92_FOREIGN_KEY_DELETE_RULE)),
+        InfoType::Sql92ForeignKeyUpdateRule => write_u32(synthesize(SQL92_FOREIGN_KEY_UPDATE_RULE)),
+        InfoType::Sql92Grant => write_u32(synthesize(SQL92_GRANT)),
+        InfoType::Sql92NumericValueFunctions => {
+            write_u32(synthesize(SQL92_NUMERIC_VALUE_FUNCTIONS))
+        }
+        InfoType::Sql92Revoke => write_u32(synthesize(SQL92_REVOKE)),
+        InfoType::Sql92RowValueConstructor => write_u32(synthesize(SQL92_ROW_VALUE_CONSTRUCTOR)),
+        InfoType::Sql92StringFunctions => write_u32(synthesize(SQL92_STRING_FUNCTIONS)),
+        InfoType::DdlIndex => write_u32(synthesize(DDL_INDEX)),
+        InfoType::InsertStatement => write_u32(synthesize(INSERT_STATEMENT)),
 
         // ----- `SQL_CONVERT_<source>` bitmasks (per-source-type) ----------
         InfoType::ConvertBigint => write_u32(synthesize(CONVERT_BIGINT)),
@@ -1751,6 +2040,8 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::ConvertWchar => write_u32(synthesize(CONVERT_WCHAR)),
         InfoType::ConvertWlongVarchar => write_u32(synthesize(CONVERT_WLONGVARCHAR)),
         InfoType::ConvertWvarchar => write_u32(synthesize(CONVERT_WVARCHAR)),
+        InfoType::ConvertIntervalDayTime => write_u32(synthesize(CONVERT_INTERVAL_DAY_TIME)),
+        InfoType::ConvertIntervalYearMonth => write_u32(synthesize(CONVERT_INTERVAL_YEAR_MONTH)),
     }
 
     Ok(())
@@ -1948,7 +2239,6 @@ impl OdbcFunction {
                 | Self::Drivers
                 | Self::GetCursorName
                 | Self::ParamOptions
-                | Self::ProcedureColumns
                 | Self::SetCursorName
                 | Self::SetPos
                 | Self::SetScrollOptions

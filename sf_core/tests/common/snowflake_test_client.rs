@@ -6,6 +6,7 @@ use sf_core::protobuf::apis::database_driver_v1::{
     database_driver_client_with,
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
+use std::sync::Mutex;
 
 use super::arrow_result_helper::ArrowResultHelper;
 use super::config::{Parameters, get_parameters, setup_logging};
@@ -30,6 +31,8 @@ pub struct SnowflakeTestClient {
     pub parameters: Parameters,
     private_key_file: Option<PrivateKeyFile>,
     client: DatabaseDriverClient,
+    created_statements: Mutex<Vec<StatementHandle>>,
+    created_result_sets: Mutex<Vec<ResultSetHandle>>,
 }
 
 impl SnowflakeTestClient {
@@ -58,6 +61,8 @@ impl SnowflakeTestClient {
             parameters,
             private_key_file: None,
             client,
+            created_statements: Mutex::new(Vec::new()),
+            created_result_sets: Mutex::new(Vec::new()),
         };
 
         test_client.set_options_from_parameters();
@@ -154,6 +159,8 @@ impl SnowflakeTestClient {
             parameters: test_parameters,
             private_key_file: None,
             client,
+            created_statements: Mutex::new(Vec::new()),
+            created_result_sets: Mutex::new(Vec::new()),
         };
 
         test_client.set_options_from_parameters();
@@ -194,7 +201,25 @@ impl SnowflakeTestClient {
                 conn_handle: Some(self.conn_handle),
             })
             .unwrap();
-        response.stmt_handle.unwrap()
+        let stmt_handle = response.stmt_handle.unwrap();
+        self.created_statements.lock().unwrap().push(stmt_handle);
+        stmt_handle
+    }
+
+    /// Track all ResultSetHandles from an execute query result
+    fn track_result_handles(&self, result: &execute_query_response::Result) {
+        match result {
+            execute_query_response::Result::Single(rs) => {
+                if let Some(handle) = rs.result_set_handle {
+                    self.created_result_sets.lock().unwrap().push(handle);
+                }
+            }
+            execute_query_response::Result::Multi(_) => {
+                // Multi-statement results don't contain handles directly.
+                // They have query_ids, and handles are retrieved later via
+                // connection_get_result_set() which tracks them separately.
+            }
+        }
     }
 
     pub fn execute_statement_query(
@@ -228,7 +253,8 @@ impl SnowflakeTestClient {
                 })),
             }
         });
-        self.client
+        let result = self
+            .client
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(*stmt),
                 bindings,
@@ -236,7 +262,23 @@ impl SnowflakeTestClient {
             })
             .unwrap()
             .result
+            .unwrap();
+        self.track_result_handles(&result);
+        result
+    }
+
+    /// Submit a statement without waiting for it to complete, returning its
+    /// query id immediately. Unlike `execute_statement_query`, this does not
+    /// poll the server for a result, so the query is typically still running
+    /// when this call returns.
+    pub fn execute_statement_async(&self, stmt: &StatementHandle) -> String {
+        self.client
+            .statement_execute_async_blocking(StatementExecuteAsyncRequest {
+                stmt_handle: Some(*stmt),
+                bindings: None,
+            })
             .unwrap()
+            .query_id
     }
 
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
@@ -275,10 +317,14 @@ impl SnowflakeTestClient {
     }
 
     pub fn fetch_chunk(&self, chunk: ResultChunk) -> DatabaseFetchChunkResponse {
+        self.fetch_chunks(vec![chunk])
+    }
+
+    pub fn fetch_chunks(&self, chunks: Vec<ResultChunk>) -> DatabaseFetchChunkResponse {
         self.client
             .database_fetch_chunk_blocking(DatabaseFetchChunkRequest {
-                db_handle: Some(self.db_handle),
-                chunk: Some(chunk),
+                conn_handle: None,
+                chunks,
                 // Arrow IPC path: columns are ignored.
                 columns: Vec::new(),
             })
@@ -291,6 +337,10 @@ impl SnowflakeTestClient {
                 stmt_handle: Some(*stmt),
             })
             .unwrap();
+        self.created_statements
+            .lock()
+            .unwrap()
+            .retain(|s| s != stmt);
     }
 
     /// Executes a SQL statement, ignoring the result. Use for DDL/side-effect queries.
@@ -362,6 +412,26 @@ impl SnowflakeTestClient {
         stream
     }
 
+    /// Execute a single query with per-statement options (e.g. QUERY_TAG) set
+    /// via the statement-options path, returning the Arrow stream directly.
+    pub fn execute_query_with_statement_params(
+        &self,
+        sql: &str,
+        statement_params: &[(&str, &str)],
+    ) -> ResultSetGetStreamResponse {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        for (key, value) in statement_params {
+            self.set_statement_option(&stmt_handle, key, ConfigSetting::from(*value));
+        }
+        let result = self.execute_statement_query(&stmt_handle);
+        let rs_handle = unwrap_single_rs_handle(&result);
+        let stream = self.result_set_get_stream(&rs_handle);
+        self.result_set_release(&rs_handle);
+        self.release_statement(&stmt_handle);
+        stream
+    }
+
     /// Get an Arrow stream for a query_id by looking it up via the connection,
     /// fetching the stream, and releasing the handle.
     pub fn get_result_set(
@@ -393,12 +463,87 @@ impl SnowflakeTestClient {
 
     /// Get a ResultSetResponse (handle + descriptor) by query_id via the connection.
     pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
-        self.client
+        let response = self
+            .client
             .connection_get_result_set_blocking(ConnectionGetResultSetRequest {
                 conn_handle: Some(self.conn_handle),
                 query_id: query_id.to_string(),
             })
+            .unwrap();
+        if let Some(handle) = response.result_set_handle {
+            self.created_result_sets.lock().unwrap().push(handle);
+        }
+        response
+    }
+
+    /// Abort a running query by its Snowflake Query ID. Returns the server's
+    /// outcome (`NotRunning` if the query was not running — e.g. already
+    /// completed, or never started). Panics on a genuine RPC error (bad
+    /// handle, transport failure).
+    pub fn abort_query(&self, query_id: &str) -> AbortQueryOutcome {
+        let outcome = self.abort_query_no_unwrap(query_id).unwrap().outcome;
+        AbortQueryOutcome::try_from(outcome).unwrap_or(AbortQueryOutcome::Unspecified)
+    }
+
+    /// Like [`Self::abort_query`], but surfaces a genuine RPC error instead
+    /// of panicking — for tests asserting on the error path itself.
+    pub fn abort_query_no_unwrap(
+        &self,
+        query_id: &str,
+    ) -> Result<ConnectionAbortQueryResponse, String> {
+        self.client
+            .connection_abort_query_blocking(ConnectionAbortQueryRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    /// Fetch the current status name (e.g. "RUNNING", "ABORTED") of a query
+    /// by its Snowflake Query ID via `ConnectionGetQueryStatus`.
+    pub fn get_query_status(&self, query_id: &str) -> String {
+        self.client
+            .connection_get_query_status_blocking(ConnectionGetQueryStatusRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
             .unwrap()
+            .status_name
+    }
+
+    /// Streaming PUT: upload `data` using `sql` (JDBC `uploadStream` / Python
+    /// `file_stream` path). Returns the PUT-shaped result set handle + descriptor.
+    pub fn connection_upload_stream(
+        &self,
+        sql: &str,
+        data: Vec<u8>,
+    ) -> Result<ConnectionUploadStreamResponse, String> {
+        self.client
+            .connection_upload_stream_blocking(ConnectionUploadStreamRequest {
+                conn_handle: Some(self.conn_handle),
+                sql: sql.to_string(),
+                data,
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
+    /// Streaming GET: download `source_filename` from `stage_name` (JDBC
+    /// `downloadStream` path), optionally gunzipping. Returns the raw bytes.
+    pub fn connection_download_stream(
+        &self,
+        stage_name: &str,
+        source_filename: &str,
+        decompress: bool,
+    ) -> Result<Vec<u8>, String> {
+        self.client
+            .connection_download_stream_blocking(ConnectionDownloadStreamRequest {
+                conn_handle: Some(self.conn_handle),
+                stage_name: stage_name.to_string(),
+                source_filename: source_filename.to_string(),
+                decompress,
+            })
+            .map(|resp| resp.data)
+            .map_err(|e| format!("{e:?}"))
     }
 
     pub fn result_set_get_stream(&self, rs_handle: &ResultSetHandle) -> ResultSetGetStreamResponse {
@@ -415,6 +560,10 @@ impl SnowflakeTestClient {
                 result_set_handle: Some(*rs_handle),
             })
             .unwrap();
+        self.created_result_sets
+            .lock()
+            .unwrap()
+            .retain(|h| h != rs_handle);
     }
 
     /// Execute a multistatement query.
@@ -731,6 +880,32 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
+        // Release all unreleased result sets first
+        let result_sets = self.created_result_sets.lock().unwrap().clone();
+        for rs in result_sets {
+            if let Err(e) = self
+                .client
+                .result_set_release_blocking(ResultSetReleaseRequest {
+                    result_set_handle: Some(rs),
+                })
+            {
+                tracing::warn!("Failed to release result set in Drop: {e:?}");
+            }
+        }
+
+        // Release all unreleased statements
+        let statements = self.created_statements.lock().unwrap().clone();
+        for stmt in statements {
+            if let Err(e) = self
+                .client
+                .statement_release_blocking(StatementReleaseRequest {
+                    stmt_handle: Some(stmt),
+                })
+            {
+                tracing::warn!("Failed to release statement in Drop: {e:?}");
+            }
+        }
+
         // Release the connection when the client is dropped
         if let Err(e) = self
             .client

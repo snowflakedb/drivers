@@ -29,10 +29,14 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  */
 final class NativeLibraryLoader {
 
-  private static final SFLogger logger = SFLoggerFactory.getLogger(NativeLibraryLoader.class);
+  // Bootstrap log must not round-trip through core (native lib is still loading).
+  private static final SFLogger logger =
+      SFLoggerFactory.getDeliveryLogger(NativeLibraryLoader.class.getName());
 
   /**
-   * Resource directory inside the JAR where {@code copyNativeLib} (build.gradle) places the lib.
+   * Root resource dir for the native libs. The fat JAR carries one lib per platform under an {@code
+   * <os>-<arch>} subdir; each {@code snowflake-jdbc-native} artifact carries one. {@link #load()}
+   * picks the running platform's at startup.
    */
   private static final String NATIVE_RESOURCE_DIR =
       "/net/snowflake/client/internal/unicore/native/";
@@ -65,9 +69,15 @@ final class NativeLibraryLoader {
       extracted = extractNativeLibFromResource();
     } catch (IOException e) {
       throw new RuntimeException(
-          "Failed to extract bundled native library from JAR resources. Either ensure the lib is "
-              + "bundled in the JAR (built via Gradle copyNativeLib) or set CORE_PATH / "
-              + "jdbc.library.path explicitly.",
+          "No bundled native library found in JAR resources. The classifier-less "
+              + "'net.snowflake:snowflake-jdbc-native' jar is native-free by design and is not runnable "
+              + "on its own. For a runnable driver, depend on the platform classifier jar "
+              + "'net.snowflake:snowflake-jdbc-native:<version>:<classifier>' (e.g. classifier "
+              + "osx-aarch_64; let os-maven-plugin / osdetector-gradle-plugin fill in "
+              + "${os.detected.classifier}), or the self-contained "
+              + "'net.snowflake:snowflake-jdbc-native-all' jar. Advanced setups can instead point "
+              + "CORE_PATH or the jdbc.library.path system property at a local native lib. See "
+              + "https://github.com/snowflakedb/universal-driver/tree/main/jdbc",
           e);
     }
     System.load(extracted.toAbsolutePath().toString());
@@ -76,14 +86,18 @@ final class NativeLibraryLoader {
   /** Copy the bundled native lib resource into a temp file the JVM can {@code System.load}. */
   private static Path extractNativeLibFromResource() throws IOException {
     String libFileName = nativeLibFileName();
-    String resourcePath = NATIVE_RESOURCE_DIR + libFileName;
+    String resourcePath = NATIVE_RESOURCE_DIR + osArchDir() + "/" + libFileName;
     try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
       if (in == null) {
         throw new IOException(
             "Native library not found in JAR at "
                 + resourcePath
-                + ". The driver JAR was built "
-                + "without the platform-specific native lib bundled.");
+                + ". This JAR carries no native lib for this platform ("
+                + System.getProperty("os.name")
+                + "/"
+                + System.getProperty("os.arch")
+                + ") — expected for the native-free 'snowflake-jdbc-native' jar, or for a classifier "
+                + "jar built for a different platform.");
       }
       // Use a per-version subdir so concurrent JVMs don't clobber each other and the OS
       // doesn't refuse to load a file that's been overwritten while still mapped.
@@ -97,20 +111,71 @@ final class NativeLibraryLoader {
     }
   }
 
-  /**
-   * Resolve the native lib filename for the current OS. Architecture isn't currently encoded in the
-   * resource path because cargo only produces one binary per OS in {@code target/release/}; if we
-   * ship multi-arch builds in the future, extend this to include {@code os.arch}.
-   */
+  /** Native lib filename cargo produces on the current OS. Keyed off {@link #osToken()}. */
   private static String nativeLibFileName() {
+    switch (osToken()) {
+      case "darwin":
+        return "libjdbc_bridge.dylib";
+      case "windows":
+        return "jdbc_bridge.dll";
+      default:
+        // Linux and other POSIX systems
+        return "libjdbc_bridge.so";
+    }
+  }
+
+  /**
+   * The resource subdir for the running platform: {@code <os>-<arch>-<libc>} on Linux (glibc and
+   * musl natives aren't interchangeable, so each jar carries both variants and we pick here), just
+   * {@code <os>-<arch>} on macOS/Windows.
+   *
+   * <p>SYNC CONTRACT: {@link #osToken()}/{@link #archToken()}/{@link #libcToken()} must match the
+   * {@code host*Token} derivations in {@code build.gradle} and the matrix in {@code
+   * _build-jdbc-fatjar.yml}, which name the jar's subdirs.
+   */
+  private static String osArchDir() {
+    String osArch = osToken() + "-" + archToken();
+    // Only Linux ships a per-libc native; mac/windows subdirs carry no libc segment.
+    if ("linux".equals(osToken())) {
+      return osArch + "-" + libcToken();
+    }
+    return osArch;
+  }
+
+  /**
+   * The C library flavor of the running host: {@code "musl"} or {@code "gnu"}. Only consulted on
+   * Linux (see {@link #osArchDir()}). The {@code jdbc.libc} system property overrides {@link
+   * LibcDetector#detect()} for locked-down JVMs; defaults to {@code "gnu"} when detection is
+   * inconclusive (glibc is the common case and the override is the escape hatch).
+   */
+  private static String libcToken() {
+    String override = System.getProperty("jdbc.libc");
+    if (override != null && !override.isEmpty()) {
+      return override.toLowerCase();
+    }
+    return "musl".equals(LibcDetector.detect()) ? "musl" : "gnu";
+  }
+
+  private static String osToken() {
     String osName = System.getProperty("os.name", "").toLowerCase();
     if (osName.contains("mac") || osName.contains("darwin")) {
-      return "libjdbc_bridge.dylib";
+      return "darwin";
     }
     if (osName.contains("windows")) {
-      return "jdbc_bridge.dll";
+      return "windows";
     }
-    // Linux and other POSIX systems
-    return "libjdbc_bridge.so";
+    return "linux";
+  }
+
+  private static String archToken() {
+    String osArch = System.getProperty("os.arch", "").toLowerCase();
+    if (osArch.equals("aarch64") || osArch.equals("arm64")) {
+      return "aarch64";
+    }
+    if (osArch.equals("amd64") || osArch.equals("x86_64")) {
+      return "x86_64";
+    }
+    // Fall through with the raw value so the "not found" error names the actual arch.
+    return osArch;
   }
 }

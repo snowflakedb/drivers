@@ -5,6 +5,7 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
+import org.apache.arrow.vector.complex.FixedSizeListVector;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.Field;
 
@@ -108,6 +109,9 @@ public final class ArrowVectorConverterUtil {
             default:
               throw new SnowflakeSQLException("Unsupported Arrow physical type for TIME: " + type);
           }
+
+        case VECTOR:
+          return new VectorTypeConverter((FixedSizeListVector) vector, idx, context);
 
           // Structured types (MAP/ARRAY/OBJECT) currently fall back to string rendering, matching
           // legacy snowflake-jdbc's VarCharConverter fallback when the column is not materialized

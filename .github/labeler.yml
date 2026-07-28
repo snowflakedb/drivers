@@ -9,6 +9,7 @@ nodejs:
   - changed-files:
       - any-glob-to-any-file:
           - nodejs/**
+          - nodejs_bridge/**
 
 dotnet:
   - changed-files:

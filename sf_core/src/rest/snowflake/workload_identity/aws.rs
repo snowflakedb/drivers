@@ -50,13 +50,13 @@ pub enum AwsAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to load AWS credentials"))]
-    CredentialsLoadFailed {
+    CredentialsLoad {
         source: Box<dyn std::error::Error + Send + Sync>,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("AWS AssumeRole for '{role_arn}' failed"))]
-    AssumeRoleFailed {
+    AssumeRole {
         role_arn: String,
         source: Box<dyn std::error::Error + Send + Sync>,
         #[snafu(implicit)]
@@ -74,7 +74,7 @@ pub enum AwsAttestationError {
         location: Location,
     },
     #[snafu(display("AWS STS GetWebIdentityToken failed"))]
-    WebIdentityTokenFailed {
+    WebIdentityToken {
         source: Box<dyn std::error::Error + Send + Sync>,
         #[snafu(implicit)]
         location: Location,
@@ -85,13 +85,13 @@ pub enum AwsAttestationError {
         location: Location,
     },
     #[snafu(display("Failed to serialize GetCallerIdentity token"))]
-    TokenSerializeFailed {
+    TokenSerialize {
         source: serde_json::Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to create HMAC-SHA256 instance"))]
-    HmacInitFailed {
+    HmacInit {
         source: hmac::digest::InvalidLength,
         #[snafu(implicit)]
         location: Location,
@@ -146,7 +146,7 @@ async fn get_caller_identity_token(
         &date_stamp,
     )?;
 
-    let json = serde_json::to_string(&request).context(TokenSerializeFailedSnafu)?;
+    let json = serde_json::to_string(&request).context(TokenSerializeSnafu)?;
     Ok(BASE64.encode(json.as_bytes()))
 }
 
@@ -263,7 +263,7 @@ async fn get_web_identity_token(
         .send()
         .await
         .boxed()
-        .context(WebIdentityTokenFailedSnafu)?;
+        .context(WebIdentityTokenSnafu)?;
 
     response
         .web_identity_token()
@@ -294,7 +294,7 @@ async fn resolve_credentials(
             .provide_credentials()
             .await
             .boxed()
-            .context(CredentialsLoadFailedSnafu)
+            .context(CredentialsLoadSnafu)
     } else {
         let sts_client = StsClient::new(&sdk_config);
         chain_assume_role(&sts_client, &config.impersonation_path).await
@@ -329,7 +329,7 @@ async fn chain_assume_role(
             .send()
             .await
             .boxed()
-            .context(AssumeRoleFailedSnafu {
+            .context(AssumeRoleSnafu {
                 role_arn: role_arn.clone(),
             })?;
 
@@ -413,7 +413,7 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<Vec<u8>, AwsAttestationError> {
-    let mut mac = HmacSha256::new_from_slice(key).context(HmacInitFailedSnafu)?;
+    let mut mac = HmacSha256::new_from_slice(key).context(HmacInitSnafu)?;
     mac.update(data);
     Ok(mac.finalize().into_bytes().to_vec())
 }

@@ -624,3 +624,27 @@ class TestIsValid:
         conn = connection_factory()
         conn.close()
         assert conn.is_valid() is False
+
+
+class TestClientPrefetchThreads:
+    """Tests for the client_prefetch_threads connection property."""
+
+    def test_should_return_default_value_of_4(self, connection):
+        """client_prefetch_threads should return 4 when not explicitly configured."""
+        assert connection.client_prefetch_threads == 4
+
+    def test_should_return_configured_value_from_connection_kwarg(self, connection_factory):
+        """client_prefetch_threads should reflect the value set at connection time."""
+        with connection_factory(client_prefetch_threads=8) as conn:
+            assert conn.client_prefetch_threads == 8
+
+    def test_should_update_value_via_setter(self, connection):
+        """Setting client_prefetch_threads should update the value returned by the getter."""
+        connection.client_prefetch_threads = 6
+        assert connection.client_prefetch_threads == 6
+
+    def test_should_roundtrip_multiple_values(self, connection):
+        """Getter should reflect each value set by the setter."""
+        for value in (1, 3, 8):
+            connection.client_prefetch_threads = value
+            assert connection.client_prefetch_threads == value

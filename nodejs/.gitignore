@@ -1,8 +1,8 @@
+# Build artifacts
+_build/
+
 # Dependencies
 node_modules/
-
-# Build output
-dist/
 
 # Test output
 coverage/

@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -8,12 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SkipForJSONResultSet;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
@@ -21,11 +24,25 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class FloatTests extends SnowflakeIntegrationTestBase {
+public class FloatTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final String FLOAT_TYPE = "FLOAT";
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
   // Realistic large maximum value (15 significant digits, works in both Arrow and JSON)
   private static final double FLOAT_REALISTIC_MAX = 1.79769313486231e+308;
+  private static final ColumnExpectation FLOAT_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.DOUBLE,
+          "DOUBLE",
+          Double.class.getName(),
+          0,
+          0,
+          24,
+          true,
+          false,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastFloatValuesToAppropriateTypeForFloatAndSynonyms() throws Exception {
@@ -54,6 +71,19 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
           assertAllFloatGetters(resultSet, 4, Double.NaN, "Column 4 mismatch for " + FLOAT_TYPE);
           assertAllFloatGetters(
               resultSet, 5, Double.POSITIVE_INFINITY, "Column 5 mismatch for " + FLOAT_TYPE);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  FLOAT_COLUMN.withColumnName("0.0::FLOAT"),
+                  FLOAT_COLUMN.withColumnName("123.456::FLOAT"),
+                  FLOAT_COLUMN.withColumnName("1.23E10::FLOAT"),
+                  FLOAT_COLUMN.withColumnName("'NAN'::FLOAT"),
+                  FLOAT_COLUMN.withColumnName("'INF'::FLOAT")));
+
           assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
   }

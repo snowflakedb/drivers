@@ -1,3 +1,4 @@
+mod logging;
 mod logout;
 mod session_parameters;
 mod session_refresh;

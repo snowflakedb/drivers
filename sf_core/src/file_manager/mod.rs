@@ -11,13 +11,23 @@ pub mod types;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod internal {
     pub use super::azure_transfer::download_from_azure_streaming;
-    pub use super::cloud_http::{CloudStreamingDownload, CseDownloadInfo, StreamReader};
+    pub use super::cloud_http::{
+        CloudSpillTarget, CloudStreamingDownload, CseDownloadInfo, StreamReader,
+    };
     pub use super::encryption::{
         EncryptingReader, EncryptionError, Encryptor, build_encryptor, compute_sha256_digest,
         decrypt_ciphertext_to_writer,
     };
     pub use super::gcs_transfer::download_from_gcs_streaming;
     pub use crate::compression::compress_to_tempfile;
+
+    use super::{
+        CloudCredentials, RefreshFuture, StageInfoCache, StageInfoRefreshError, StageInfoRefresher,
+        StageInfoSnapshot,
+    };
+    use crate::utils::sync::MutexRecoverExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
 
     /// Builds a base put/get retry policy with the given `max_attempts`
     /// (zero backoff for instant test runs).
@@ -34,9 +44,11 @@ pub mod internal {
         p
     }
 
-    /// Zero-backoff variant of the production Azure retry policy, for tests.
+    /// Zero-backoff base put/get policy for Azure transfer tests. The per-attempt
+    /// policy is derived from this via `azure_403_fastfail_policy` (which removes
+    /// 403 from the retryable set); tests pass this as the transfer `base`.
     pub fn azure_test_retry_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
-        super::azure_transfer::azure_retry_policy(&base_policy(max_attempts))
+        base_policy(max_attempts)
     }
 
     /// Zero-backoff variant of the production GCS retry policy, for tests.
@@ -58,29 +70,111 @@ pub mod internal {
         );
         params
     }
+
+    /// Configurable in-memory [`StageInfoRefresher`] fake for cloud
+    /// file-transfer refresh-on-error tests. Wraps a real [`StageInfoCache`]
+    /// (production type), counts `refresh()` calls, optionally rotates the
+    /// cached credential on the next refresh, and can be armed to fail.
+    ///
+    /// `Arc`-backed, so a `clone()` shares the cache and counter across
+    /// concurrent tasks — mirroring production's `Arc<RwLock<StageInfoCache>>`.
+    /// This is the single shared refresher fake for the file-transfer tests;
+    /// prefer it over hand-rolling a per-cloud copy.
+    ///
+    /// It does NOT model the production coalescing window in
+    /// `SnowflakeStageInfoRefresher` (a real `Instant` gate) — unit-test that
+    /// against the real type, not this fake.
+    #[derive(Clone)]
+    pub struct FakeStageInfoRefresher {
+        cache: StageInfoCache,
+        refresh_calls: Arc<AtomicU32>,
+        next_creds: Arc<Mutex<Option<CloudCredentials>>>,
+        fail_msg: Arc<Mutex<Option<String>>>,
+    }
+
+    impl FakeStageInfoRefresher {
+        /// Seeds the fake with `initial` credentials, no pending rotation or failure.
+        pub fn new(initial: CloudCredentials) -> Self {
+            Self {
+                cache: StageInfoCache::new_with_creds(initial),
+                refresh_calls: Arc::new(AtomicU32::new(0)),
+                next_creds: Arc::new(Mutex::new(None)),
+                fail_msg: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        /// Arms the next `refresh()` to rotate the cache to `creds`. Left
+        /// unarmed, `refresh()` stores nothing (simulates a coalesced peer).
+        pub fn arm_rotation(&self, creds: CloudCredentials) {
+            *self.next_creds.lock_recover() = Some(creds);
+        }
+
+        /// Arms the next `refresh()` to fail with `ServerRejected`.
+        pub fn arm_failure(&self, msg: &str) {
+            *self.fail_msg.lock_recover() = Some(msg.to_string());
+        }
+
+        /// Number of times `refresh()` has been invoked.
+        pub fn refresh_call_count(&self) -> u32 {
+            self.refresh_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl StageInfoRefresher for FakeStageInfoRefresher {
+        fn refresh(&mut self) -> RefreshFuture<'_> {
+            let calls = self.refresh_calls.clone();
+            let next = self.next_creds.clone();
+            let fail = self.fail_msg.clone();
+            let cache = self.cache.clone();
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                if let Some(msg) = fail.lock_recover().take() {
+                    return Err(StageInfoRefreshError::ServerRejected {
+                        message: msg,
+                        location: snafu::Location::default(),
+                    });
+                }
+                if let Some(c) = next.lock_recover().take() {
+                    cache.store(StageInfoSnapshot::creds_only(c));
+                }
+                Ok(())
+            })
+        }
+
+        fn refresh_url(&mut self) -> RefreshFuture<'_> {
+            // Creds live in the cache, not per-file presigned URLs, on the paths
+            // these fakes cover; refresh_url is never exercised.
+            Box::pin(async { Ok(()) })
+        }
+
+        fn cache(&self) -> &StageInfoCache {
+            &self.cache
+        }
+    }
 }
 
 pub use self::types::*;
-pub use azure_transfer::download_from_azure;
+pub use azure_transfer::{AzureDownloadError, AzureUploadError, download_from_azure};
 pub use gcs_transfer::{
     GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
 };
-pub use multipart::{MultipartParams, MultipartThreshold};
+pub use multipart::{FileTooLargeError, MultipartParams, MultipartThreshold};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
-use azure_transfer::{
-    AzureDownloadError, AzureUploadError, azure_retry_policy, download_from_azure_streaming,
-    upload_to_azure_or_skip,
-};
+use azure_transfer::{download_from_azure_streaming, upload_to_azure_or_skip};
+use cloud_http::{CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo};
 use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
 use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
 use path_expansion::{PathExpansionError, expand_filenames};
-use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
+use s3_transfer::{
+    DownloadFileError, S3Download, S3DownloadBody, SpillTarget, SpilledBody, UploadFileError,
+    download_from_s3, upload_to_s3_or_skip,
+};
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
 use std::io::Read;
@@ -172,7 +266,8 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
 ///   (`s3_transfer::upload_to_s3_or_skip`).
 /// - GCS stages: 401 triggers a creds refresh; 400 in presigned-mode
 ///   triggers a URL refresh (`gcs_transfer::upload_to_gcs_or_skip`).
-/// - Azure stages: SAS URL refresh is out of scope for the current gap stack.
+/// - Azure stages: any 403 triggers a SAS refresh via a fresh PUT/GET query
+///   (`azure_transfer::upload_to_azure_or_skip`, `download_from_azure`).
 ///
 /// Refreshed snapshots are stored in the refresher's `StageInfoCache` rather
 /// than returned here.
@@ -234,6 +329,7 @@ async fn upload_prepared_source(
             file_metadata.target.as_str(),
             data.overwrite,
             policy,
+            data.multipart,
             refresher,
         )
         .await
@@ -243,6 +339,9 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.multipart,
+            // Build the policy here, where `using_presigned_url` is known, and
+            // pass it by reference so the test seam can inject zero backoff.
             &gcs_retry_policy(data.stage_info.presigned_url.is_some(), policy),
             refresher,
         )
@@ -254,7 +353,9 @@ async fn upload_prepared_source(
             file_metadata.target.as_str(),
             data.overwrite,
             data.skip_upload_on_content_match,
-            &azure_retry_policy(policy),
+            data.multipart,
+            policy,
+            refresher,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -542,6 +643,7 @@ pub async fn download_files(
             presigned_url,
             flavor: data.flavor.clone(),
             multipart: data.multipart,
+            unsafe_file_write: data.unsafe_file_write,
         };
 
         let result =
@@ -577,8 +679,8 @@ fn safe_download_file_name(src_location: &str) -> Result<&str, FileManagerError>
 
 /// GET path guard layer 2 (mirrors JDBC `assertWithinDirectory`): join the
 /// safe basename onto the canonicalized `local_location` and confirm the result
-/// stays inside it before any file is created. Canonicalizing also asserts the
-/// dir exists — behavior-preserving, since `File::create` never made parents.
+/// stays inside it before any file is created. The caller creates
+/// `local_location` first (SNOW-3704966), so `canonicalize` here also confirms it.
 /// The containment check is defense-in-depth against future layer-1 changes and
 /// catches a leaf that already exists as a symlink escaping `base_dir`.
 fn resolve_validated_output_path(
@@ -603,6 +705,25 @@ fn resolve_validated_output_path(
     Ok(output_path)
 }
 
+/// Prepares the on-disk destination for one downloaded file: create
+/// `local_location` recursively if missing (SNOW-3704966; matches Python
+/// `os.makedirs` and JDBC), run the GET path guard, and derive the sibling
+/// `<output>.part` temp path (downloads write there and `rename` on success, so
+/// observers never see partial plaintext). Blocking; call inside `spawn_blocking`.
+fn prepare_download_output_paths(
+    local_location: &str,
+    src_location: &str,
+) -> Result<(PathBuf, PathBuf), FileManagerError> {
+    std::fs::create_dir_all(local_location).context(IoSnafu)?;
+    let output_path = resolve_validated_output_path(local_location, src_location)?;
+    let partial_path = {
+        let mut s = output_path.as_os_str().to_owned();
+        s.push(".part");
+        PathBuf::from(s)
+    };
+    Ok((output_path, partial_path))
+}
+
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
 ///
 /// `per_file_index` is the file's index inside the GET batch — i.e. its
@@ -616,57 +737,73 @@ fn resolve_validated_output_path(
 /// `tokio::task::spawn_blocking` so the async runtime thread is free while the
 /// blocking channel receive waits for the next chunk from the async producer.
 ///
-/// For S3, the existing `DownloadResponse { data: Vec<u8> }` path is preserved
-/// (S3 streaming is a follow-up optimization).
+/// For S3, a single buffered GET is used below the multipart threshold and
+/// parallel ranged GETs into a tempfile above it. CSE objects decrypt the
+/// ciphertext through a blocking `Read`; SSE objects skip decryption — a spilled
+/// (ranged) download is renamed into place, an in-memory (small) one is copied
+/// straight to the destination.
 pub async fn download_single_file(
     mut data: SingleDownloadData,
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
-    // `resolve_validated_output_path` runs blocking `canonicalize` syscalls;
-    // keep them off the async executor like every other blocking FS op below.
+    // Blocking FS syscalls (create_dir_all/canonicalize); keep off the async executor.
     let (output_path, partial_path) = {
         let local_location = data.local_location.clone();
         let src_location = data.src_location.clone();
-        tokio::task::spawn_blocking(move || -> Result<(PathBuf, PathBuf), FileManagerError> {
-            let output_path = resolve_validated_output_path(&local_location, &src_location)?;
-            // Atomic write via a sibling `.part` temp file: plaintext is decrypted (or
-            // copied, on the SSE branch) into the temp path, the digest is verified at
-            // finalize time, and only on success do we `rename` to `output_path`. On
-            // failure we `remove_file` the temp; the destination is never created, so
-            // concurrent FS observers (file watchers, antivirus, scripts) see no
-            // partial plaintext at the user-visible path. This restores parity with
-            // the pre-streaming behaviour where digest verification preceded any
-            // write to disk.
-            let partial_path = {
-                let mut s = output_path.as_os_str().to_owned();
-                s.push(".part");
-                PathBuf::from(s)
-            };
-            Ok((output_path, partial_path))
+        tokio::task::spawn_blocking(move || {
+            prepare_download_output_paths(&local_location, &src_location)
         })
         .await
         .context(BlockingTaskSnafu)??
     };
 
-    // GCS and Azure use the streaming path: no intermediate Vec<u8> for ciphertext.
-    // S3 retains the DownloadResponse Vec<u8> path (its streaming is a separate effort).
+    // CSE downloads decrypt the ciphertext through a blocking `Read`; SSE
+    // downloads skip decryption and write the raw bytes. S3 buffers small blobs
+    // in memory and spills large ranged downloads to a tempfile (renamed into
+    // place on the SSE path); GCS/Azure stream from the network.
     //
-    // In every branch we verify the SHA-256 digest at finalize time rather than
-    // pre-checking it: pre-verification would require buffering the full ciphertext,
-    // which defeats the streaming refactor. The integrity guarantee is preserved
-    // (a tampered byte still yields DigestMismatch); only the failure-mode timing
-    // differs. We absorb that by writing to `partial_path` and renaming on success
-    // — the user-visible destination only ever appears as a complete, verified
-    // artefact, even if a concurrent FS observer is racing.
-    // Extract enc_material before the match so all three arms can move it into
-    // their spawn_blocking closure without cloning EncryptionMaterial's strings.
+    // CSE verifies the SHA-256 digest at finalize time rather than pre-checking
+    // it: pre-verification would require buffering the full ciphertext, which
+    // defeats the streaming refactor. The integrity guarantee is preserved (a
+    // tampered byte still yields DigestMismatch); only the failure-mode timing
+    // differs. Every branch writes to `partial_path` and renames on success — the
+    // user-visible destination only ever appears as a complete artefact, even if
+    // a concurrent FS observer is racing.
+    // Extract enc_material and unsafe_file_write before the match so all three
+    // arms can move them into their spawn_blocking closures
+    // (EncryptionMaterial is not Clone).
     let enc_material = data.encryption_material.take();
+    let unsafe_file_write = data.unsafe_file_write;
     let (cloud_byte_count, output_byte_len) = match data.stage_info.location_type {
         LocationType::S3 => {
-            let DownloadResponse {
-                data: raw_data,
+            // Spill parallel ranged downloads next to the destination (not the
+            // system temp dir) so the SSE finalize below is a same-filesystem
+            // rename rather than a cross-device copy.
+            // unwrap_or_else uses "." (current dir) rather than temp_dir so
+            // the spill stays on the same filesystem as the destination,
+            // keeping the subsequent rename cross-device-safe. temp_dir can
+            // be on a different FS, which makes NamedTempFile::persist fail
+            // with EXDEV. parent() is only None when output_path has no
+            // directory component (a bare filename), in which case "." is
+            // the correct implicit parent.
+            let spill_dir = output_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            // A non-encrypted ranged download assembles straight into `.part`
+            // (one rename to publish; any hard-kill leftover is a
+            // self-overwriting `.part`). An encrypted (or git-stage) download
+            // has `encryption_material`, so its ciphertext goes to a temp in
+            // `spill_dir` and is decrypted into `.part` below.
+            let spill_target = if enc_material.is_some() {
+                SpillTarget::Temp(&spill_dir)
+            } else {
+                SpillTarget::Part(&partial_path)
+            };
+            let S3Download {
+                body,
                 digest,
                 file_metadata,
                 cloud_byte_count,
@@ -674,86 +811,146 @@ pub async fn download_single_file(
                 &data.stage_info,
                 data.src_location.as_str(),
                 policy,
+                data.multipart,
                 refresher,
+                spill_target,
             )
             .await
             .context(S3DownloadSnafu)?;
 
             let partial_path2 = partial_path.clone();
-            let output_path2 = output_path.clone();
 
-            // The decrypt/copy + file writes are blocking (and decrypt is
-            // CPU-bound); run them off the async executor in `spawn_blocking`,
-            // mirroring the GCS/Azure streaming arms below.
-            let output_byte_len =
-                tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
-                    match (enc_material.as_ref(), file_metadata, digest.as_deref()) {
-                        // Client-side-encrypted object: decrypt into the temp path,
+            // Write to `<dst>.part` but do NOT rename inside spawn_blocking.
+            // Rename happens after the `.await` (see below), so a cancelled/
+            // dropped outer future cannot publish a file written by a detached
+            // blocking task. The `.await` itself is the cancellation point.
+            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(
+                move || -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
+                    match (enc_material, file_metadata, digest) {
+                        // Client-side-encrypted object: decrypt the ciphertext
+                        // (from the in-memory buffer or the spilled tempfile),
                         // verifying the SHA-256 digest at finalize time.
                         (Some(enc_material), Some(enc_metadata), Some(d)) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
-                            match decrypt_ciphertext_to_writer(
-                                raw_data.as_slice(),
+                            let reader = body.into_reader().context(IoSnafu)?;
+                            let mut output_file =
+                                create_output_file(&partial_path2, unsafe_file_write)
+                                    .context(IoSnafu)?;
+                            let result = decrypt_ciphertext_to_writer(
+                                reader,
                                 &enc_metadata,
-                                d,
-                                enc_material,
+                                d.as_str(),
+                                &enc_material,
                                 &mut output_file,
-                            ) {
-                                Ok(n) => {
-                                    drop(output_file);
-                                    finalize_rename(&partial_path2, &output_path2)
-                                        .context(IoSnafu)?;
-                                    Ok(n)
-                                }
-                                Err(e) => {
-                                    drop(output_file);
-                                    warn_remove_partial(&partial_path2);
-                                    Err(e).context(DecryptionSnafu)
-                                }
-                            }
+                            )
+                            .context(DecryptionSnafu);
+                            write_or_cleanup(output_file, &partial_path2, result).map(|n| (n, None))
                         }
-                        // Two non-decrypting cases share the raw-copy path:
-                        //   * SSE stage — no `encryption_material`; the cloud bytes are
-                        //     already plaintext (server-side decryption).
+                        // Non-decrypting cases — the cloud bytes are already the
+                        // final plaintext:
+                        //   * SSE stage — no `encryption_material` (server-side
+                        //     decryption).
                         //   * `encryption_material` present but the object carries no
-                        //     client-side-encryption headers (e.g. git stage objects on
-                        //     S3) — fall through to raw bytes, matching legacy connector
+                        //     client-side-encryption headers (e.g. git-stage objects
+                        //     on S3) — write raw bytes, matching legacy connector
                         //     behaviour (SNOW git-stage fix).
-                        (enc_material, _, _) => {
-                            if enc_material.is_some() {
+                        (maybe_enc, _, _) => {
+                            if maybe_enc.is_some() {
                                 tracing::debug!(
                                     "encryption_material present but S3 encryption headers absent; \
-                                 writing raw bytes"
+                                     writing raw bytes"
                                 );
                             }
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
-                            match std::io::copy(&mut raw_data.as_slice(), &mut output_file) {
-                                Ok(_) => {
-                                    drop(output_file);
-                                    finalize_rename(&partial_path2, &output_path2)
-                                        .context(IoSnafu)?;
-                                    Ok(raw_data.len() as i64)
+                            match body {
+                                // Non-encrypted ranged download: the parallel GETs already
+                                // assembled the whole object straight into `.part`. Nothing to
+                                // copy — signal `None` so the post-await branch renames `.part`
+                                // to the output (a single same-FS rename, no copy).
+                                S3DownloadBody::Spilled(SpilledBody::Part(_)) => {
+                                    Ok((cloud_byte_count, None))
                                 }
-                                Err(e) => {
-                                    drop(output_file);
-                                    warn_remove_partial(&partial_path2);
-                                    Err(e).context(IoSnafu)
+                                // git-stage ranged download: raw bytes were assembled into a
+                                // temp (chosen because `encryption_material` was present). Hand
+                                // the TempPath out so the caller renames it straight to output.
+                                S3DownloadBody::Spilled(SpilledBody::Temp(temp)) => {
+                                    Ok((cloud_byte_count, Some(temp)))
+                                }
+                                // Small buffered download: copy the already-in-RAM
+                                // bytes out (unavoidable and cheap).
+                                S3DownloadBody::InMemory(bytes) => {
+                                    let mut output_file =
+                                        create_output_file(&partial_path2, unsafe_file_write)
+                                            .context(IoSnafu)?;
+                                    let result = std::io::copy(&mut &bytes[..], &mut output_file)
+                                        .map(|n| n as i64)
+                                        .context(IoSnafu);
+                                    write_or_cleanup(output_file, &partial_path2, result)
+                                        .map(|n| (n, None))
                                 }
                             }
                         }
                     }
-                })
-                .await
-                .context(BlockingTaskSnafu)??;
+                },
+            )
+            .await
+            .context(BlockingTaskSnafu)??;
+
+            // Atomic publish: rename into place after the .await cancellation point.
+            // `Some(temp)` (git-stage ranged download): the raw temp is renamed
+            // directly to output — single same-FS rename.
+            // `None` (CSE decrypt, InMemory copy, or non-encrypted ranged
+            // download): the `.part` file is renamed to output via finalize_rename.
+            // Running here — not inside spawn_blocking — means a dropped outer
+            // future cannot publish; the blocking task may finish writing, but this
+            // rename never executes unless the future reaches this point.
+            match spilled_temp {
+                Some(temp) => {
+                    // git-stage ranged download: rename temp directly to output — single same-FS rename.
+                    let output_for_rename = output_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        temp.persist(&output_for_rename)
+                            .map(|_| ())
+                            .map_err(|e| e.error)
+                            .context(IoSnafu)
+                    })
+                    .await
+                    .context(BlockingTaskSnafu)??;
+                }
+                None => {
+                    // CSE / InMemory / non-encrypted-ranged path: rename `.part` into place.
+                    let partial_for_rename = partial_path.clone();
+                    let output_for_rename = output_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        finalize_rename(&partial_for_rename, &output_for_rename)
+                    })
+                    .await
+                    .context(BlockingTaskSnafu)?
+                    .context(IoSnafu)?;
+                }
+            }
+
             (cloud_byte_count, output_byte_len)
         }
 
         LocationType::Gcs => {
-            // TODO(SNOW-3406377): GCS/Azure download arms below are ~70 lines each
-            // and differ only in the streaming-download fn called and the error
-            // context constructor — extract a shared helper, and fold the
-            // `cloud_byte_count_hint > 0 ? hint : cloud_bytes_read` fallback onto
-            // `CloudStreamingDownload`. Deferred from this PR to keep diff scoped.
+            // Spill ranged downloads next to the destination (see the S3 arm) so
+            // an SSE finalize is a same-filesystem rename, not a cross-device copy.
+            // unwrap_or_else uses "." (current dir) rather than temp_dir so the
+            // spill stays on the same filesystem as the destination, keeping the
+            // subsequent rename cross-device-safe. parent() is only None when
+            // output_path has no directory component (a bare filename).
+            let spill_dir = output_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            // A non-encrypted ranged download assembles straight into `.part`
+            // (one rename to publish); an encrypted (or git-stage) download has
+            // `encryption_material`, so its ciphertext goes to a temp in
+            // `spill_dir` and is decrypted into `.part` below. Mirrors the S3 arm.
+            let spill_target = if enc_material.is_some() {
+                CloudSpillTarget::Temp(&spill_dir)
+            } else {
+                CloudSpillTarget::Part(&partial_path)
+            };
             let dl = download_from_gcs_streaming(
                 &data.stage_info,
                 data.src_location.as_str(),
@@ -766,73 +963,62 @@ pub async fn download_single_file(
                     policy,
                 ),
                 per_file_index,
+                data.multipart,
                 refresher,
+                spill_target,
             )
             .await
             .context(GcsDownloadSnafu)?;
 
             let cloud_byte_count_hint = dl.cloud_byte_count;
+            let cloud_bytes_read = dl.cloud_bytes_read;
             let cse_info = dl.cse_info;
-            let reader = dl.reader;
-            // Running total of on-cloud ciphertext bytes pulled off the wire,
-            // read back after the blocking decrypt task joins. Used as the
-            // `cloud_byte_count` fallback when Content-Length is absent.
-            let cloud_bytes_read = reader.bytes_read_handle();
+            let body = dl.body;
             let partial_path2 = partial_path.clone();
-            let output_path2 = output_path.clone();
-            // Blocking decrypt/write in a spawn_blocking task so the async runtime
-            // thread is free to run the GCS producer that feeds the channel reader.
-            let output_byte_len =
-                tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
-                    match (enc_material.as_ref(), cse_info) {
-                        (Some(enc_material), Some(cse)) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
-                            match decrypt_ciphertext_to_writer(
-                                reader,
-                                &cse.metadata,
-                                &cse.digest,
-                                enc_material,
-                                &mut output_file,
-                            ) {
-                                Ok(n) => {
-                                    drop(output_file);
-                                    finalize_rename(&partial_path2, &output_path2)
-                                        .context(IoSnafu)?;
-                                    Ok(n)
-                                }
-                                Err(e) => {
-                                    drop(output_file);
-                                    warn_remove_partial(&partial_path2);
-                                    Err(e).context(DecryptionSnafu)
-                                }
-                            }
-                        }
-                        // Client expects CSE (it has encryption material) but the
-                        // object carried no CSE headers — a server/contract error.
-                        (Some(_), None) => MissingDecryptionMetadataSnafu {
-                            detail: "encryption metadata headers missing from downloaded file",
-                        }
-                        .fail(),
-                        (None, _) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
-                            match std::io::copy(&mut { reader }, &mut output_file) {
-                                Ok(n) => {
-                                    drop(output_file);
-                                    finalize_rename(&partial_path2, &output_path2)
-                                        .context(IoSnafu)?;
-                                    Ok(n as i64)
-                                }
-                                Err(e) => {
-                                    drop(output_file);
-                                    warn_remove_partial(&partial_path2);
-                                    Err(e).context(IoSnafu)
-                                }
-                            }
-                        }
-                    }
-                })
-                .await
-                .context(BlockingTaskSnafu)??;
+            // Blocking finalize (decrypt / copy, no rename) in a spawn_blocking task
+            // so the async runtime thread stays free to run the GCS producer that
+            // feeds a streamed body's channel reader.
+            // Write to `<dst>.part` but do NOT rename inside spawn_blocking.
+            // Rename happens after the `.await` (see below), so a cancelled/
+            // dropped outer future cannot publish a file written by a detached
+            // blocking task. The `.await` itself is the cancellation point.
+            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(move || {
+                write_cloud_download(
+                    body,
+                    cse_info,
+                    enc_material,
+                    cloud_byte_count_hint,
+                    &partial_path2,
+                    unsafe_file_write,
+                )
+            })
+            .await
+            .context(BlockingTaskSnafu)??;
+
+            // Atomic publish — runs after .await so a dropped future cannot publish.
+            match spilled_temp {
+                Some(temp) => {
+                    let output_for_rename = output_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        temp.persist(&output_for_rename)
+                            .map(|_| ())
+                            .map_err(|e| e.error)
+                            .context(IoSnafu)
+                    })
+                    .await
+                    .context(BlockingTaskSnafu)??;
+                }
+                None => {
+                    let partial_for_rename = partial_path.clone();
+                    let output_for_rename = output_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        finalize_rename(&partial_for_rename, &output_for_rename)
+                    })
+                    .await
+                    .context(BlockingTaskSnafu)?
+                    .context(IoSnafu)?;
+                }
+            }
 
             // Use Content-Length hint as cloud_byte_count; if absent (chunked TE),
             // fall back to the on-cloud ciphertext bytes actually pulled off the
@@ -849,72 +1035,81 @@ pub async fn download_single_file(
         }
 
         LocationType::Azure => {
+            // Spill ranged downloads next to the destination (see the S3 arm) so
+            // an SSE finalize is a same-filesystem rename, not a cross-device copy.
+            // unwrap_or_else uses "." (current dir) rather than temp_dir so the
+            // spill stays on the same filesystem as the destination, keeping the
+            // subsequent rename cross-device-safe. parent() is only None when
+            // output_path has no directory component (a bare filename), in which
+            // case "." is the correct implicit parent.
+            let spill_dir = output_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            // A non-encrypted ranged download assembles straight into `.part`
+            // (one rename to publish); an encrypted (or git-stage) download has
+            // `encryption_material`, so its ciphertext goes to a temp in
+            // `spill_dir` and is decrypted into `.part` below. Mirrors the S3 arm.
+            let spill_target = if enc_material.is_some() {
+                CloudSpillTarget::Temp(&spill_dir)
+            } else {
+                CloudSpillTarget::Part(&partial_path)
+            };
             let dl = download_from_azure_streaming(
                 &data.stage_info,
                 data.src_location.as_str(),
-                &azure_retry_policy(policy),
+                data.multipart,
+                policy,
+                spill_target,
+                refresher,
             )
             .await
             .context(AzureDownloadSnafu)?;
 
             let cloud_byte_count_hint = dl.cloud_byte_count;
+            let cloud_bytes_read = dl.cloud_bytes_read;
             let cse_info = dl.cse_info;
-            let reader = dl.reader;
-            let cloud_bytes_read = reader.bytes_read_handle();
+            let body = dl.body;
             let partial_path2 = partial_path.clone();
-            let output_path2 = output_path.clone();
+            // Write to `<dst>.part` but do NOT rename inside spawn_blocking;
+            // same cancellation-safety rationale as the GCS arm above.
+            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(move || {
+                write_cloud_download(
+                    body,
+                    cse_info,
+                    enc_material,
+                    cloud_byte_count_hint,
+                    &partial_path2,
+                    unsafe_file_write,
+                )
+            })
+            .await
+            .context(BlockingTaskSnafu)??;
 
-            let output_byte_len =
-                tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
-                    match (enc_material.as_ref(), cse_info) {
-                        (Some(enc_material), Some(cse)) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
-                            match decrypt_ciphertext_to_writer(
-                                reader,
-                                &cse.metadata,
-                                &cse.digest,
-                                enc_material,
-                                &mut output_file,
-                            ) {
-                                Ok(n) => {
-                                    drop(output_file);
-                                    finalize_rename(&partial_path2, &output_path2)
-                                        .context(IoSnafu)?;
-                                    Ok(n)
-                                }
-                                Err(e) => {
-                                    drop(output_file);
-                                    warn_remove_partial(&partial_path2);
-                                    Err(e).context(DecryptionSnafu)
-                                }
-                            }
-                        }
-                        // Client expects CSE (it has encryption material) but the
-                        // object carried no CSE headers — a server/contract error.
-                        (Some(_), None) => MissingDecryptionMetadataSnafu {
-                            detail: "encryption metadata headers missing from downloaded file",
-                        }
-                        .fail(),
-                        (None, _) => {
-                            let mut output_file = File::create(&partial_path2).context(IoSnafu)?;
-                            match std::io::copy(&mut { reader }, &mut output_file) {
-                                Ok(n) => {
-                                    drop(output_file);
-                                    finalize_rename(&partial_path2, &output_path2)
-                                        .context(IoSnafu)?;
-                                    Ok(n as i64)
-                                }
-                                Err(e) => {
-                                    drop(output_file);
-                                    warn_remove_partial(&partial_path2);
-                                    Err(e).context(IoSnafu)
-                                }
-                            }
-                        }
-                    }
-                })
-                .await
-                .context(BlockingTaskSnafu)??;
+            // Atomic publish — runs after .await so a dropped future cannot publish.
+            match spilled_temp {
+                Some(temp) => {
+                    let output_for_rename = output_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        temp.persist(&output_for_rename)
+                            .map(|_| ())
+                            .map_err(|e| e.error)
+                            .context(IoSnafu)
+                    })
+                    .await
+                    .context(BlockingTaskSnafu)??;
+                }
+                None => {
+                    let partial_for_rename = partial_path.clone();
+                    let output_for_rename = output_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        finalize_rename(&partial_for_rename, &output_for_rename)
+                    })
+                    .await
+                    .context(BlockingTaskSnafu)?
+                    .context(IoSnafu)?;
+                }
+            }
 
             let cloud_byte_count = if cloud_byte_count_hint > 0 {
                 cloud_byte_count_hint
@@ -941,6 +1136,30 @@ pub async fn download_single_file(
     })
 }
 
+/// Creates the `.part` output file for a GET download, applying owner-only
+/// permissions (`0o600`) on Unix when `unsafe_file_write` is `false`.
+///
+/// On Unix with `unsafe_file_write = false`, forces mode `0o600`; otherwise uses the process umask.
+fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
+    #[cfg(unix)]
+    if !unsafe_file_write {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        // O_CREAT only sets the mode on newly-created files; if a stale .part
+        // file exists its permissions are left untouched by truncate.  fchmod
+        // (via set_permissions on the fd) covers that case.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        return Ok(file);
+    }
+    let _ = unsafe_file_write;
+    File::create(path)
+}
+
 /// Best-effort cleanup of the `<output_path>.part` temp file when an
 /// atomic-rename download fails mid-stream. Logs (rather than ignoring) the
 /// removal error so a subsequent disk-full failure on the same path is at
@@ -953,6 +1172,107 @@ fn warn_remove_partial(partial_path: &Path) {
             rm_err
         );
     }
+}
+
+/// Write-only finalizer for a streaming (GCS / Azure) download into `partial_path`.
+/// A client-side-encrypted body is decrypted (digest verified); a non-encrypting
+/// (SSE) body has its raw bytes written — and a **spilled** SSE body (parallel
+/// ranged GETs already assembled in the destination dir) is written to disk.
+/// Does **not** rename to the output path; the caller does that in a separate
+/// post-`.await` `spawn_blocking` so a dropped outer future cannot publish a
+/// partially-written file. Returns the byte count written and, for the
+/// `Spilled` arm, the `TempPath` for the caller to rename directly to
+/// `output_path` (no intermediate `.part` rename). For all other arms `None`
+/// is returned and the caller renames `partial_path` (`.part`) to `output_path`
+/// via `finalize_rename`. Runs on a blocking thread.
+fn write_cloud_download(
+    body: CloudDownloadBody,
+    cse_info: Option<CseDownloadInfo>,
+    enc_material: Option<EncryptionMaterial>,
+    cloud_byte_count_hint: i64,
+    partial_path: &Path,
+    unsafe_file_write: bool,
+) -> Result<(i64, Option<tempfile::TempPath>), FileManagerError> {
+    match (enc_material, cse_info) {
+        // Client-side-encrypted object: decrypt (verifying the digest).
+        (Some(enc_material), Some(cse)) => {
+            let reader = body.into_reader().context(IoSnafu)?;
+            let mut output_file =
+                create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
+            let result = decrypt_ciphertext_to_writer(
+                reader,
+                &cse.metadata,
+                &cse.digest,
+                &enc_material,
+                &mut output_file,
+            )
+            .context(DecryptionSnafu);
+            write_or_cleanup(output_file, partial_path, result).map(|n| (n, None))
+        }
+        // enc_material present but no CSE headers on the object (sfcdigest absent) —
+        // git-stage objects on Azure/GCS carry encryption key-wrap headers but no
+        // sfcdigest; the download path sets cse_info=None (see cloud git-stage fix).
+        // Treat as raw bytes: the spill_target was Temp (because enc_material.is_some()),
+        // so hand the temp out for the caller to rename, or copy a streamed body.
+        (Some(_), None) => {
+            tracing::debug!(
+                "enc_material present but cse_info absent; treating as raw bytes (git-stage)"
+            );
+            match body {
+                CloudDownloadBody::Spilled(CloudSpilledBody::Temp(temp)) => {
+                    Ok((cloud_byte_count_hint, Some(temp)))
+                }
+                CloudDownloadBody::Streamed(reader) => {
+                    let mut output_file =
+                        create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
+                    let result = std::io::copy(&mut { reader }, &mut output_file)
+                        .map(|n| n as i64)
+                        .context(IoSnafu);
+                    write_or_cleanup(output_file, partial_path, result).map(|n| (n, None))
+                }
+                CloudDownloadBody::Spilled(CloudSpilledBody::Part(_)) => {
+                    // Unreachable: spill_target=Part is only chosen when enc_material=None.
+                    unreachable!("Part spill with enc_material present")
+                }
+            }
+        }
+        // Non-encrypting (SSE) object — the cloud bytes are the final plaintext.
+        // spill_target=Part was chosen (enc_material=None), so Temp cannot appear here.
+        (None, _) => match body {
+            // Non-encrypted ranged download: parallel GETs assembled straight into `.part`.
+            // Nothing to copy — signal `None` so the post-await branch renames `.part`.
+            CloudDownloadBody::Spilled(CloudSpilledBody::Part(_)) => {
+                Ok((cloud_byte_count_hint, None))
+            }
+            CloudDownloadBody::Spilled(CloudSpilledBody::Temp(_)) => {
+                // Unreachable: spill_target=Temp is only chosen when enc_material.is_some().
+                unreachable!("Temp spill with no encryption material")
+            }
+            // Single buffered GET: copy the network stream to disk.
+            CloudDownloadBody::Streamed(reader) => {
+                let mut output_file =
+                    create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
+                let result = std::io::copy(&mut { reader }, &mut output_file)
+                    .map(|n| n as i64)
+                    .context(IoSnafu);
+                write_or_cleanup(output_file, partial_path, result).map(|n| (n, None))
+            }
+        },
+    }
+}
+
+/// Write-only finalizer used where rename is handled separately (async arm).
+/// Drops the file handle and cleans up `.part` on error.
+fn write_or_cleanup(
+    output_file: File,
+    partial: &Path,
+    write_result: Result<i64, FileManagerError>,
+) -> Result<i64, FileManagerError> {
+    drop(output_file);
+    if write_result.is_err() {
+        warn_remove_partial(partial);
+    }
+    write_result
 }
 
 /// Atomically promotes the verified `<output>.part` temp file to its final
@@ -1062,12 +1382,6 @@ pub enum FileManagerError {
         location: Location,
         backtrace: snafu::Backtrace,
     },
-    #[snafu(display("Missing decryption metadata: {detail}"))]
-    MissingDecryptionMetadata {
-        detail: &'static str,
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("File does not exist: {pattern}"))]
     NoFilesMatched {
         pattern: String,
@@ -1095,10 +1409,93 @@ pub enum FileManagerError {
     },
 }
 
+impl FileManagerError {
+    /// Whether this is a "file/object exceeds the cloud's max-object ceiling"
+    /// error — an input error the proto boundary routes to `InvalidArgument`
+    /// rather than `InternalError`. Defined here because the cloud `*FileError`
+    /// enums are private to this module.
+    pub(crate) fn is_file_too_large(&self) -> bool {
+        matches!(
+            self,
+            FileManagerError::S3Upload {
+                source: UploadFileError::FileTooLarge { .. },
+                ..
+            } | FileManagerError::S3Download {
+                source: DownloadFileError::FileTooLarge { .. },
+                ..
+            } | FileManagerError::GcsUpload {
+                source: GcsUploadError::FileTooLarge { .. },
+                ..
+            } | FileManagerError::GcsDownload {
+                source: GcsDownloadError::FileTooLarge { .. },
+                ..
+            }
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_owner_only_mode_when_unsafe_file_write_is_false() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp); // remove so create_output_file creates it fresh
+
+        create_output_file(&path, false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_owner_only_mode_on_stale_part_file() {
+        use std::os::unix::fs::PermissionsExt;
+        // Pre-create a .part file with loose permissions to simulate a stale
+        // leftover from a previous failed download.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp);
+        let stale = File::create(&path).unwrap();
+        stale
+            .set_permissions(std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        drop(stale);
+
+        create_output_file(&path, false).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_output_file_uses_umask_mode_when_unsafe_file_write_is_true() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Baseline: mode produced by standard File::create (umask-dependent).
+        let tmp_base = tempfile::NamedTempFile::new().unwrap();
+        let base_path = tmp_base.path().to_owned();
+        drop(tmp_base);
+        File::create(&base_path).unwrap();
+        let baseline_mode = std::fs::metadata(&base_path).unwrap().permissions().mode() & 0o777;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        drop(tmp);
+        create_output_file(&path, true).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+
+        // unsafe_file_write=true must use the same permissions as File::create,
+        // not the forced 0o600 of the secure path.
+        assert_eq!(mode, baseline_mode);
+    }
 
     #[test]
     fn upload_result_message_odbc_skipped_uses_legacy_literal() {
@@ -1130,6 +1527,70 @@ mod tests {
             upload_result_message(UploadStatus::Uploaded, &PutGetResultsetFlavor::Python),
             "",
         );
+    }
+
+    #[test]
+    fn is_file_too_large_true_for_s3_over_ceiling_upload_and_download() {
+        // `u64::MAX` is well past S3's `max_object`, so `compute_part_size`
+        // yields the `FileTooLarge` inner error the transfer paths wrap.
+        let inner = || {
+            Box::new(
+                multipart::compute_part_size(u64::MAX, &multipart::MultipartConfig::S3)
+                    .unwrap_err(),
+            )
+        };
+
+        let upload = FileManagerError::S3Upload {
+            source: UploadFileError::FileTooLarge {
+                source: inner(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(upload.is_file_too_large());
+
+        let download = FileManagerError::S3Download {
+            source: DownloadFileError::FileTooLarge {
+                source: inner(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(download.is_file_too_large());
+    }
+
+    #[test]
+    fn is_file_too_large_true_for_gcs_over_ceiling_upload_and_download() {
+        // The GCS `FileTooLarge` variants carry a `detail: String` (not a boxed
+        // source like S3), so build them directly. The routing that depends on
+        // this — GCS file-too-large → `InvalidArgument`, not `InternalError` —
+        // is what these arms exist to make correct.
+        let upload = FileManagerError::GcsUpload {
+            source: GcsUploadError::FileTooLarge {
+                detail: "object exceeds GCS max object size".to_string(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(upload.is_file_too_large());
+
+        let download = FileManagerError::GcsDownload {
+            source: GcsDownloadError::FileTooLarge {
+                detail: "object exceeds GCS max object size".to_string(),
+                location: Location::new(file!(), line!(), 0),
+            },
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(download.is_file_too_large());
+    }
+
+    #[test]
+    fn is_file_too_large_false_for_unrelated_errors() {
+        let not_found = FileManagerError::NoFilesMatched {
+            pattern: "no-such-file".to_string(),
+            location: Location::new(file!(), line!(), 0),
+        };
+        assert!(!not_found.is_file_too_large());
     }
 
     #[test]
@@ -1426,13 +1887,49 @@ mod tests {
 
     #[test]
     fn resolve_validated_output_path_missing_dir_is_io_error() {
-        // Nonexistent dir → `Io`, matching the pre-fix `File::create` failure.
+        // The guard still requires an existing dir (the GET flow creates it
+        // upstream, SNOW-3704966); this pins the guard's standalone contract.
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
         assert!(matches!(
             resolve_validated_output_path(missing.to_str().unwrap(), "data.csv"),
             Err(FileManagerError::Io { .. })
         ));
+    }
+
+    // SNOW-3704966: a missing destination dir is created recursively before write.
+    #[test]
+    fn prepare_download_output_paths_creates_missing_dir_recursively() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("nested").join("missing");
+        assert!(
+            !missing.exists(),
+            "precondition: destination must not exist"
+        );
+
+        let (output_path, partial_path) =
+            prepare_download_output_paths(missing.to_str().unwrap(), "data.csv")
+                .expect("missing destination dir must be created, not rejected");
+
+        assert!(
+            missing.is_dir(),
+            "GET must create the destination directory tree"
+        );
+        let base = std::fs::canonicalize(&missing).unwrap();
+        assert_eq!(output_path, base.join("data.csv"));
+        let mut expected_partial = output_path.clone().into_os_string();
+        expected_partial.push(".part");
+        assert_eq!(partial_path, PathBuf::from(expected_partial));
+    }
+
+    #[test]
+    fn prepare_download_output_paths_existing_dir_is_ok() {
+        // create_dir_all is a no-op when the directory already exists.
+        let dir = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let (output_path, _partial) =
+            prepare_download_output_paths(dir.path().to_str().unwrap(), "f.bin").unwrap();
+        assert_eq!(output_path, base.join("f.bin"));
     }
 
     // Mirrors JDBC `symlinkEscapeIsRejected`: a leaf that already exists as a
@@ -1961,6 +2458,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: None,
         }
     }
@@ -1983,7 +2481,7 @@ mod tests {
 
     use crate::sensitive::SensitiveString;
     use std::io::Write;
-    use wiremock::matchers::method;
+    use wiremock::matchers::{method, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn run_content_match_skip(flavor: PutGetResultsetFlavor) -> UploadResult {
@@ -2014,8 +2512,11 @@ mod tests {
             )
             .mount(&mock)
             .await;
-        // Load-bearing: skip must fire (no PUT) for this end-to-end path.
+        // Load-bearing: skip must fire (no Azure block-blob PUT) for this path.
+        // Path-scoped to /test-container/ so stray S3 UploadPart requests from
+        // concurrent tests don't spuriously trip the expect(0) assertion.
         Mock::given(method("PUT"))
+            .and(path_regex("^/test-container/"))
             .respond_with(ResponseTemplate::new(201))
             .expect(0)
             .mount(&mock)
@@ -2035,6 +2536,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
+            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
             storage_account: Some("test".to_string()),
         };
 
@@ -2131,6 +2633,7 @@ mod tests {
                 use_regional_url: false,
                 use_s3_regional_url: false,
                 tls_config: crate::tls::config::TlsConfig::default(),
+                crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
                 storage_account: None,
             },
             encryption_material: None,

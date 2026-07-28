@@ -170,9 +170,7 @@ behavior_differences:
       `ResultBatch` does not have `session_manager` or `http_config` properties.
       Chunk fetching is handled internally by the Rust core, so there is no Python-level HTTP
       session management to configure on individual batches. After deserializing a `ResultBatch`
-      (e.g. via pickle), a live `Connection` must be provided to any data-fetching method
-      (`create_iter`, `to_arrow`, `to_pandas`, `populate_data`) or set via the `connection`
-      property, because the connection is not serialized.
+      (e.g. via pickle), a live `Connection` may be provided but is not required for a chunk download.
 
   21:
     name: "Closed cursor raises InterfaceError on all operations"
@@ -564,3 +562,89 @@ behavior_differences:
       BD#10 in jdbc/ and BD#81 in odbc_tests/ BehaviorDifferences.yaml. Callers that configured
       a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
       to `https://`.
+
+  39:
+    name: "Failed GET download no longer leaves an orphaned .part file"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      The legacy connector staged downloads in a `<dst>.part` file but never removed it on the
+      failure path, so an interrupted GET left an orphaned `.part` behind. The universal driver
+      removes the staging file on failure, so a failed download leaves no debris. The improvement
+      is accepted.
+    old_driver_behavior: |
+      The legacy connector downloads to an intermediate `<dst>.part` file
+      (`SnowflakeStorageClient.intermediate_dst_path`) and renames it to the final path only on
+      full success. On a failed or interrupted GET (chunk error, digest/decryption failure, or
+      retry exhaustion) `finish_download` takes its failure branch, which only removes a
+      pre-existing final file and never unlinks the `.part` (`delete_client_data` cleans only the
+      separate `tmp_dir`). An orphaned `<dst>.part` is therefore left behind in the destination
+      directory until the user removes it manually. The final destination path itself is not
+      corrupted, because the rename to it happens only on success.
+    new_driver_behavior: |
+      GET downloads assemble into a sibling `<dst>.part` staging file and rename it to the final
+      destination only after the transfer completes successfully (and, for client-side-encrypted
+      files, only after the SHA-256 content digest verifies). The user-visible destination path is
+      therefore only ever a complete file. On failure the driver drains any in-flight chunk writes
+      and then removes the `.part` staging file, so a failed download leaves the filesystem clean.
+      (A client-side-encrypted download stages ciphertext in a separate temporary file that is
+      likewise removed on failure and unlinked once decrypted.) The only residue possible is after
+      a hard process kill (SIGKILL / power loss), where at most a single `<dst>.part` can remain —
+      self-documenting, and overwritten by the next download of the same file rather than
+      accumulating. The contract is cloud-generic (S3, Azure, and GCS).
+
+  40:
+    name: "Azure SAS refresh triggers on any 403, not only token-expiry-reason matches"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      On an Azure Blob 403 the Python connector only refreshes the SAS when the
+      403 reason phrase matches one of two hard-coded strings in
+      `azure_storage_client.py`'s `TOKEN_EXPIRATION_ERR_MESSAGE`
+      ("Signature not valid in the specified time frame", "Server failed to
+      authenticate the request."). `_has_expired_token` gates on
+      `response.status_code == 403 and any(msg in response.reason ...)` — a
+      reason-gated trigger, not status-only. Any 403 whose reason is outside that
+      two-string set is therefore not refreshed and the operation fails: a
+      recoverable expiry reported with a different reason phrase, or a response
+      that carries no reason phrase at all. (CONFIRMED from source.)
+    new_driver_behavior: |
+      The universal driver refreshes on ANY Azure 403 (`is_expired_sas_error`
+      returns `status_code == 403`, body/reason-blind), re-issues the PUT/GET
+      query to obtain a fresh `stageInfo`, and retries with the new SAS — matching
+      the JDBC any-403 behavior, so it recovers every 403 whose reason the legacy
+      connector would not match. If the refreshed SAS is also rejected, the
+      terminal 403 still surfaces to the caller. Demonstrated by the parity test
+      `test_should_recover_when_azure_put_returns_403_regardless_of_the_reason_phrase`,
+      which forces the trigger divergence over HTTP/1.1 with a SYNTHETIC
+      non-matching reason ("Signature fields not well formed.") — a fabricated
+      stimulus that isolates the trigger-mechanism difference (the common real
+      Azure expiry reason does match legacy's gate, so what differs is the
+      mechanism, widening for any reason legacy does not list).
+
+  41:
+    name: "Terminal Azure 403 after SAS refresh is logged with outcome-tiered severity"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SAS-refresh handling on the Azure transfer path is logged at debug only, with
+      no severity tiering by outcome.
+    new_driver_behavior: |
+      Log severity tracks the outcome of the 403. A 403 that refresh recovers logs
+      at debug (no warn). A terminal non-token 403 (the refreshed SAS is still
+      rejected) logs at warn carrying status, the Azure <Code>, the reason (None on
+      HTTP/2), and a SAS-redacted URL. A failure of the refresh mechanism itself
+      logs at error. Beyond severity, the outcomes themselves diverge when the
+      refresh's re-issued GS query fails: the universal driver bounds that failure
+      and raises a terminal error, whereas the legacy connector retries the refresh
+      GS call under a query RetryCtx whose network_timeout defaults to None
+      (infinite), so it retries unboundedly rather than surfacing a terminal error.

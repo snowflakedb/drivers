@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.types;
 
+import static java.sql.ResultSetMetaData.columnNoNulls;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -10,15 +11,32 @@ import java.sql.Connection;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class DateTests extends SnowflakeIntegrationTestBase {
+public class DateTests extends SnowflakeIntegrationTestBase
+    implements WithScalarResultSetMetadataAssertions {
   private static final int LARGE_RESULT_SET_SIZE = 100_000;
+  private static final ColumnExpectation DATE_COLUMN =
+      new ColumnExpectation(
+          null,
+          Types.DATE,
+          "DATE",
+          Date.class.getName(),
+          10,
+          0,
+          10,
+          false,
+          false,
+          columnNoNulls,
+          null);
 
   @Test
   public void shouldCastDateValuesToAppropriateType() throws Exception {
@@ -40,6 +58,16 @@ public class DateTests extends SnowflakeIntegrationTestBase {
               Arrays.asList(
                   LocalDate.of(2024, 1, 15), LocalDate.of(1970, 1, 1), LocalDate.of(1999, 12, 31)),
               row);
+
+          ResultSetMetaData meta = resultSet.getMetaData();
+          SnowflakeResultSetMetaData sfMeta = meta.unwrap(SnowflakeResultSetMetaData.class);
+          assertScalarResultSetMetadata(
+              meta,
+              sfMeta,
+              Arrays.asList(
+                  DATE_COLUMN.withColumnName("'2024-01-15'::DATE"),
+                  DATE_COLUMN.withColumnName("'1970-01-01'::DATE"),
+                  DATE_COLUMN.withColumnName("'1999-12-31'::DATE")));
         });
   }
 

@@ -65,6 +65,8 @@ from mappings import (  # noqa: E402
     PYTHON_PLATFORM,
     SDIST_PY,
     CORE_PLATFORM,
+    DOTNET_PLATFORM,
+    DOTNET_TFM,
 )
 
 
@@ -307,6 +309,12 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
                 f"from CORE_PLATFORM in mappings/core.py — add a row there or "
                 f"constrain the model."
             )
+        if driver == "dotnet" and pair not in DOTNET_PLATFORM:
+            raise RuntimeError(
+                f"({pair[0]}, {pair[1]}) is allowed by the dotnet model but missing "
+                f"from DOTNET_PLATFORM in mappings/dotnet.py — add a row there or "
+                f"constrain the model."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +337,7 @@ def _make_name(combo: dict[str, str], result_format: str | None = None) -> str:
     py = combo.get("PyVersion")
     hatch_env = combo.get("HatchEnv")
     dm = combo.get("DM")
+    dotnet_version = combo.get("DotnetVersion")
     if py:
         parts.append(f"py{py}")
     if hatch_env and hatch_env != "test":
@@ -338,6 +347,8 @@ def _make_name(combo: dict[str, str], result_format: str | None = None) -> str:
     # non-default DM so the existing unixODBC cell names stay stable.
     if dm and dm != "unixodbc":
         parts.append(dm)
+    if dotnet_version:
+        parts.append(f" tfm {dotnet_version}")
     if result_format:
         parts.append(result_format)
     return "-".join(parts)
@@ -444,6 +455,43 @@ def _build_core_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | Non
     return row
 
 
+def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | None:
+    """
+    Build a row for the .NET driver test job.
+
+    Each row targets one (OS, Arch, Cloud, DotnetVersion) combination.
+    Platform metadata from DOTNET_PLATFORM, version metadata from DOTNET_TFM.
+    """
+    os_, arch, cloud = combo["OS"], combo["Arch"], combo["Cloud"]
+    dotnet_version = combo["DotnetVersion"]
+    runner = GHA_RUNNER.get((os_, arch))
+    if runner is None:
+        return None
+
+    platform = DOTNET_PLATFORM.get((os_, arch))
+    if platform is None:
+        return None
+
+    tfm = DOTNET_TFM.get(dotnet_version)
+    if tfm is None:
+        return None
+
+    name = _make_name(combo)
+
+    row: dict[str, Any] = {
+        "name": name,
+        "os": runner,
+        "cloud_provider": cloud,
+        "trigger_level": trigger,
+        "dotnet_version": dotnet_version,
+        "sf_core_lib": platform["sf_core_lib"],
+        "cargo_flags": platform["cargo_flags"],
+        "test_runner": tfm["test_runner"],
+        "copy_native_lib": tfm["copy_native_lib"],
+    }
+    return row
+
+
 # ---------------------------------------------------------------------------
 # Core generator
 # ---------------------------------------------------------------------------
@@ -471,6 +519,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
 
     is_python = "PyVersion" in params or "HatchEnv" in params
     is_core = driver == "core"
+    is_dotnet = driver == "dotnet"
 
     # Precompute the MERGE_QUEUE_CELLS key set so _routing_valid can exclude
     # them from the pairwise candidate pool. This prevents the greedy solver
@@ -514,6 +563,8 @@ def generate(model_path: Path, driver: str) -> list[dict]:
         # placeholder value works. Pass "merge" for clarity.
         if is_core:
             return _build_core_row(combo, "merge") is not None
+        if is_dotnet:
+            return _build_dotnet_row(combo, "merge") is not None
         return _build_gha_row(combo, "merge", is_python) is not None
 
     pairwise_keys: set[tuple] = {
@@ -567,6 +618,8 @@ def generate(model_path: Path, driver: str) -> list[dict]:
         trigger = combo.pop("_trigger")
         if is_core:
             row = _build_core_row(combo, trigger)
+        elif is_dotnet:
+            row = _build_dotnet_row(combo, trigger)
         else:
             row = _build_gha_row(combo, trigger, is_python)
         if row is not None:
@@ -901,7 +954,7 @@ def emit_build_matrix(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pairwise CI matrix generator")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--driver", choices=["odbc", "python", "core"], help="Generate for a single driver")
+    group.add_argument("--driver", choices=["odbc", "python", "core", "dotnet"], help="Generate for a single driver")
     group.add_argument("--all", action="store_true", help="Regenerate all drivers")
     parser.add_argument(
         "--event",
@@ -972,7 +1025,7 @@ def main() -> None:
         emit_build_matrix(args.driver, args.event, labels, level_override=args.level)
         return
 
-    drivers = ["odbc", "python", "core"] if args.all else [args.driver]
+    drivers = ["odbc", "python", "core", "dotnet"] if args.all else [args.driver]
     ok = True
     for driver in drivers:
         if not run_driver(driver):

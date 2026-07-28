@@ -138,6 +138,7 @@ TEST_CASE("should reuse cached MFA token without passcode", "[mfa_auth][requires
 // =============================================================================
 
 TEST_CASE("should fail authentication when wrong password is provided", "[mfa_auth][requires_browser]") {
+  SKIP("Disabled: bad-secret tests cause pipeline flakiness by blocking the test account");
   REQUIRE_BROWSER("MFA E2E needs the headless browser container for TOTP generation");
 
   // Given Authentication is set to username_password_mfa and user is provided but password is skipped or invalid

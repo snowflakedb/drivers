@@ -28,10 +28,14 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use scopeguard::defer;
+
 use crate::common::mocks::oauth;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
-use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
+use sf_core::token_cache::{
+    CacheKey, KeyringTokenCache, TokenCache, TokenType, normalize_identifier, normalize_url,
+};
 
 // The OAuth Authorization Code flow's interactive leg would otherwise
 // pop a real browser window against the wiremock IdP. We rely on the
@@ -46,9 +50,7 @@ use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
 
 /// Reduces boilerplate for OAuth integration tests.  Holds a wiremock
 /// server, a configured [`SnowflakeTestClient`], a [`KeyringTokenCache`]
-/// handle, and the host used as the token-cache key (always `127.0.0.1`
-/// for the wiremock-backed flow because that's what
-/// `host_from_token_url` extracts from the configured `oauth_token_request_url`).
+/// handle, and the normalized URL components used to build cache keys.
 ///
 /// On `Drop` the fixture removes every token type it could conceivably
 /// have seeded, scoped to the unique username — avoids cross-test
@@ -57,10 +59,10 @@ struct OAuthTestFixture {
     mock: MockServerWithTls,
     client: SnowflakeTestClient,
     cache: KeyringTokenCache,
-    /// Host used as the token-cache key (always `127.0.0.1` for the
-    /// wiremock-backed flow, which is what `host_from_token_url`
-    /// extracts from the configured `oauth_token_request_url`).
-    cache_host: String,
+    /// Normalized IdP token-endpoint URL for cache key construction.
+    idp_url: String,
+    /// Normalized Snowflake server URL for cache key construction.
+    snowflake_url: String,
     user: String,
 }
 
@@ -85,13 +87,15 @@ impl OAuthTestFixture {
         client.set_connection_option("client_store_temporary_credential", "true");
 
         let cache = KeyringTokenCache::new().expect("token cache should be available");
-        let cache_host = host_from(&mock.http_url());
+        let idp_url = normalize_url(&token_url);
+        let snowflake_url = normalize_url(&mock.http_url());
 
         Self {
             mock,
             client,
             cache,
-            cache_host,
+            idp_url,
+            snowflake_url,
             user: user.to_string(),
         }
     }
@@ -110,13 +114,15 @@ impl OAuthTestFixture {
         client.set_connection_option("oauth_scope", "session:role:test_role");
 
         let cache = KeyringTokenCache::new().expect("token cache should be available");
-        let cache_host = host_from(&mock.http_url());
+        let idp_url = normalize_url(&token_url);
+        let snowflake_url = normalize_url(&mock.http_url());
 
         Self {
             mock,
             client,
             cache,
-            cache_host,
+            idp_url,
+            snowflake_url,
             user: user.to_string(),
         }
     }
@@ -132,13 +138,16 @@ impl OAuthTestFixture {
         client.set_connection_option("token", token);
 
         let cache = KeyringTokenCache::new().expect("token cache should be available");
-        let cache_host = host_from(&mock.http_url());
+        let server_url = mock.http_url();
+        let idp_url = normalize_url(&server_url);
+        let snowflake_url = normalize_url(&server_url);
 
         Self {
             mock,
             client,
             cache,
-            cache_host,
+            idp_url,
+            snowflake_url,
             user: user.to_string(),
         }
     }
@@ -150,37 +159,40 @@ impl OAuthTestFixture {
         }
     }
 
+    fn cache_key(&self, token_type: TokenType) -> CacheKey {
+        // The default test parameters supply role="test_role"; the production code
+        // passes login_parameters.role to run_oauth_authorization_code, which uses it
+        // in the CacheKey so all cache reads/writes are role-scoped.
+        CacheKey {
+            token_type,
+            idp: self.idp_url.clone(),
+            snowflake: self.snowflake_url.clone(),
+            username: normalize_identifier(&self.user),
+            role: normalize_identifier("test_role"),
+        }
+    }
+
     fn seed_access_token(&self, value: &str) {
         self.cache
-            .add_token(
-                &self.cache_host,
-                &self.user,
-                TokenType::OAuthAccessToken,
-                value,
-            )
+            .add_token(&self.cache_key(TokenType::OAuthAccessToken), value)
             .expect("seed OAuth access token");
     }
 
     fn seed_refresh_token(&self, value: &str) {
         self.cache
-            .add_token(
-                &self.cache_host,
-                &self.user,
-                TokenType::OAuthRefreshToken,
-                value,
-            )
+            .add_token(&self.cache_key(TokenType::OAuthRefreshToken), value)
             .expect("seed OAuth refresh token");
     }
 
     fn cached_access_token(&self) -> Option<String> {
         self.cache
-            .get_token(&self.cache_host, &self.user, TokenType::OAuthAccessToken)
+            .get_token(&self.cache_key(TokenType::OAuthAccessToken))
             .expect("get OAuth access token")
     }
 
     fn cached_refresh_token(&self) -> Option<String> {
         self.cache
-            .get_token(&self.cache_host, &self.user, TokenType::OAuthRefreshToken)
+            .get_token(&self.cache_key(TokenType::OAuthRefreshToken))
             .expect("get OAuth refresh token")
     }
 
@@ -213,21 +225,9 @@ impl Drop for OAuthTestFixture {
             TokenType::OAuthRefreshToken,
             TokenType::DpopBundledAccessToken,
         ] {
-            let _ = self.cache.remove_token(&self.cache_host, &self.user, tt);
+            let _ = self.cache.remove_token(&self.cache_key(tt));
         }
     }
-}
-
-/// Extract the bare host (no port) from a URL string. Mirrors
-/// `host_from_token_url` in `sf_core::rest::snowflake::oauth::token`,
-/// which the production code uses to derive the cache key (prefers
-/// IdP token URL host, falls back to Snowflake host).
-fn host_from(url: &str) -> String {
-    url::Url::parse(url)
-        .expect("valid mock URL")
-        .host_str()
-        .expect("mock URL must have a host")
-        .to_string()
 }
 
 /// Build a unique username scoped to the running test, so concurrent
@@ -649,5 +649,146 @@ fn should_fail_client_credentials_when_idp_response_is_missing_access_token() {
         result,
         &["MissingAccessToken", "access_token", "OAuthFlow", "OAuth"],
         "CC missing access_token error",
+    );
+}
+
+// =============================================================================
+// Cache key isolation — multi-account and multi-role no cross-eviction
+// =============================================================================
+
+#[test]
+fn should_not_cross_evict_access_token_for_different_snowflake_account_sharing_idp() {
+    // Given two Snowflake accounts share one IdP (same IdP URL, different
+    // Snowflake URLs) and both have access tokens cached, evicting account1's
+    // token via a 390303 error must leave account2's token untouched.
+    let user = unique_user("oauth_ac_multi_acct");
+    let stale_at = "stale-at-acct1";
+    let other_at = "at-for-other-account";
+
+    let fixture = OAuthTestFixture::with_authorization_code(&user);
+    // Seed AT + RT for the fixture's account (account1)
+    fixture.seed_access_token(stale_at);
+    fixture.seed_refresh_token("rt-acct1");
+
+    // Manually seed an AT for "account2" — same IdP URL, different Snowflake host.
+    // The build_cache_key hash will differ because `snowflake` differs, so both
+    // entries live under distinct keys in the OS keystore.
+    let other_account_key = CacheKey {
+        token_type: TokenType::OAuthAccessToken,
+        idp: fixture.idp_url.clone(),
+        snowflake: "OTHER-ACCOUNT.SNOWFLAKECOMPUTING.COM".to_string(),
+        username: normalize_identifier(&user),
+        role: normalize_identifier("test_role"),
+    };
+    fixture
+        .cache
+        .add_token(&other_account_key, other_at)
+        .expect("seed account2 access token");
+    // OAuthTestFixture::Drop only evicts keys under the fixture's own
+    // snowflake_url, so this cross-account entry must be cleaned up
+    // unconditionally — a panic in the assertions below would otherwise strand
+    // it in the OS keyring.
+    defer! {
+        let _ = fixture.cache.remove_token(&other_account_key);
+    }
+
+    // Mount 390303 → refresh for account1
+    fixture
+        .mock
+        .mount(oauth::snowflake_login_oauth_then_success("390303"));
+    fixture
+        .mock
+        .mount(oauth::idp_token_endpoint_success_refresh());
+
+    // When Trying to Connect as account1 (triggers eviction + refresh)
+    let result = fixture.connect();
+
+    // Then Login for account1 eventually succeeds
+    OAuthTestFixture::assert_success(result, "AC 390303 retry to succeed");
+
+    // And account1's stale AT was evicted
+    let acct1_at = fixture.cached_access_token();
+    assert_ne!(
+        acct1_at.as_deref(),
+        Some(stale_at),
+        "stale AT for account1 must be evicted after 390303"
+    );
+
+    // And account2's AT is completely unaffected
+    let acct2_at = fixture
+        .cache
+        .get_token(&other_account_key)
+        .expect("get_token must not fail");
+    assert_eq!(
+        acct2_at.as_deref(),
+        Some(other_at),
+        "AT for the other account must not be cross-evicted"
+    );
+}
+
+#[test]
+fn should_not_cross_evict_access_token_for_different_role() {
+    // Given one Snowflake account has two roles each with a cached access token,
+    // evicting role A's token via a 390303 error must leave role B's token untouched.
+    let user = unique_user("oauth_ac_multi_role");
+    let stale_at = "stale-at-test-role";
+    let other_role_at = "at-for-analyst-role";
+
+    let fixture = OAuthTestFixture::with_authorization_code(&user);
+    // Seed AT + RT for the fixture's default role (test_role)
+    fixture.seed_access_token(stale_at);
+    fixture.seed_refresh_token("rt-test-role");
+
+    // Manually seed an AT for a different role on the same account.
+    // The build_cache_key hash will differ because `role` differs.
+    let other_role_key = CacheKey {
+        token_type: TokenType::OAuthAccessToken,
+        idp: fixture.idp_url.clone(),
+        snowflake: fixture.snowflake_url.clone(),
+        username: normalize_identifier(&user),
+        role: normalize_identifier("ANALYST_ROLE"),
+    };
+    fixture
+        .cache
+        .add_token(&other_role_key, other_role_at)
+        .expect("seed analyst_role access token");
+    // OAuthTestFixture::Drop only evicts keys under the fixture's default role,
+    // so this second-role entry must be cleaned up unconditionally — a panic in
+    // the assertions below would otherwise strand it in the OS keyring.
+    defer! {
+        let _ = fixture.cache.remove_token(&other_role_key);
+    }
+
+    // Mount 390303 → refresh for test_role
+    fixture
+        .mock
+        .mount(oauth::snowflake_login_oauth_then_success("390303"));
+    fixture
+        .mock
+        .mount(oauth::idp_token_endpoint_success_refresh());
+
+    // When Trying to Connect (role=test_role triggers eviction + refresh)
+    let result = fixture.connect();
+
+    // Then Login for test_role eventually succeeds
+    OAuthTestFixture::assert_success(result, "AC 390303 retry to succeed");
+
+    // And test_role's stale AT was evicted
+    let test_role_at = fixture.cached_access_token();
+    assert_ne!(
+        test_role_at.as_deref(),
+        Some(stale_at),
+        "stale AT for test_role must be evicted after 390303"
+    );
+
+    // And ANALYST_ROLE's AT is completely unaffected
+    let analyst_at = fixture
+        .cache
+        .get_token(&other_role_key)
+        .expect("get_token must not fail");
+    assert_eq!(
+        analyst_at.as_deref(),
+        Some(other_role_at),
+        "AT for the other role must not be cross-evicted"
     );
 }

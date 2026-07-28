@@ -63,9 +63,19 @@ impl CrlValidator {
             }
         }
 
-        // Validate the top-most certificate (no further issuers)
-        self.validate_single_certificate(chain.last().unwrap(), &[], false)
-            .await
+        // Validate the top-most certificate (no further issuers).
+        let Some(top_cert) = chain.last() else {
+            // Unreachable: empty and single-element chains are handled above, so
+            // the chain has >= 2 elements here. If that invariant is ever broken,
+            // fail closed (treat the chain as invalid) rather than silently
+            // reporting the chain as validated.
+            tracing::error!(
+                target: "sf_core::crl",
+                "validate_certificate_chain reached the tail with an empty chain (unexpected); failing closed"
+            );
+            return Ok(false);
+        };
+        self.validate_single_certificate(top_cert, &[], false).await
     }
 
     fn is_anchor(&self, cert_der: &[u8]) -> bool {
@@ -188,25 +198,5 @@ impl CrlValidator {
 impl CrlValidator {
     pub(crate) async fn fetch_crl_with_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         self.cache.get(url).await
-    }
-
-    pub(crate) fn write_crl_atomic(&self, path: &std::path::Path, data: &[u8]) {
-        use std::io::Write;
-        // Best-effort atomic write: write to a temp file in the same directory, then rename
-        if let Some(dir) = path.parent() {
-            let tmp_name = match path.file_name().and_then(|s| s.to_str()) {
-                Some(name) => format!(".{}.tmp", name),
-                None => ".tmp_crl.tmp".to_string(),
-            };
-            let tmp_path = dir.join(tmp_name);
-            if let Ok(mut file) = std::fs::File::create(&tmp_path) {
-                let _ = file.write_all(data);
-                let _ = file.sync_all();
-                let _ = std::fs::rename(&tmp_path, path);
-                return;
-            }
-        }
-        // Fallback: direct write
-        let _ = std::fs::write(path, data);
     }
 }

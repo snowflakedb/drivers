@@ -1,0 +1,67 @@
+# Routing-accuracy eval set for: run-jdbc-ud-tests
+# Review and refine before committing.
+#
+# should_trigger: prompts that SHOULD activate this skill
+# should_not_trigger: prompts that should NOT activate this skill
+
+should_trigger:
+  - prompt: "how do I run the jdbc tests locally"
+    notes: "Direct request to run JDBC tests — core use case of this skill"
+
+  - prompt: "getting UnsatisfiedLinkError when running jdbc tests, how do I fix it"
+    notes: "Error scenario matching the troubleshooting section of this skill (missing jdbc_bridge)"
+
+  - prompt: "need to build jdbc_bridge and run gradle tests"
+    notes: "Explicit mention of jdbc_bridge compilation and Gradle — both covered in this runbook"
+
+  - prompt: "how do i set CORE_PATH for jdbc"
+    notes: "CORE_PATH setup is a key step in this runbook (Step 2)"
+
+  - prompt: "run just SnowflakeDriverTest in the jdbc module"
+    notes: "Specific Gradle test class filtering covered by ./gradlew test --tests in this skill"
+
+  - prompt: "jdbc tests keep failing with link error after i changed some rust code"
+    notes: "Indirect scenario: Rust change → UnsatisfiedLinkError → need to rebuild jdbc_bridge"
+
+  - prompt: "cargo build jdbc then run all jdbc tests"
+    notes: "Abbreviated shorthand combining both build and test steps this skill covers"
+
+  - prompt: "how do i run jdbc parity tests, and does it matter which jvm i use"
+    notes: "Parity tests + JVM requirement (HotSpot vs OpenJ9) are explicitly covered in this runbook"
+
+  - prompt: "set up credentials and run jdbc e2e suite on my machine"
+    notes: "End-to-end local setup request spanning Steps 1-3 of this runbook"
+
+  - prompt: "whats the gradle command for jdbc coverage report"
+    notes: "Coverage report via jacocoTestReport is in this skill; slightly indirect but clear JDBC+Gradle context"
+
+  - prompt: "jdbc tests pass in ci but i cant get them running locally, UnsatisfiedLinkError"
+    notes: "Borderline — phrased as a debugging question but the fix (build jdbc_bridge, set CORE_PATH) is in this runbook"
+
+  - prompt: "run jdbc referenceTest and jacoco"
+    notes: "Abbreviated request referencing specific Gradle tasks from this skill"
+
+should_not_trigger:
+  - prompt: "review these jdbc tests for flakiness"
+    reason: "jdbc-test-reviewer — this is a code quality review task, not running tests"
+
+  - prompt: "is my jdbc test using try-with-resources correctly"
+    reason: "jdbc-test-reviewer — asking about test code correctness/quality, not execution"
+
+  - prompt: "how do i run the python connector tests locally"
+    reason: "run-python-ud-tests — same pattern but for the Python UD, not JDBC"
+
+  - prompt: "odbc tests failing after rust changes, how do i rebuild and rerun"
+    reason: "run-odbc-ud-tests — same rebuild-and-rerun pattern but for ODBC driver"
+
+  - prompt: "run the node.js vitest suite for the universal driver"
+    reason: "run-nodejs-ud-tests — Node.js UD tests via Vitest, not JDBC/Gradle"
+
+  - prompt: "does SNOW-12345 have jdbc regression test coverage"
+    reason: "bug-regression-coverage — checking whether a Jira bug ticket is covered by regression tests"
+
+  - prompt: "my jdbc test has a Thread.sleep, should I replace it"
+    reason: "jdbc-test-reviewer — flaky test pattern analysis, not running/building tests"
+
+  - prompt: "how do i write a new jdbc integration test for oauth"
+    reason: "general conversation / no skill — authoring new test code, not running the existing suite"
