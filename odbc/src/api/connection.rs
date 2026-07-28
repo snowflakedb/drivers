@@ -9,8 +9,8 @@ use crate::api::error::{
     AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidPortSnafu,
-    InvalidTransactionOperationCodeSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
-    ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
+    InvalidTransactionOperationCodeSnafu, InvalidTransactionStateSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::get_info_bitmasks::{
     AGGREGATE_FUNCTIONS, ALTER_DOMAIN, ALTER_TABLE, BATCH_ROW_COUNT, BATCH_SUPPORT,
@@ -581,6 +581,9 @@ fn connect_with_params(
     {
         let mut c = dbc.connection.lock();
         dbc.mark_connected(&mut c, db_handle, conn_handle);
+        // A freshly-established session has no open transaction, regardless of
+        // any stale flag left on a reused handle from a prior connection.
+        c.open_transaction = false;
     }
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
@@ -872,6 +875,16 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
         }
     };
 
+    // Per the ODBC spec, SQLDisconnect must return 25000 (invalid transaction
+    // state) and leave the connection open when an ODBC-managed transaction is
+    // still in process (autocommit OFF with pending work). The application must
+    // SQLEndTran (commit/rollback) before disconnecting. Checked under the
+    // `connection` lock, which is also held across statement execution, so there
+    // is no race with a concurrent execute that opens a transaction.
+    if connection.open_transaction {
+        return InvalidTransactionStateSnafu.fail();
+    }
+
     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         c.connection_close(ConnectionCloseRequest {
             conn_handle: Some(conn_handle),
@@ -1036,7 +1049,7 @@ pub fn end_tran_env(env_handle: sql::Handle, completion_type: sql::SmallInt) -> 
 /// Returns 08003 if the connection is closed and HY010 if any statement on the
 /// connection is awaiting data-at-execution.
 fn commit_or_rollback(dbc: &Dbc, op: TxnOp) -> OdbcResult<()> {
-    let connection = dbc.connection.lock();
+    let mut connection = dbc.connection.lock();
     let conn_handle = match &connection.state {
         ConnectionState::Connected { conn_handle, .. } => *conn_handle,
         ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
@@ -1078,6 +1091,11 @@ fn commit_or_rollback(dbc: &Dbc, op: TxnOp) -> OdbcResult<()> {
         }
         Ok(())
     })?;
+
+    // The manual-commit transaction (if any) is now closed. Clearing under the
+    // still-held `connection` lock means a subsequent SQLDisconnect on this
+    // connection will not spuriously return 25000.
+    connection.open_transaction = false;
 
     close_open_cursors(&child_ids);
     Ok(())
@@ -1171,7 +1189,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             match maybe_conn_handle {
                 Some(conn_handle) => {
                     let autocommit_on = matches!(val, AutocommitValue::On);
-                    drop(connection);
+                    // Hold `connection` across the RPC (same as `commit_or_rollback`
+                    // and `execute`) so a concurrent execute on another thread cannot
+                    // set `open_transaction = true` between the RPC and the clear
+                    // below and have it silently clobbered back to false, which would
+                    // let SQLDisconnect proceed while a real transaction is still
+                    // open. The RPC only touches the sf_core connection, not
+                    // `dbc.connection`; same lock order as `execute`, so no deadlock.
                     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                         c.connection_set_autocommit(ConnectionSetAutocommitRequest {
                             conn_handle: Some(conn_handle),
@@ -1179,8 +1203,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                         })
                         .await
                     })?;
-                    let mut connection = dbc.connection.lock();
                     connection.cached_autocommit = val;
+                    // Switching autocommit ON commits any in-flight manual-commit
+                    // transaction, so the open-transaction flag no longer applies.
+                    // Cleared under the still-held lock that guards the disconnect gate.
+                    if matches!(val, AutocommitValue::On) {
+                        connection.open_transaction = false;
+                    }
                     // Keep pre_connection_attrs in sync so a reconnect on the same handle
                     // re-applies the value set while connected rather than the stale pre-connect value.
                     connection

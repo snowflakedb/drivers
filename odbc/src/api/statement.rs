@@ -247,6 +247,20 @@ use crate::conversion::NumericSettings;
 /// Refreshes connection numeric settings from the server, applies the
 /// execution response to statement state, resets the row counter, and writes
 /// the parameter-array output fields (`PARAMS_PROCESSED_PTR` / `PARAM_STATUS_PTR`).
+/// Mark an ODBC-managed transaction as open after a *successful* statement
+/// execute. Under manual-commit (autocommit OFF) a successful execute opens a
+/// transaction that `SQLDisconnect` must guard with SQLSTATE 25000 until
+/// `SQLEndTran` (commit/rollback) or switching autocommit ON closes it. No-op
+/// under autocommit ON. Callers must invoke this only on the success path.
+fn mark_transaction_open_if_needed(conn: &mut Connection) {
+    if matches!(
+        conn.cached_autocommit,
+        crate::api::types::AutocommitValue::Off
+    ) {
+        conn.open_transaction = true;
+    }
+}
+
 fn finalize_execute_response(
     conn: &mut crate::api::Connection,
     inner: &mut StatementInner,
@@ -268,6 +282,15 @@ fn finalize_execute_response(
 
     let result = apply_execute_response(inner, conn_handle, response, origin);
     inner.rows_returned = 0;
+
+    // A successful statement execute under manual-commit (autocommit OFF) opens
+    // an ODBC-managed transaction. SQLDisconnect consults this flag to return
+    // 25000 while a transaction is still in process. Matches the old driver's
+    // observed behavior where even a plain SELECT under autocommit OFF triggers
+    // the pending-transaction guard. Cleared by SQLEndTran / autocommit->ON.
+    if result.is_ok() {
+        mark_transaction_open_if_needed(conn);
+    }
 
     // Write PARAMS_PROCESSED and PARAM_STATUS regardless of result so the
     // application always gets feedback for the rows that were sent. Parameter
@@ -3256,6 +3279,9 @@ fn execute_dae(
     }
     apply_execute_response(inner, conn_handle, response, origin)?;
     inner.rows_returned = 0;
+    // See finalize_execute_response: a successful execute under autocommit OFF
+    // opens an ODBC-managed transaction that SQLDisconnect must guard with 25000.
+    mark_transaction_open_if_needed(conn);
     Ok(())
 }
 

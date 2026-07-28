@@ -100,6 +100,7 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
             child_statements: vec![],
             child_descriptors: vec![],
             cached_autocommit: crate::api::types::AutocommitValue::On,
+            open_transaction: false,
             current_catalog: None,
             metadata_id: false,
             driver_section: None,
