@@ -250,6 +250,16 @@ pub enum LocationType {
     Azure,
 }
 
+impl fmt::Display for LocationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LocationType::S3 => f.write_str("S3"),
+            LocationType::Gcs => f.write_str("GCS"),
+            LocationType::Azure => f.write_str("Azure"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StageInfo {
     pub location_type: LocationType,

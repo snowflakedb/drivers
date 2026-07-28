@@ -2,9 +2,10 @@ use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRet
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
-    MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
+    StageInfoRefresher, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
+use super::{RemoteHead, skip_upload_decision};
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -575,24 +576,21 @@ pub(super) async fn upload_to_azure_or_skip(
                 None
             };
 
-            match classify_pre_upload_skip(
+            let remote_head = match &remote {
+                Some(h) => RemoteHead::Present {
+                    digest: h.digest.as_deref(),
+                },
+                None => RemoteHead::Absent,
+            };
+            if let Some(status) = skip_upload_decision(
+                LocationType::Azure,
                 overwrite,
                 skip_upload_on_content_match,
-                remote.as_ref(),
+                &remote_head,
                 &prepared.digest,
+                &key,
             ) {
-                SkipDecision::Existence => {
-                    tracing::info!("Blob already exists in Azure: {:?}", key);
-                    return Ok(UploadStatus::Skipped);
-                }
-                SkipDecision::ContentMatch => {
-                    tracing::info!(
-                        "Blob content matches local digest, skipping upload: {:?}",
-                        key
-                    );
-                    return Ok(UploadStatus::Skipped);
-                }
-                SkipDecision::Upload => {}
+                return Ok(status);
             }
 
             if body_len >= multipart.threshold.bytes() {
@@ -635,45 +633,6 @@ pub(super) async fn upload_to_azure_or_skip(
     result
 }
 
-/// Outcome of the pre-upload skip check. Extracted so the decision is
-/// testable independent of the HEAD elision in `upload_to_azure_or_skip`
-/// (the elision can hide a missing guard in the content-match branch).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SkipDecision {
-    /// The blob is visible on stage and the caller didn't request overwrite.
-    /// Skip without comparing content — stale stage bytes are preserved.
-    Existence,
-    /// The caller opted into content-match skipping and the remote digest
-    /// equals the local one. Skip the redundant upload; the bytes on stage
-    /// are already what we'd have written.
-    ContentMatch,
-    /// Neither skip applies; upload proceeds.
-    Upload,
-}
-
-/// Pure decision: which skip branch (if any) fires. Existence-only is checked
-/// first so a `!overwrite` caller never reaches the content-match branch — a
-/// blob that exists is treated as authoritative regardless of digest. A
-/// missing remote digest cannot match, so the content branch falls through
-/// to `Upload` in that case.
-fn classify_pre_upload_skip(
-    overwrite: bool,
-    skip_upload_on_content_match: bool,
-    remote: Option<&RemoteBlobHeader>,
-    local_digest: &str,
-) -> SkipDecision {
-    if !overwrite && remote.is_some() {
-        return SkipDecision::Existence;
-    }
-    if overwrite
-        && skip_upload_on_content_match
-        && remote.and_then(|h| h.digest.as_deref()) == Some(local_digest)
-    {
-        return SkipDecision::ContentMatch;
-    }
-    SkipDecision::Upload
-}
-
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
 ///
@@ -711,15 +670,6 @@ pub async fn download_from_azure(
 #[derive(Debug, Clone)]
 struct RemoteBlobHeader {
     digest: Option<String>,
-}
-
-#[cfg(test)]
-impl RemoteBlobHeader {
-    fn with_digest(digest: &str) -> Self {
-        Self {
-            digest: Some(digest.to_string()),
-        }
-    }
 }
 
 /// Probes the blob with HEAD. Returns:
@@ -1666,6 +1616,7 @@ pub enum AzureDownloadError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::config::retry::Jitter;
@@ -2018,14 +1969,6 @@ mod tests {
         }
     }
 
-    fn prepared_with_digest(digest: &str) -> PreparedUpload {
-        PreparedUpload {
-            source: ByteSource::Bytes(b"hello-azure".to_vec().into()).into(),
-            digest: digest.to_string(),
-            cse: None,
-        }
-    }
-
     // ---- Refresh-on-403: predicate, marker, and HEAD-recovery coverage ----
     // (Restored from PR #248; the GET-redrive proof lands with the per-range
     // work.)
@@ -2157,7 +2100,7 @@ mod tests {
         let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2204,7 +2147,7 @@ mod tests {
         let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("d"),
+            prepared_upload_with_digest("d"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2256,7 +2199,7 @@ mod tests {
         let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("d"),
+            prepared_upload_with_digest("d"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2430,7 +2373,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2465,7 +2408,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2547,7 +2490,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2579,7 +2522,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2613,7 +2556,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2628,80 +2571,9 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // 8. Skip-decision in isolation — kills mutants the wiremock scenarios
-    //    can't (see SkipDecision / classify_pre_upload_skip docs).
-    //
-    //    The six wiremock scenarios above couple the `skip_upload_on_content_match &&`
-    //    guard with the HEAD-elision optimization (head_needed = !overwrite ||
-    //    skip_match). The case that would expose a missing guard —
-    //    overwrite=true, skip_match=false, remote-digest matches local — is
-    //    UNREACHABLE through `upload_to_azure_or_skip` because HEAD is elided
-    //    in that configuration. These direct unit tests bypass the elision so
-    //    a guard regression fails here even when the integration scenarios
-    //    still pass.
+    // 8. Skip-decision isolation tests live in `file_manager::tests`
+    //    (`classify_*`), since the decision is shared across clouds.
     // ---------------------------------------------------------------
-
-    /// Mutation guard: dropping `skip_upload_on_content_match &&` from the
-    /// content branch flips this to `ContentMatch` and the assertion fails.
-    #[test]
-    fn classify_does_not_fire_content_branch_without_opt_in() {
-        let h = RemoteBlobHeader::with_digest("abc");
-        let decision = classify_pre_upload_skip(
-            /* overwrite */ true,
-            /* skip_upload_on_content_match */ false,
-            Some(&h),
-            "abc",
-        );
-        assert_eq!(
-            decision,
-            SkipDecision::Upload,
-            "content-match must require the opt-in flag"
-        );
-    }
-
-    /// Positive control: the same digest match WITH the flag set fires.
-    #[test]
-    fn classify_fires_content_branch_with_opt_in() {
-        let h = RemoteBlobHeader::with_digest("abc");
-        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::ContentMatch);
-    }
-
-    /// Existence wins over content-match when `!overwrite`: a blob that
-    /// exists is treated as authoritative, digest comparison is skipped.
-    #[test]
-    fn classify_existence_wins_under_no_overwrite() {
-        let h = RemoteBlobHeader::with_digest("abc");
-        let decision = classify_pre_upload_skip(false, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::Existence);
-    }
-
-    /// `!overwrite` with no remote means upload — blob doesn't exist yet.
-    /// Common first-upload path.
-    #[test]
-    fn classify_uploads_when_remote_absent_under_no_overwrite() {
-        let decision = classify_pre_upload_skip(false, false, None, "abc");
-        assert_eq!(decision, SkipDecision::Upload);
-    }
-
-    /// `overwrite && skip_match && remote present but digest absent` — the
-    /// HEAD returned 200 but no `x-ms-meta-sfcdigest` header. Cannot compare,
-    /// so upload runs (fail-open at the comparison site).
-    #[test]
-    fn classify_uploads_when_remote_digest_missing() {
-        let h = RemoteBlobHeader { digest: None };
-        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::Upload);
-    }
-
-    /// `overwrite && skip_match && remote digest differs` — the racing
-    /// uploader had different content; we must overwrite, not skip.
-    #[test]
-    fn classify_uploads_when_digests_differ() {
-        let h = RemoteBlobHeader::with_digest("xyz");
-        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::Upload);
-    }
 
     // ---------------------------------------------------------------
     // 9. Parametrized fail-open over HEAD error classes — only 404 is
@@ -2930,7 +2802,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2964,7 +2836,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3008,7 +2880,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -3041,7 +2913,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3079,7 +2951,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
