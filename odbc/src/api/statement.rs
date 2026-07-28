@@ -820,8 +820,6 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             return CursorAlreadyOpenSnafu.fail();
         }
 
-        tracing::debug!("prepare: query = {query}");
-
         let stmt_handle = guard.stmt_handle;
         let async_enabled = inner.async_enabled;
 
