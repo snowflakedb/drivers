@@ -189,6 +189,110 @@ use std::sync::Arc;
 /// matching the historical universal-driver behaviour.
 const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIPPED";
 
+/// Result of the pre-upload HEAD probe, in cloud-agnostic terms. Each cloud
+/// projects its own HEAD response (or a treated-as-absent error) down to this
+/// shape, so the shared skip decision never depends on a cloud SDK type. The
+/// two-variant shape also makes the illegal state "absent but has a digest"
+/// unrepresentable.
+pub(crate) enum RemoteHead<'a> {
+    /// The object is not present (404, or an error the cloud's policy treats
+    /// as absent — e.g. S3's fail-open-on-403).
+    Absent,
+    /// The object exists. `digest` carries the stored `sfc-digest` metadata
+    /// value iff the HEAD response had a parseable one; `None` when the object
+    /// predates digest tagging or the header was malformed.
+    Present { digest: Option<&'a str> },
+}
+
+/// Outcome of the pre-upload skip check, shared by all three cloud upload
+/// paths. Extracted so the decision is testable independent of each cloud's
+/// HEAD-elision optimization (the elision can hide a missing guard in the
+/// content-match branch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkipDecision {
+    /// The remote object is visible and the caller didn't request overwrite.
+    /// Skip without comparing content — stale stage bytes are preserved.
+    Existence,
+    /// The caller opted into content-match skipping and the remote digest
+    /// equals the local one. Skip the redundant upload; the bytes on stage
+    /// are already what we'd have written.
+    ContentMatch,
+    /// Neither skip applies; upload proceeds.
+    Upload,
+}
+
+/// Pure decision: which skip branch (if any) fires. Existence-only is checked
+/// first so a `!overwrite` caller never reaches the content-match branch — a
+/// remote object that exists is treated as authoritative regardless of
+/// digest. A missing remote digest cannot match, so the content branch falls
+/// through to `Upload` in that case.
+///
+/// `remote` is a cloud-agnostic [`RemoteHead`], not a cloud SDK response type,
+/// so the decision stays free of any cloud's HEAD-response shape; each cloud's
+/// call site builds a `RemoteHead` from its own probe result.
+pub(crate) fn classify_pre_upload_skip(
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    remote: &RemoteHead<'_>,
+    local_digest: &str,
+) -> SkipDecision {
+    if !overwrite && matches!(remote, RemoteHead::Present { .. }) {
+        return SkipDecision::Existence;
+    }
+    if overwrite
+        && skip_upload_on_content_match
+        && matches!(remote, RemoteHead::Present { digest: Some(d) } if *d == local_digest)
+    {
+        return SkipDecision::ContentMatch;
+    }
+    SkipDecision::Upload
+}
+
+/// Shared pre-upload skip step: classify, and if a skip fires, log it
+/// (tagged with `cloud`) and return `Skipped`. `None` means proceed to
+/// upload. Each cloud still owns its own HEAD probe and error policy; only
+/// this pure decision + log + return step is shared, removing the per-cloud
+/// triplication of the classify/match/log block.
+pub(crate) fn skip_upload_decision(
+    cloud: LocationType,
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    remote: &RemoteHead<'_>,
+    local_digest: &str,
+    key: &str,
+) -> Option<UploadStatus> {
+    match classify_pre_upload_skip(
+        overwrite,
+        skip_upload_on_content_match,
+        remote,
+        local_digest,
+    ) {
+        SkipDecision::Existence => {
+            tracing::info!("{cloud}: remote object already exists, skipping upload: {key}");
+            Some(UploadStatus::Skipped)
+        }
+        SkipDecision::ContentMatch => {
+            tracing::info!("{cloud}: remote content matches local digest, skipping upload: {key}");
+            Some(UploadStatus::Skipped)
+        }
+        SkipDecision::Upload => None,
+    }
+}
+
+/// Test builder for a minimal [`PreparedUpload`] carrying `digest` — an empty
+/// in-memory payload, no CSE. This is the shape all three clouds' skip tests
+/// need; sharing it here removes the copy-pasted per-cloud builders. The skip
+/// branch returns before the body is streamed, so the empty payload is never
+/// read.
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) fn prepared_upload_with_digest(digest: &str) -> PreparedUpload {
+    PreparedUpload {
+        source: types::PreparedSource::Bytes(bytes::Bytes::new()),
+        digest: digest.to_string(),
+        cse: None,
+    }
+}
+
 /// Bytes read from the source for compression auto-detection. Every
 /// `CompressionType` we currently detect has its magic at offset 0 (gzip 0–1,
 /// bzip2 0–2, zstd 0–3, parquet/ORC 0–3), so 16 bytes would suffice today.
@@ -1438,6 +1542,100 @@ impl FileManagerError {
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    // ---------------------------------------------------------------
+    // classify_pre_upload_skip — pure decision tests, shared by all three
+    // clouds. Relocated here (from azure_transfer.rs) when the skip decision
+    // was hoisted so every cloud call site could use it (SNOW-3715266).
+    //
+    // These bypass each cloud's HEAD-elision optimization entirely, so a
+    // guard regression fails here even when the higher-level wiremock
+    // scenarios in azure_transfer.rs / s3_transfer.rs / gcs_transfer.rs still
+    // pass — e.g. the overwrite=true, skip_match=false, remote-digest-matches
+    // case is UNREACHABLE through any `upload_to_*_or_skip` because HEAD is
+    // elided in that configuration (`head_needed = !overwrite || skip_match`).
+    // ---------------------------------------------------------------
+
+    /// Mutation guard: dropping `skip_upload_on_content_match &&` from the
+    /// content branch flips this to `ContentMatch` and the assertion fails.
+    #[test]
+    fn classify_does_not_fire_content_branch_without_opt_in() {
+        let decision = classify_pre_upload_skip(
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &RemoteHead::Present {
+                digest: Some("abc"),
+            },
+            "abc",
+        );
+        assert_eq!(
+            decision,
+            SkipDecision::Upload,
+            "content-match must require the opt-in flag"
+        );
+    }
+
+    /// Positive control: the same digest match WITH the flag set fires.
+    #[test]
+    fn classify_fires_content_branch_with_opt_in() {
+        let decision = classify_pre_upload_skip(
+            true,
+            true,
+            &RemoteHead::Present {
+                digest: Some("abc"),
+            },
+            "abc",
+        );
+        assert_eq!(decision, SkipDecision::ContentMatch);
+    }
+
+    /// Existence wins over content-match when `!overwrite`: a remote object
+    /// that exists is treated as authoritative, digest comparison is skipped.
+    #[test]
+    fn classify_existence_wins_under_no_overwrite() {
+        let decision = classify_pre_upload_skip(
+            false,
+            true,
+            &RemoteHead::Present {
+                digest: Some("abc"),
+            },
+            "abc",
+        );
+        assert_eq!(decision, SkipDecision::Existence);
+    }
+
+    /// `!overwrite` with no remote means upload — the object doesn't exist
+    /// yet. Common first-upload path.
+    #[test]
+    fn classify_uploads_when_remote_absent_under_no_overwrite() {
+        let decision = classify_pre_upload_skip(false, false, &RemoteHead::Absent, "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    /// `overwrite && skip_match && remote present but digest absent` — the
+    /// HEAD returned 200 but no digest metadata header. Cannot compare, so
+    /// upload runs (fail-open at the comparison site).
+    #[test]
+    fn classify_uploads_when_remote_digest_missing() {
+        let decision =
+            classify_pre_upload_skip(true, true, &RemoteHead::Present { digest: None }, "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    /// `overwrite && skip_match && remote digest differs` — the racing
+    /// uploader had different content; we must overwrite, not skip.
+    #[test]
+    fn classify_uploads_when_digests_differ() {
+        let decision = classify_pre_upload_skip(
+            true,
+            true,
+            &RemoteHead::Present {
+                digest: Some("xyz"),
+            },
+            "abc",
+        );
+        assert_eq!(decision, SkipDecision::Upload);
+    }
 
     #[cfg(unix)]
     #[test]
