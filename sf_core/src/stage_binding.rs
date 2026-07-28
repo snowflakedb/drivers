@@ -167,6 +167,7 @@ async fn ensure_stage(
         query_input,
         ctx.retry_policy,
         QueryExecutionMode::Blocking,
+        None,
     )
     .await;
 
@@ -209,6 +210,7 @@ async fn issue_put_query(
         query_input,
         ctx.retry_policy,
         QueryExecutionMode::Blocking,
+        None,
     )
     .await
     .context(PutQuerySnafu)
