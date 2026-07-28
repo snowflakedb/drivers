@@ -11,6 +11,7 @@
 #include "compatibility.hpp"
 #include "get_descriptor.hpp"
 #include "odbc_cast.hpp"
+#include "terminating_statement_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -271,31 +272,23 @@ TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "Descriptor swap: HY017 when setting 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "Descriptor swap: Cannot use explicit descriptor from different connection",
                  "[odbc-api][descriptor][swap][error]") {
-  // Allocate a second connection and connect
-  SQLHDBC dbc2 = SQL_NULL_HDBC;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env_handle(), &dbc2);
-  REQUIRE(ret == SQL_SUCCESS);
+  // A second connection on the same environment; RAII-disconnects and frees on
+  // scope exit.
+  ExtraConnectedDbc other(env_handle(), dsn_name());
 
-  struct Cleanup {
-    SQLHDBC dbc{SQL_NULL_HDBC};
-    SQLHDESC desc{SQL_NULL_HDESC};
-    ~Cleanup() {
-      if (desc != SQL_NULL_HDESC) (void)SQLFreeHandle(SQL_HANDLE_DESC, desc);
-      if (dbc != SQL_NULL_HDBC) {
-        (void)SQLDisconnect(dbc);
-        (void)SQLFreeHandle(SQL_HANDLE_DBC, dbc);
-      }
-    }
-  } cleanup{dbc2, SQL_NULL_HDESC};
-
-  ret = SQLConnect(dbc2, sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(SQL_SUCCEEDED(ret));
-
-  // Allocate an explicit descriptor on the second connection
+  // Allocate an explicit descriptor on the second connection.
   SQLHDESC foreign_explicit = SQL_NULL_HDESC;
-  ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc2, &foreign_explicit);
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, other.dbc(), &foreign_explicit);
   REQUIRE(ret == SQL_SUCCESS);
-  cleanup.desc = foreign_explicit;
+
+  // Free the descriptor before `other` tears down its parent connection. Declared
+  // after `other` so it destructs first (reverse declaration order).
+  struct DescCleanup {
+    SQLHDESC desc{SQL_NULL_HDESC};
+    ~DescCleanup() {
+      if (desc != SQL_NULL_HDESC) (void)SQLFreeHandle(SQL_HANDLE_DESC, desc);
+    }
+  } desc_cleanup{foreign_explicit};
 
   // Attempt to set it on stmt from the first connection — must fail.
   // iODBC's DM intercepts this and returns HY017 (it treats the foreign handle
