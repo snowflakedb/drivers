@@ -6,7 +6,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
 
 use crate::api::OdbcError;
 use crate::api::runtime::global;
-use crate::api::types::{ConnectionState, conn_from_handle, stmt_from_handle};
+use crate::api::types::{conn_from_handle, stmt_from_handle};
 
 /// Record an `api_call` event for the given ODBC entry point.
 ///
@@ -98,10 +98,14 @@ fn resolve_conn_handle(
 }
 
 fn connected_conn_handle(dbc: &crate::api::Dbc) -> Option<TConnectionHandle> {
-    match &dbc.connection.lock().state {
-        ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
-        ConnectionState::Disconnected => None,
-    }
+    // Read the lock-free telemetry cache, never `dbc.connection`. A synchronous
+    // `SQLExecDirect` holds `connection` locked for the full duration of the
+    // query, so resolving the handle through that mutex would let a cross-thread
+    // `SQLCancel` firing `record_api!` stall until the query finished — defeating
+    // the cancel. The cache is written only at the connect/disconnect
+    // transitions; a read racing one of those may observe a stale value, which
+    // telemetry tolerates (see `Dbc::telemetry_connection_cache`).
+    dbc.telemetry_connection_cache.load().as_deref().copied()
 }
 
 #[cfg(test)]
@@ -127,6 +131,29 @@ mod tests {
         // Env handles never carry a session even when non-null.
         let dummy: sql::Handle = 1usize as sql::Handle;
         assert!(resolve_conn_handle(sql::HandleType::Env, dummy).is_none());
+    }
+
+    #[test]
+    fn connected_conn_handle_reflects_cache_store_and_clear() {
+        use sf_core::protobuf::generated::database_driver_v1::DatabaseHandle as TDatabaseHandle;
+
+        let dbc = crate::api::Dbc::new_disconnected_for_test();
+
+        // Disconnected: the empty cache resolves to None.
+        assert!(connected_conn_handle(&dbc).is_none());
+
+        // A connect transition publishes the handle into the cache.
+        let handle = TConnectionHandle { id: 42, magic: 7 };
+        dbc.mark_connected(
+            &mut dbc.connection.lock(),
+            TDatabaseHandle::default(),
+            handle,
+        );
+        assert_eq!(connected_conn_handle(&dbc), Some(handle));
+
+        // A disconnect transition clears it again.
+        dbc.mark_disconnected(&mut dbc.connection.lock());
+        assert!(connected_conn_handle(&dbc).is_none());
     }
 
     #[test]
