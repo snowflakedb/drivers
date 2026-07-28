@@ -203,18 +203,21 @@ jobs:
           MATRIX_RESULT="${{ needs.dotnet_tests.result }}"
           REFERENCE_RESULT="${{ needs.dotnet_tests_reference.result }}"
 
-          # Check if tests were skipped
-          if [[ "$MATRIX_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
-            echo "✓ dotnet jobs were SKIPPED (no relevant changes detected)"
-            exit 0
-          fi
-
-          # Check if any job failed or was cancelled
+          # Check if any job failed or was cancelled. This must run before the
+          # "tests skipped" check below: a failure in an upstream job can cause
+          # a downstream job to be auto-skipped, which would otherwise be
+          # misread as "no relevant changes detected" and pass.
           if [[ "$MATRIX_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ dotnet CI FAILED or CANCELLED"
             echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
             echo "  - dotnet_tests_reference: $REFERENCE_RESULT"
             exit 1
+          fi
+
+          # Check if tests were skipped (only reachable once nothing above failed/cancelled)
+          if [[ "$MATRIX_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
+            echo "✓ dotnet jobs were SKIPPED (no relevant changes detected)"
+            exit 0
           fi
 
           # Tests ran and passed
