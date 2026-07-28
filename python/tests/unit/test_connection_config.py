@@ -108,6 +108,14 @@ class TestFromKwargs:
         assert config.user == "u"
         assert "client_fetch_use_mp" not in config._extra
 
+    def test_enable_crl_cache_is_dropped_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="enable_crl_cache"):
+            config = ConnectionConfig.from_kwargs(user="u", enable_crl_cache=False)
+        assert config.user == "u"
+        assert config.crl_enable_memory_caching is True
+        assert config.crl_enable_disk_caching is True
+        assert "enable_crl_cache" not in config._extra
+
     def test_client_session_keep_alive_kwargs(self):
         config = ConnectionConfig.from_kwargs(
             client_session_keep_alive=True,
