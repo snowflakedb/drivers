@@ -19,6 +19,8 @@ use super::{EmptyLayer, LoggingConfig};
 
 type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 
+const TROUBLESHOOTING_LOG_FILE: &str = "sf_driver_troubleshooting.log";
+
 /// Wraps the composed tracing subscriber and owns the `SdkTracerProvider`,
 /// tying the OTEL exporter lifetime to the subscriber. Lives inside a
 /// [`tracing::dispatcher::Dispatch`] (which `Arc`-wraps it); the provider
@@ -183,11 +185,8 @@ impl LogManager {
     /// active, `None` otherwise.  Used as a fallback by `DiagnosticRunner`
     /// so the SnowCD report lands in the same directory as troubleshooting logs.
     pub fn troubleshooting_path(&self) -> Option<std::path::PathBuf> {
-        if self.troubleshooting {
-            Some(self.troubleshooting_log_dir.clone())
-        } else {
-            None
-        }
+        self.troubleshooting
+            .then(|| self.troubleshooting_log_dir.clone())
     }
 
     /// The [`tracing::dispatcher::Dispatch`] wrapping the configured
@@ -456,6 +455,45 @@ impl LogManager {
         ))
     }
 
+    /// Pre-creates the troubleshooting log file with owner-only (`0o600`) permissions on Unix
+    fn ensure_troubleshooting_log_permissions(log_file: &std::path::Path) -> Result<(), LogError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(log_file)
+                .map_err(|e| {
+                    InitSnafu {
+                        message: format!(
+                            "Failed to create troubleshooting log file {}: {e}",
+                            log_file.display()
+                        ),
+                    }
+                    .build()
+                })?;
+            // O_CREAT only sets mode on new files; remediate stale files too.
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| {
+                    InitSnafu {
+                        message: format!(
+                            "Failed to set troubleshooting log permissions on {}: {e}",
+                            log_file.display()
+                        ),
+                    }
+                    .build()
+                })?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = log_file;
+        }
+        Ok(())
+    }
+
     fn build_troubleshooting_layer(log_path: &std::path::Path) -> Result<BoxedLayer, LogError> {
         if let Err(e) = std::fs::create_dir_all(log_path) {
             eprintln!(
@@ -464,10 +502,14 @@ impl LogManager {
             );
             return Ok(EmptyLayer.boxed());
         }
+
+        let log_file = log_path.join(TROUBLESHOOTING_LOG_FILE);
+        Self::ensure_troubleshooting_log_permissions(&log_file)?;
+
         // Rotation::NEVER → single file, no date/sequence suffix appended.
         let appender = tracing_appender::rolling::RollingFileAppender::builder()
             .rotation(tracing_appender::rolling::Rotation::NEVER)
-            .filename_prefix("sf_driver_troubleshooting.log")
+            .filename_prefix(TROUBLESHOOTING_LOG_FILE)
             .build(log_path)
             .map_err(|e| {
                 InitSnafu {
@@ -538,6 +580,42 @@ impl LogManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn troubleshooting_log_file_has_mode_600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        assert!(LogManager::build_troubleshooting_layer(dir.path()).is_ok());
+
+        let log_file = dir.path().join(TROUBLESHOOTING_LOG_FILE);
+        assert!(
+            log_file.exists(),
+            "troubleshooting log should be pre-created"
+        );
+        let mode = std::fs::metadata(&log_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn troubleshooting_log_remediates_stale_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let log_file = dir.path().join(TROUBLESHOOTING_LOG_FILE);
+        std::fs::write(&log_file, "stale\n").unwrap();
+        std::fs::set_permissions(&log_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(LogManager::build_troubleshooting_layer(dir.path()).is_ok());
+
+        let mode = std::fs::metadata(&log_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "stale permissions should be remediated to 0o600"
+        );
+    }
 
     #[test]
     fn build_core_layer_disabled_returns_empty() {

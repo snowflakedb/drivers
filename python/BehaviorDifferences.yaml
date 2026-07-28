@@ -648,3 +648,24 @@ behavior_differences:
       and raises a terminal error, whereas the legacy connector retries the refresh
       GS call under a query RetryCtx whose network_timeout defaults to None
       (infinite), so it retries unboundedly rather than surfacing a terminal error.
+
+  42:
+    name: "enable_crl_cache removed; CRL caches controlled by independent toggles"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `enable_crl_cache` (default `True`) is the master switch for CRL caching.
+      When `False`, both the in-memory and on-disk CRL caches are disabled
+      regardless of `enable_crl_file_cache`. When `True`, an in-memory cache is
+      always created and `enable_crl_file_cache` (default `True`) independently
+      controls whether a disk cache is also used.
+    new_driver_behavior: |
+      `enable_crl_cache` is accepted for source compatibility but has no effect
+      and emits a `DeprecationWarning`. The universal driver exposes independent
+      toggles: `enable_crl_memory_cache` → `crl_enable_memory_caching` and
+      `enable_crl_file_cache` → `crl_enable_disk_caching` (both default `True`).
+      Callers who previously disabled caching via `enable_crl_cache=False` must
+      set both toggles to `False` explicitly.

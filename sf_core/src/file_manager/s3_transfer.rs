@@ -16,10 +16,8 @@ use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use tempfile::{NamedTempFile, TempPath};
 use tokio_stream::wrappers::ReceiverStream;
 
 // AWS SDK imports
@@ -794,48 +792,11 @@ pub(super) struct S3Download {
     pub(super) cloud_byte_count: i64,
 }
 
-// TODO(SNOW-3406377): the ranged-download assembly loop is duplicated across S3,
-// Azure, and GCS. It is extracted into a shared cloud_http::assemble_ranged_download
-// helper — and S3's SpilledBody / SpillTarget migrated onto the cloud_http types
-// (CloudSpillTarget, CloudSpilledBody) that Azure and GCS already use — in a
-// dedicated follow-up PR stacked on this one. See that PR for the extraction.
-
 /// Where the downloaded ciphertext lives. `into_reader` yields a uniform
 /// blocking `Read` over either shape for the decrypt/copy step.
 pub(super) enum S3DownloadBody {
     InMemory(Bytes),
-    Spilled(SpilledBody),
-}
-
-/// A ranged download assembled to disk. The two shapes differ only in who owns
-/// the file and how it is finalized:
-///
-/// * `Part` — a non-encrypted download assembled straight into the caller's
-///   `<dst>.part` staging file. The bytes are already the final plaintext, so
-///   the caller just renames `.part` to the destination (a single same-FS
-///   rename). Any leftover after a hard kill is a self-documenting,
-///   self-overwriting `.part`, never random debris.
-/// * `Temp` — a client-side-encrypted (or git-stage) download assembled into a
-///   throwaway RAII temp. CSE bytes are ciphertext that still has to be
-///   decrypted into `.part`, so they cannot land in `.part` directly; the temp
-///   is unlinked on drop once consumed.
-pub(super) enum SpilledBody {
-    Part(PathBuf),
-    Temp(TempPath),
-}
-
-/// Where a ranged download should assemble its bytes. Chosen by the caller
-/// (which knows whether the object is client-side-encrypted) and threaded down
-/// to [`s3_range_download`]. `Copy` so it can be handed to each STS-refresh
-/// retry of the download closure.
-#[derive(Clone, Copy)]
-pub(super) enum SpillTarget<'a> {
-    /// Non-encrypted download: assemble directly into this `<dst>.part` file.
-    Part(&'a Path),
-    /// Encrypted / git-stage download: assemble ciphertext into a temp in this
-    /// directory (kept on the destination's filesystem so the later finalize is
-    /// a same-FS rename, not a cross-device copy).
-    Temp(&'a Path),
+    Spilled(cloud_http::CloudSpilledBody),
 }
 
 impl S3DownloadBody {
@@ -848,10 +809,10 @@ impl S3DownloadBody {
             // The decrypt/copy step only reads a spilled body for CSE, which is
             // always a `Temp`; a `Part` body is the final plaintext and is
             // finalized by rename, not read back. Handle both for totality.
-            S3DownloadBody::Spilled(SpilledBody::Temp(temp)) => {
+            S3DownloadBody::Spilled(cloud_http::CloudSpilledBody::Temp(temp)) => {
                 Ok(Box::new(multipart::SpilledReader::open(temp)?))
             }
-            S3DownloadBody::Spilled(SpilledBody::Part(path)) => {
+            S3DownloadBody::Spilled(cloud_http::CloudSpilledBody::Part(path)) => {
                 Ok(Box::new(std::fs::File::open(path)?))
             }
         }
@@ -874,7 +835,7 @@ pub(super) async fn download_from_s3(
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
-    spill_target: SpillTarget<'_>,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -910,7 +871,7 @@ async fn s3_download_attempt(
     stage_info: &StageInfo,
     s3_key: &str,
     multipart: MultipartParams,
-    spill_target: SpillTarget<'_>,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, S3AttemptError<DownloadFileError>> {
     let head = s3_head_object(s3_client, stage_info, s3_key).await?;
     let content_length = head.content_length().unwrap_or(0).max(0) as u64;
@@ -1069,22 +1030,10 @@ async fn s3_get_whole(
 }
 
 /// Downloads the object with parallel ranged GETs into a pre-allocated file,
-/// returning the assembled [`SpilledBody`]. Ranges are fetched up to
-/// `concurrency` at a time and written at their absolute offset (`pwrite`), so
-/// out-of-order completion is fine.
-///
-/// The assembly file is chosen by `target`: a non-encrypted download writes
-/// straight into the caller's `<dst>.part` (one rename from done), while an
-/// encrypted / git-stage download writes into a throwaway temp (its ciphertext
-/// is decrypted into `.part` afterwards).
-///
-/// On failure the range futures are *drained*, not short-circuited: every
-/// in-flight `write_at` finishes and drops its file handle before we return, so
-/// the partially-written assembly file can be removed even on Windows (which
-/// refuses to unlink an open file). A failed download therefore leaves no
-/// leftover; the only way a partial survives is a hard kill (SIGKILL / power
-/// loss), and then it is a self-documenting, self-overwriting `<dst>.part`
-/// rather than a random temp.
+/// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
+/// Ranges are fetched up to `concurrency` at a time and written at their
+/// absolute offset (`pwrite`), so out-of-order completion is fine. Thin
+/// wrapper around the shared [`cloud_http::assemble_ranged_download`] helper.
 async fn s3_range_download(
     s3_client: &S3Client,
     stage_info: &StageInfo,
@@ -1092,109 +1041,22 @@ async fn s3_range_download(
     content_length: u64,
     chunk_size: u64,
     concurrency: usize,
-    target: SpillTarget<'_>,
-) -> Result<SpilledBody, S3AttemptError<DownloadFileError>> {
+    target: cloud_http::CloudSpillTarget<'_>,
+) -> Result<cloud_http::CloudSpilledBody, S3AttemptError<DownloadFileError>> {
     let mk_temp_err = |detail: String| {
         S3AttemptError::Other(download_file_error::TempFileSnafu { detail }.build())
     };
 
-    // Owns the assembly file for the duration of the download: either the
-    // caller's `.part` (referenced by path) or a RAII temp.
-    enum Assembly {
-        Part(PathBuf),
-        Temp(NamedTempFile),
-    }
-
-    // Create + pre-allocate the assembly file off-thread. spawn_blocking (not
-    // block_in_place): safe on current-thread runtimes; block_in_place panics
-    // on those. Returns the owner plus a shared, cloneable handle for the
-    // concurrent positioned writes.
-    let owned_target = match target {
-        SpillTarget::Part(p) => (true, p.to_path_buf()),
-        SpillTarget::Temp(d) => (false, d.to_path_buf()),
-    };
-    #[allow(clippy::result_large_err)]
-    let (assembly, file) = tokio::task::spawn_blocking(move || {
-        let (is_part, path_or_dir) = owned_target;
-        if is_part {
-            let f = std::fs::File::create(&path_or_dir).map_err(|e| mk_temp_err(e.to_string()))?;
-            // Pre-allocate so positioned writes of out-of-order chunks always land.
-            f.set_len(content_length)
-                .map_err(|e| mk_temp_err(e.to_string()))?;
-            let file = Arc::new(f);
-            Ok::<_, S3AttemptError<DownloadFileError>>((Assembly::Part(path_or_dir), file))
-        } else {
-            let named =
-                NamedTempFile::new_in(&path_or_dir).map_err(|e| mk_temp_err(e.to_string()))?;
-            named
-                .as_file()
-                .set_len(content_length)
-                .map_err(|e| mk_temp_err(e.to_string()))?;
-            let file = Arc::new(
-                named
-                    .as_file()
-                    .try_clone()
-                    .map_err(|e| mk_temp_err(e.to_string()))?,
-            );
-            Ok::<_, S3AttemptError<DownloadFileError>>((Assembly::Temp(named), file))
-        }
-    })
+    cloud_http::assemble_ranged_download(
+        content_length,
+        chunk_size,
+        concurrency,
+        target,
+        mk_temp_err,
+        mk_temp_err,
+        move |range| async move { s3_get_range(s3_client, stage_info, s3_key, &range).await },
+    )
     .await
-    .map_err(|e| mk_temp_err(format!("join error in tempfile setup: {e}")))??;
-
-    let ranges = multipart::plan_ranges(content_length, chunk_size);
-    // Drain, don't short-circuit: `collect` (not `try_collect`) polls EVERY
-    // range future to completion, so all in-flight `write_at` spawn_blocking
-    // tasks finish and release their cloned file handles before we return.
-    // With no writer holding the file open, the cleanup below can unlink it
-    // even on Windows. The first error is surfaced after the drain.
-    let results: Vec<Result<(), S3AttemptError<DownloadFileError>>> = futures::stream::iter(ranges)
-        .map(|range| {
-            let file = Arc::clone(&file);
-            async move {
-                let bytes = s3_get_range(s3_client, stage_info, s3_key, &range).await?;
-                // Guard against endpoints that ignore Range and return the whole
-                // object (200 not 206): writing at range.start would corrupt the
-                // assembled file by overrunning the pre-allocated length.
-                let expected_len = range.end - range.start + 1;
-                if bytes.len() as u64 != expected_len {
-                    return Err(mk_temp_err(format!(
-                        "ranged GET returned {} bytes, expected {expected_len} \
-                         (bytes={}-{}); endpoint may not honour Range header",
-                        bytes.len(),
-                        range.start,
-                        range.end
-                    )));
-                }
-                tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
-                    .await
-                    .map_err(|e| mk_temp_err(format!("join error writing chunk: {e}")))?
-                    .map_err(|e| mk_temp_err(e.to_string()))
-            }
-        })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-    // Release our write handle so the only reference left is the one owned by
-    // `assembly` (Temp) or none (Part) — required before unlinking on Windows.
-    drop(file);
-    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
-
-    match assembly {
-        Assembly::Part(path) => match outcome {
-            Ok(_) => Ok(SpilledBody::Part(path)),
-            Err(e) => {
-                // Drained above, so no writer still holds `.part` open; the
-                // best-effort remove succeeds even on Windows.
-                let _ = std::fs::remove_file(&path);
-                Err(e)
-            }
-        },
-        // On success hand out the unlink-on-drop guard; on failure `named`
-        // drops here and NamedTempFile unlinks it (drained, so no open writer).
-        Assembly::Temp(named) => outcome.map(|_| SpilledBody::Temp(named.into_temp_path())),
-    }
 }
 
 /// Ranged GET of `[range.start, range.end]`, returning the body bytes. Folds
@@ -2484,6 +2346,8 @@ mod tests {
     /// complete sequence end to end.
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_runs_create_parts_complete() {
+        use std::sync::Arc;
+
         let mock = MockServer::start().await;
         let parts = Arc::new(AtomicUsize::new(0));
 
@@ -2546,6 +2410,8 @@ mod tests {
     /// libsnowflakeclient `// TODO abort` orphan-cost gap.
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_aborts_on_part_failure() {
+        use std::sync::Arc;
+
         let mock = MockServer::start().await;
         let aborts = Arc::new(AtomicUsize::new(0));
 
@@ -2633,14 +2499,17 @@ mod tests {
             &base_policy(),
             always_multipart(),
             &mut None,
-            SpillTarget::Temp(spill.path()),
+            cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
         .await
         .expect("ranged download should succeed against the mock");
 
         assert_eq!(download.cloud_byte_count, payload.len() as i64);
         assert!(
-            matches!(download.body, S3DownloadBody::Spilled(SpilledBody::Temp(_))),
+            matches!(
+                download.body,
+                S3DownloadBody::Spilled(cloud_http::CloudSpilledBody::Temp(_))
+            ),
             "above-threshold download must spill to a tempfile"
         );
 
@@ -2682,13 +2551,13 @@ mod tests {
             &base_policy(),
             always_multipart(),
             &mut None,
-            SpillTarget::Part(&part_path),
+            cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await
         .expect("ranged download should succeed against the mock");
 
         match download.body {
-            S3DownloadBody::Spilled(SpilledBody::Part(p)) => {
+            S3DownloadBody::Spilled(cloud_http::CloudSpilledBody::Part(p)) => {
                 assert_eq!(p, part_path, "the assembly file must be the caller's .part");
                 assert_eq!(
                     std::fs::read(&p).unwrap(),
@@ -2725,7 +2594,7 @@ mod tests {
             &base_policy_with_attempts(1), // single attempt: fail fast
             always_multipart(),
             &mut None,
-            SpillTarget::Part(&part_path),
+            cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await;
 

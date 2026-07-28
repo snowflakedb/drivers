@@ -22,17 +22,22 @@ jobs:
             name: macOS Universal
             driver_lib: libSnowflake.dylib
             driver_manager: unixodbc
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_manager: unixodbc
+          # TODO SNOW-3858024: Fix the timeouts
+          # - os: windows-latest
+          #   name: Windows x64
+          #   driver_lib: sfodbc.dll
+          #   driver_manager: unixodbc
           - os: macos-latest
             name: macOS Universal + iODBC
             driver_lib: libSnowflake.dylib
             driver_manager: iodbc
     runs-on: ${{ matrix.os }}
     name: odbc_reference_tests (${{ matrix.name }})
-    timeout-minutes: 60
+    # Stopgap: the ~2942 live-Snowflake reference tests overran the 60-min cap on
+    # Windows (Linux/macOS finish in 15-19 min). Bumped to 90 to stop the timeout
+    # cancellations while the real fix (higher Windows ctest parallelism / sharding)
+    # lands. Revert to 60 once Windows comfortably fits.
+    timeout-minutes: 90
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

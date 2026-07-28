@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import tomlkit
 
 import snowflake.connector
 
@@ -32,6 +33,12 @@ _BOGUS_KWARGS: dict = dict(
 
 _EMPTY_ALLOWLIST = "[]"
 _STAGE_ALLOWLIST = json.dumps([{"host": "s3.amazonaws.com", "port": 443, "type": "STAGE"}])
+_MULTI_TYPE_ALLOWLIST = json.dumps(
+    [
+        {"host": "ocsp.snowflakecomputing.com", "port": 80, "type": "OCSP_CACHE"},
+        {"host": "s3.amazonaws.com", "port": 443, "type": "STAGE"},
+    ]
+)
 _INVALID_ALLOWLIST = "This function has been deprecated. Use SYSTEM$ALLOWLIST instead."
 
 _IP_RE = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
@@ -156,6 +163,51 @@ class TestReportFileCreation:
 
 
 # ---------------------------------------------------------------------------
+# TOML profile activation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skip_reference(reason="sf_core only: connections.toml profile resolver")
+class TestTomlProfileActivation:
+    """enable_connection_diag = true in a connections.toml profile must trigger the diagnostic."""
+
+    def test_toml_profile_enables_diagnostic(self, tmp_path, monkeypatch):
+        """Setting enable_connection_diag in a profile, not as a kwarg, must produce a report.
+
+        The Rust core discovers connections.toml via SNOWFLAKE_HOME.  We point
+        SNOWFLAKE_HOME at a temporary directory so the test is fully isolated.
+        """
+        snowflake_home = tmp_path / "sf_home"
+        snowflake_home.mkdir()
+        report_dir = tmp_path / "report"
+        report_dir.mkdir()
+
+        connections_file = snowflake_home / "connections.toml"
+        doc = tomlkit.document()
+        conn = tomlkit.table()
+        conn.add("account", "testaccount")
+        conn.add("user", "testuser")
+        conn.add("password", "testpassword")
+        conn.add("login_timeout", 5)
+        conn.add("enable_connection_diag", True)
+        conn.add("connection_diag_log_path", str(report_dir))
+        doc.add("myconn", conn)
+        connections_file.write_text(tomlkit.dumps(doc))
+        connections_file.chmod(0o600)
+
+        monkeypatch.setenv("SNOWFLAKE_HOME", str(snowflake_home))
+
+        try:
+            snowflake.connector.connect(connection_name="myconn")
+        except Exception:
+            pass
+
+        assert (report_dir / REPORT_FILENAME).exists(), (
+            "Report file not created: enable_connection_diag=true from TOML profile was ignored"
+        )
+
+
+# ---------------------------------------------------------------------------
 # INITIAL section
 # ---------------------------------------------------------------------------
 
@@ -174,6 +226,38 @@ class TestInitialSection:
     def test_host_logged(self, tmp_path):
         report = _run_diag(tmp_path)
         assert "INITIAL: Host based on specified account: testaccount.snowflakecomputing.com" in report
+
+    @pytest.mark.skip_reference(reason="sf_core only: minicore environment metadata")
+    def test_sf_core_version_logged(self, tmp_path):
+        """sf_core version appears in the INITIAL section."""
+        report = _run_diag(tmp_path)
+        assert re.search(r"INITIAL: sf_core version: \S+", report), (
+            "Expected 'INITIAL: sf_core version: <version>' in report"
+        )
+
+    @pytest.mark.skip_reference(reason="sf_core only: minicore environment metadata")
+    def test_os_and_arch_logged(self, tmp_path):
+        """OS name and CPU architecture appear in the INITIAL section."""
+        report = _run_diag(tmp_path)
+        assert re.search(r"INITIAL: OS: \S+", report), "Expected 'INITIAL: OS: <name>' in report"
+        assert re.search(r"INITIAL: Architecture: \S+", report), "Expected 'INITIAL: Architecture: <arch>' in report"
+
+    @pytest.mark.skip_reference(reason="sf_core only: minicore environment metadata")
+    def test_cert_revocation_mode_logged(self, tmp_path):
+        """Cert revocation check mode (DISABLED/ENABLED/ADVISORY) appears in the INITIAL section."""
+        report = _run_diag(tmp_path)
+        assert re.search(
+            r"INITIAL: Cert revocation check mode: (DISABLED|ENABLED|ADVISORY)",
+            report,
+        ), "Expected 'INITIAL: Cert revocation check mode: ...' in report"
+
+    @pytest.mark.skip_reference(reason="sf_core only: minicore environment metadata")
+    def test_detected_platforms_logged(self, tmp_path):
+        """Platform detection result (may be empty) appears in the INITIAL section."""
+        report = _run_diag(tmp_path)
+        assert re.search(r"INITIAL: Detected platforms:", report), (
+            "Expected 'INITIAL: Detected platforms: ...' in report"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +323,70 @@ class TestSnowflakeUrlSection:
         report = _run_diag(tmp_path)
         assert "https://crt.sh/?serial=" in report
 
+    @pytest.mark.skip_reference(reason="sf_core only: negotiated TLS protocol version (exceeds old-driver coverage)")
+    def test_tls_negotiated_protocol_logged(self, tmp_path):
+        """Negotiated TLS protocol version is logged after the handshake."""
+        report = _run_diag(tmp_path)
+        assert re.search(
+            r"SNOWFLAKE_URL: testaccount\.snowflakecomputing\.com:443: TLS: negotiated protocol:",
+            report,
+        ), "Expected 'TLS: negotiated protocol:' line under SNOWFLAKE_URL"
+
+    @pytest.mark.skip_reference(reason="sf_core only: negotiated TLS cipher suite (exceeds old-driver coverage)")
+    def test_tls_negotiated_cipher_suite_logged(self, tmp_path):
+        """Negotiated TLS cipher suite is logged after the handshake."""
+        report = _run_diag(tmp_path)
+        assert re.search(
+            r"SNOWFLAKE_URL: testaccount\.snowflakecomputing\.com:443: TLS: negotiated cipher suite:",
+            report,
+        ), "Expected 'TLS: negotiated cipher suite:' line under SNOWFLAKE_URL"
+
+
+# ---------------------------------------------------------------------------
+# verify_certificates=False diagnostic behaviour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skip_reference(reason="sf_core only: verify_certificates affects diagnostic TLS handshake")
+class TestInsecureTlsDiagnostic:
+    """verify_certificates=False must not cause false-negative TLS failures in the diagnostic.
+
+    Before the fix, build_tls_client_and_rustls_config returned a cert-verified rustls
+    config (build_fallback_rustls_config / system roots) when verify_certificates=False.
+    The diagnostic's inspect_tls then performed a rustls handshake with cert verification
+    enabled against servers the caller had explicitly declared unverifiable — producing
+    false-negative TLS failures in environments with custom or self-signed CAs.
+
+    After the fix, the diagnostic uses NoCertificateVerification so the TLS probe
+    behaves consistently with the insecure reqwest client.
+    """
+
+    def test_report_created_with_verify_certificates_false(self, tmp_path):
+        """Diagnostic completes and writes a non-empty report when cert verification is off."""
+        _run_diag(tmp_path, verify_certificates=False)
+        report_file = tmp_path / REPORT_FILENAME
+        assert report_file.exists()
+        assert report_file.stat().st_size > 0
+
+    def test_tls_probe_reaches_snowflake_with_verify_certificates_false(self, tmp_path):
+        """TLS handshake succeeds and cert chain is logged when verify_certificates=False.
+
+        Confirms that the diagnostic uses a NoCertificateVerification rustls config
+        (not a cert-verified fallback) so inspect_tls completes end-to-end even in
+        environments where the server's CA is not in the system root store.
+        """
+        report = _run_diag(tmp_path, verify_certificates=False)
+        assert re.search(
+            r"SNOWFLAKE_URL: testaccount\.snowflakecomputing\.com: Certificate 1: serial=[0-9a-f]+",
+            report,
+        ), "Expected cert serial in report — TLS handshake should succeed with verify_certificates=False"
+
+    def test_snowflake_url_section_present_with_verify_certificates_false(self, tmp_path):
+        """SNOWFLAKE_URL section is written even when cert verification is disabled."""
+        report = _run_diag(tmp_path, verify_certificates=False)
+        assert "=========Snowflake URL information" in report
+        assert "SNOWFLAKE_URL: testaccount.snowflakecomputing.com: nslookup results:" in report
+
 
 # ---------------------------------------------------------------------------
 # STAGE section
@@ -267,6 +415,15 @@ class TestStageSection:
         allowlist_file = tmp_path / "allowlist.json"
         allowlist_file.write_text(_STAGE_ALLOWLIST)
         report = _run_diag(tmp_path, connection_diag_allowlist_path=str(allowlist_file))
+        assert "STAGE: s3.amazonaws.com" in report
+
+    @pytest.mark.skip_reference(reason="sf_core only: all allowlist entry types probed")
+    def test_multi_type_allowlist_both_sections_in_report(self, tmp_path):
+        """All allowlist entry types appear in the report, not just STAGE."""
+        allowlist_file = tmp_path / "allowlist.json"
+        allowlist_file.write_text(_MULTI_TYPE_ALLOWLIST)
+        report = _run_diag(tmp_path, connection_diag_allowlist_path=str(allowlist_file))
+        assert "OCSP_CACHE: ocsp.snowflakecomputing.com" in report
         assert "STAGE: s3.amazonaws.com" in report
 
     def test_invalid_allowlist_content_recorded(self, tmp_path):

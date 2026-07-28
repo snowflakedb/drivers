@@ -31,14 +31,14 @@ impl IdTokenCacheFixture {
 
         let cache = KeyringTokenCache::new().expect("token cache should be available");
         let server_url = mock.http_url();
-        // The default test parameters supply role="test_role"; the production code
-        // embeds normalize_identifier(login_parameters.role) in the ID-token cache key.
+        // ID-token keys hash only `snowflake` + `username`; `idp` and `role`
+        // are excluded by `build_cache_key`, so they are left empty here.
         let key = CacheKey {
             token_type: TokenType::IdToken,
-            idp: normalize_url(&server_url),
+            idp: String::new(),
             snowflake: normalize_url(&server_url),
             username: normalize_identifier(user),
-            role: normalize_identifier("test_role"),
+            role: String::new(),
         };
 
         Self {
@@ -396,14 +396,14 @@ fn should_not_cache_id_token_when_caching_disabled() {
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
     let server_url = mock.http_url();
-    // The default test parameters supply role="test_role"; the production code
-    // embeds normalize_identifier(login_parameters.role) in the ID-token cache key.
+    // ID-token keys hash only `snowflake` + `username`; `idp` and `role`
+    // are excluded by `build_cache_key`, so they are left empty here.
     let key = CacheKey {
         token_type: TokenType::IdToken,
-        idp: normalize_url(&server_url),
+        idp: String::new(),
         snowflake: normalize_url(&server_url),
         username: normalize_identifier("eb_no_cache"),
-        role: normalize_identifier("test_role"),
+        role: String::new(),
     };
     let cached = cache.get_token(&key).expect("get_token should not fail");
     assert!(

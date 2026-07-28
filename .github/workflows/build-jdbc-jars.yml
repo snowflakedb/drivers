@@ -1,0 +1,32 @@
+name: Build JDBC JARs
+
+on:
+  push:
+    branches:
+      - 'release/jdbc-**'
+  pull_request:
+    # Packaging-only paths: the JAR layout (Gradle build), the runtime native
+    # selection, and the workflows themselves. Deliberately NOT all of jdbc/** —
+    # the 7-leg build_native matrix is ~45 minutes, and driver code changes are
+    # already covered by JDBC CI.
+    paths:
+      - 'jdbc/build.gradle'
+      - 'jdbc/settings.gradle'
+      - 'jdbc/gradle/**'
+      - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/NativeLibraryLoader.java'
+      - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/LibcDetector.java'
+      - '.github/workflows/build-jdbc-jars.yml'
+      - '.github/workflows/_build-jdbc-fatjar.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_jdbc_jars:
+    if: >-
+      github.repository_owner != 'snowflakedb'
+      || github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/heads/release/')
+    uses: ./.github/workflows/_build-jdbc-fatjar.yml

@@ -11,11 +11,13 @@ import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.SnowflakeUtil;
 
+@JdbcBoundary
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 public class SnowflakeResultSetMetaDataImpl
     implements ResultSetMetaData, SnowflakeResultSetMetaData, DelegatingWrapper {

@@ -62,7 +62,7 @@ fn should_authenticate_with_cached_mfa_token_via_wiremock() {
     let server_url = fixture.mock.http_url();
     let key = CacheKey {
         token_type: TokenType::MfaToken,
-        idp: normalize_url(&server_url),
+        idp: String::new(),
         snowflake: normalize_url(&server_url),
         username: normalize_identifier(user),
         role: String::new(),
@@ -98,7 +98,7 @@ fn assert_ext_authn_error_evicts_cached_mfa_token(
     let server_url = fixture.mock.http_url();
     let key = CacheKey {
         token_type: TokenType::MfaToken,
-        idp: normalize_url(&server_url),
+        idp: String::new(),
         snowflake: normalize_url(&server_url),
         username: normalize_identifier(user),
         role: String::new(),
@@ -190,7 +190,7 @@ fn should_retry_with_duo_push_when_cached_mfa_token_fails_ext_authn() {
     let server_url = fixture.mock.http_url();
     let key = CacheKey {
         token_type: TokenType::MfaToken,
-        idp: normalize_url(&server_url),
+        idp: String::new(),
         snowflake: normalize_url(&server_url),
         username: normalize_identifier(user),
         role: String::new(),
@@ -228,7 +228,7 @@ fn should_fail_with_retry_error_when_both_cached_token_and_duo_push_fail() {
     let server_url = fixture.mock.http_url();
     let key = CacheKey {
         token_type: TokenType::MfaToken,
-        idp: normalize_url(&server_url),
+        idp: String::new(),
         snowflake: normalize_url(&server_url),
         username: normalize_identifier(user),
         role: String::new(),

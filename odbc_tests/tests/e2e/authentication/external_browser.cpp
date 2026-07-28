@@ -33,17 +33,17 @@
 // gated behind REQUIRE_BROWSER.
 namespace {
 
-std::string get_external_browser_connection_string() {
+std::string get_external_browser_connection_string(bool cache_token = false) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   // Use the default test connection (host, account, etc.) but override UID to
   // the Okta user and switch the authenticator to EXTERNALBROWSER — mirroring
   // what the Python E2E test does via connection_factory(**browser_credentials).
-  read_default_params(ss, params, {"UID", "AUTHENTICATOR", "ROLE"});
+  read_default_params(ss, params, {"UID", "AUTHENTICATOR", "ROLE", "CLIENT_STORE_TEMPORARY_CREDENTIAL"});
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_USER", "UID");
   ss << "AUTHENTICATOR=EXTERNALBROWSER;";
   ss << "ROLE=PUBLIC;";
-  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
+  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=" << (cache_token ? "true" : "false") << ";";
   return ss.str();
 }
 
@@ -105,4 +105,68 @@ TEST_CASE("should authenticate with external browser via Okta IdP", "[external_b
   ret = SQLDisconnect(dbc.getHandle());
   REQUIRE_ODBC(ret, dbc);
   cleanup.connected = false;
+}
+
+TEST_CASE("should reuse cached ID token without browser interaction", "[external_browser_e2e][requires_browser]") {
+  REQUIRE_BROWSER("External browser E2E needs the headless Chromium container");
+
+  oauth_auth::clean_browser_processes();
+
+  // Given External browser authentication is configured with caching enabled and a token has been
+  // cached from a previous connection
+  std::string connection_string = get_external_browser_connection_string(/*cache_token=*/true);
+
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
+  REQUIRE_ODBC(ret, env);
+
+  auto params = get_test_parameters("testconnection");
+  std::string login = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OKTA_USER");
+  std::string password = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OKTA_PASSWORD");
+
+  {
+    ConnectionHandleWrapper first = env.createConnectionHandle();
+    struct FirstCleanup {
+      ConnectionHandleWrapper& dbc;
+      bool connected = false;
+      ~FirstCleanup() {
+        if (connected) SQLDisconnect(dbc.getHandle());
+        oauth_auth::clean_browser_processes();
+      }
+    } guard{first};
+
+    ret = oauth_auth::connect_with_browser_automation(first, connection_string, "success", login, password);
+    REQUIRE_ODBC(ret, first);
+    guard.connected = true;
+
+    verify_simple_query_execution(first);
+
+    ret = SQLDisconnect(first.getHandle());
+    REQUIRE_ODBC(ret, first);
+    guard.connected = false;
+  }
+
+  // When Trying to Connect without browser interaction
+  {
+    ConnectionHandleWrapper second = env.createConnectionHandle();
+    struct SecondCleanup {
+      ConnectionHandleWrapper& dbc;
+      bool connected = false;
+      ~SecondCleanup() {
+        if (connected) SQLDisconnect(dbc.getHandle());
+      }
+    } guard{second};
+
+    ret = SQLDriverConnect(second.getHandle(), nullptr, (SQLCHAR*)connection_string.c_str(), SQL_NTS, nullptr, 0,
+                           nullptr, SQL_DRIVER_NOPROMPT);
+    REQUIRE_ODBC(ret, second);
+    guard.connected = true;
+
+    // Then Login is successful and simple query can be executed
+    verify_simple_query_execution(second);
+
+    ret = SQLDisconnect(second.getHandle());
+    REQUIRE_ODBC(ret, second);
+    guard.connected = false;
+  }
 }

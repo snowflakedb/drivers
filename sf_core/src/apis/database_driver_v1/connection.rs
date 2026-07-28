@@ -249,6 +249,7 @@ impl DatabaseDriverV1 {
                 query_input.clone(),
                 &retry_policy,
                 QueryExecutionMode::Blocking,
+                None,
             )
             .await
             {
@@ -379,13 +380,14 @@ impl DatabaseDriverV1 {
                     crate::config::retry::TimeoutConfig::from_params(&conn.connection_seed)
                 };
 
-                let http_client = crate::tls::create_tls_client_with_proxy_and_timeouts(
-                    config.tls.clone(),
-                    Some(&config.proxy),
-                    self.crl_worker.clone(),
-                    timeout_config.connect_timeout,
-                )
-                .context(TlsClientCreationSnafu)?;
+                let (http_client, diag_rustls) =
+                    crate::tls::client::build_tls_client_and_rustls_config(
+                        &config.tls,
+                        Some(&config.proxy),
+                        self.crl_worker.clone(),
+                        timeout_config.connect_timeout,
+                    )
+                    .context(TlsClientCreationSnafu)?;
                 let login_parameters = LoginParameters::from_connection_config(
                     &config,
                     client_info,
@@ -416,8 +418,18 @@ impl DatabaseDriverV1 {
                 let mut diag_runner = if let Some(diag_cfg) = effective_diag {
                     let account = config.server.account.clone();
                     let host_str = host.clone().unwrap_or_default();
+                    let diag_cfg = config.diagnostic.clone();
+                    let diag_proxy = config.proxy.clone();
+                    let diag_client_info = login_parameters.client_info.clone();
                     tokio::task::spawn_blocking(move || {
-                        let mut runner = DiagnosticRunner::new(&account, &host_str, diag_cfg);
+                        let mut runner = DiagnosticRunner::new(
+                            &account,
+                            &host_str,
+                            diag_cfg,
+                            diag_rustls,
+                            diag_proxy,
+                            &diag_client_info,
+                        );
                         runner.run_pre_connect();
                         runner
                     })

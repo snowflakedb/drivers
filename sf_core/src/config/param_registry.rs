@@ -1867,7 +1867,12 @@ static PARAM_DEFS: &[ParamDef] = &[
         value_type: ValueType::Bool,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::Bool(false)),
+        // No registry default: the consumer uses `.unwrap_or(false)`.  Omitting
+        // the default keeps the Python dataclass field at `None` so that a
+        // TOML profile setting `enable_connection_diag = true` is not silently
+        // overridden by a Python-side `False` default passed as an explicit
+        // Layer-1 option.
+        default: None,
         sensitive: false,
         description: "Run connectivity diagnostics during connect and write a report",
         deprecated_by: None,

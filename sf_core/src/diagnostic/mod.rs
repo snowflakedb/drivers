@@ -10,26 +10,45 @@
 //! - Actual connected peer IP (not just DNS, mirrors `conn.RemoteAddr()`)
 //! - PrivateLink: flag when a `.privatelink.` host resolves to a public IP
 //! - TLS certificate chain: serial, subject, issuer, validity, crt.sh link
-//! - CRL Distribution Points: download and parse each CRL
+//! - CRL Distribution Points: download and parse each CRL, deduped per run
+//! - All allowlist entry types (not just STAGE), dispatching on port
+//! - Proxy inheritance: proxy honored on all ports when configured (CONNECT
+//!   tunnel for 443/other, absolute-form GET for 80)
+//! - HTTP status: integer set {200, 301, 302, 307, 308, 400, 403}
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read as _, Write as _};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
+use rustls::{ClientConnection, StreamOwned};
 use tracing::warn;
-use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::*;
 
 use crate::config::connection_config::DiagnosticConfig;
+use crate::config::rest_parameters::ClientInfo;
 use crate::log_foreign_error;
+use crate::tls::config::ProxyConfig;
 
 const REPORT_FILENAME: &str = "SnowflakeConnectionTestReport.txt";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// HTTP status codes that indicate successful connectivity (mirrors gosnowflake).
+///
+/// 200 = success, 400 = GCS/Azure bare GET, 403 = S3 bare GET.
+/// 3xx redirects would be followed by Go's http.Client; with raw TCP we treat
+/// them as connectivity proof instead of following them.
+///
+/// Behavior change vs. the prior `["200", "301", "cloudfront"]` substring match:
+/// this is now a strict status-code set, so e.g. a `404` (even from a
+/// CloudFront-fronted endpoint that previously matched on the `cloudfront`
+/// substring) is reported as a failure. Empty / unparseable responses still
+/// count as connectivity success (see `do_http_check`).
+const ACCEPTABLE_HTTP_STATUS: &[u16] = &[200, 301, 302, 307, 308, 400, 403];
 
 // ---------------------------------------------------------------------------
 // Runner
@@ -44,13 +63,36 @@ pub struct DiagnosticRunner {
     allowlist_retrieval_success: bool,
     /// Resolved log directory (after path validation / fallback).
     log_dir: PathBuf,
+    /// rustls config built from the connection's TlsConfig (same root store,
+    /// CRL verifier, and TLS version window as the main connection).
+    tls_client_config: Arc<rustls::ClientConfig>,
+    /// Proxy settings from the main connection (used for CONNECT tunneling on
+    /// port-443/other probes and absolute-form GET on port-80 probes).
+    proxy_config: ProxyConfig,
+    /// CRL URLs already fetched *successfully* this run — prevents re-fetching
+    /// the same CRL from multiple certs in the same chain.  Failed fetches are
+    /// not recorded, so they are retried per cert.  Scoped per run (not global)
+    /// to avoid the gosnowflake process-global staleness bug.
+    tested_crls: HashSet<String>,
+    /// Allowlist entry types seen, in first-appearance order.  Used to emit
+    /// all entry-type sections in the report rather than STAGE only.
+    allowlist_sections: Vec<String>,
+    /// Seen-set for O(1) dedup in `run_post_connect`.  Mirrors `allowlist_sections`.
+    allowlist_sections_seen: HashSet<String>,
 }
 
 impl DiagnosticRunner {
     /// Create the runner.  Performs the initial SNOWFLAKE_URL probe (DNS +
     /// TLS cert inspection), resolves and validates both the log path and the
     /// allowlist path, and emits path-validation warnings via `tracing::warn!`.
-    pub fn new(account: &str, host: &str, config: DiagnosticConfig) -> Self {
+    pub fn new(
+        account: &str,
+        host: &str,
+        config: DiagnosticConfig,
+        tls_client_config: Arc<rustls::ClientConfig>,
+        proxy_config: ProxyConfig,
+        client_info: &ClientInfo,
+    ) -> Self {
         let DiagnosticConfig::Enabled {
             log_path,
             allowlist_path,
@@ -59,7 +101,7 @@ impl DiagnosticRunner {
             unreachable!("DiagnosticRunner::new called with DiagnosticConfig::Disabled");
         };
 
-        let sections = ["INITIAL", "PROXY", "SNOWFLAKE_URL", "STAGE", "IGNORE"];
+        let sections = ["INITIAL", "PROXY", "SNOWFLAKE_URL"];
         let mut results: HashMap<String, Vec<String>> = sections
             .iter()
             .map(|s| (s.to_string(), Vec::new()))
@@ -77,8 +119,23 @@ impl DiagnosticRunner {
             &format!("Host based on specified account: {host}"),
         );
 
+        for line in collect_environment_info(client_info) {
+            append(&mut results, "INITIAL", &line);
+        }
+
         // Probe the main Snowflake host (DNS + peer IP + TLS cert inspection).
-        probe_host(host, 443, "SNOWFLAKE_URL", &mut results);
+        // Initialize tested_crls here so CRL URLs seen in the Snowflake host cert
+        // chain are remembered and not re-fetched for post-connect allowlist entries.
+        let mut tested_crls: HashSet<String> = HashSet::new();
+        probe_host(
+            host,
+            443,
+            "SNOWFLAKE_URL",
+            &mut results,
+            &tls_client_config,
+            &proxy_config,
+            &mut tested_crls,
+        );
 
         // ---- Resolve log directory -----------------------------------------
         let tmpdir: PathBuf = std::env::temp_dir();
@@ -127,6 +184,11 @@ impl DiagnosticRunner {
             results,
             allowlist_retrieval_success: false,
             log_dir,
+            tls_client_config,
+            proxy_config,
+            tested_crls,
+            allowlist_sections: Vec::new(),
+            allowlist_sections_seen: HashSet::new(),
         }
     }
 
@@ -144,17 +206,44 @@ impl DiagnosticRunner {
     /// `allowlist_json` is the raw `system$allowlist()` response from an
     /// already-established session.  Pass `None` when the connection failed
     /// (the file-path branch is tried automatically from `config.allowlist_path`).
+    ///
+    /// All entry types are probed (not just STAGE), dispatching on port exactly
+    /// as gosnowflake does.
     pub fn run_post_connect(&mut self, allowlist_json: Option<String>) {
         let entries = self.load_allowlist(allowlist_json);
         if let Some(entries) = entries {
             self.allowlist_retrieval_success = true;
+            // Clone what we need to avoid simultaneous mutable + immutable borrows
+            // on different fields of `self` across the loop.
+            let tls_config = Arc::clone(&self.tls_client_config);
+            let proxy_config = self.proxy_config.clone();
             for entry in entries {
-                let host_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let host = entry.get("host").and_then(|v| v.as_str()).unwrap_or("");
+                let host_type = entry
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("UNKNOWN")
+                    .to_string();
+                let host = entry
+                    .get("host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let port: u16 = entry.get("port").and_then(|v| v.as_u64()).unwrap_or(443) as u16;
-                if host_type == "STAGE" {
-                    probe_host(host, port, "STAGE", &mut self.results);
+
+                // Track section order for the report (seen-set gives O(1) dedup).
+                if self.allowlist_sections_seen.insert(host_type.clone()) {
+                    self.allowlist_sections.push(host_type.clone());
                 }
+
+                probe_host(
+                    &host,
+                    port,
+                    &host_type,
+                    &mut self.results,
+                    &tls_config,
+                    &proxy_config,
+                    &mut self.tested_crls,
+                );
             }
         }
     }
@@ -266,12 +355,19 @@ impl DiagnosticRunner {
         );
 
         if self.allowlist_retrieval_success {
-            let stage = join_section(&self.results, "STAGE");
-            msg.push_str(&format!(
+            // Keep existing section title so tests that assert on the exact string pass.
+            msg.push_str(
                 "\n=========Snowflake Stage information===================================\n\
-                 We retrieved stage info from the allowlist\n\
-                 {stage}\n"
-            ));
+                 We retrieved stage info from the allowlist\n",
+            );
+            // Emit results for every entry type in first-appearance order.
+            for section in &self.allowlist_sections {
+                let content = join_section(&self.results, section);
+                if !content.is_empty() {
+                    msg.push_str(&content);
+                    msg.push('\n');
+                }
+            }
         } else {
             msg.push_str(
                 "\n=========Snowflake Stage information - Unavailable=====================\n\
@@ -353,14 +449,80 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
 
 /// Probe `host:port`: DNS lookup, TCP connect (logs actual peer IP), then
 /// port-specific check:
-///   - port 443 → TLS handshake + cert inspection
-///   - port 80  → HTTP GET connectivity check
-///   - other    → TCP-only success/fail log
-fn probe_host(host: &str, port: u16, section: &str, results: &mut HashMap<String, Vec<String>>) {
+///   - port 443 → TLS handshake + cert inspection (via proxy CONNECT when configured)
+///   - port 80  → HTTP GET connectivity check with integer status validation
+///     (absolute-form request URI through the proxy when configured)
+///   - other    → reachability check (proxy CONNECT tunnel when configured, else TCP-only)
+///
+/// When an explicit proxy is configured it is honored for every port, mirroring
+/// gosnowflake copying the proxy from its transport factory: the TCP connection
+/// is made to the proxy and the target is reached via CONNECT (443/other) or an
+/// absolute-form GET (80).
+fn probe_host(
+    host: &str,
+    port: u16,
+    section: &str,
+    results: &mut HashMap<String, Vec<String>>,
+    tls_client_config: &Arc<rustls::ClientConfig>,
+    proxy_config: &ProxyConfig,
+    tested_crls: &mut HashSet<String>,
+) {
     dns_lookup(host, section, results);
 
-    let addr = format!("{host}:{port}");
-    let sock_addr = match std::net::ToSocketAddrs::to_socket_addrs(&addr.as_str()) {
+    // With an explicit proxy configured, make the TCP connection to the proxy
+    // (for any port) and reach the target through it below.
+    //
+    // Note: proxies configured via HTTP_PROXY / HTTPS_PROXY environment
+    // variables (use_proxy_env=true, no explicit host) are not honored here
+    // because raw TCP probes cannot reuse reqwest's env-var detection.  The
+    // PROXY section of the report already shows the detected env-var proxies.
+    // Extract proxy host; a present-but-empty value is misconfigured — warn and ignore.
+    let proxy_host: Option<&str> = match proxy_config.host.as_deref() {
+        Some(h) if !h.is_empty() => Some(h),
+        Some(_) => {
+            warn!("{host}:{port}: Proxy host is set but empty; ignoring proxy for this probe.");
+            None
+        }
+        None => None,
+    };
+
+    // Pre-build the Proxy-Authorization header once so both the CONNECT tunnel
+    // and the absolute-form HTTP GET path can include it without duplicating
+    // the base64 encoding.
+    let proxy_auth_header: Option<String> = if proxy_host.is_some() {
+        proxy_config
+            .user
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|user| {
+                let pass = proxy_config
+                    .password
+                    .as_ref()
+                    .map(|p| p.reveal().as_str())
+                    .unwrap_or("");
+                format!(
+                    "Proxy-Authorization: Basic {}\r\n",
+                    BASE64.encode(format!("{user}:{pass}"))
+                )
+            })
+    } else {
+        None
+    };
+    let (tcp_host, tcp_port) = if let Some(ph) = proxy_host {
+        let raw_port = proxy_config.port.unwrap_or(8080);
+        let pp = u16::try_from(raw_port).unwrap_or_else(|_| {
+            warn!(
+                "{host}:{port}: Proxy port {raw_port} is out of range; falling back to 8080 for this probe."
+            );
+            8080
+        });
+        (ph.to_string(), pp)
+    } else {
+        (host.to_string(), port)
+    };
+
+    let addr_str = format!("{tcp_host}:{tcp_port}");
+    let sock_addr = match std::net::ToSocketAddrs::to_socket_addrs(addr_str.as_str()) {
         Ok(mut a) => match a.next() {
             Some(s) => s,
             None => {
@@ -382,66 +544,169 @@ fn probe_host(host: &str, port: u16, section: &str, results: &mut HashMap<String
         }
     };
 
-    match TcpStream::connect_timeout(&sock_addr, PROBE_TIMEOUT) {
-        Ok(stream) => {
-            // Log the actual connected IP — mirrors gosnowflake's conn.RemoteAddr() logging.
-            if let Ok(peer) = stream.peer_addr() {
-                let ip = peer.ip();
-                append(
-                    results,
-                    section,
-                    &format!("{host}:{port}: Connected to IP: {ip}"),
-                );
-            }
-
-            if port == 443 {
-                inspect_tls(host, stream, section, results);
-            } else if port == 80 {
-                do_http_check(host, port, stream, section, results);
-            } else {
-                append(
-                    results,
-                    section,
-                    &format!("{host}:{port}: URL Check: Connected Successfully"),
-                );
-            }
-        }
+    let stream = match TcpStream::connect_timeout(&sock_addr, PROBE_TIMEOUT) {
+        Ok(s) => s,
         Err(e) => {
             append(
                 results,
                 section,
                 &format!("{host}:{port}: URL Check: Failed: {e}"),
             );
+            return;
+        }
+    };
+
+    // Bound every subsequent read/write: `connect_timeout` covers only the
+    // connect, so without these a stalled peer or proxy would hang this
+    // blocking probe thread indefinitely (the CONNECT tunnel and TLS handshake
+    // both read from the socket). Applied once here so all paths inherit it.
+    stream.set_read_timeout(Some(PROBE_TIMEOUT)).ok();
+    stream.set_write_timeout(Some(PROBE_TIMEOUT)).ok();
+
+    // Log the actual connected IP — mirrors gosnowflake's conn.RemoteAddr() logging.
+    // Under a proxy this is the proxy's IP, so label it to avoid confusion.
+    if let Ok(peer) = stream.peer_addr() {
+        let via = if proxy_host.is_some() {
+            " (via proxy)"
+        } else {
+            ""
+        };
+        append(
+            results,
+            section,
+            &format!("{host}:{port}: Connected to IP: {}{via}", peer.ip()),
+        );
+    }
+
+    if port == 443 {
+        // If going through a proxy, establish a CONNECT tunnel first so the TLS
+        // handshake (and cert chain) reflects the real target, not the proxy.
+        let stream = if proxy_host.is_some() {
+            match connect_proxy_tunnel(stream, host, port, proxy_auth_header.as_deref()) {
+                Ok(s) => s,
+                Err(e) => {
+                    append(
+                        results,
+                        section,
+                        &format!("{host}:{port}: URL Check: Failed: proxy CONNECT: {e}"),
+                    );
+                    return;
+                }
+            }
+        } else {
+            stream
+        };
+        inspect_tls(
+            host,
+            stream,
+            section,
+            results,
+            tls_client_config,
+            tested_crls,
+        );
+    } else if port == 80 {
+        // Plain HTTP: a proxy forwards it via an absolute-form request URI (no
+        // CONNECT needed), so pass `use_proxy` down to shape the request line.
+        do_http_check(
+            host,
+            port,
+            stream,
+            section,
+            results,
+            proxy_host.is_some(),
+            proxy_auth_header.as_deref(),
+        );
+    } else if proxy_host.is_some() {
+        // Non-HTTP(S) port through a proxy: the only way to prove reachability
+        // is a CONNECT tunnel. A 200 from the proxy means the target accepted.
+        match connect_proxy_tunnel(stream, host, port, proxy_auth_header.as_deref()) {
+            Ok(_) => append(
+                results,
+                section,
+                &format!("{host}:{port}: URL Check: Connected Successfully"),
+            ),
+            Err(e) => append(
+                results,
+                section,
+                &format!("{host}:{port}: URL Check: Failed: proxy CONNECT: {e}"),
+            ),
+        }
+    } else {
+        append(
+            results,
+            section,
+            &format!("{host}:{port}: URL Check: Connected Successfully"),
+        );
+    }
+}
+
+/// Send an HTTP/1.1 CONNECT request over `stream` to establish a tunnel to
+/// `target_host:target_port`.  Returns the same stream (now tunneled) on success.
+///
+/// `proxy_auth_header` is an optional pre-built `"Proxy-Authorization: Basic …\r\n"`
+/// line; pass `Some(...)` when the proxy requires credentials.
+fn connect_proxy_tunnel(
+    mut stream: TcpStream,
+    target_host: &str,
+    target_port: u16,
+    proxy_auth_header: Option<&str>,
+) -> Result<TcpStream, String> {
+    let auth = proxy_auth_header.unwrap_or("");
+    let req = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\n\
+         Host: {target_host}:{target_port}\r\n\
+         {auth}\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    // Read until end-of-headers marker.
+    let mut response: Vec<u8> = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                response.push(byte[0]);
+                if response.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if response.len() > 4096 {
+                    return Err("proxy CONNECT response too large".to_string());
+                }
+            }
+            Err(e) => return Err(e.to_string()),
         }
     }
+
+    let response_str = String::from_utf8_lossy(&response);
+    let status_line = response_str.lines().next().unwrap_or("");
+    let proxy_status: Option<u16> = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok());
+    if proxy_status != Some(200) {
+        return Err(format!("proxy rejected CONNECT: {status_line}"));
+    }
+
+    Ok(stream)
 }
 
 /// Perform TLS handshake over `stream` and inspect the certificate chain.
 ///
 /// Mirrors gosnowflake's `doHTTPSGetCerts`: logs serial (hex), subject,
 /// issuer, validity, crt.sh link, and CRL Distribution Points for each cert.
+/// Uses the connection's TLS config (root store, CRL verifier, version window)
+/// rather than re-building from system roots.
 fn inspect_tls(
     host: &str,
     stream: TcpStream,
     section: &str,
     results: &mut HashMap<String, Vec<String>>,
+    tls_client_config: &Arc<rustls::ClientConfig>,
+    tested_crls: &mut HashSet<String>,
 ) {
-    // Build TLS client config with system root certificates.
-    let root_store = {
-        let mut native = rustls_native_certs::load_native_certs();
-        let mut store = rustls::RootCertStore::empty();
-        // Drain any load errors silently — diagnostic should not fail.
-        native.errors.clear();
-        store.add_parsable_certificates(native.certs);
-        store
-    };
-
-    let config = Arc::new(
-        ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth(),
-    );
-
     let server_name = match ServerName::try_from(host.to_owned()) {
         Ok(n) => n,
         Err(e) => {
@@ -454,7 +719,7 @@ fn inspect_tls(
         }
     };
 
-    let conn = match ClientConnection::new(config, server_name) {
+    let conn = match ClientConnection::new(Arc::clone(tls_client_config), server_name) {
         Ok(c) => c,
         Err(e) => {
             append(
@@ -485,6 +750,24 @@ fn inspect_tls(
         &format!("{host}:443: URL Check: Connected Successfully"),
     );
 
+    // Negotiated TLS protocol version and cipher suite — available after the
+    // handshake completes. This exceeds old-driver coverage (gosnowflake and
+    // Python diagnostic do not log these fields).
+    if let Some(proto) = tls.conn.protocol_version() {
+        append(
+            results,
+            section,
+            &format!("{host}:443: TLS: negotiated protocol: {proto:?}"),
+        );
+    }
+    if let Some(suite) = tls.conn.negotiated_cipher_suite() {
+        append(
+            results,
+            section,
+            &format!("{host}:443: TLS: negotiated cipher suite: {suite:?}"),
+        );
+    }
+
     // Collect peer certificate DER bytes before consuming the stream.
     let cert_ders: Vec<Vec<u8>> = tls
         .conn
@@ -513,40 +796,9 @@ fn inspect_tls(
                     ),
                 );
 
-                // CRL Distribution Points — download and parse each.
-                let crl_urls: Vec<String> = cert
-                    .extensions()
-                    .iter()
-                    .filter_map(|ext| {
-                        if let ParsedExtension::CRLDistributionPoints(points) =
-                            ext.parsed_extension()
-                        {
-                            Some(points.points.iter())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-                    .filter_map(|point| point.distribution_point.as_ref())
-                    .filter_map(|name| {
-                        if let x509_parser::extensions::DistributionPointName::FullName(names) =
-                            name
-                        {
-                            Some(names.iter())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-                    .filter_map(|gn| {
-                        if let GeneralName::URI(uri) = gn {
-                            Some(uri.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
-                    .collect();
+                // CRL Distribution Points — download and parse each, with dedup.
+                let crl_urls =
+                    crate::crl::extract_crl_distribution_points(cert_der).unwrap_or_default();
 
                 if crl_urls.is_empty() {
                     append(
@@ -561,7 +813,7 @@ fn inspect_tls(
                             section,
                             &format!("{host}: Certificate {cert_num}: CRL DP: {crl_url}"),
                         );
-                        fetch_and_parse_crl(crl_url, host, cert_num, section, results);
+                        fetch_and_parse_crl(crl_url, host, cert_num, section, results, tested_crls);
                     }
                 }
             }
@@ -577,14 +829,27 @@ fn inspect_tls(
 }
 
 /// Fetch a CRL over HTTP (plain TCP, not TLS) and log its metadata.
-/// Mirrors gosnowflake's `fetchCRL`.
+///
+/// Deduplicates by URL: once a CRL has been fetched *successfully* this run its
+/// URL is recorded in `tested_crls` and later certs sharing the same DP skip the
+/// redundant fetch.  Failed fetches are not recorded, so a transient failure is
+/// retried by the next cert.  Scoped per run rather than process-globally to
+/// avoid stale cached results across runs.
 fn fetch_and_parse_crl(
     url: &str,
     host: &str,
     cert_num: usize,
     section: &str,
     results: &mut HashMap<String, Vec<String>>,
+    tested_crls: &mut HashSet<String>,
 ) {
+    if tested_crls.contains(url) {
+        tracing::debug!(
+            "{host}: Certificate {cert_num}: CRL {url}: already checked this run, skipping"
+        );
+        return;
+    }
+
     // Only handle plain HTTP CRL DPs (HTTPS CRL DPs are rare).
     if !url.starts_with("http://") {
         append(
@@ -633,6 +898,9 @@ fn fetch_and_parse_crl(
                              nextUpdate={next_update}, revokedCount={revoked}"
                         ),
                     );
+                    // Record after successful fetch so a later cert in the same chain
+                    // with the same DP skips the redundant fetch.
+                    tested_crls.insert(url.to_string());
                 }
             }
         }
@@ -688,7 +956,7 @@ fn http_get_binary(url: &str) -> Result<Vec<u8>, String> {
         .map(|p| p + 4)
         .ok_or_else(|| "no HTTP header separator in response".to_string())?;
 
-    // Check for HTTP 200.
+    // Require HTTP 200 for CRL responses (mirrors gosnowflake's fetchCRL).
     let header = String::from_utf8_lossy(&response[..body_start]);
     let status_line = header.lines().next().unwrap_or("");
     if !status_line.contains("200") {
@@ -699,40 +967,92 @@ fn http_get_binary(url: &str) -> Result<Vec<u8>, String> {
 }
 
 /// HTTP GET connectivity check over an already-established TCP stream (port 80).
+///
+/// Rewrites the path to `/ocsp_response_cache.json` for OCSP cache hosts
+/// (mirrors gosnowflake's hostname-prefix check).  Accepts integer status codes
+/// in `ACCEPTABLE_HTTP_STATUS` rather than fragile string-pattern matching.
+///
+/// When `via_proxy` is set the stream is connected to the proxy (not the
+/// target), so the request uses an absolute-form request URI that the proxy
+/// forwards to the target.  The caller is responsible for setting read/write
+/// timeouts on `stream`.
 fn do_http_check(
     host: &str,
     port: u16,
     mut stream: TcpStream,
     section: &str,
     results: &mut HashMap<String, Vec<String>>,
+    via_proxy: bool,
+    proxy_auth_header: Option<&str>,
 ) {
-    let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
-    if stream.write_all(request.as_bytes()).is_ok() {
-        let mut buf = [0u8; 4096];
-        let response = match stream.read(&mut buf) {
-            Ok(n) => String::from_utf8_lossy(&buf[..n]).to_string(),
-            Err(_) => String::new(),
-        };
-        let ok_patterns = ["200", "301", "cloudfront"];
-        if ok_patterns.iter().any(|p| response.contains(p)) || response.is_empty() {
-            append(
-                results,
-                section,
-                &format!("{host}:{port}: URL Check: Connected Successfully"),
-            );
-        } else {
-            append(
-                results,
-                section,
-                &format!("{host}:{port}: URL Check: Failed: {response}"),
-            );
-        }
+    // OCSP cache hosts serve the cache file at a specific path.
+    let path = if host.starts_with("ocsp.snowflakecomputing.") {
+        "/ocsp_response_cache.json"
     } else {
+        "/"
+    };
+
+    // Origin-form (`/path`) for a direct connection; absolute-form
+    // (`http://host:port/path`) so an HTTP proxy forwards to the target.
+    let request_target = if via_proxy {
+        format!("http://{host}:{port}{path}")
+    } else {
+        path.to_string()
+    };
+
+    let auth = if via_proxy {
+        proxy_auth_header.unwrap_or("")
+    } else {
+        ""
+    };
+    let request =
+        format!("GET {request_target} HTTP/1.1\r\nHost: {host}\r\n{auth}Connection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        // TCP connected but the write failed (e.g. immediate RST from the
+        // server-side socket). Count as connectivity proven at the TCP layer.
         append(
             results,
             section,
             &format!("{host}:{port}: URL Check: Connected Successfully"),
         );
+        return;
+    }
+
+    let mut buf = [0u8; 512];
+    let n = stream.read(&mut buf).unwrap_or(0);
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    // Extract the integer status code from the response line.
+    let status: Option<u16> = response
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|s| s.parse().ok());
+
+    match status {
+        Some(code) if ACCEPTABLE_HTTP_STATUS.contains(&code) => {
+            append(
+                results,
+                section,
+                &format!("{host}:{port}: URL Check: Connected Successfully"),
+            );
+        }
+        Some(code) => {
+            append(
+                results,
+                section,
+                &format!("{host}:{port}: URL Check: Failed: HTTP {code}"),
+            );
+        }
+        None => {
+            // No parseable status (empty response or non-HTTP).  TCP connection
+            // succeeded so treat as connectivity success.
+            append(
+                results,
+                section,
+                &format!("{host}:{port}: URL Check: Connected Successfully"),
+            );
+        }
     }
 }
 
@@ -767,6 +1087,66 @@ fn parse_allowlist(
             None
         }
     }
+}
+
+/// Collect environment and driver metadata for the INITIAL report section
+/// from the already-built [`ClientInfo`].
+///
+/// `ClientInfo` carries the same fields that the old drivers send as
+/// `CLIENT_ENVIRONMENT` in every login request, so we reuse that struct
+/// rather than re-detecting the same information a second time.
+fn collect_environment_info(info: &ClientInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    lines.push(format!("sf_core version: {}", env!("CARGO_PKG_VERSION")));
+    lines.push(format!("Driver: {}", info.client_app_id));
+    lines.push(format!("Driver version: {}", info.version));
+    lines.push(format!("Application: {}", info.application));
+    lines.push(format!("OS: {}", info.os));
+    lines.push(format!("Architecture: {}", std::env::consts::ARCH));
+    lines.push(format!("OS version: {}", info.os_version));
+
+    if let Some(details) = &info.os_details
+        && !details.is_empty()
+    {
+        let mut pairs: Vec<_> = details.iter().collect();
+        pairs.sort_by_key(|(k, _)| k.as_str());
+        let s = pairs
+            .into_iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("OS details: {s}"));
+    }
+
+    if let Some(mode) = &info.ocsp_mode {
+        lines.push(format!("OCSP mode: {mode}"));
+    }
+
+    let mode_str = match info.crl_config.check_mode {
+        crate::crl::config::CertRevocationCheckMode::Disabled => "DISABLED",
+        crate::crl::config::CertRevocationCheckMode::Enabled => "ENABLED",
+        crate::crl::config::CertRevocationCheckMode::Advisory => "ADVISORY",
+    };
+    lines.push(format!("Cert revocation check mode: {mode_str}"));
+
+    if info.platforms.is_empty() {
+        lines.push("Detected platforms: (none)".to_string());
+    } else {
+        lines.push(format!("Detected platforms: {}", info.platforms.join(", ")));
+    }
+
+    if let Some(name) = &info.runtime_name {
+        lines.push(format!("Runtime: {name}"));
+    }
+    if let Some(ver) = &info.runtime_version {
+        lines.push(format!("Runtime version: {ver}"));
+    }
+    if let Some(compiler) = &info.compiler {
+        lines.push(format!("Compiler: {compiler}"));
+    }
+
+    lines
 }
 
 /// Collect proxy settings from environment variables as a Python-style dict
