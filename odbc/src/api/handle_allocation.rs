@@ -88,6 +88,7 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
         .get(env_id)?;
     let dbc = Dbc {
         env_id,
+        telemetry_connection_cache: arc_swap::ArcSwapOption::empty(),
         connection: Mutex::new(Connection {
             state: ConnectionState::Disconnected,
             diagnostic_info: DiagnosticInfo::default(),

@@ -14,3 +14,7 @@ New features:
 - Implemented `SQLForeignKeys` and `SQLForeignKeysW` catalog functions using `SHOW IMPORTED KEYS` / `SHOW EXPORTED KEYS`. (snowflakedb/universal-driver#456)
 - Implemented `SQLProcedures` and `SQLProceduresW` catalog functions using `information_schema.procedures`. (snowflakedb/universal-driver#534)
 - Implemented `SQLProcedureColumns` and `SQLProcedureColumnsW` catalog functions using `information_schema.procedures`, parsing the argument signature and return type into per-column metadata. (snowflakedb/universal-driver#535)
+
+Bug fixes:
+
+- Fixed a priority inversion where API-usage telemetry could block on the connection mutex for the full duration of a synchronous query; the connection handle is now read from a lock-free, best-effort atomic telemetry cache so telemetry (and cross-thread `SQLCancel`) never waits on an in-flight query. (snowflakedb/universal-driver#631)

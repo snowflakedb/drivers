@@ -573,10 +573,15 @@ fn connect_with_params(
 
     tracing::info!("connect_with_params: connection_init completed");
 
-    dbc.connection.lock().state = ConnectionState::Connected {
-        db_handle,
-        conn_handle,
-    };
+    // Set `state` and the lock-free telemetry cache together within one
+    // critical section so they stay ordered with each other. The cache lets
+    // telemetry resolve the session without ever locking `connection` (which a
+    // synchronous query holds for its full duration). `mark_connected` is the
+    // single writer that keeps the two in sync.
+    {
+        let mut c = dbc.connection.lock();
+        dbc.mark_connected(&mut c, db_handle, conn_handle);
+    }
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
     // already established (state = Connected). Use warn-and-continue rather than `?`
@@ -883,7 +888,19 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
         Ok::<_, crate::api::OdbcError>(())
     })?;
 
-    connection.state = ConnectionState::Disconnected;
+    // Clear the telemetry cache post-teardown (after the `block_on` succeeds).
+    // This runs under the `connection` guard acquired at the top of this
+    // function, so `state` and the cache flip together under the lock — the same
+    // lock-consistency the connect path gets from its scoped critical section.
+    // The clear is deliberately deferred to here rather than done at disconnect
+    // entry: `state` stays `Connected` and the cache stays `Some` across the
+    // teardown, so the `?`-returns above leave both set, upholding "cache is
+    // `Some` iff `Connected`". A telemetry read racing the teardown may still
+    // resolve the handle being released — acceptable, since disconnect is
+    // single-threaded under normal ODBC use and telemetry is best-effort (core
+    // drops events for released handles). `mark_disconnected` clears `state` and
+    // the cache together, upholding "cache is `Some` iff `Connected`".
+    dbc.mark_disconnected(&mut connection);
     Ok(())
 }
 
