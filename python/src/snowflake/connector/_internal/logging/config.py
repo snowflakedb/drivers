@@ -129,14 +129,6 @@ class LoggingConfiguration:
             cls._instance = cls(troubleshooting_enabled=troubleshooting_enabled)
         return cls._instance
 
-    @classmethod
-    def get(cls) -> LoggingConfiguration:
-        """Return the initialized instance."""
-        if cls._instance is None:
-            msg = "logging is not initialized; sf_core_init has not run yet"
-            raise RuntimeError(msg)
-        return cls._instance
-
     def is_troubleshooting_enabled(self) -> bool:
         """Return whether wrapper logs should bypass the ``CoreLogger`` pre-filter."""
         return self._troubleshooting_enabled

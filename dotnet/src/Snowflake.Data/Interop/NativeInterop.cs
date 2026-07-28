@@ -20,8 +20,8 @@ internal sealed unsafe class NativeInterop : INativeInterop
         NativeLibraryLoader.Register();
         var result = NativeMethods.sf_core_init(&LogCallback);
 
-        if (result != 0)
-            throw new InvalidOperationException($"sf_core_init failed with code {result}. Check stderr for details.");
+        if (result.Status != 0)
+            throw new InvalidOperationException($"sf_core_init failed with code {result.Status}. Check stderr for details.");
     }
 
     public nuint CallProto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen) => NativeMethods.sf_core_api_call_proto(api, method, request, requestLen, response, responseLen);
