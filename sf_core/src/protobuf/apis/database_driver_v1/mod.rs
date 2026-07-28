@@ -792,6 +792,29 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementReleaseResponse {})
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_cancel", skip(self, input))]
+    async fn statement_cancel(
+        &self,
+        input: StatementCancelRequest,
+    ) -> Result<StatementCancelResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+
+        // Mirrors connection_abort_query: ABORTED means the abort was accepted
+        // (processed), not that the query stopped — the executing thread
+        // observes the actual cancellation via its canceled query-response.
+        // Genuine failures (invalid handle, transport, cancel timeout) surface
+        // as an RPC error.
+        let outcome = self
+            .driver
+            .statement_cancel(stmt_handle.into())
+            .await
+            .to_protobuf()?;
+
+        Ok(StatementCancelResponse {
+            outcome: AbortQueryOutcome::from(outcome) as i32,
+        })
+    }
+
     #[instrument(name = "DatabaseDriverV1::statement_set_sql_query", skip(self, input))]
     async fn statement_set_sql_query(
         &self,
@@ -1218,6 +1241,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementReleaseRequest,
     ) -> BlockingProtoResult<StatementReleaseResponse>;
+    fn statement_cancel_blocking(
+        &self,
+        input: StatementCancelRequest,
+    ) -> BlockingProtoResult<StatementCancelResponse>;
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
@@ -1373,6 +1400,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementReleaseRequest,
     ) -> BlockingProtoResult<StatementReleaseResponse> {
         block_on_client_call(self.statement_release(input))
+    }
+
+    fn statement_cancel_blocking(
+        &self,
+        input: StatementCancelRequest,
+    ) -> BlockingProtoResult<StatementCancelResponse> {
+        block_on_client_call(self.statement_cancel(input))
     }
 
     fn database_fetch_chunk_blocking(

@@ -1654,6 +1654,85 @@ pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
 pub struct Dbc {
     pub connection: Mutex<Connection>,
     pub env_id: HandleId,
+    /// Lock-free, best-effort mirror of `ConnectionState::Connected.conn_handle`,
+    /// read by telemetry so it never has to lock `connection` (which a
+    /// synchronous query holds for its full duration — see
+    /// `connected_conn_handle`). Written only at the connect/disconnect
+    /// transitions.
+    ///
+    /// TELEMETRY-ONLY: no consumer other than telemetry may read this. It is not
+    /// authoritative — `ConnectionState` is. A reader racing a connect/disconnect
+    /// may observe a stale value; that is acceptable because the core telemetry
+    /// boundary drops events for handles it cannot resolve, so a stale read at
+    /// worst drops a single best-effort event.
+    ///
+    /// Kept `pub(crate)` and written only through [`Dbc::mark_connected`] /
+    /// [`Dbc::mark_disconnected`] so the "cache is `Some` iff `Connected`"
+    /// invariant is enforced by construction rather than by convention at each
+    /// call site.
+    pub(crate) telemetry_connection_cache: arc_swap::ArcSwapOption<TConnectionHandle>,
+}
+
+impl Dbc {
+    /// Transition the connection to `Connected`, updating both the authoritative
+    /// [`ConnectionState`] and the best-effort telemetry cache under the caller's
+    /// held `connection` guard.
+    ///
+    /// This is the single writer that pairs the two, which is what upholds the
+    /// "telemetry cache is `Some` iff `Connected`" invariant: every
+    /// state transition must go through this method (or [`Dbc::mark_disconnected`])
+    /// rather than assigning `state` or storing into the cache directly, so a new
+    /// transition path cannot silently desync the two.
+    pub(crate) fn mark_connected(
+        &self,
+        connection: &mut Connection,
+        db_handle: TDatabaseHandle,
+        conn_handle: TConnectionHandle,
+    ) {
+        connection.state = ConnectionState::Connected {
+            db_handle,
+            conn_handle,
+        };
+        self.telemetry_connection_cache
+            .store(Some(std::sync::Arc::new(conn_handle)));
+    }
+
+    /// Transition the connection to `Disconnected`, clearing both the
+    /// [`ConnectionState`] and the telemetry cache under the caller's held
+    /// `connection` guard. See [`Dbc::mark_connected`] for the invariant.
+    pub(crate) fn mark_disconnected(&self, connection: &mut Connection) {
+        connection.state = ConnectionState::Disconnected;
+        self.telemetry_connection_cache.store(None);
+    }
+}
+
+#[cfg(test)]
+impl Dbc {
+    /// Build a `Disconnected` `Dbc` with an empty telemetry cache for unit tests
+    /// that exercise the cache/state transition helpers without ODBC globals.
+    pub(crate) fn new_disconnected_for_test() -> Self {
+        Dbc {
+            env_id: HandleId::from(std::ptr::null_mut::<sql::Obj>()),
+            telemetry_connection_cache: arc_swap::ArcSwapOption::empty(),
+            connection: Mutex::new(Connection {
+                state: ConnectionState::Disconnected,
+                diagnostic_info: DiagnosticInfo::default(),
+                pre_connection_attrs: Default::default(),
+                numeric_settings: Default::default(),
+                access_mode: AccessMode::ReadWrite,
+                quiet_mode: std::ptr::null_mut(),
+                packet_size: 0,
+                child_statements: vec![],
+                child_descriptors: vec![],
+                cached_autocommit: AutocommitValue::On,
+                open_transaction: false,
+                current_catalog: None,
+                metadata_id: false,
+                driver_section: None,
+                dsn_name: None,
+            }),
+        }
+    }
 }
 
 pub struct Connection {
@@ -1682,6 +1761,14 @@ pub struct Connection {
     /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
     /// when the server session parameter is unavailable.
     pub cached_autocommit: AutocommitValue,
+    /// Whether an ODBC-managed (manual-commit) transaction is currently open on
+    /// this connection. Set when a statement executes while autocommit is OFF;
+    /// cleared by `SQLEndTran` (commit/rollback), by switching autocommit ON, and
+    /// on a fresh connect (`connect_with_params`) to guard against a stale flag
+    /// left on a reused handle. Read by `SQLDisconnect` to return SQLSTATE 25000
+    /// per the ODBC spec when a transaction is still in process. Guarded by the
+    /// enclosing `Connection` mutex (no atomics needed).
+    pub open_transaction: bool,
     /// Cached SQL_ATTR_CURRENT_CATALOG value. Populated after connect and updated
     /// after each successful USE DATABASE (SET). SQLGetConnectAttr always refreshes
     /// this from the server per spec; the field is used to track the catalog for

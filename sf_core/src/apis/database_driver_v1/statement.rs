@@ -5,6 +5,9 @@ use tracing::Instrument;
 use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
+use super::inflight::{
+    InflightGuard, InflightQuery, InflightSlot, set_inflight, take_and_mark_cancelling,
+};
 use super::multistatement;
 use super::query::{StageInfoRefreshContext, perform_put_get_transfer};
 use super::result_set::{
@@ -22,7 +25,7 @@ use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
     AbortOutcome, QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
-    snowflake_query_with_client,
+    snowflake_cancel_query, snowflake_query_with_client,
 };
 
 use crate::config::rest_parameters::QueryParameters;
@@ -34,6 +37,12 @@ use arrow::array::RecordBatchReader;
 use serde_json::value::RawValue;
 use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
+
+/// Upper bound on how long `statement_cancel` waits for the abort-request to be
+/// processed before giving up. The cancel is best-effort — the executing thread
+/// observes the actual cancellation — so a generous-but-finite bound is enough
+/// to keep the cancel thread from stalling on a slow/hung server.
+const STATEMENT_CANCEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Pointer to raw bytes in memory - used by query bindings
 #[derive(Debug)]
@@ -324,6 +333,34 @@ impl DatabaseDriverV1 {
             build_query_parameters_with_timeout(&stmt.settings, timeout_seconds);
 
         let conn_arc = stmt.conn.clone();
+
+        // Mint the requestId now (while the statement is locked) and publish
+        // {request_id, sql_text} into the in-flight slot BEFORE the
+        // query-request is sent, so a concurrent statement_cancel (from another
+        // thread) can find it and abort the running query by requestId.
+        //
+        // The residual window between here and the server registering the
+        // request_id is unavoidable: cancellation is keyed on request_id, and
+        // there is nothing to abort until the query-request has been submitted
+        // and registered server-side. A cancel landing in that window is a
+        // best-effort no-op (there is no registered request_id to abort yet;
+        // the app re-polls / re-issues). Do NOT try to close it by holding
+        // a lock across the network send — that reintroduces the self-deadlock
+        // between execute and cancel on the statement mutex.
+        let request_id = uuid::Uuid::new_v4();
+        let inflight = stmt.inflight.clone();
+        set_inflight(
+            &inflight,
+            InflightQuery {
+                request_id: request_id.to_string(),
+                sql_text: query.clone(),
+                cancelling: false,
+            },
+        );
+        // RAII: clears the slot on every exit — success, early `?` error, and
+        // future-drop (the local-token cancel drops this future mid-await).
+        let _inflight_guard = InflightGuard(inflight);
+
         drop(stmt);
 
         let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
@@ -372,6 +409,7 @@ impl DatabaseDriverV1 {
                     query_input.clone(),
                     &retry_policy,
                     execution_mode,
+                    Some(request_id),
                 );
                 let result = if let Some((budget, deadline)) = query_deadline {
                     match tokio::time::timeout_at(deadline, query_call).await {
@@ -661,6 +699,105 @@ impl DatabaseDriverV1 {
         ))
         .await
     }
+
+    /// Cancel the query currently in flight on a statement by its
+    /// client-generated `requestId` (the cross-thread `SQLCancel` path).
+    ///
+    /// Reads the statement's in-flight slot (populated by
+    /// `execute_query_internal` before the query-request is sent) and, if a
+    /// query is running, issues `POST /queries/v1/abort-request` with
+    /// `{sqlText, requestId}`. Idempotent and best-effort. Mirrors
+    /// [`connection_abort_query`](Self::connection_abort_query): returns
+    /// [`AbortOutcome`] for the two expected outcomes and reserves `Err` for
+    /// genuine failures.
+    ///
+    /// - No query in flight (slot empty) or a cancel already initiated
+    ///   (`cancelling` set) → `Ok(AbortOutcome::NotRunning)`, no server call.
+    ///   This "nothing to cancel" no-op prevents a double abort when two
+    ///   cancels race.
+    /// - Server acknowledges the abort (`success: true`) →
+    ///   `Ok(AbortOutcome::Aborted)`. This means the request was *processed*,
+    ///   NOT a guarantee the query stopped — whether it actually stopped is
+    ///   observed on the executing thread (it returns the canceled
+    ///   query-response), not here.
+    /// - Server declines because the query was not running →
+    ///   `Ok(AbortOutcome::NotRunning)`.
+    /// - The abort POST is bounded by a timeout so a slow/hung server can't
+    ///   stall the calling (cancel) thread → `Err(CancelTimeout)`;
+    ///   session-expired is transparently renewed-and-retried by
+    ///   `with_valid_session`.
+    pub async fn statement_cancel(&self, stmt_handle: Handle) -> Result<AbortOutcome, ApiError> {
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
+        async {
+            let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                }
+                .build()
+            })?;
+
+            // Briefly lock the statement only to clone the independently-lockable
+            // in-flight slot and the connection Arc, then release it — we never
+            // hold the statement mutex across the abort POST.
+            let (inflight, conn_arc) = {
+                let stmt = stmt_ptr.lock().await;
+                (stmt.inflight.clone(), stmt.conn.clone())
+            };
+
+            // Take-and-mark: read the in-flight identity and set `cancelling`
+            // under the slot lock, so a second concurrent cancel sees the flag
+            // and no-ops.
+            //
+            // By design, marking happens before the abort is attempted: if the
+            // steps below fail (e.g. `query_context` errors or the abort POST
+            // hits `CancelTimeout`), the slot stays `cancelling` and a retried
+            // cancel no-ops rather than re-issuing the abort. This is within
+            // best-effort cancel semantics (the app re-polls / re-issues) and
+            // preserves the at-most-one-abort-per-query guarantee.
+            let Some((request_id, sql_text)) = take_and_mark_cancelling(&inflight) else {
+                // Nothing to cancel: no query in flight, or a cancel is already
+                // underway.
+                return Ok(AbortOutcome::NotRunning);
+            };
+
+            let (query_parameters, http_client, _) = query_context(&conn_arc).await?;
+
+            let cancel = with_valid_session(&conn_arc, |token| {
+                let http_client = &http_client;
+                let query_parameters = &query_parameters;
+                let request_id = &request_id;
+                let sql_text = &sql_text;
+                async move {
+                    snowflake_cancel_query(
+                        http_client,
+                        query_parameters,
+                        token.reveal(),
+                        request_id,
+                        sql_text,
+                    )
+                    .await
+                }
+            });
+
+            // Bound the abort POST so a slow/hung server cannot stall the cancel
+            // thread. A cancel only requires the request to be processed, not
+            // awaited to completion.
+            tokio::time::timeout(STATEMENT_CANCEL_TIMEOUT, cancel)
+                .await
+                .unwrap_or_else(|_elapsed| {
+                    tracing::warn!(
+                        timeout_secs = STATEMENT_CANCEL_TIMEOUT.as_secs(),
+                        "statement_cancel abort-request timed out"
+                    );
+                    Err(CancelTimeoutSnafu {
+                        timeout: STATEMENT_CANCEL_TIMEOUT,
+                    }
+                    .build())
+                })
+        }
+        .instrument(crate::snowflake_op_span!("statement_cancel", session_id))
+        .await
+    }
 }
 
 /// Lock the connection and extract the transport parameters, HTTP client, and retry policy
@@ -696,6 +833,9 @@ pub struct Statement {
     pub(crate) settings: ParamStore,
     pub query: Option<String>,
     pub conn: Arc<Mutex<Connection>>,
+    /// In-flight query identity for cross-thread `statement_cancel`. See
+    /// [`InflightSlot`].
+    pub(crate) inflight: InflightSlot,
 }
 
 #[derive(Debug, Clone)]
@@ -711,6 +851,7 @@ impl Statement {
             state: StatementState::Initialized,
             query: None,
             conn,
+            inflight: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 

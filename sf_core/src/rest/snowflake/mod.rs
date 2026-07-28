@@ -59,6 +59,7 @@ use uuid::Uuid;
 
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
+const ABORT_REQUEST_PATH: &str = "/queries/v1/abort-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 
 /// Send an HTTP request with retry and return `(StatusCode, body_text)`.
@@ -385,7 +386,7 @@ async fn try_get_cached_token(
     let cache = token_cache?;
     let key = CacheKey {
         token_type,
-        idp: normalize_url(server_url),
+        idp: String::new(),
         snowflake: normalize_url(server_url),
         username: normalize_identifier(username),
         role: normalize_identifier(role),
@@ -422,7 +423,7 @@ async fn store_token_in_cache(
     };
     let key = CacheKey {
         token_type,
-        idp: normalize_url(server_url),
+        idp: String::new(),
         snowflake: normalize_url(server_url),
         username: normalize_identifier(username),
         role: normalize_identifier(role),
@@ -454,7 +455,7 @@ async fn remove_token_from_cache(
     };
     let key = CacheKey {
         token_type,
-        idp: normalize_url(server_url),
+        idp: String::new(),
         snowflake: normalize_url(server_url),
         username: normalize_identifier(username),
         role: normalize_identifier(role),
@@ -571,10 +572,11 @@ pub async fn auth_request_data(
             }
 
             let cached_id_token = if *client_store_temporary_credential {
+                // `build_cache_key` drops `role` for ID tokens; empty is intentional.
                 try_get_cached_token(
                     &login_parameters.server_url,
                     username,
-                    login_parameters.role.as_deref().unwrap_or(""),
+                    "",
                     TokenType::IdToken,
                     token_cache.clone(),
                 )
@@ -964,12 +966,14 @@ pub async fn snowflake_login_with_client(
             ) =>
             {
                 tracing::debug!(%username, "Acquiring external-browser prompt lock");
+                // ID-token keys hash only `snowflake` + `username`; `idp` and
+                // `role` are excluded by `build_cache_key`, so leave them empty.
                 let lock_key = CacheKey {
                     token_type: TokenType::IdToken,
-                    idp: normalize_url(&login_parameters.server_url),
+                    idp: String::new(),
                     snowflake: normalize_url(&login_parameters.server_url),
                     username: normalize_identifier(username),
-                    role: normalize_identifier(login_parameters.role.as_deref().unwrap_or("")),
+                    role: String::new(),
                 };
                 Some(prompt_lock::acquire(locks, &lock_key).await)
             }
@@ -986,7 +990,7 @@ pub async fn snowflake_login_with_client(
                 tracing::debug!(%username, "Acquiring MFA prompt lock");
                 let lock_key = CacheKey {
                     token_type: TokenType::MfaToken,
-                    idp: normalize_url(&login_parameters.server_url),
+                    idp: String::new(),
                     snowflake: normalize_url(&login_parameters.server_url),
                     username: normalize_identifier(username),
                     role: String::new(),
@@ -1192,14 +1196,12 @@ pub async fn snowflake_login_with_client(
                 client_store_temporary_credential: true,
                 ..
             } if login_request.data.consent_cache_id_token != Some(false) => {
-                auth_response.data.id_token.as_ref().map(|t| {
-                    (
-                        username.as_str(),
-                        login_parameters.role.as_deref().unwrap_or(""),
-                        TokenType::IdToken,
-                        t,
-                    )
-                })
+                // `build_cache_key` drops `role` for ID tokens; empty is intentional.
+                auth_response
+                    .data
+                    .id_token
+                    .as_ref()
+                    .map(|t| (username.as_str(), "", TokenType::IdToken, t))
             }
             _ => None,
         };
@@ -1543,10 +1545,19 @@ pub async fn snowflake_query<'a>(
         query_input,
         &policy,
         execution_mode,
+        None,
     )
     .await
 }
 
+/// Execute a query, optionally under a caller-supplied `requestId`.
+///
+/// `request_id: None` mints a fresh id here — the right choice for every
+/// caller that doesn't need to know it in advance. The statement execute path
+/// passes `Some(id)` so it can store `{request_id, sql_text}` on the statement
+/// *before* the query-request is sent, letting a cross-thread
+/// `statement_cancel` abort the running query by that same `requestId`.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     skip(client, query_parameters, session_token, query_input),
     fields(sql)
@@ -1558,7 +1569,9 @@ pub async fn snowflake_query_with_client<'a>(
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
+    request_id: Option<uuid::Uuid>,
 ) -> Result<query_response::Response, RestError> {
+    let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
     let session_token = session_token.as_ref();
 
     // Async mode path (legacy, opt-in)
@@ -1569,6 +1582,7 @@ pub async fn snowflake_query_with_client<'a>(
             session_token,
             query_input,
             retry_policy,
+            request_id,
         )
         .await;
     }
@@ -1580,6 +1594,7 @@ pub async fn snowflake_query_with_client<'a>(
         session_token,
         &query_input,
         retry_policy,
+        request_id,
     )
     .await
 }
@@ -1591,6 +1606,7 @@ async fn execute_async_with_fallback<'a>(
     session_token: &str,
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
+    request_id: uuid::Uuid,
 ) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
         client,
@@ -1598,6 +1614,7 @@ async fn execute_async_with_fallback<'a>(
         session_token,
         &query_input,
         retry_policy,
+        request_id,
     )
     .await
     {
@@ -1645,6 +1662,7 @@ async fn execute_async_with_fallback<'a>(
         session_token,
         &query_input,
         retry_policy,
+        request_id,
     )
     .await?;
 
@@ -1675,7 +1693,8 @@ async fn execute_async_with_fallback<'a>(
 ///
 /// Retry handling lives in [`execute_sync_query`], which wraps the actual
 /// `POST /queries/v1/query-request` call with [`execute_with_retry`]. The
-/// `requestId` is generated here once and threaded through so that every
+/// `requestId` is supplied by the caller (so the statement execute path can
+/// pre-register it for cross-thread cancel) and threaded through so that every
 /// HTTP-level replay reuses the same id; the second and subsequent attempts
 /// also carry `retry=true`, giving the server the hint it needs to dedupe
 /// against an already-running/completed query.
@@ -1685,9 +1704,8 @@ async fn execute_sync_with_retry<'a>(
     session_token: &str,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
+    request_id: uuid::Uuid,
 ) -> Result<query_response::Response, RestError> {
-    let request_id = uuid::Uuid::new_v4();
-
     execute_sync_query(
         client,
         query_parameters,
@@ -1856,8 +1874,8 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     session_token: S,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
+    request_id: uuid::Uuid,
 ) -> Result<query_response::Response, RestError> {
-    let request_id = uuid::Uuid::new_v4();
     crate::rest::snowflake::async_exec::execute_blocking_with_async(
         client,
         query_parameters,
@@ -2147,6 +2165,90 @@ pub async fn snowflake_abort_query(
     })
 }
 
+/// Cancel a running query by its client-generated `requestId` (not its
+/// server-assigned `queryId`).
+///
+/// Issues `POST /queries/v1/abort-request` with the JSON body
+/// `{ "sqlText": <sql>, "requestId": <request_id> }`. The `requestId` in the
+/// body identifies the in-flight query to abort; the `requestId` query
+/// parameter is this abort request's own id (a fresh uuid), consistent with
+/// every other Snowflake REST call.
+///
+/// The endpoint returns HTTP 200 for business-logic outcomes — the real result
+/// is in the JSON envelope. Mirrors [`snowflake_abort_query`]: returns
+/// `Ok(AbortOutcome::Aborted)` when the server acknowledges the abort
+/// (`success: true`, meaning the request was *processed*, not a guarantee the
+/// query stopped), or `Ok(AbortOutcome::NotRunning)` when it declines
+/// (`success: false` — the query was not running) — a normal outcome, not an
+/// error. Session-token expiry (`390112`) and other transport/parse failures
+/// still propagate as `Err` (`read_response_json` maps `390112` to
+/// `SessionExpired` centrally so `with_valid_session` can renew-and-retry).
+#[tracing::instrument(skip(client, query_parameters, session_token, sql_text))]
+pub async fn snowflake_cancel_query(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    request_id: &str,
+    sql_text: &str,
+) -> Result<AbortOutcome, RestError> {
+    let abort_url = Url::parse(query_parameters.server_url.as_str())
+        .and_then(|base| base.join(ABORT_REQUEST_PATH))
+        .context(UrlJoinSnafu {
+            path: ABORT_REQUEST_PATH,
+        })?;
+
+    tracing::info!(
+        method = %Method::POST,
+        host = abort_url.host_str().unwrap_or("<none>"),
+        path = abort_url.path(),
+        "outbound HTTP call"
+    );
+
+    let client_start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_owned());
+
+    let request = apply_json_content_type(apply_query_headers(
+        client.post(abort_url),
+        &query_parameters.client_info,
+        session_token,
+    ))
+    .query(&[
+        ("requestId", uuid::Uuid::new_v4().to_string()),
+        ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ("clientStartTime", client_start_time),
+        ("retryCount", "0".to_owned()),
+    ])
+    .json(&serde_json::json!({
+        "sqlText": sql_text,
+        "requestId": request_id,
+    }))
+    .build()
+    .context(RequestConstructionSnafu {
+        request: "cancel_query",
+    })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute cancel query request",
+    })?;
+
+    tracing::info!(status = response.status().as_u16(), "HTTP response");
+
+    let cancel_response: query_response::AbortQueryResponse = read_response_json(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)?;
+
+    // `success: false` here is a business-logic decline (the query was not
+    // running), not a failure — session-token expiry (390112) has already been
+    // mapped to `SessionExpired` by `read_response_json`.
+    Ok(if cancel_response.success {
+        AbortOutcome::Aborted
+    } else {
+        AbortOutcome::NotRunning
+    })
+}
+
 /// Standard Snowflake JSON response envelope: `{success, code, message, data: T}`.
 ///
 /// Every REST endpoint parsed by [`read_response_json`] returns this shape; the
@@ -2180,19 +2282,12 @@ where
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
         }
+        // Do not embed the raw body in the error message, as this JSON may contain sensitive data.
         let body = response_text.unwrap_or("Unknown error".to_string());
-        let truncated = if body.len() > 1024 {
-            let mut end = 1024;
-            while !body.is_char_boundary(end) {
-                end -= 1;
-            }
-            format!("{}… ({} bytes total)", &body[..end], body.len())
-        } else {
-            body
-        };
+        let message = format!("Unexpected response, body length {}.", body.len());
         return ResponseStatusSnafu {
             status: response_status,
-            message: truncated,
+            message,
         }
         .fail();
     }
@@ -2488,6 +2583,7 @@ mod tests {
         /// friends derive from `(server_url, username, role, token_type)`. `server_url`
         /// is a full URL (e.g. `"https://host.example.com"`) that is passed directly into
         /// `normalize_url`, matching how production helpers pass the full server URL.
+        /// MFA and ID token flows use `idp: String::new()` per spec.
         fn with_token(
             server_url: &str,
             username: &str,
@@ -2498,7 +2594,7 @@ mod tests {
             let cache = Self::new();
             let key = CacheKey {
                 token_type,
-                idp: normalize_url(server_url),
+                idp: String::new(),
                 snowflake: normalize_url(server_url),
                 username: normalize_identifier(username),
                 role: normalize_identifier(role),
@@ -2540,7 +2636,7 @@ mod tests {
     fn key_for(server_url: &str, username: &str, role: &str, token_type: TokenType) -> CacheKey {
         CacheKey {
             token_type,
-            idp: normalize_url(server_url),
+            idp: String::new(),
             snowflake: normalize_url(server_url),
             username: normalize_identifier(username),
             role: normalize_identifier(role),
@@ -3217,6 +3313,142 @@ mod tests {
         }
     }
 
+    /// Mirrors [`snowflake_abort_query_tests`]: the `success`-envelope →
+    /// [`AbortOutcome`] mapping for the requestId-based cancel endpoint. The
+    /// outbound body shape (`{sqlText, requestId}`) and the cross-thread
+    /// orchestration are covered by `tests/integration/query/statement_cancel.rs`.
+    mod snowflake_cancel_query_tests {
+        use super::*;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn query_parameters(server_url: String) -> QueryParameters {
+            QueryParameters {
+                server_url,
+                client_info: test_client_info(),
+                log_max_query_length: 1024,
+                log_query_text: false,
+                log_query_parameters: false,
+            }
+        }
+
+        #[tokio::test]
+        async fn success_true_returns_ok_aborted() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/queries/v1/abort-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_cancel_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "running-request-id",
+                "SELECT 1",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Ok(AbortOutcome::Aborted)),
+                "expected Ok(Aborted), got {result:?}"
+            );
+        }
+
+        /// Server declining the cancel (query not running — e.g. already
+        /// completed, code `000605`) is a normal outcome — `Ok(NotRunning)`,
+        /// not an error.
+        #[tokio::test]
+        async fn success_false_returns_ok_not_running() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/queries/v1/abort-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "000605",
+                    "message": "Query is not currently executing",
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_cancel_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "running-request-id",
+                "SELECT 1",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Ok(AbortOutcome::NotRunning)),
+                "expected Ok(NotRunning), got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn non_2xx_response_returns_err() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/queries/v1/abort-request"))
+                .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_cancel_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "running-request-id",
+                "SELECT 1",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(RestError::InvalidSnowflakeResponse { .. })),
+                "expected InvalidSnowflakeResponse error, got {result:?}"
+            );
+        }
+
+        /// `success:false` with body code `390112` (session token expired) still
+        /// routes through the existing `SessionExpired` mapping in
+        /// `read_response_json`, so `with_valid_session` can renew-and-retry.
+        #[tokio::test]
+        async fn session_expired_code_returns_err() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/queries/v1/abort-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "390112",
+                    "message": "Session token expired",
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let result = snowflake_cancel_query(
+                &reqwest::Client::new(),
+                &query_parameters(server.uri()),
+                "mock_session_token",
+                "running-request-id",
+                "SELECT 1",
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(RestError::InvalidSnowflakeResponse { .. })),
+                "expected InvalidSnowflakeResponse(SessionExpired), got {result:?}"
+            );
+        }
+    }
+
     mod user_agent_tests {
         use super::*;
 
@@ -3534,6 +3766,48 @@ mod tests {
         assert!(
             matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
             "expected SessionExpired, got {result:?}"
+        );
+    }
+
+    /// Non-2xx bodies can carry tokens in JSON `data`; the error Display must
+    /// not embed raw body content — only status and a generic body-length hint.
+    #[tokio::test]
+    async fn read_response_json_error_omits_raw_body_from_display() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let secret_token = "super-secret-token-12345";
+        let body = format!(
+            r#"{{"success":false,"code":"390100","message":"Auth failed","data":{{"token":"{secret_token}"}}}}"#
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/login"))
+            .respond_with(ResponseTemplate::new(403).set_body_string(body.clone()))
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .post(format!("{}/login", server.uri()))
+            .send()
+            .await
+            .expect("mock request sends");
+
+        let err = read_response_json::<serde_json::Value>(response)
+            .await
+            .expect_err("non-2xx should fail");
+        let display = err.to_string();
+        assert!(
+            display.contains("403") && display.contains(&format!("body length {}.", body.len())),
+            "expected status and body length in display, got: {display}"
+        );
+        assert!(
+            !display.contains(secret_token),
+            "raw body must not appear in error display, got: {display}"
+        );
+        assert!(
+            !display.contains("390100") && !display.contains("Auth failed"),
+            "server error payload must not appear in display, got: {display}"
         );
     }
 }

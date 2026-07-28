@@ -23,8 +23,8 @@ internal sealed unsafe class NativeInterop : INativeInterop
         var callbackPtr = Marshal.GetFunctionPointerForDelegate(logCallbackDelegate);
         var result = NativeMethods.sf_core_init(callbackPtr);
 
-        if (result != 0)
-            throw new InvalidOperationException($"sf_core_init failed with code {result}. Check stderr for details.");
+        if (result.Status != 0)
+            throw new InvalidOperationException($"sf_core_init failed with code {result.Status}. Check stderr for details.");
     }
 
     public nuint CallProto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen) =>

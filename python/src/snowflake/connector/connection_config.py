@@ -125,8 +125,8 @@ class ConnectionConfig(ConnectionConfigMixin):
     disable_saml_url_check: bool | None = False
     """Skip the Okta SAML URL host-match safety check. Default: False"""
 
-    enable_connection_diag: bool | None = False
-    """Run connectivity diagnostics during connect and write a report. Default: False"""
+    enable_connection_diag: bool | None = None
+    """Run connectivity diagnostics during connect and write a report"""
 
     enable_server_session_keep_alive_auto_detection: bool | None = None
     """Enable auto-detection of async queries before logout (SNOW-2314152)"""

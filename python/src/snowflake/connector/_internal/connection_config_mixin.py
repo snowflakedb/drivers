@@ -202,7 +202,7 @@ class ConnectionConfigMixin:
             "returned by the IdP. Use client_store_temporary_credential to gate caching"
         ),
         "enable_crl_cache": (
-            "not supported; the universal driver has independent cache toggles. "
+            "not supported; the universal driver has independent cache toggles (see BehaviorDifferences #42)."
             "Use enable_crl_memory_cache and enable_crl_file_cache instead"
         ),
     }

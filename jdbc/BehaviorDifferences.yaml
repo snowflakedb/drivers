@@ -796,3 +796,13 @@ behavior_differences:
     status_rationale: |
       Not yet reviewed. The no-op is a known temporary gap (network timeout support is deferred to the
       retries & timeouts epic); the getter contract will be revisited when it lands.
+  42:
+    name: "Linux legacy external-browser id-token cache requires CLIENT_STORE_TEMPORARY_CREDENTIAL session param"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Legacy snowflake-jdbc on Linux ignores clientStoreTemporaryCredential for id-token cache I/O unless
+      CLIENT_STORE_TEMPORARY_CREDENTIAL is also set; universal driver does not.
