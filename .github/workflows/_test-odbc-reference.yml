@@ -22,10 +22,11 @@ jobs:
             name: macOS Universal
             driver_lib: libSnowflake.dylib
             driver_manager: unixodbc
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_manager: unixodbc
+          # TODO SNOW-3858024: Fix the timeouts
+          # - os: windows-latest
+          #   name: Windows x64
+          #   driver_lib: sfodbc.dll
+          #   driver_manager: unixodbc
           - os: macos-latest
             name: macOS Universal + iODBC
             driver_lib: libSnowflake.dylib
