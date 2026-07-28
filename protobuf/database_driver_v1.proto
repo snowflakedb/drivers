@@ -629,6 +629,23 @@ message StatementReleaseRequest {
 message StatementReleaseResponse {
 }
 
+// Cancel the query currently in flight on a statement (cross-thread SQLCancel).
+// Keyed on the statement's own client-generated requestId, captured by the core
+// at submit time — the caller passes only the handle.
+message StatementCancelRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementCancelResponse {
+  // Whether a query was in flight and its abort was acknowledged
+  // (ABORTED), or there was nothing to cancel (NOT_RUNNING). ABORTED means
+  // the abort request was accepted (processed), NOT a guarantee the query
+  // stopped — that is observed on the executing thread. Genuine failures
+  // (invalid handle, transport, cancel timeout) are reported as an RPC error,
+  // not through this enum.
+  AbortQueryOutcome outcome = 1;
+}
+
 message StatementSetSqlQueryRequest {
   StatementHandle stmt_handle = 1;
   string query = 2;
@@ -993,6 +1010,8 @@ service DatabaseDriver {
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
+  // Cancel the query in flight on a statement by its requestId (cross-thread SQLCancel)
+  rpc StatementCancel(StatementCancelRequest) returns (StatementCancelResponse);
 
   // ResultSet operations
   rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse);

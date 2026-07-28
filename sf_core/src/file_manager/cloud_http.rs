@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tempfile::NamedTempFile;
 
 /// Read-buffer size in bytes for the streaming upload producer — one channel chunk.
 const UPLOAD_CHUNK_SIZE_BYTES: usize = 64 * 1024;
@@ -215,8 +216,8 @@ pub enum CloudDownloadBody {
     Spilled(CloudSpilledBody),
 }
 
-/// A ranged cloud download assembled to disk. Mirrors S3's `SpilledBody`; the
-/// two shapes differ only in who owns the file and how it is finalized:
+/// A ranged cloud download assembled to disk, shared by S3, Azure, and GCS.
+/// The two shapes differ only in who owns the file and how it is finalized:
 ///
 /// * `Part` — a non-encrypted (SSE) download assembled straight into the
 ///   caller's `<dst>.part` staging file. The bytes are already the final
@@ -263,6 +264,134 @@ impl CloudDownloadBody {
                 Ok(Box::new(std::fs::File::open(path)?))
             }
         }
+    }
+}
+
+/// Downloads the object with parallel ranged GETs into a pre-allocated file.
+///
+/// Shared assembly loop for S3, Azure, and GCS. The assembly file is chosen by
+/// `target`: a non-encrypted download writes straight into the caller's
+/// `<dst>.part` (one rename from done), while an encrypted / git-stage download
+/// writes into a throwaway temp (its ciphertext is decrypted into `.part`
+/// afterwards).
+///
+/// On failure the range futures are *drained*, not short-circuited: `collect`
+/// polls EVERY future so all in-flight `write_at` spawn_blocking tasks finish
+/// and release their cloned file handles before we return. With no writer
+/// holding the file open, the cleanup can unlink the partially-written assembly
+/// file even on Windows (which refuses to unlink an open file). The first error
+/// is surfaced after the drain.
+///
+/// `get_range` must return exactly `range.end - range.start + 1` bytes; if an
+/// endpoint ignores the Range header and returns the whole object (200 rather
+/// than 206) this guard surfaces via `mk_range_err` before the overrun can
+/// corrupt the pre-allocated assembly file. `mk_range_err` is kept distinct
+/// from `mk_temp_err` (used for setup/join/write failures) so a caller can map
+/// the truncation case to its own error variant rather than a generic one —
+/// GCS does this today (`GcsRequestError::RangeNotHonored`); S3 and Azure both
+/// pass the same closure for both parameters.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn assemble_ranged_download<E, Fut, G, M, MR>(
+    content_length: u64,
+    chunk_size: u64,
+    concurrency: usize,
+    target: CloudSpillTarget<'_>,
+    mk_temp_err: M,
+    mk_range_err: MR,
+    get_range: G,
+) -> Result<CloudSpilledBody, E>
+where
+    G: Fn(super::multipart::DownloadRange) -> Fut,
+    Fut: std::future::Future<Output = Result<Bytes, E>>,
+    M: Fn(String) -> E,
+    MR: Fn(String) -> E,
+{
+    // Owns the assembly file for the download's duration.
+    enum Assembly {
+        Part(PathBuf),
+        Temp(NamedTempFile),
+    }
+
+    let owned_target = match target {
+        CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
+        CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
+    };
+    // Setup returns io::Error (NOT E) so mk_temp_err need not be Send/'static.
+    let (assembly, file): (Assembly, Arc<std::fs::File>) = tokio::task::spawn_blocking(move || {
+        let (is_part, path_or_dir) = owned_target;
+        if is_part {
+            // TODO(SNOW-3832603): the SSE ranged-download `.part` is created with the
+            // process umask, bypassing the owner-only 0o600 hardening that
+            // `create_output_file` applies when `unsafe_file_write == false`. This is a
+            // shared cross-cloud gap for S3/Azure/GCS, which all assemble through this
+            // helper, and `unsafe_file_write` is not threaded into any streaming
+            // ranged-download signature. Thread `unsafe_file_write` through and route
+            // Part creation via `create_output_file` so SSE plaintext ranged downloads
+            // on all three clouds get owner-only perms.
+            let f = std::fs::File::create(&path_or_dir)?;
+            f.set_len(content_length)?; // pre-allocate for out-of-order pwrite
+            Ok::<_, std::io::Error>((Assembly::Part(path_or_dir), Arc::new(f)))
+        } else {
+            let named = NamedTempFile::new_in(&path_or_dir)?;
+            named.as_file().set_len(content_length)?;
+            let file = Arc::new(named.as_file().try_clone()?);
+            Ok((Assembly::Temp(named), file))
+        }
+    })
+    .await
+    .map_err(|e| mk_temp_err(format!("join error in tempfile setup: {e}")))?
+    .map_err(|e| mk_temp_err(e.to_string()))?;
+
+    let ranges = super::multipart::plan_ranges(content_length, chunk_size);
+    let get_range = &get_range;
+    let mk_temp_err = &mk_temp_err;
+    let mk_range_err = &mk_range_err;
+    let file_handle = &file;
+    // Drain, don't short-circuit: `collect` polls EVERY future so all in-flight
+    // write_at spawn_blocking tasks release their cloned handles before return,
+    // so the assembly file can be unlinked even on Windows. First error surfaced
+    // after the drain.
+    let results: Vec<Result<(), E>> = futures::stream::iter(ranges)
+        .map(|range| async move {
+            let bytes = get_range(range).await?;
+            // 206-vs-200 guard: an endpoint that ignores Range and returns the
+            // whole object (200) would overrun the pre-allocated length.
+            let expected_len = range.end - range.start + 1;
+            if bytes.len() as u64 != expected_len {
+                return Err(mk_range_err(format!(
+                    "ranged GET returned {} bytes, expected {expected_len} \
+                     (bytes={}-{}); endpoint may not honour Range header",
+                    bytes.len(),
+                    range.start,
+                    range.end
+                )));
+            }
+            let file = Arc::clone(file_handle);
+            tokio::task::spawn_blocking(move || {
+                super::multipart::write_at(&file, range.start, &bytes)
+            })
+            .await
+            .map_err(|e| mk_temp_err(format!("join error writing chunk: {e}")))?
+            .map_err(|e| mk_temp_err(e.to_string()))
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    // Release our handle so only `assembly` (Temp) or none (Part) holds the file.
+    drop(file);
+    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
+
+    match assembly {
+        Assembly::Part(path) => match outcome {
+            Ok(_) => Ok(CloudSpilledBody::Part(path)),
+            Err(e) => {
+                // drained: safe on Windows
+                let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(path)).await;
+                Err(e)
+            }
+        },
+        Assembly::Temp(named) => outcome.map(|_| CloudSpilledBody::Temp(named.into_temp_path())),
     }
 }
 

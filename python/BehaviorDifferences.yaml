@@ -138,16 +138,21 @@ behavior_differences:
       `to_arrow()`, `to_pandas()`, and `create_iter(iter_unit=TABLE_UNIT)` all work on every batch regardless of its class.
 
   19:
-    name: "write_pandas create_temp_table parameter removed"
+    name: "write_pandas create_temp_table: DeprecationWarning alias restored for Snowpark compat"
     status: allowed
     type: api_incompatibility
     reviewed: true
-    is_breaking_change: true
-    impact: high
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
       `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
     new_driver_behavior: |
-      The `create_temp_table` parameter is removed from `write_pandas`. Use `table_type='temp'` instead.
+      The universal driver accepts `create_temp_table=True` and translates it to `table_type='temp'`, emitting a `DeprecationWarning`
+      directing callers to use `table_type='temp'` directly. Runtime behaviour is unchanged; code using
+      `warnings.filterwarnings("error")` will see the warning raised as an exception.
+    description: |
+      Retained for Snowpark backward-compatibility. The parameter is still deprecated;
+      callers should migrate to `table_type='temp'`.
 
   20:
     name: "ResultBatch does not expose session_manager or http_config"
@@ -645,24 +650,25 @@ behavior_differences:
       (infinite), so it retries unboundedly rather than surfacing a terminal error.
 
   42:
-    name: "write_pandas create_temp_table emits DeprecationWarning"
+    name: "enable_crl_cache removed; CRL caches controlled by independent toggles"
     status: allowed
-    type: enhancement
+    type: api_incompatibility
     reviewed: false
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Passing `create_temp_table=True` to `write_pandas` silently translates to
-      `table_type="temp"` with no warning emitted to the caller.
+      `enable_crl_cache` (default `True`) is the master switch for CRL caching.
+      When `False`, both the in-memory and on-disk CRL caches are disabled
+      regardless of `enable_crl_file_cache`. When `True`, an in-memory cache is
+      always created and `enable_crl_file_cache` (default `True`) independently
+      controls whether a disk cache is also used.
     new_driver_behavior: |
-      The universal driver emits a `DeprecationWarning` directing callers to use
-      `table_type="temp"` instead of `create_temp_table=True`. The translation still
-      occurs so runtime behaviour is otherwise unchanged. Code using
-      `warnings.filterwarnings("error")` will see the warning raised as an exception.
-    description: |
-      `create_temp_table` is the legacy boolean spelling accepted for Snowpark
-      backward-compatibility. The warning nudges callers toward the canonical
-      `table_type` parameter without breaking existing usage.
+      `enable_crl_cache` is accepted for source compatibility but has no effect
+      and emits a `DeprecationWarning`. The universal driver exposes independent
+      toggles: `enable_crl_memory_cache` → `crl_enable_memory_caching` and
+      `enable_crl_file_cache` → `crl_enable_disk_caching` (both default `True`).
+      Callers who previously disabled caching via `enable_crl_cache=False` must
+      set both toggles to `False` explicitly.
 
   43:
     name: "ResultMetadataV2.fields is None for structured column types (OBJECT/ARRAY/MAP)"

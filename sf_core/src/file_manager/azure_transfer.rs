@@ -16,9 +16,7 @@ use futures::TryStreamExt as _;
 use reqwest::Method;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tempfile::NamedTempFile;
 use tokio_stream::wrappers::ReceiverStream;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
@@ -1393,19 +1391,8 @@ pub async fn download_from_azure_streaming(
 /// Downloads the blob with parallel ranged GETs into a pre-allocated file,
 /// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
 /// Ranges are fetched up to `concurrency` at a time and written at their
-/// absolute offset, so out-of-order completion is fine.
-///
-/// The assembly file is chosen by `target`: a non-encrypted download writes
-/// straight into the caller's `<dst>.part` (one rename from done), while an
-/// encrypted / git-stage download writes into a throwaway temp (its ciphertext
-/// is decrypted into `.part` afterwards).
-///
-/// On failure the range futures are *drained*, not short-circuited: every
-/// in-flight `write_at` finishes and drops its file handle before we return, so
-/// the partially-written assembly file can be removed even on Windows (which
-/// refuses to unlink an open file). A failed download therefore leaves no
-/// leftover; the only way a partial survives is a hard kill (SIGKILL / power
-/// loss), and then it is a self-documenting, self-overwriting `<dst>.part`.
+/// absolute offset, so out-of-order completion is fine. Thin wrapper around
+/// the shared [`cloud_http::assemble_ranged_download`] helper.
 async fn azure_range_download(
     client: &reqwest::Client,
     full_url: &str,
@@ -1415,103 +1402,18 @@ async fn azure_range_download(
     policy: &RetryPolicy,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
-    let mk_temp_err = |e: std::io::Error| {
-        azure_download_error::TempFileSnafu {
-            detail: e.to_string(),
-        }
-        .build()
-    };
+    let mk_temp_err = |detail: String| azure_download_error::TempFileSnafu { detail }.build();
 
-    // Create + pre-allocate the assembly file off-thread. spawn_blocking (not
-    // block_in_place): safe on current-thread runtimes; block_in_place panics
-    // on those. Mirrors the S3 arm. Returns the owner (either the caller's
-    // `.part`, referenced by path, or a RAII temp) plus a shared, cloneable
-    // handle for the concurrent positioned writes.
-    enum Assembly {
-        Part(std::path::PathBuf),
-        Temp(NamedTempFile),
-    }
-
-    let owned_target = match target {
-        cloud_http::CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
-        cloud_http::CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
-    };
-    let (assembly, file) = tokio::task::spawn_blocking(move || {
-        let (is_part, path_or_dir) = owned_target;
-        if is_part {
-            let f = std::fs::File::create(&path_or_dir).map_err(mk_temp_err)?;
-            f.set_len(content_length).map_err(mk_temp_err)?;
-            Ok::<_, AzureDownloadError>((Assembly::Part(path_or_dir), Arc::new(f)))
-        } else {
-            let named = NamedTempFile::new_in(&path_or_dir).map_err(mk_temp_err)?;
-            named
-                .as_file()
-                .set_len(content_length)
-                .map_err(mk_temp_err)?;
-            let file = Arc::new(named.as_file().try_clone().map_err(mk_temp_err)?);
-            Ok((Assembly::Temp(named), file))
-        }
-    })
+    cloud_http::assemble_ranged_download(
+        content_length,
+        chunk_size,
+        concurrency,
+        target,
+        mk_temp_err,
+        mk_temp_err,
+        move |range| async move { azure_get_range(client, full_url, &range, policy).await },
+    )
     .await
-    .map_err(|e| {
-        azure_download_error::TempFileSnafu {
-            detail: format!("join error in tempfile setup: {e}"),
-        }
-        .build()
-    })??;
-
-    let ranges = multipart::plan_ranges(content_length, chunk_size);
-    // Drain, don't short-circuit: `collect` (not `try_collect`) polls EVERY
-    // range future to completion, so all in-flight `write_at` tasks finish and
-    // release their cloned file handles before we return. With no writer holding
-    // the file open, the cleanup below can unlink it even on Windows. The first
-    // error is surfaced after the drain.
-    let results: Vec<Result<(), AzureDownloadError>> = futures::stream::iter(ranges)
-        .map(|range| {
-            let file = Arc::clone(&file);
-            async move {
-                let bytes = azure_get_range(client, full_url, &range, policy).await?;
-                tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
-                    .await
-                    .map_err(|e| {
-                        azure_download_error::TempFileSnafu {
-                            detail: format!("join error writing chunk: {e}"),
-                        }
-                        .build()
-                    })?
-                    .map_err(|e| {
-                        azure_download_error::TempFileSnafu {
-                            detail: e.to_string(),
-                        }
-                        .build()
-                    })
-            }
-        })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-    // Release our write handle so the only reference left is the one owned by
-    // `assembly` (Temp) or none (Part) — required before unlinking on Windows.
-    drop(file);
-    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
-
-    match assembly {
-        Assembly::Part(path) => match outcome {
-            Ok(_) => Ok(cloud_http::CloudSpilledBody::Part(path)),
-            Err(e) => {
-                // Drained above, so no writer still holds `.part` open; the
-                // best-effort remove succeeds even on Windows.
-                let _ = std::fs::remove_file(&path);
-                Err(e)
-            }
-        },
-        // On success hand out the unlink-on-drop guard; on failure `named` drops
-        // here and NamedTempFile unlinks it (drained, so no open writer).
-        Assembly::Temp(named) => {
-            outcome.map(|_| cloud_http::CloudSpilledBody::Temp(named.into_temp_path()))
-        }
-    }
 }
 
 /// Ranged GET of `[range.start, range.end]`, returning the body bytes.
@@ -1539,22 +1441,8 @@ async fn azure_get_range(
             detail: sanitize_sas(e.to_string()),
         })
     })?;
-    // Validate that the endpoint returned exactly the bytes we asked for.
-    // An endpoint that silently truncates a range would cause write_at to
-    // stomp adjacent chunks with zeros rather than surfacing an error.
-    let expected_len = (range.end - range.start + 1) as usize;
-    if bytes.len() != expected_len {
-        return Err(azure_download_error::TempFileSnafu {
-            detail: format!(
-                "ranged GET returned {} bytes, expected {} (range {}-{})",
-                bytes.len(),
-                expected_len,
-                range.start,
-                range.end,
-            ),
-        }
-        .build());
-    }
+    // The 206-vs-200 / truncation guard (bytes.len() == expected) lives in the
+    // shared cloud_http::assemble_ranged_download, applied uniformly to all clouds.
     Ok(bytes)
 }
 

@@ -140,14 +140,14 @@ fn should_show_only_one_external_browser_prompt_when_multiple_connections_authen
     let user = "eb_lock_concurrent";
     let mock = MockServerWithTls::start();
     let cache = KeyringTokenCache::new().expect("token cache should be available");
-    // The default test parameters supply role="test_role"; the production code
-    // embeds normalize_identifier(login_parameters.role) in the ID-token cache key.
+    // ID-token keys hash only `snowflake` + `username`; `idp` and `role` are
+    // excluded by `build_cache_key`, so they are left empty here.
     let eb_id_token_key = CacheKey {
         token_type: TokenType::IdToken,
-        idp: normalize_url(&mock.http_url()),
+        idp: String::new(),
         snowflake: normalize_url(&mock.http_url()),
         username: normalize_identifier(user),
-        role: normalize_identifier("test_role"),
+        role: String::new(),
     };
     // Ensure no leftover token from a previous run
     let _ = cache.remove_token(&eb_id_token_key);
@@ -238,7 +238,7 @@ fn should_show_only_one_mfa_prompt_when_multiple_connections_authenticate_concur
     let cache = KeyringTokenCache::new().expect("token cache should be available");
     let mfa_token_key = CacheKey {
         token_type: TokenType::MfaToken,
-        idp: normalize_url(&mock.http_url()),
+        idp: String::new(),
         snowflake: normalize_url(&mock.http_url()),
         username: normalize_identifier(user),
         role: String::new(),
@@ -629,10 +629,10 @@ fn should_release_the_lock_when_the_first_connection_login_fails_so_the_waiting_
     let cache = KeyringTokenCache::new().expect("token cache should be available");
     let fail_first_id_key = CacheKey {
         token_type: TokenType::IdToken,
-        idp: normalize_url(&mock.http_url()),
+        idp: String::new(),
         snowflake: normalize_url(&mock.http_url()),
         username: normalize_identifier(user),
-        role: normalize_identifier("test_role"),
+        role: String::new(),
     };
     let _ = cache.remove_token(&fail_first_id_key);
 
@@ -764,10 +764,10 @@ fn should_release_the_lock_when_the_browser_callback_times_out_so_the_waiting_co
     let cache = KeyringTokenCache::new().expect("token cache should be available");
     let timeout_id_key = CacheKey {
         token_type: TokenType::IdToken,
-        idp: normalize_url(&mock.http_url()),
+        idp: String::new(),
         snowflake: normalize_url(&mock.http_url()),
         username: normalize_identifier(user),
-        role: normalize_identifier("test_role"),
+        role: String::new(),
     };
     let _ = cache.remove_token(&timeout_id_key);
 

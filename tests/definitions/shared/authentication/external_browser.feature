@@ -15,6 +15,12 @@ Feature: External Browser Authentication
     When Trying to Connect with headless browser providing valid credentials
     Then Login is successful and simple query can be executed
 
+  @python_e2e @odbc_e2e @jdbc_e2e
+  Scenario: should reuse cached ID token without browser interaction
+    Given External browser authentication is configured with caching enabled and a token has been cached from a previous connection
+    When Trying to Connect without browser interaction
+    Then Login is successful and simple query can be executed
+
   # =============================================================================
   # Integration Tests - Mocked External Browser Authentication
   # =============================================================================

@@ -360,6 +360,7 @@ async fn run_sql_against_gs(
             query_input.clone(),
             retry_policy,
             QueryExecutionMode::Blocking,
+            None,
         )
         .await
         {

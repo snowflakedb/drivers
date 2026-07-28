@@ -851,6 +851,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::QueryTimeout { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
+        ApiError::CancelTimeout { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
     }
 }
 
@@ -1029,6 +1032,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         // TODO(SNOW-2872503): Add a dedicated proto StatusCode for query timeout so
         // language wrappers can surface HYT00 / OperationalError correctly.
         ApiError::QueryTimeout { .. } => StatusCode::GenericError,
+        ApiError::CancelTimeout { .. } => StatusCode::GenericError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);

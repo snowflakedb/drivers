@@ -68,3 +68,24 @@ class TestExternalBrowserAuthentication:
         # Then Login is successful and simple query can be executed
         with connection:
             verify_simple_query_execution(connection)
+
+    def test_should_reuse_cached_id_token_without_browser_interaction(self, connection_factory, browser_credentials):
+        # Given External browser authentication is configured with caching enabled and a token has
+        # been cached from a previous connection
+        connect_params = browser_credentials.connect_params(client_store_temporary_credential=True)
+
+        first = connect_with_browser_automation(
+            connect_fn=lambda: connection_factory(**connect_params),
+            scenario="success",
+            login=browser_credentials.user,
+            password=browser_credentials.password,
+        )
+        with first:
+            verify_simple_query_execution(first)
+
+        # When Trying to Connect without browser interaction
+        second = connection_factory(**connect_params)
+
+        # Then Login is successful and simple query can be executed
+        with second:
+            verify_simple_query_execution(second)

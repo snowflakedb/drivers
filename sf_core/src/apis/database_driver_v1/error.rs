@@ -203,4 +203,10 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Query cancel timed out after {timeout:?}"))]
+    CancelTimeout {
+        timeout: std::time::Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
