@@ -564,15 +564,3 @@ behavior_differences:
       BD#10 in jdbc/ and BD#81 in odbc_tests/ BehaviorDifferences.yaml. Callers that configured
       a plaintext `http://` IdP token endpoint (rare; typically an internal proxy) must switch
       to `https://`.
-
-  40:
-    name: "write_pandas create_temp_table: difference resolved — see BD#19"
-    status: fixed
-    type: enhancement
-    reviewed: true
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
-    new_driver_behavior: |
-      The universal driver accepts `create_temp_table=True` and emits a DeprecationWarning, matching legacy driver behaviour. See BD#19.
