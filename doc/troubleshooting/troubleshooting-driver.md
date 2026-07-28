@@ -30,7 +30,8 @@ process restart.
 
 The driver creates the directory if it does not exist.
 Logs are written to a single file named `sf_driver_troubleshooting.log`
-(no rotation, no date suffix).
+(no rotation, no date suffix). On Unix the file is created with owner-only
+permissions (`0600`).
 
 ## What gets logged
 

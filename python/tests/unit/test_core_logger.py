@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from snowflake.connector._internal.logging import get_logger
+from snowflake.connector._internal.logging.config import LoggingConfiguration
 from snowflake.connector._internal.logging.core_logger import CoreLogger
 
 
@@ -59,6 +60,24 @@ class TestCoreLogger:
                 logger.debug("filtered out")
             send_mock.assert_not_called()
         finally:
+            py_logger.setLevel(logging.NOTSET)
+
+    def test_bypasses_pre_filter_when_troubleshooting_enabled(self) -> None:
+        """DEBUG is delivered when troubleshooting bypasses the stdlib level gate."""
+        logger = get_logger("snowflake.connector.test_troubleshooting_bypass")
+        py_logger = logging.getLogger("snowflake.connector.test_troubleshooting_bypass")
+        py_logger.setLevel(logging.WARNING)
+        prev_instance = LoggingConfiguration._instance
+        try:
+            LoggingConfiguration._instance = LoggingConfiguration(troubleshooting_enabled=True)
+            with patch(_SEND, return_value=0) as send_mock:
+                logger.debug("troubleshooting captures this %s", "event")
+            send_mock.assert_called_once()
+            kwargs = send_mock.call_args.kwargs
+            assert kwargs["level"] == 3  # DEBUG in FFI callback encoding
+            assert kwargs["message"] == "troubleshooting captures this event"
+        finally:
+            LoggingConfiguration._instance = prev_instance
             py_logger.setLevel(logging.NOTSET)
 
     def test_ffi_failure_does_not_raise(self, caplog: pytest.LogCaptureFixture) -> None:
