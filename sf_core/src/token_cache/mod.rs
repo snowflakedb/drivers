@@ -22,14 +22,15 @@ pub enum TokenType {
 }
 
 impl TokenType {
-    /// Returns the string representation of the token type.
+    /// Returns the PascalCase string used as the token-type segment in cache key
+    /// prefixes (e.g. `"MfaToken"`, `"OauthAccessToken"`).
     pub fn as_str(&self) -> &'static str {
         match self {
-            TokenType::IdToken => "ID_TOKEN",
-            TokenType::MfaToken => "MFA_TOKEN",
-            TokenType::OAuthAccessToken => "OAUTH_ACCESS_TOKEN",
-            TokenType::OAuthRefreshToken => "OAUTH_REFRESH_TOKEN",
-            TokenType::DpopBundledAccessToken => "DPOP_BUNDLED_ACCESS_TOKEN",
+            TokenType::IdToken => "IdToken",
+            TokenType::MfaToken => "MfaToken",
+            TokenType::OAuthAccessToken => "OauthAccessToken",
+            TokenType::OAuthRefreshToken => "OauthRefreshToken",
+            TokenType::DpopBundledAccessToken => "DpopBundledAccessToken",
         }
     }
 
@@ -53,30 +54,34 @@ impl std::fmt::Display for TokenType {
 
 /// The key fields that uniquely identify a cached token across drivers.
 ///
-/// Fields must be normalized before construction. Use [`normalize_url`] for
-/// URL fields (`idp`, `snowflake`) and [`normalize_identifier`] for identifier
-/// fields (`username`, `role`).
+/// Fields are normalized before construction. Use [`normalize_url`] for URL fields
+/// (`idp`, `snowflake`) and [`normalize_identifier`] for identifier fields
+/// (`username`, `role`).
 ///
-/// For non-OAuth flows (MFA, external-browser ID token), set both `idp` and
-/// `snowflake` to the normalized Snowflake server URL; leave `role` empty for
-/// MFA or populate it from `LoginParameters.role` for ID-token flows.
+/// **OAuth flows** (`OauthAccessToken`, `OauthRefreshToken`,
+/// `DpopBundledAccessToken`): populate `idp` with the full token-endpoint URL,
+/// `role` with the role name (or empty string if none), `snowflake` with the
+/// Snowflake server URL, and `username`.
+///
+/// **MFA and ID token flows** (`MfaToken`, `IdToken`): set `idp` and `role` to
+/// empty string. Only `snowflake` and `username` are included in the key hash for
+/// these flows.
 #[derive(Debug, Clone)]
 pub struct CacheKey {
     pub token_type: TokenType,
-    /// Normalized IdP token-endpoint URL (scheme stripped, uppercased).
+    /// Normalized IdP token-endpoint URL. Empty string for MFA and ID token flows.
     pub idp: String,
-    /// Normalized Snowflake server URL (scheme stripped, uppercased).
+    /// Normalized Snowflake server URL.
     pub snowflake: String,
-    /// Normalized Snowflake username (unquoted segments uppercased, quoted preserved).
+    /// Normalized Snowflake username.
     pub username: String,
-    /// Normalized role name (unquoted segments uppercased, quoted preserved);
-    /// empty for MFA flows.
+    /// Normalized role name. Empty string for MFA flows and when no role is configured.
     pub role: String,
 }
 
 /// Normalizes a URL for use as a cache key component.
 ///
-/// Strips the URL scheme and any userinfo prefix, then uppercases the remaining
+/// Strips the URL scheme and any userinfo prefix, then lowercases the remaining
 /// authority (host and any explicitly-stated port) and path. A trailing slash
 /// on a root-only URL is omitted so bare host-only URLs produce a key without
 /// a trailing slash.
@@ -86,14 +91,14 @@ pub struct CacheKey {
 /// verbatim — the `url` crate normalizes such ports away. Callers must supply
 /// the raw connection-string URL, never a value produced by `url::Url::as_str()`.
 ///
-/// Cross-driver spec (§2.3): strip scheme, uppercase remainder, keep port and path.
+/// Cross-driver spec: strip scheme, lowercase remainder, keep port and path.
 ///
 /// # Examples
 /// ```text
 /// "https://login.microsoftonline.com:443/tenant/oauth2/v2.0"
-///   → "LOGIN.MICROSOFTONLINE.COM:443/TENANT/OAUTH2/V2.0"
+///   → "login.microsoftonline.com:443/tenant/oauth2/v2.0"
 /// "https://myorg-myaccount.snowflakecomputing.com"
-///   → "MYORG-MYACCOUNT.SNOWFLAKECOMPUTING.COM"
+///   → "myorg-myaccount.snowflakecomputing.com"
 /// ```
 pub fn normalize_url(url: &str) -> String {
     // Strip the scheme prefix ("scheme://") from the raw string to preserve
@@ -123,42 +128,37 @@ pub fn normalize_url(url: &str) -> String {
     // Trim a root-only trailing slash so bare-host URLs have no slash suffix.
     format!("{authority}{path}")
         .trim_end_matches('/')
-        .to_uppercase()
+        .to_lowercase()
 }
 
 /// Normalizes a Snowflake identifier for use as a cache key component.
 ///
-/// Segments not enclosed in double quotes are uppercased; double-quoted
-/// segments (including their surrounding `"` delimiters) are preserved
-/// verbatim. This matches Snowflake's identifier case-folding rules.
+/// If the value contains any double-quote character (`"`), it is returned
+/// verbatim — quoted identifiers carry case-sensitive semantics and must not
+/// be altered. Otherwise the entire value is lowercased, since unquoted
+/// Snowflake identifiers are case-insensitive.
 ///
 /// # Examples
 /// ```text
-/// "first.last@domain.com"     → "FIRST.LAST@DOMAIN.COM"
-/// "\"First Last\"@domain.com" → "\"First Last\"@DOMAIN.COM"
+/// "first.last@domain.com"     → "first.last@domain.com"
+/// "\"First Last\"@domain.com" → "\"First Last\"@domain.com"  (verbatim — has quotes)
 /// ```
 pub fn normalize_identifier(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_quotes = false;
-    for ch in s.chars() {
-        match ch {
-            '"' => {
-                in_quotes = !in_quotes;
-                result.push(ch);
-            }
-            _ if in_quotes => result.push(ch),
-            _ => result.push(ch.to_ascii_uppercase()),
-        }
+    if s.contains('"') {
+        s.to_string()
+    } else {
+        s.to_lowercase()
     }
-    result
 }
 
 /// A trait for implementing token caching functionality.
 ///
 /// Implementations provide secure storage for authentication tokens, keyed
-/// by a versioned, uniformly-hashed [`CacheKey`] that encodes the IdP URL,
-/// Snowflake URL, username, role, and token type. The hash is computed by
-/// [`build_cache_key`].
+/// by a versioned, uniformly-hashed [`CacheKey`]. The key format is
+/// `SnowflakeTokenCache.v2.<TOKEN_TYPE>.<sha256hex(keyData)>`, where `keyData`
+/// is flow-dependent (see [`build_cache_key`] and [`CacheKey`]).
+///
+/// Key format: `SnowflakeTokenCache.v2.<TokenType>.<sha256hex(keyData)>`.
 pub trait TokenCache: Send + Sync {
     /// Adds a token to the keystore.
     ///
@@ -187,39 +187,57 @@ pub trait TokenCache: Send + Sync {
 ///
 /// The format is:
 /// ```text
-/// SnowflakeTokenCache.v<VERSION>.<sha256hex(compact_json_sorted_fields)>
+/// SnowflakeTokenCache.v<VERSION>.<TOKEN_TYPE>.<sha256hex(compact_json_sorted_fields)>
 /// ```
 ///
-/// Fields are serialized into compact JSON in lexicographic key order
-/// (`idp → role → snowflake → token_type → username`) to guarantee
-/// byte-exact cross-driver parity regardless of field insertion order.
+/// Fields serialized into `keyData` are flow-dependent:
+/// - OAuth flows (`OauthAccessToken`, `OauthRefreshToken`, `DpopBundledAccessToken`):
+///   `idp → role → snowflake → username` (4 fields, sorted)
+/// - MFA and ID token flows (`MfaToken`, `IdToken`):
+///   `snowflake → username` (2 fields, sorted)
+///
+/// `token_type` is NOT serialized into the JSON — it appears as the third
+/// dot-separated segment of the key prefix, enabling per-type keystore cleanup.
 pub fn build_cache_key(key: &CacheKey) -> String {
     let serialized = serialize_cache_key(key);
     let hash = hex::encode(Sha256::digest(serialized.as_bytes()));
-    format!("{KEY_PREFIX}.v{KEY_VERSION}.{hash}")
+    format!(
+        "{KEY_PREFIX}.v{KEY_VERSION}.{}.{hash}",
+        key.token_type.as_str()
+    )
+}
+
+fn is_oauth_type(token_type: TokenType) -> bool {
+    matches!(
+        token_type,
+        TokenType::OAuthAccessToken
+            | TokenType::OAuthRefreshToken
+            | TokenType::DpopBundledAccessToken
+    )
 }
 
 /// Serializes `key` into compact JSON with lexicographically sorted field names.
 ///
-/// Uses [`BTreeMap`] so that `serde_json::to_string` emits fields in sorted
-/// order without a custom serializer.
+/// For OAuth flows (`OauthAccessToken`, `OauthRefreshToken`, `DpopBundledAccessToken`):
+/// `idp`, `role`, `snowflake`, `username` (4 fields).
+/// For MFA and ID token flows (`MfaToken`, `IdToken`): `snowflake`, `username` (2 fields).
+/// `token_type` is intentionally excluded — it appears in the key prefix.
 fn serialize_cache_key(key: &CacheKey) -> String {
     let mut map = BTreeMap::new();
-    map.insert("idp", key.idp.as_str());
-    map.insert("role", key.role.as_str());
+    if is_oauth_type(key.token_type) {
+        map.insert("idp", key.idp.as_str());
+        map.insert("role", key.role.as_str());
+    }
     map.insert("snowflake", key.snowflake.as_str());
-    map.insert("token_type", key.token_type.as_str());
     map.insert("username", key.username.as_str());
     serde_json::to_string(&map).expect("BTreeMap<&str, &str> serialization is infallible")
 }
 
-/// Validates that `idp`, `snowflake`, and `username` are non-empty.
+/// Validates that `snowflake` and `username` are non-empty.
 ///
-/// `role` is allowed to be empty (e.g., MFA flows). `idp` is validated as
-/// defense-in-depth: it is always populated in practice (the IdP URL for OAuth,
-/// the server URL for non-OAuth flows), but an empty `idp` would silently
-/// collapse the cross-IdP dimension of the key and reintroduce the collision
-/// class this module guards against, so it is rejected rather than hashed.
+/// `idp` must be non-empty for OAuth flows; empty is allowed for MFA/ID (absent by
+/// spec). `role` is allowed to be empty — absent for MFA/ID and when no role is
+/// configured for OAuth.
 pub(super) fn validate_key_components(key: &CacheKey) -> Result<(), TokenCacheError> {
     if key.snowflake.is_empty() {
         return InvalidKeyFormatSnafu {
@@ -233,7 +251,7 @@ pub(super) fn validate_key_components(key: &CacheKey) -> Result<(), TokenCacheEr
         }
         .fail();
     }
-    if key.idp.is_empty() {
+    if is_oauth_type(key.token_type) && key.idp.is_empty() {
         return InvalidKeyFormatSnafu {
             key: format!("idp=<empty>, snowflake={}", key.snowflake),
         }
@@ -337,31 +355,79 @@ pub enum TokenCacheError {
 mod tests {
     use super::*;
 
-    mod build_cache_key_tests {
+    mod golden_hash_tests {
         use super::*;
 
-        fn golden_key() -> CacheKey {
-            CacheKey {
+        /// OAuth golden vector — spec §3 Vector A.
+        /// URL fields are lowercased; quoted identifier fields are verbatim
+        /// (normalize_identifier returns them unchanged when they contain `"`).
+        #[test]
+        fn oauth_golden_hash_matches_spec() {
+            let key = CacheKey {
                 token_type: TokenType::DpopBundledAccessToken,
-                idp: "LOGIN.MICROSOFTONLINE.COM:443/TENANT-ID/OAUTH2/V2.0".to_string(),
-                snowflake: "MYORG-MYACCOUNT.PRIVATELINK.SNOWFLAKECOMPUTING.COM".to_string(),
-                username: "\"FIRST LAST\"@LONG-CORPORATE-DOMAIN.EXAMPLE.COM".to_string(),
-                role: "\"ANALYST ROLE WITH SPACES\":NORTH_AMERICA:PROD:READONLY".to_string(),
-            }
+                idp: "login.microsoftonline.com:443/tenant-id/oauth2/v2.0".to_string(),
+                snowflake: "myorg-myaccount.privatelink.snowflakecomputing.com".to_string(),
+                username: "\"First Last\"@long-corporate-domain.example.com".to_string(),
+                role: "\"Analyst Role With Spaces\":north_america:prod:readonly".to_string(),
+            };
+            assert_eq!(
+                build_cache_key(&key),
+                "SnowflakeTokenCache.v2.DpopBundledAccessToken.741b6d66d252666d6821bfd19e0151511cf4efdaaeba2b3c87673aa4de6d2c0b"
+            );
         }
 
+        /// MFA golden vector — spec §3 Vector B.
+        /// idp and role are empty; key contains only snowflake + username.
         #[test]
-        fn golden_hash_matches_spec() {
+        fn mfa_golden_hash_matches_spec() {
+            let key = CacheKey {
+                token_type: TokenType::MfaToken,
+                idp: String::new(),
+                snowflake: "myorg-myaccount.privatelink.snowflakecomputing.com".to_string(),
+                username: "\"First Last\"@long-corporate-domain.example.com".to_string(),
+                role: String::new(),
+            };
             assert_eq!(
-                build_cache_key(&golden_key()),
-                "SnowflakeTokenCache.v2.75ff2ad65a68afb402f125f62894697673c5ef3d863aba466d16b7a81053d1f4"
+                build_cache_key(&key),
+                "SnowflakeTokenCache.v2.MfaToken.10c5dde84bb8f584c0df06ea826d418c4f580e08f9db10187c0cb5e2a732a0d6"
             );
         }
 
         #[test]
-        fn key_starts_with_versioned_prefix() {
-            assert!(build_cache_key(&golden_key()).starts_with("SnowflakeTokenCache.v2."));
+        fn oauth_key_contains_token_type_as_readable_prefix_segment() {
+            let key = CacheKey {
+                token_type: TokenType::OAuthAccessToken,
+                idp: "IDP.EXAMPLE.COM".to_string(),
+                snowflake: "ACCOUNT.EXAMPLE.COM".to_string(),
+                username: "USER".to_string(),
+                role: String::new(),
+            };
+            let built = build_cache_key(&key);
+            assert!(
+                built.starts_with("SnowflakeTokenCache.v2.OauthAccessToken."),
+                "unexpected key: {built}"
+            );
         }
+
+        #[test]
+        fn mfa_key_contains_mfa_token_as_readable_prefix_segment() {
+            let key = CacheKey {
+                token_type: TokenType::MfaToken,
+                idp: String::new(),
+                snowflake: "ACCOUNT.EXAMPLE.COM".to_string(),
+                username: "USER".to_string(),
+                role: String::new(),
+            };
+            let built = build_cache_key(&key);
+            assert!(
+                built.starts_with("SnowflakeTokenCache.v2.MfaToken."),
+                "unexpected key: {built}"
+            );
+        }
+    }
+
+    mod build_cache_key_tests {
+        use super::*;
 
         #[test]
         fn different_snowflake_hosts_produce_different_keys() {
@@ -398,17 +464,17 @@ mod tests {
         }
 
         #[test]
-        fn empty_role_for_mfa_produces_valid_key() {
+        fn mfa_key_does_not_include_idp_or_role() {
             let key = CacheKey {
                 token_type: TokenType::MfaToken,
-                idp: "ACCOUNT.SNOWFLAKECOMPUTING.COM".to_string(),
+                idp: String::new(),
                 snowflake: "ACCOUNT.SNOWFLAKECOMPUTING.COM".to_string(),
                 username: "USER".to_string(),
                 role: String::new(),
             };
 
             let result = build_cache_key(&key);
-            assert!(result.starts_with("SnowflakeTokenCache.v2."));
+            assert!(result.starts_with("SnowflakeTokenCache.v2.MfaToken."));
         }
 
         #[test]
@@ -427,38 +493,105 @@ mod tests {
 
             assert_ne!(build_cache_key(&key1), build_cache_key(&key2));
         }
+
+        #[test]
+        fn mfa_and_oauth_keys_differ_for_same_user_and_host() {
+            let snowflake = "ACCOUNT.SNOWFLAKECOMPUTING.COM".to_string();
+            let username = "USER".to_string();
+            let oauth_key = CacheKey {
+                token_type: TokenType::OAuthAccessToken,
+                idp: snowflake.clone(),
+                snowflake: snowflake.clone(),
+                username: username.clone(),
+                role: String::new(),
+            };
+            let mfa_key = CacheKey {
+                token_type: TokenType::MfaToken,
+                idp: String::new(),
+                snowflake: snowflake.clone(),
+                username: username.clone(),
+                role: String::new(),
+            };
+            assert_ne!(build_cache_key(&oauth_key), build_cache_key(&mfa_key));
+        }
+    }
+
+    mod serialize_cache_key_tests {
+        use super::*;
+
+        #[test]
+        fn oauth_serialization_omits_token_type_includes_four_fields() {
+            let key = CacheKey {
+                token_type: TokenType::OAuthAccessToken,
+                idp: "IDP.EXAMPLE.COM".to_string(),
+                role: "ROLE".to_string(),
+                snowflake: "SF.EXAMPLE.COM".to_string(),
+                username: "USER".to_string(),
+            };
+            let json = serialize_cache_key(&key);
+            assert_eq!(
+                json,
+                r#"{"idp":"IDP.EXAMPLE.COM","role":"ROLE","snowflake":"SF.EXAMPLE.COM","username":"USER"}"#
+            );
+            assert!(
+                !json.contains("token_type"),
+                "token_type must not appear in keyData"
+            );
+        }
+
+        #[test]
+        fn mfa_serialization_omits_idp_role_and_token_type() {
+            let key = CacheKey {
+                token_type: TokenType::MfaToken,
+                idp: String::new(),
+                role: String::new(),
+                snowflake: "SF.EXAMPLE.COM".to_string(),
+                username: "USER".to_string(),
+            };
+            let json = serialize_cache_key(&key);
+            assert_eq!(json, r#"{"snowflake":"SF.EXAMPLE.COM","username":"USER"}"#);
+            assert!(!json.contains("idp"), "idp must not appear in MFA keyData");
+            assert!(
+                !json.contains("role"),
+                "role must not appear in MFA keyData"
+            );
+            assert!(
+                !json.contains("token_type"),
+                "token_type must not appear in keyData"
+            );
+        }
     }
 
     mod token_type_tests {
         use super::*;
 
         #[test]
-        fn as_str_returns_correct_values() {
-            assert_eq!(TokenType::IdToken.as_str(), "ID_TOKEN");
-            assert_eq!(TokenType::MfaToken.as_str(), "MFA_TOKEN");
-            assert_eq!(TokenType::OAuthAccessToken.as_str(), "OAUTH_ACCESS_TOKEN");
-            assert_eq!(TokenType::OAuthRefreshToken.as_str(), "OAUTH_REFRESH_TOKEN");
+        fn as_str_returns_pascal_case_values() {
+            assert_eq!(TokenType::IdToken.as_str(), "IdToken");
+            assert_eq!(TokenType::MfaToken.as_str(), "MfaToken");
+            assert_eq!(TokenType::OAuthAccessToken.as_str(), "OauthAccessToken");
+            assert_eq!(TokenType::OAuthRefreshToken.as_str(), "OauthRefreshToken");
             assert_eq!(
                 TokenType::DpopBundledAccessToken.as_str(),
-                "DPOP_BUNDLED_ACCESS_TOKEN"
+                "DpopBundledAccessToken"
             );
         }
 
         #[test]
         fn display_matches_as_str() {
-            assert_eq!(format!("{}", TokenType::IdToken), "ID_TOKEN");
-            assert_eq!(format!("{}", TokenType::MfaToken), "MFA_TOKEN");
+            assert_eq!(format!("{}", TokenType::IdToken), "IdToken");
+            assert_eq!(format!("{}", TokenType::MfaToken), "MfaToken");
             assert_eq!(
                 format!("{}", TokenType::OAuthAccessToken),
-                "OAUTH_ACCESS_TOKEN"
+                "OauthAccessToken"
             );
             assert_eq!(
                 format!("{}", TokenType::OAuthRefreshToken),
-                "OAUTH_REFRESH_TOKEN"
+                "OauthRefreshToken"
             );
             assert_eq!(
                 format!("{}", TokenType::DpopBundledAccessToken),
-                "DPOP_BUNDLED_ACCESS_TOKEN"
+                "DpopBundledAccessToken"
             );
         }
     }
@@ -467,10 +600,10 @@ mod tests {
         use super::*;
 
         #[test]
-        fn strips_scheme_uppercases_host_port_and_path() {
+        fn strips_scheme_lowercases_host_port_and_path() {
             assert_eq!(
                 normalize_url("https://login.microsoftonline.com:443/tenant-id/oauth2/v2.0"),
-                "LOGIN.MICROSOFTONLINE.COM:443/TENANT-ID/OAUTH2/V2.0"
+                "login.microsoftonline.com:443/tenant-id/oauth2/v2.0"
             );
         }
 
@@ -478,7 +611,7 @@ mod tests {
         fn omits_root_path_for_bare_host() {
             assert_eq!(
                 normalize_url("https://myorg-myaccount.privatelink.snowflakecomputing.com"),
-                "MYORG-MYACCOUNT.PRIVATELINK.SNOWFLAKECOMPUTING.COM"
+                "myorg-myaccount.privatelink.snowflakecomputing.com"
             );
         }
 
@@ -486,7 +619,7 @@ mod tests {
         fn includes_explicit_port_and_non_root_path() {
             assert_eq!(
                 normalize_url("https://account.snowflakecomputing.com/path/to/resource"),
-                "ACCOUNT.SNOWFLAKECOMPUTING.COM/PATH/TO/RESOURCE"
+                "account.snowflakecomputing.com/path/to/resource"
             );
         }
 
@@ -494,20 +627,20 @@ mod tests {
         fn excludes_implicit_default_port() {
             assert_eq!(
                 normalize_url("https://host.example.com"),
-                "HOST.EXAMPLE.COM"
+                "host.example.com"
             );
         }
 
         #[test]
-        fn unparseable_input_is_uppercased_verbatim() {
-            assert_eq!(normalize_url("not a url"), "NOT A URL");
+        fn unparseable_input_is_lowercased_verbatim() {
+            assert_eq!(normalize_url("not a url"), "not a url");
         }
 
         #[test]
         fn strips_userinfo_from_authority_only() {
             assert_eq!(
                 normalize_url("https://user:pass@host.example.com/path"),
-                "HOST.EXAMPLE.COM/PATH"
+                "host.example.com/path"
             );
         }
 
@@ -517,7 +650,7 @@ mod tests {
             // the previous whole-string split would have truncated here.
             assert_eq!(
                 normalize_url("https://host.example.com/oauth/@handle/token"),
-                "HOST.EXAMPLE.COM/OAUTH/@HANDLE/TOKEN"
+                "host.example.com/oauth/@handle/token"
             );
         }
     }
@@ -526,40 +659,39 @@ mod tests {
         use super::*;
 
         #[test]
-        fn uppercases_plain_identifier() {
-            assert_eq!(normalize_identifier("user@domain.com"), "USER@DOMAIN.COM");
+        fn lowercases_plain_identifier() {
+            assert_eq!(normalize_identifier("USER@DOMAIN.COM"), "user@domain.com");
         }
 
         #[test]
-        fn preserves_double_quoted_segment() {
+        fn returns_quoted_value_verbatim() {
+            // Value contains a `"` → returned unchanged in its entirety.
             assert_eq!(
                 normalize_identifier("\"First Last\"@domain.com"),
-                "\"First Last\"@DOMAIN.COM"
+                "\"First Last\"@domain.com"
             );
         }
 
         #[test]
-        fn handles_multiple_quoted_and_unquoted_segments() {
+        fn returns_value_with_mid_string_quote_verbatim() {
+            // The `"` does not have to be at position 0; any quote triggers verbatim.
             assert_eq!(
                 normalize_identifier("\"Analyst Role With Spaces\":north_america:prod"),
-                "\"Analyst Role With Spaces\":NORTH_AMERICA:PROD"
+                "\"Analyst Role With Spaces\":north_america:prod"
             );
         }
 
         #[test]
-        fn already_uppercased_input_is_unchanged() {
-            assert_eq!(normalize_identifier("USER@DOMAIN.COM"), "USER@DOMAIN.COM");
+        fn lowercases_already_lowercase_input() {
+            assert_eq!(normalize_identifier("user@domain.com"), "user@domain.com");
         }
 
         #[test]
-        fn preserves_sql_escaped_double_quotes_verbatim() {
-            // `"Foo""Bar"` is a single quoted identifier whose `""` is an
-            // escaped double-quote. Its content stays verbatim (case-preserved),
-            // while a trailing unquoted segment is still uppercased. Locks the
-            // quote-toggle behavior against future simplification.
+        fn returns_sql_escaped_double_quotes_verbatim() {
+            // `"Foo""Bar"` contains double-quote characters → entire value is verbatim.
             assert_eq!(
                 normalize_identifier("\"Foo\"\"Bar\":baz"),
-                "\"Foo\"\"Bar\":BAZ"
+                "\"Foo\"\"Bar\":baz"
             );
         }
     }
@@ -625,10 +757,25 @@ mod tests {
         }
 
         #[test]
-        fn validate_key_components_rejects_empty_idp() {
+        fn validate_key_components_accepts_empty_idp_for_mfa() {
             let key = CacheKey {
+                token_type: TokenType::MfaToken,
                 idp: String::new(),
-                ..valid_key()
+                snowflake: "HOST.EXAMPLE.COM".to_string(),
+                username: "user".to_string(),
+                role: String::new(),
+            };
+            assert!(validate_key_components(&key).is_ok());
+        }
+
+        #[test]
+        fn validate_key_components_rejects_empty_idp_for_oauth() {
+            let key = CacheKey {
+                token_type: TokenType::DpopBundledAccessToken,
+                idp: String::new(),
+                snowflake: "HOST.EXAMPLE.COM".to_string(),
+                username: "user".to_string(),
+                role: String::new(),
             };
 
             assert!(
@@ -636,7 +783,7 @@ mod tests {
                     validate_key_components(&key),
                     Err(TokenCacheError::InvalidKeyFormat { .. })
                 ),
-                "Expected InvalidKeyFormat for empty idp"
+                "Expected InvalidKeyFormat for empty idp on OAuth token type"
             );
         }
     }
@@ -654,10 +801,29 @@ mod tests {
             format!("{prefix}_{timestamp}")
         }
 
+        fn make_mfa_key(snowflake: &str, username: &str) -> CacheKey {
+            CacheKey {
+                token_type: TokenType::MfaToken,
+                idp: String::new(),
+                snowflake: snowflake.to_string(),
+                username: username.to_string(),
+                role: String::new(),
+            }
+        }
+
         fn make_key(snowflake: &str, username: &str, token_type: TokenType) -> CacheKey {
             CacheKey {
                 token_type,
-                idp: snowflake.to_string(),
+                idp: if matches!(
+                    token_type,
+                    TokenType::OAuthAccessToken
+                        | TokenType::OAuthRefreshToken
+                        | TokenType::DpopBundledAccessToken
+                ) {
+                    snowflake.to_string()
+                } else {
+                    String::new()
+                },
                 snowflake: snowflake.to_string(),
                 username: username.to_string(),
                 role: String::new(),
@@ -723,7 +889,7 @@ mod tests {
             let username = unique_test_key("nonexistent_user");
             cleanup_test_token(&cache, &snowflake, &username);
 
-            let key = make_key(&snowflake, &username, TokenType::MfaToken);
+            let key = make_mfa_key(&snowflake, &username);
 
             // When we get a token
             let result = cache.get_token(&key);
