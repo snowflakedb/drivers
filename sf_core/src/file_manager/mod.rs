@@ -172,8 +172,8 @@ use encryption::{
 use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{
-    DownloadFileError, S3Download, S3DownloadBody, SpillTarget, SpilledBody, UploadFileError,
-    download_from_s3, upload_to_s3_or_skip,
+    DownloadFileError, S3Download, S3DownloadBody, UploadFileError, download_from_s3,
+    upload_to_s3_or_skip,
 };
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
@@ -798,9 +798,9 @@ pub async fn download_single_file(
             // has `encryption_material`, so its ciphertext goes to a temp in
             // `spill_dir` and is decrypted into `.part` below.
             let spill_target = if enc_material.is_some() {
-                SpillTarget::Temp(&spill_dir)
+                CloudSpillTarget::Temp(&spill_dir)
             } else {
-                SpillTarget::Part(&partial_path)
+                CloudSpillTarget::Part(&partial_path)
             };
             let S3Download {
                 body,
@@ -865,13 +865,13 @@ pub async fn download_single_file(
                                 // assembled the whole object straight into `.part`. Nothing to
                                 // copy — signal `None` so the post-await branch renames `.part`
                                 // to the output (a single same-FS rename, no copy).
-                                S3DownloadBody::Spilled(SpilledBody::Part(_)) => {
+                                S3DownloadBody::Spilled(CloudSpilledBody::Part(_)) => {
                                     Ok((cloud_byte_count, None))
                                 }
                                 // git-stage ranged download: raw bytes were assembled into a
                                 // temp (chosen because `encryption_material` was present). Hand
                                 // the TempPath out so the caller renames it straight to output.
-                                S3DownloadBody::Spilled(SpilledBody::Temp(temp)) => {
+                                S3DownloadBody::Spilled(CloudSpilledBody::Temp(temp)) => {
                                     Ok((cloud_byte_count, Some(temp)))
                                 }
                                 // Small buffered download: copy the already-in-RAM
