@@ -3215,6 +3215,7 @@ dependencies = [
 name = "nodejs_bridge"
 version = "0.0.1"
 dependencies = [
+ "arrow",
  "napi",
  "napi-build",
  "napi-derive",
