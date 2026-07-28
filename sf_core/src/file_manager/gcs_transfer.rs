@@ -11,14 +11,12 @@ use crate::log_foreign_error;
 use crate::refresh::{Refresher, execute_with_refresh};
 use crate::sensitive::SensitiveString;
 use bytes::Bytes;
-use futures::StreamExt as _;
 use reqwest::{Method, StatusCode};
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
-use tempfile::NamedTempFile;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
@@ -1507,19 +1505,8 @@ async fn gcs_ranged_download_attempt(
 /// Downloads the object with parallel ranged GETs into a pre-allocated file,
 /// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
 /// Ranges are fetched up to `concurrency` at a time and written at their
-/// absolute offset (`pwrite`), so out-of-order completion is fine.
-///
-/// The assembly file is chosen by `target`: a non-encrypted download writes
-/// straight into the caller's `<dst>.part` (one rename from done), while an
-/// encrypted / git-stage download writes into a throwaway temp (its ciphertext
-/// is decrypted into `.part` afterwards).
-///
-/// On failure the range futures are *drained*, not short-circuited: every
-/// in-flight `write_at` finishes and drops its file handle before we return, so
-/// the partially-written assembly file can be removed even on Windows (which
-/// refuses to unlink an open file). A failed download therefore leaves no
-/// leftover; the only way a partial survives is a hard kill (SIGKILL / power
-/// loss), and then it is a self-documenting, self-overwriting `<dst>.part`.
+/// absolute offset (`pwrite`), so out-of-order completion is fine. Thin
+/// wrapper around the shared [`cloud_http::assemble_ranged_download`] helper.
 ///
 /// Every argument is a distinct input (connection + request identity, the
 /// object's size and chosen chunk size, how many ranges to fetch at once, the
@@ -1538,100 +1525,22 @@ async fn gcs_range_download(
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, GcsRequestError> {
     let mk_temp_err = |detail: String| GcsRequestError::TempFile { detail };
+    // Kept distinct from mk_temp_err so a 206-vs-200 truncation surfaces as the
+    // specific RangeNotHonored variant GCS already distinguishes from a generic
+    // temp-file failure (S3/Azure don't make this distinction and pass the same
+    // closure for both parameters).
+    let mk_range_err = |detail: String| GcsRequestError::RangeNotHonored { detail };
 
-    // Owns the assembly file for the duration of the download: either the
-    // caller's `.part` (referenced by path) or a RAII temp.
-    enum Assembly {
-        Part(std::path::PathBuf),
-        Temp(NamedTempFile),
-    }
-
-    // Create + pre-allocate the assembly file off-thread. spawn_blocking (not
-    // block_in_place): safe on current-thread runtimes; block_in_place panics
-    // on those. Returns the owner plus a shared, cloneable handle for the
-    // concurrent positioned writes.
-    let owned_target = match target {
-        cloud_http::CloudSpillTarget::Part(p) => (true, p.to_path_buf()),
-        cloud_http::CloudSpillTarget::Temp(d) => (false, d.to_path_buf()),
-    };
-    #[allow(clippy::result_large_err)]
-    let (assembly, file) = tokio::task::spawn_blocking(move || {
-        let (is_part, path_or_dir) = owned_target;
-        if is_part {
-            // TODO(SNOW-3832603): the SSE ranged-download `.part` is created with the
-            // process umask, bypassing the owner-only 0o600 hardening that
-            // `create_output_file` applies when `unsafe_file_write == false`. This is a
-            // shared cross-cloud gap — S3 (`s3_range_download`) and Azure
-            // (`azure_range_download`) create their `.part` the same way, and
-            // `unsafe_file_write` is not threaded into any streaming ranged-download
-            // signature. Thread `unsafe_file_write` through and route Part creation via
-            // `create_output_file` so SSE plaintext ranged downloads on S3/Azure/GCS all
-            // get owner-only perms.
-            let f = std::fs::File::create(&path_or_dir).map_err(|e| mk_temp_err(e.to_string()))?;
-            f.set_len(content_length)
-                .map_err(|e| mk_temp_err(e.to_string()))?;
-            Ok::<_, GcsRequestError>((Assembly::Part(path_or_dir), Arc::new(f)))
-        } else {
-            let named =
-                NamedTempFile::new_in(&path_or_dir).map_err(|e| mk_temp_err(e.to_string()))?;
-            named
-                .as_file()
-                .set_len(content_length)
-                .map_err(|e| mk_temp_err(e.to_string()))?;
-            let file = Arc::new(
-                named
-                    .as_file()
-                    .try_clone()
-                    .map_err(|e| mk_temp_err(e.to_string()))?,
-            );
-            Ok((Assembly::Temp(named), file))
-        }
-    })
+    cloud_http::assemble_ranged_download(
+        content_length,
+        chunk_size,
+        concurrency,
+        target,
+        mk_temp_err,
+        mk_range_err,
+        move |range| async move { gcs_get_range(client, url, token, &range, policy).await },
+    )
     .await
-    .map_err(|e| mk_temp_err(format!("join error in tempfile setup: {e}")))??;
-
-    // Drain, don't short-circuit: `collect` (not `try_collect`) polls EVERY
-    // range future to completion, so all in-flight `write_at` tasks finish and
-    // release their cloned file handles before we return. With no writer holding
-    // the file open, the cleanup below can unlink it even on Windows. The first
-    // error is surfaced after the drain.
-    let ranges = multipart::plan_ranges(content_length, chunk_size);
-    let results: Vec<Result<(), GcsRequestError>> = futures::stream::iter(ranges)
-        .map(|range| {
-            let file = Arc::clone(&file);
-            async move {
-                let bytes = gcs_get_range(client, url, token, &range, policy).await?;
-                tokio::task::spawn_blocking(move || multipart::write_at(&file, range.start, &bytes))
-                    .await
-                    .map_err(|e| mk_temp_err(format!("join error writing chunk: {e}")))?
-                    .map_err(|e| mk_temp_err(e.to_string()))
-            }
-        })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-    // Release our write handle so the only reference left is the one owned by
-    // `assembly` (Temp) or none (Part) — required before unlinking on Windows.
-    drop(file);
-    let outcome = results.into_iter().collect::<Result<Vec<()>, _>>();
-
-    match assembly {
-        Assembly::Part(path) => match outcome {
-            Ok(_) => Ok(cloud_http::CloudSpilledBody::Part(path)),
-            Err(e) => {
-                // Drained above, so no writer still holds `.part` open; the
-                // best-effort remove succeeds even on Windows.
-                let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(&path)).await;
-                Err(e)
-            }
-        },
-        // On success hand out the unlink-on-drop guard; on failure `named` drops
-        // here and NamedTempFile unlinks it (drained, so no open writer).
-        Assembly::Temp(named) => {
-            outcome.map(|_| cloud_http::CloudSpilledBody::Temp(named.into_temp_path()))
-        }
-    }
 }
 
 /// Ranged GET of `[range.start, range.end]`, returning the body bytes. 401
@@ -1659,21 +1568,8 @@ async fn gcs_get_range(
         .bytes()
         .await
         .map_err(|source| GcsRequestError::Http { source })?;
-    // Guard against endpoints that ignore Range and return the whole object
-    // (200 not 206): writing at range.start would corrupt the assembled file
-    // by overrunning the pre-allocated length.
-    let expected_len = range.end - range.start + 1;
-    if bytes.len() as u64 != expected_len {
-        return Err(GcsRequestError::RangeNotHonored {
-            detail: format!(
-                "ranged GET returned {} bytes, expected {expected_len} \
-                 (bytes={}-{}); endpoint may not honour Range header",
-                bytes.len(),
-                range.start,
-                range.end
-            ),
-        });
-    }
+    // The 206-vs-200 / truncation guard (bytes.len() == expected) lives in the
+    // shared cloud_http::assemble_ranged_download, applied uniformly to all clouds.
     Ok(bytes)
 }
 

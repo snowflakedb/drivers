@@ -331,6 +331,35 @@ impl SnowflakeTestClient {
             .unwrap()
     }
 
+    /// Cancel the query in flight on a statement (cross-thread `SQLCancel`).
+    /// Returns the raw `StatementCancelResponse` so tests can assert
+    /// `success` and inspect any error.
+    #[allow(clippy::result_large_err)]
+    pub fn statement_cancel_blocking(
+        &self,
+        stmt: &StatementHandle,
+    ) -> Result<StatementCancelResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .statement_cancel_blocking(StatementCancelRequest {
+                stmt_handle: Some(*stmt),
+            })
+    }
+
+    /// Execute the statement's query, returning the raw protobuf result so
+    /// tests can inspect the `DriverException` (e.g. `vendor_code`) on failure.
+    #[allow(clippy::result_large_err)]
+    pub fn execute_statement_query_raw(
+        &self,
+        stmt: &StatementHandle,
+    ) -> Result<ExecuteQueryResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(*stmt),
+                bindings: None,
+                timeout_seconds: None,
+            })
+    }
+
     pub fn release_statement(&self, stmt: &StatementHandle) {
         self.client
             .statement_release_blocking(StatementReleaseRequest {

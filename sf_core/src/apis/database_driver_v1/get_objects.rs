@@ -611,6 +611,7 @@ async fn execute_show(
                 query_input,
                 &retry_policy,
                 QueryExecutionMode::Blocking,
+                None,
             )
             .await
         }

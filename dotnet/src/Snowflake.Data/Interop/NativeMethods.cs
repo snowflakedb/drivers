@@ -9,7 +9,7 @@ internal static unsafe partial class NativeMethods
     private const string LibName = "sf_core";
 
     [LibraryImport(LibName, EntryPoint = "sf_core_init")]
-    public static partial uint sf_core_init(delegate* unmanaged[Cdecl]<uint, byte*, byte*, uint, byte*, uint> callback);
+    public static partial SfCoreInitResult sf_core_init(delegate* unmanaged[Cdecl]<uint, byte*, byte*, uint, byte*, uint> callback);
 
     [LibraryImport(LibName, EntryPoint = "sf_core_api_call_proto", StringMarshalling = StringMarshalling.Utf8)]
     public static partial nuint sf_core_api_call_proto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen);

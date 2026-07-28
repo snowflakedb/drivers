@@ -2,16 +2,18 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <string>
-
 #include <catch2/catch_test_macros.hpp>
 
+#include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "Schema.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
+#include "get_descriptor.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
+#include "terminating_statement_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -209,6 +211,235 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback on environment 
 
   ret = SQLEndTran(SQL_HANDLE_ENV, env_handle(), SQL_COMMIT);
   REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit on environment handle commits all connections",
+                 "[odbc-api][endtran][terminating_statement]") {
+  ExtraConnectedDbc extra(env_handle(), dsn_name());
+  Schema::use_temp_session_schema(extra.dbc());
+  const std::string table = generate_unique_table_name("ENDTRAN_ENV_ALL_COMMIT");
+
+  SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("CREATE OR REPLACE TABLE " + table + " (ID INTEGER)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("INSERT INTO " + table + " VALUES (1)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(extra.stmt(), sqlchar(("INSERT INTO " + table + " VALUES (2)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(extra.stmt(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLEndTran(SQL_HANDLE_ENV, env_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("SELECT COUNT(*) FROM " + table).c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER count = -1;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 2);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback on environment handle rolls back all connections",
+                 "[odbc-api][endtran][terminating_statement]") {
+  ExtraConnectedDbc extra(env_handle(), dsn_name());
+  Schema::use_temp_session_schema(extra.dbc());
+  const std::string table = generate_unique_table_name("ENDTRAN_ENV_ALL_ROLLBACK");
+
+  SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("CREATE OR REPLACE TABLE " + table + " (ID INTEGER)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("INSERT INTO " + table + " VALUES (1)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(extra.stmt(), sqlchar(("INSERT INTO " + table + " VALUES (2)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(extra.stmt(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLEndTran(SQL_HANDLE_ENV, env_handle(), SQL_ROLLBACK);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("SELECT COUNT(*) FROM " + table).c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER count = -1;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 0);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtSessionSchemaFixture,
+                 "SQLEndTran: Environment-handle rollback does not undo already-committed rows on other connections",
+                 "[odbc-api][endtran][terminating_statement]") {
+  ExtraConnectedDbc extra(env_handle(), dsn_name());
+  Schema::use_temp_session_schema(extra.dbc());
+  const std::string table = generate_unique_table_name("ENDTRAN_ENV_AGG");
+
+  SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("CREATE OR REPLACE TABLE " + table + " (ID INTEGER)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("INSERT INTO " + table + " VALUES (1)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(extra.stmt(), sqlchar(("INSERT INTO " + table + " VALUES (99)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(extra.stmt(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLEndTran(SQL_HANDLE_ENV, env_handle(), SQL_ROLLBACK);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("SELECT COUNT(*) FROM " + table).c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER count = -1;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &count, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 1);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Environment handle skips disconnected connections",
+                 "[odbc-api][endtran][terminating_statement]") {
+  ExtraConnectedDbc extra(env_handle(), dsn_name());
+  Schema::use_temp_session_schema(extra.dbc());
+  const std::string table = generate_unique_table_name("ENDTRAN_ENV_SKIP");
+
+  SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetConnectAttr(extra.dbc(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("CREATE OR REPLACE TABLE " + table + " (ID INTEGER)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar(("INSERT INTO " + table + " VALUES (1)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(extra.stmt(), sqlchar(("INSERT INTO " + table + " VALUES (99)").c_str()), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFreeStmt(extra.stmt(), SQL_CLOSE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Cleanly end the extra connection's transaction before disconnecting. Since
+  // SNOW-3831236, SQLDisconnect refuses with 25000 while a manual-commit
+  // transaction is open, so rolling back first lets the disconnect succeed on
+  // both drivers and makes `extra` genuinely closed. This keeps the test a true
+  // "environment-scope SQLEndTran skips a disconnected connection" scenario; the
+  // rolled-back INSERT (99) never commits, so only the main connection's row
+  // survives regardless of driver (removing the old row-count difference).
+  ret = SQLEndTran(SQL_HANDLE_DBC, extra.dbc(), SQL_ROLLBACK);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  extra.disconnect();
+
+  ret = SQLEndTran(SQL_HANDLE_ENV, env_handle(), SQL_COMMIT);
+
+  // Result: the return code depends on the driver manager, identically for both drivers. Under
+  //   iODBC the DM fans the env-scope call out per-connection and reaches the disconnected `extra`;
+  //   both drivers return the spec-mandated 08003 for it, so the aggregated call is SQL_ERROR
+  //   (iODBC does not surface the SQLSTATE on the env/connection handle). Under unixODBC the call
+  //   routes to the driver's end_tran_env handler, which skips disconnected connections and returns
+  //   SQL_SUCCESS. This is a driver-manager artifact, not an old-vs-new difference.
+  IODBC_ONLY { REQUIRE(ret == SQL_ERROR); }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+
+  // Effect (asserted for every permutation, independent of the return code above): the still-
+  //   connected main connection's INSERT (1) is committed and the disconnected connection's
+  //   INSERT (99) was rolled back before disconnecting, so exactly one row survives. Read from an
+  //   independent autocommit-ON connection so this reflects committed data only (no read-your-
+  //   writes from the main connection's own transaction).
+  ExtraConnectedDbc reader(env_handle(), dsn_name());
+  Schema::use_temp_session_schema(reader.dbc());
+  SQLRETURN reader_ret = SQLExecDirect(reader.stmt(), sqlchar(("SELECT COUNT(*) FROM " + table).c_str()), SQL_NTS);
+  REQUIRE(reader_ret == SQL_SUCCESS);
+  reader_ret = SQLFetch(reader.stmt());
+  REQUIRE(reader_ret == SQL_SUCCESS);
+  SQLINTEGER durable_count = -1;
+  reader_ret = SQLGetData(reader.stmt(), 1, SQL_C_SLONG, &durable_count, 0, nullptr);
+  REQUIRE(reader_ret == SQL_SUCCESS);
+  REQUIRE(durable_count == 1);
 
   ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, reinterpret_cast<SQLPOINTER>(SQL_AUTOCOMMIT_ON), 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -499,6 +730,22 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY092 - Invalid handle type
   }
   else {
     REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt_handle(), SQL_HANDLE_STMT);
+  }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY092 - Invalid handle type (descriptor)",
+                 "[odbc-api][endtran][terminating_statement][error]") {
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+  const SQLRETURN ret = SQLEndTran(SQL_HANDLE_DESC, ard, SQL_COMMIT);
+  IODBC_ONLY {
+    // iODBC's DM validates the HandleType enum before dispatching and rejects
+    //   SQL_HANDLE_DESC for SQLEndTran with SQL_INVALID_HANDLE (no diagnostic
+    //   records) before the driver is ever called. unixODBC forwards to the
+    //   driver, which maps it to HY092.
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY092", ard, SQL_HANDLE_DESC);
   }
 }
 
