@@ -869,14 +869,10 @@ jobs:
         run: |
           echo "=== Python CI Status ==="
 
-          # Check if tests were skipped
-          if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
-            echo "✓ Python tests were SKIPPED (no relevant changes detected)"
-            echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
-            exit 0
-          fi
-
-          # Check if critical jobs failed or were cancelled
+          # Check if critical jobs failed or were cancelled. This must run before the
+          # "tests skipped" check below: a failure in an upstream job (e.g. build_wheels)
+          # causes GitHub Actions to auto-skip downstream jobs like python_tests, which
+          # would otherwise be misread as "no relevant changes detected" and pass.
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.packaging_tests_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
@@ -891,6 +887,13 @@ jobs:
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
             exit 1
+          fi
+
+          # Check if tests were skipped (only reachable once nothing above failed/cancelled)
+          if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
+            echo "✓ Python tests were SKIPPED (no relevant changes detected)"
+            echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
+            exit 0
           fi
 
           # Tests ran and passed

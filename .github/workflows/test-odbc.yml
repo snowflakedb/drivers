@@ -238,23 +238,16 @@ jobs:
         run: |
           echo "=== ODBC CI Status ==="
 
-          # Check if tests were skipped. needs.odbc_tests is the reusable-
-          # workflow call (_test-odbc.yml) — when detect-changes says no
-          # relevant changes, the call is skipped and so is its aggregate
-          # result, which is the trigger for the "skipped" path here.
-          if [[ "${{ needs.odbc_tests.result }}" == "skipped" ]]; then
-            echo "✓ ODBC tests were SKIPPED (no relevant changes detected)"
-            echo "  - run_odbc: ${{ needs.detect-changes.outputs.run_odbc }}"
-            exit 0
-          fi
-
           # Each `needs.<X>.result` for a reusable-workflow call aggregates
           # every job inside the called workflow:
           #   needs.odbc_tests          → _test-odbc.yml
           #                               (load-odbc-matrix, build_odbc_driver,
           #                                odbc_tests, cleanup_odbc)
           #   needs.odbc_tests_reference → _test-odbc-reference.yml
-          # — any internal failure surfaces here.
+          # — any internal failure surfaces here. This must run before the
+          # "tests skipped" check below: a failure in an upstream job can cause
+          # a downstream job to be auto-skipped, which would otherwise be
+          # misread as "no relevant changes detected" and pass.
           if [[ "${{ needs.odbc_unit_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
@@ -263,6 +256,16 @@ jobs:
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
             exit 1
+          fi
+
+          # Check if tests were skipped (only reachable once nothing above failed/cancelled).
+          # needs.odbc_tests is the reusable-workflow call (_test-odbc.yml) — when
+          # detect-changes says no relevant changes, the call is skipped and so is
+          # its aggregate result, which is the trigger for the "skipped" path here.
+          if [[ "${{ needs.odbc_tests.result }}" == "skipped" ]]; then
+            echo "✓ ODBC tests were SKIPPED (no relevant changes detected)"
+            echo "  - run_odbc: ${{ needs.detect-changes.outputs.run_odbc }}"
+            exit 0
           fi
 
           # Tests ran and passed
