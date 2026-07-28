@@ -4,31 +4,54 @@ on:
   schedule:
     - cron: '0 4 * * *'  # Nightly at 04:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
-    branches: [main]
+    branches: [main, 'release/jdbc-**']
   pull_request:
+    # `labeled` is included so applying a scope label to a PR re-runs the
+    # workflow without needing a new commit. Unrelated labels are filtered by
+    # the `scope-label-gate` job below; concurrency keeps in-flight runs alive
+    # for those.
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     types: [ checks_requested ]
-  # Lets the mirror (snowflakedb) run on demand — see the detect-changes gate.
+  # Lets the mirror (snowflakedb) run on demand — see the scope-label-gate.
   workflow_dispatch:
 
 concurrency:
-  # Group by PR number for PRs; fall back to run ID for push-to-main and
-  # merge_group runs (each run is unique so they won't cancel each other).
+  # Group by PR number for PRs; fall back to run ID for push-to-main,
+  # push-to-release, and merge_group runs (each run is unique so they won't
+  # cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  # Don't cancel an in-flight run when an unrelated label is added/removed —
+  # only scope-up labels and normal push/synchronize/reopen events should
+  # replace the running matrix.
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  detect-changes:
-    # Public-side gate: on the mirror (snowflakedb) run only on manual dispatch
-    # or release/* pushes; gating this root job skips the whole workflow there.
-    # Internal repo (repository_owner != 'snowflakedb') unchanged.
+  # Filter out PR runs triggered solely by adding an unrelated label
+  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
+  # evaluates to false on those events, this job is skipped, and every
+  # downstream job that `needs:` it is skipped too. Scope-up labels
+  # pass through and re-run the workflow.
+  scope-label-gate:
+    # Public-side gate: on the mirror (snowflakedb) this pipeline runs only on
+    # manual dispatch or release/* pushes, never on every PR/push-to-main. On
+    # the internal repo (repository_owner != 'snowflakedb') behavior is
+    # unchanged. AND-merged with the scope-label filter.
     if: >-
-      github.repository_owner != 'snowflakedb'
-      || github.event_name == 'workflow_dispatch'
-      || startsWith(github.ref, 'refs/heads/release/')
+      (github.repository_owner != 'snowflakedb'
+       || github.event_name == 'workflow_dispatch'
+       || startsWith(github.ref, 'refs/heads/release/'))
+      && (github.event.action != 'labeled'
+          || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name))
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+
+  detect-changes:
+    needs: scope-label-gate
     uses: ./.github/workflows/detect-changes.yml
 
   jdbc_tests:
@@ -339,12 +362,6 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
-  # Build the release JARs (fat + thin), gated on jdbc_tests (skipped when it is). See _build-jdbc-fatjar.yml.
-  build_fatjar:
-    needs: [detect-changes, jdbc_tests]
-    if: needs.jdbc_tests.result == 'success'
-    uses: ./.github/workflows/_build-jdbc-fatjar.yml
-
   jdbc-status:
     needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference, jdbc_parity_tests]
     if: always()
@@ -358,20 +375,23 @@ jobs:
           REFERENCE_RESULT="${{ needs.jdbc_tests_reference.result }}"
           PARITY_RESULT="${{ needs.jdbc_parity_tests.result }}"
 
-          # Check if tests were skipped
-          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" && "$PARITY_RESULT" == "skipped" ]]; then
-            echo "✓ JDBC jobs were SKIPPED (no relevant changes detected)"
-            echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
-            exit 0
-          fi
-
-          # Check if any job failed or was cancelled
+          # Check if any job failed or was cancelled. This must run before the
+          # "tests skipped" check below: a failure in an upstream job can cause
+          # a downstream job to be auto-skipped, which would otherwise be
+          # misread as "no relevant changes detected" and pass.
           if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ || "$PARITY_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ JDBC CI FAILED or CANCELLED"
             echo "  - JDBC Tests (new): $NEW_RESULT"
             echo "  - JDBC Reference (old): $REFERENCE_RESULT"
             echo "  - JDBC Parity: $PARITY_RESULT"
             exit 1
+          fi
+
+          # Check if tests were skipped (only reachable once nothing above failed/cancelled)
+          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" && "$PARITY_RESULT" == "skipped" ]]; then
+            echo "✓ JDBC jobs were SKIPPED (no relevant changes detected)"
+            echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
+            exit 0
           fi
 
           # Tests ran and passed

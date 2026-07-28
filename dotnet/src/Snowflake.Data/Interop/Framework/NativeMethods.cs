@@ -8,7 +8,7 @@ internal static unsafe class NativeMethods
     private const string LibName = "sf_core";
 
     [DllImport(LibName, EntryPoint = "sf_core_init", CallingConvention = CallingConvention.Cdecl)]
-    public static extern uint sf_core_init(IntPtr callback);
+    public static extern SfCoreInitResult sf_core_init(IntPtr callback);
 
     [DllImport(LibName, EntryPoint = "sf_core_api_call_proto", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern UIntPtr sf_core_api_call_proto(

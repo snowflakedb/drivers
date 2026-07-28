@@ -300,6 +300,14 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display(
+        "Invalid transaction state: a transaction is still in process on the connection"
+    ))]
+    InvalidTransactionState {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid cursor state: cursor is already open"))]
     CursorAlreadyOpen {
         #[snafu(implicit)]
@@ -731,6 +739,7 @@ impl OdbcError {
             OdbcError::CountFieldIncorrect { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCatalogName { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCursorState { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidTransactionState { .. } => ErrorSource::ApiMisuse,
             OdbcError::CursorAlreadyOpen { .. } => ErrorSource::CursorState,
             OdbcError::StatementErrorState { .. } => ErrorSource::CursorState,
             OdbcError::DataNotFetched { .. } => ErrorSource::CursorState,
@@ -915,6 +924,7 @@ impl OdbcError {
             OdbcError::CountFieldIncorrect { .. } => SqlState::CountFieldIncorrect,
             OdbcError::InvalidCatalogName { .. } => SqlState::InvalidCatalogName,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
+            OdbcError::InvalidTransactionState { .. } => SqlState::InvalidTransactionState,
             OdbcError::CursorAlreadyOpen { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,

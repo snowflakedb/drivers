@@ -732,7 +732,7 @@ class TestMakePdWriter:
 
 
 # ---------------------------------------------------------------------------
-# BD#42: create_temp_table deprecation warning
+# BD#19: create_temp_table deprecation warning
 # ---------------------------------------------------------------------------
 
 
@@ -744,7 +744,7 @@ class TestCreateTempTableDeprecation:
     def test_should_warn_when_create_temp_table_true(self):
         with patch("snowflake.connector.pandas_tools.WritePandasOperation") as mock_op:
             mock_op.return_value.execute.return_value = WritePandasResult(True, 1, 5, [])
-            if NEW_DRIVER_ONLY("BD#42"):
+            if NEW_DRIVER_ONLY("BD#19"):
                 with pytest.warns(DeprecationWarning, match="create_temp_table"):
                     write_pandas(_mock_conn(), _mock_df(), "MY_TABLE", create_temp_table=True)
             else:

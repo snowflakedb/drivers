@@ -1555,7 +1555,11 @@ pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> s
     // Record BEFORE disconnect tears down the session so the resolver still
     // finds the connection in `Connected` state.
     record_api!(sql::HandleType::Dbc, connection_handle, "SQLDisconnect");
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::disconnect(connection_handle);
+    // Post diagnostics so SQLGetDiagRec surfaces SQLSTATE 25000 when disconnect
+    // is refused because a transaction is still in process.
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     record_err!(sql::HandleType::Dbc, connection_handle, result);
     result.to_sql_code()
 }

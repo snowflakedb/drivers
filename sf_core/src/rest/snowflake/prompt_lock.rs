@@ -87,7 +87,7 @@ mod tests {
     fn make_key(snowflake_url: &str, username: &str, token_type: TokenType) -> CacheKey {
         CacheKey {
             token_type,
-            idp: normalize_url(snowflake_url),
+            idp: String::new(),
             snowflake: normalize_url(snowflake_url),
             username: normalize_identifier(username),
             role: String::new(),

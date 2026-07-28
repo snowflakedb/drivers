@@ -438,6 +438,7 @@ async fn fetch_fresh_stage_info_with_sql(
                     query_input,
                     &crate::config::retry::RetryPolicy::default(),
                     rest::snowflake::QueryExecutionMode::Blocking,
+                    None,
                 )
                 .await
             }

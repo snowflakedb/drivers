@@ -18,7 +18,7 @@ import net.snowflake.client.internal.util.DelegatingWrapper;
  *
  * @param <D> the delegate type being wrapped
  */
-abstract class AbstractDecorator<D> implements DelegatingWrapper {
+public abstract class AbstractDecorator<D> implements DelegatingWrapper {
 
   /** True while a decorated call is on the stack, so only the outermost one records api-usage. */
   private static final ThreadLocal<Boolean> IN_CALL = ThreadLocal.withInitial(() -> Boolean.FALSE);
