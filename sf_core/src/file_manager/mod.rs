@@ -167,19 +167,23 @@ use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
 use azure_transfer::{download_from_azure_streaming, upload_to_azure_or_skip};
-use cloud_http::{CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo};
+use cloud_http::{
+    CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo,
+    spawn_s3_byte_stream_producer,
+};
 use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
+use flate2::write::GzDecoder;
 use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{
-    DownloadFileError, S3Download, S3DownloadBody, UploadFileError, download_from_s3,
-    upload_to_s3_or_skip,
+    DownloadFileError, S3Download, S3DownloadBody, S3StreamingDownload, UploadFileError,
+    download_from_s3, download_from_s3_streaming, upload_to_s3_or_skip,
 };
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -1245,6 +1249,178 @@ pub async fn download_single_file(
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
     })
+}
+
+/// Result of [`open_s3_download_stream`]: the chunk channel, background
+/// task, and on-cloud byte count from the GET's `Content-Length` (`0` if
+/// absent or the object is empty).
+pub struct DownloadStreamOpen {
+    /// Plaintext chunks, in order. Terminal `Err` is the last item; clean
+    /// EOF is the channel closing, not a final `Ok`.
+    pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, FileManagerError>>,
+    /// Background task draining and decrypting/gunzipping the S3 body into `chunks`.
+    pub task: tokio::task::JoinHandle<()>,
+    pub cloud_byte_count: i64,
+}
+
+/// Opens a zero-disk, chunked streaming download from S3: issues one GET,
+/// then a background task drains and decrypts/gunzips the body into
+/// [`DownloadStreamOpen::chunks`]. Unlike [`download_single_file`]'s S3 arm,
+/// nothing is buffered or spilled to disk beyond a few channel-sized chunks.
+///
+/// Only opening the GET is covered by the STS-refresh retry; once the body
+/// is in hand, a mid-body failure surfaces as a terminal channel error with
+/// no retry and no Range-resume (same tradeoff as GCS/Azure — see
+/// `cloud_http::spawn_s3_byte_stream_producer`).
+pub async fn open_s3_download_stream(
+    stage_info: &StageInfo,
+    src_location: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let S3StreamingDownload {
+        body,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    } = download_from_s3_streaming(stage_info, src_location, policy, refresher)
+        .await
+        .context(S3DownloadSnafu)?;
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, FileManagerError>>(8);
+    let reader = spawn_s3_byte_stream_producer(body);
+
+    // Decrypt/gunzip is blocking work, so it runs off the async executor.
+    // Both ends (reader recv, writer blocking_send) park rather than spin
+    // when running ahead of the other.
+    let error_tx = tx.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        let outcome = run_streaming_download_pipeline(
+            reader,
+            encryption_material,
+            file_metadata,
+            digest,
+            decompress,
+            ChannelWriter { tx },
+        );
+        if let Err(e) = outcome {
+            // Consumer already disconnected (e.g. close ran first); nobody
+            // is left to hear about the failure, which is fine.
+            let _ = error_tx.blocking_send(Err(e));
+        }
+        // All Senders drop here, closing the channel — a clean EOF, not an
+        // extra empty chunk.
+    });
+
+    Ok(DownloadStreamOpen {
+        chunks: rx,
+        task,
+        cloud_byte_count,
+    })
+}
+
+/// Sync `Write` counterpart to [`cloud_http::StreamReader`], over a bounded
+/// channel of plaintext chunks (or a terminal error). Runs inside
+/// `spawn_blocking`, so `blocking_send` is correct, not `send().await`.
+struct ChannelWriter {
+    tx: tokio::sync::mpsc::Sender<Result<Vec<u8>, FileManagerError>>,
+}
+
+impl Write for ChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.tx
+            .blocking_send(Ok(buf.to_vec()))
+            .map_err(|_| io::Error::other("download stream consumer disconnected"))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Where a streaming download's plaintext goes: straight to `W`, or through
+/// gunzip first. An enum, not `Box<dyn Write>` — `GzDecoder::finish` takes
+/// `self` by value to flush the trailer, which a boxed trait object can't do
+/// (see `code-review-design-discipline.md` #5).
+enum OutputSink<W: Write> {
+    Raw(W),
+    Gunzip(GzDecoder<W>),
+}
+
+impl<W: Write> Write for OutputSink<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            OutputSink::Raw(w) => w.write(buf),
+            OutputSink::Gunzip(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            OutputSink::Raw(w) => w.flush(),
+            OutputSink::Gunzip(w) => w.flush(),
+        }
+    }
+}
+
+impl<W: Write> OutputSink<W> {
+    /// Flushes trailing gunzip state and returns the underlying `W`. No-op for `Raw`.
+    fn finish(self) -> io::Result<W> {
+        match self {
+            OutputSink::Raw(w) => Ok(w),
+            OutputSink::Gunzip(w) => w.finish(),
+        }
+    }
+}
+
+/// Runs the blocking half of a streaming S3 download: reads `reader` to EOF,
+/// optionally decrypting (CSE) and/or gunzipping, and writes plaintext to
+/// `output`. Mirrors `write_cloud_download`'s CSE/git-stage/SSE cases, but
+/// through a channel sink instead of a file.
+fn run_streaming_download_pipeline(
+    mut reader: cloud_http::StreamReader,
+    encryption_material: Option<EncryptionMaterial>,
+    file_metadata: Option<EncryptedFileMetadata>,
+    digest: Option<String>,
+    decompress: bool,
+    output: ChannelWriter,
+) -> Result<(), FileManagerError> {
+    let mut sink = if decompress {
+        OutputSink::Gunzip(GzDecoder::new(output))
+    } else {
+        OutputSink::Raw(output)
+    };
+
+    match (encryption_material, file_metadata, digest) {
+        // CSE: decrypt the ciphertext, verifying the digest at the end.
+        (Some(enc_material), Some(enc_metadata), Some(d)) => {
+            decrypt_ciphertext_to_writer(
+                &mut reader,
+                &enc_metadata,
+                d.as_str(),
+                &enc_material,
+                &mut sink,
+            )
+            .context(DecryptionSnafu)?;
+        }
+        // encryption_material set but no CSE headers on the object (e.g. S3
+        // git-stage objects) — stream raw bytes instead of decrypting.
+        (maybe_enc, _, _) => {
+            if maybe_enc.is_some() {
+                tracing::debug!(
+                    "encryption_material present but S3 encryption headers absent; \
+                     streaming raw bytes"
+                );
+            }
+            std::io::copy(&mut reader, &mut sink).context(IoSnafu)?;
+        }
+    }
+
+    sink.finish().context(IoSnafu)?;
+    Ok(())
 }
 
 /// Creates the `.part` output file for a GET download, applying owner-only

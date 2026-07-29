@@ -494,7 +494,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
 /// `download_from_gcs_streaming` + `decrypt_ciphertext_to_writer` →
 /// plaintext matches the original.
 ///
-/// This exercises the `mpsc::sync_channel` bridge (`StreamReader`) between
+/// This exercises the `tokio::sync::mpsc` bridge (`StreamReader`) between
 /// the async reqwest body stream and the sync AES-CBC decryptor.
 #[tokio::test]
 async fn gcs_streaming_bytes_source_encrypt_decrypt_roundtrip() {
@@ -663,4 +663,220 @@ fn auto_compress_then_encrypt_decrypt_decompress_roundtrip() {
         !gzip_path.exists(),
         "gzip tempfile must be unlinked once its guard drops",
     );
+}
+
+// ---------------------------------------------------------------------------
+// `open_s3_download_stream`: the zero-disk, chunked S3 GET path underneath
+// `download_stream_begin`/`_chunk`/`_close`. These tests drain the public
+// `DownloadStreamOpen::chunks` channel end to end, exercising the
+// spawn_blocking decrypt/gunzip pipeline and the ChannelWriter bridge.
+// ---------------------------------------------------------------------------
+
+/// Builds an S3 `StageInfo` pointed at a mock server `uri`, same shape as
+/// `download_single_file_tampered_digest_leaves_no_output`'s inline stage.
+fn s3_stage(uri: String) -> StageInfo {
+    StageInfo {
+        location_type: LocationType::S3,
+        // AWS doc-convention bucket/prefix, matching the AKIA...EXAMPLE creds below.
+        bucket: "examplebucket".to_string(),
+        key_prefix: "photos/2024/".to_string(),
+        region: "us-east-1".to_string(),
+        creds: CloudCredentials::S3 {
+            aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+            aws_token: SensitiveString::from(""),
+        },
+        endpoint: Some(uri),
+        presigned_url: None,
+        use_virtual_url: false,
+        use_regional_url: false,
+        use_s3_regional_url: false,
+        tls_config: sf_core::tls::config::TlsConfig::default(),
+        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        storage_account: None,
+    }
+}
+
+/// Drains a [`DownloadStreamOpen`]'s `chunks` channel into a `Vec<u8>`,
+/// propagating the first error and joining the background task so a panic
+/// there fails loudly instead of silently truncating the output.
+async fn drain_download_stream(
+    mut opened: sf_core::file_manager::DownloadStreamOpen,
+) -> Result<Vec<u8>, sf_core::file_manager::FileManagerError> {
+    let mut out = Vec::new();
+    while let Some(item) = opened.chunks.recv().await {
+        out.extend_from_slice(&item?);
+    }
+    opened.task.await.expect("pipeline task must not panic");
+    Ok(out)
+}
+
+/// Zero-backoff retry policy for the success-path tests — no retries are
+/// exercised, so a real backoff would just add latency if one ever fired.
+fn s3_test_retry_policy() -> RetryPolicy {
+    use sf_core::config::retry::{BackoffConfig, Jitter};
+    use std::time::Duration;
+    RetryPolicy {
+        backoff: BackoffConfig {
+            base: Duration::ZERO,
+            factor: 1.0,
+            cap: Duration::ZERO,
+            jitter: Jitter::None,
+        },
+        ..RetryPolicy::put_get(&ParamStore::new())
+    }
+}
+
+/// CSE round-trip: encrypt, serve ciphertext + CSE headers from a mock S3
+/// GET, stream-decrypt via the chunked pipeline, and check the plaintext
+/// matches. `decompress: false` — gzip is covered separately below.
+#[tokio::test]
+async fn s3_open_download_stream_cse_roundtrip() {
+    use sf_core::file_manager::open_s3_download_stream;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = b"open_s3_download_stream CSE round-trip payload".to_vec();
+    let material = test_encryption_material();
+    let (ciphertext, enc_meta, digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.clone().into()), &material);
+    let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-amz-meta-sfc-digest", digest.as_str())
+                .insert_header("x-amz-meta-x-amz-matdesc", mat_desc_json.as_str())
+                .insert_header("x-amz-meta-x-amz-key", enc_meta.encrypted_key.as_str())
+                .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str())
+                .set_body_bytes(ciphertext),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = s3_stage(server.uri());
+    let opened = open_s3_download_stream(
+        &stage,
+        "cse-object",
+        &s3_test_retry_policy(),
+        &mut None,
+        Some(material),
+        false,
+    )
+    .await
+    .expect("open_s3_download_stream must succeed");
+
+    let decrypted = drain_download_stream(opened)
+        .await
+        .expect("streaming decrypt must succeed");
+    assert_eq!(
+        decrypted, plaintext,
+        "chunked S3 download must reproduce the original plaintext"
+    );
+}
+
+/// Decompress-only path (no CSE): object is gzip-compressed, no client-side
+/// encryption. `decompress: true` must gunzip in-flight with no decrypt step.
+#[tokio::test]
+async fn s3_open_download_stream_gunzip_only_roundtrip() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use sf_core::file_manager::open_s3_download_stream;
+    use std::io::Write as _;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&plaintext).expect("gzip write");
+    let gzip_bytes = encoder.finish().expect("gzip finish");
+
+    let server = MockServer::start().await;
+    // No CSE headers — hits the SSE/no-encryption arm of the pipeline match.
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(gzip_bytes))
+        .mount(&server)
+        .await;
+
+    let stage = s3_stage(server.uri());
+    let opened = open_s3_download_stream(
+        &stage,
+        "gzip-object",
+        &s3_test_retry_policy(),
+        &mut None,
+        None,
+        true,
+    )
+    .await
+    .expect("open_s3_download_stream must succeed");
+
+    let decompressed = drain_download_stream(opened)
+        .await
+        .expect("streaming gunzip must succeed");
+    assert_eq!(
+        decompressed, plaintext,
+        "chunked S3 download must reproduce the original plaintext after gunzip"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Mid-body disconnect, same tradeoff as
+// `gcs_streaming_mid_body_disconnect_surfaces_error`: the AWS SDK's retry
+// covers only opening the GET, so a body truncation surfaces as a terminal
+// `Err` on `DownloadStreamOpen::chunks` with no retry and no Range-resume.
+//
+// Fixture: a raw TCP server sends a 200 with a 1 MiB Content-Length, writes
+// 16 body bytes, then closes — same shape as the GCS fixture, for S3.
+// ---------------------------------------------------------------------------
+#[tokio::test(flavor = "multi_thread")]
+async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
+    use sf_core::file_manager::open_s3_download_stream;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        // Drain the request; exact bytes (path, SigV4 headers) don't matter.
+        let mut req = [0u8; 4096];
+        let _ = sock.read(&mut req).await;
+        // Declare a 1 MiB body, send only 16 bytes, then hang up.
+        sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\n")
+            .await
+            .unwrap();
+        sock.write_all(&[0u8; 16]).await.unwrap();
+        sock.flush().await.unwrap();
+        // `sock` dropped here → connection closed mid-body.
+    });
+
+    let stage = s3_stage(format!("http://{addr}"));
+    let opened = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        open_s3_download_stream(
+            &stage,
+            "disconnect-object",
+            &s3_test_retry_policy(),
+            &mut None,
+            None,
+            false,
+        ),
+    )
+    .await
+    .expect("open must not hang")
+    .expect("header phase must succeed (200 received before disconnect)");
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        drain_download_stream(opened),
+    )
+    .await
+    .expect("drain must not hang");
+
+    assert!(
+        result.is_err(),
+        "mid-body disconnect must surface as a terminal Err on the chunks channel, got Ok({:?} bytes)",
+        result.ok().map(|v| v.len()),
+    );
+
+    server.await.unwrap();
 }

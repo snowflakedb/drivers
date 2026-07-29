@@ -2302,9 +2302,19 @@ mod tests {
         .await
         .expect("streaming GET must refresh on the routing-HEAD 403 and succeed");
 
-        let mut body = Vec::new();
-        std::io::Read::read_to_end(&mut dl.body.into_reader().expect("into_reader"), &mut body)
-            .expect("read body after re-drive");
+        // `into_reader()` on a `Streamed` body drains a `cloud_http::StreamReader`,
+        // whose `Read` impl calls `blocking_recv` — only valid off the tokio
+        // runtime (see `StreamReader`'s doc comment), so the read happens on a
+        // blocking-pool thread here, mirroring how the production download path
+        // (`write_cloud_download`) always drives it inside `spawn_blocking`.
+        let body = tokio::task::spawn_blocking(move || -> Vec<u8> {
+            let mut body = Vec::new();
+            std::io::Read::read_to_end(&mut dl.body.into_reader().expect("into_reader"), &mut body)
+                .expect("read body after re-drive");
+            body
+        })
+        .await
+        .expect("blocking read task must not panic");
         assert_eq!(
             body, BLOB_BODY,
             "body after re-drive must match served bytes"
