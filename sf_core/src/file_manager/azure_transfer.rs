@@ -1171,6 +1171,7 @@ async fn azure_head_attempt(
 /// (expired SAS) fast-fails as `SasExpired`, so the whole ranged download
 /// re-drives with a fresh SAS (whole-download restart, like the PUT multipart
 /// path); other errors pass through as `Other`.
+#[allow(clippy::too_many_arguments)]
 async fn azure_range_attempt(
     client: &reqwest::Client,
     full_url: &str,
@@ -1178,6 +1179,7 @@ async fn azure_range_attempt(
     chunk_size: u64,
     concurrency: usize,
     base: &RetryPolicy,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, AzureAttemptError<AzureDownloadError>> {
     let policy = azure_403_fastfail_policy(base);
@@ -1188,6 +1190,7 @@ async fn azure_range_attempt(
         chunk_size,
         concurrency,
         &policy,
+        unsafe_file_write,
         spill_target,
     )
     .await
@@ -1223,6 +1226,7 @@ pub async fn download_from_azure_streaming(
     filename: &str,
     multipart: MultipartParams,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
@@ -1289,6 +1293,7 @@ pub async fn download_from_azure_streaming(
                     chunk_size,
                     multipart.concurrency,
                     &base,
+                    unsafe_file_write,
                     spill_target,
                 )
                 .await?;
@@ -1343,6 +1348,7 @@ pub async fn download_from_azure_streaming(
 /// Ranges are fetched up to `concurrency` at a time and written at their
 /// absolute offset, so out-of-order completion is fine. Thin wrapper around
 /// the shared [`cloud_http::assemble_ranged_download`] helper.
+#[allow(clippy::too_many_arguments)]
 async fn azure_range_download(
     client: &reqwest::Client,
     full_url: &str,
@@ -1350,6 +1356,7 @@ async fn azure_range_download(
     chunk_size: u64,
     concurrency: usize,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
     let mk_temp_err = |detail: String| azure_download_error::TempFileSnafu { detail }.build();
@@ -1359,6 +1366,7 @@ async fn azure_range_download(
         chunk_size,
         concurrency,
         target,
+        unsafe_file_write,
         mk_temp_err,
         mk_temp_err,
         move |range| async move { azure_get_range(client, full_url, &range, policy).await },
@@ -2287,6 +2295,7 @@ mod tests {
             "file.csv",
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
             &mut refresher_opt,
         )
@@ -2336,6 +2345,7 @@ mod tests {
             "file.csv",
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
             &mut None,
         )
@@ -3090,6 +3100,7 @@ mod tests {
             "file.dat",
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
             &mut None,
         )
@@ -3136,6 +3147,7 @@ mod tests {
             "file.dat",
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             &mut None,
         )
@@ -3150,6 +3162,12 @@ mod tests {
                     payload,
                     "the .part must hold the whole reassembled object"
                 );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&part_path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o600, "ranged .part must be owner-only");
+                }
             }
             _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
         }
@@ -3183,6 +3201,7 @@ mod tests {
             "file.dat",
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             &mut None,
         )

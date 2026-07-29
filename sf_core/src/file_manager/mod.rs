@@ -894,8 +894,8 @@ pub async fn download_single_file(
             // the correct implicit parent.
             let spill_dir = output_path
                 .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             // A non-encrypted ranged download assembles straight into `.part`
             // (one rename to publish; any hard-kill leftover is a
             // self-overwriting `.part`). An encrypted (or git-stage) download
@@ -917,6 +917,7 @@ pub async fn download_single_file(
                 policy,
                 data.multipart,
                 refresher,
+                unsafe_file_write,
                 spill_target,
             )
             .await
@@ -1044,8 +1045,8 @@ pub async fn download_single_file(
             // output_path has no directory component (a bare filename).
             let spill_dir = output_path
                 .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             // A non-encrypted ranged download assembles straight into `.part`
             // (one rename to publish); an encrypted (or git-stage) download has
             // `encryption_material`, so its ciphertext goes to a temp in
@@ -1069,6 +1070,7 @@ pub async fn download_single_file(
                 per_file_index,
                 data.multipart,
                 refresher,
+                unsafe_file_write,
                 spill_target,
             )
             .await
@@ -1148,8 +1150,8 @@ pub async fn download_single_file(
             // case "." is the correct implicit parent.
             let spill_dir = output_path
                 .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             // A non-encrypted ranged download assembles straight into `.part`
             // (one rename to publish); an encrypted (or git-stage) download has
             // `encryption_material`, so its ciphertext goes to a temp in
@@ -1164,6 +1166,7 @@ pub async fn download_single_file(
                 data.src_location.as_str(),
                 data.multipart,
                 policy,
+                unsafe_file_write,
                 spill_target,
                 refresher,
             )
@@ -1244,7 +1247,7 @@ pub async fn download_single_file(
 /// permissions (`0o600`) on Unix when `unsafe_file_write` is `false`.
 ///
 /// On Unix with `unsafe_file_write = false`, forces mode `0o600`; otherwise uses the process umask.
-fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
+pub(super) fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
     #[cfg(unix)]
     if !unsafe_file_write {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -2531,10 +2534,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.bin");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(&data)
-            .unwrap();
+        File::create(&path).unwrap().write_all(&data).unwrap();
 
         let (prefix, size) =
             read_prefix_and_size(&ByteSource::Path(path)).expect("read_prefix_and_size");
@@ -2647,8 +2647,8 @@ mod tests {
             region: "us-east-1".to_string(),
             creds: CloudCredentials::S3 {
                 aws_key_id: String::new(),
-                aws_secret_key: crate::sensitive::SensitiveString::from(String::new()),
-                aws_token: crate::sensitive::SensitiveString::from(String::new()),
+                aws_secret_key: SensitiveString::from(String::new()),
+                aws_token: SensitiveString::from(String::new()),
             },
             endpoint: None,
             presigned_url: None,
@@ -2699,8 +2699,7 @@ mod tests {
             .unwrap();
 
         let real_digest =
-            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
-                .expect("digest");
+            compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into())).expect("digest");
 
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
@@ -2753,9 +2752,7 @@ mod tests {
         };
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
-        let policy = crate::config::retry::RetryPolicy::put_get(
-            &crate::config::param_store::ParamStore::new(),
-        );
+        let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
         upload_single_file(data, &policy, &mut refresher)
             .await
             .expect("upload_single_file should succeed against the mock")
@@ -2878,9 +2875,7 @@ mod tests {
             single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
-        let policy = crate::config::retry::RetryPolicy::put_get(
-            &crate::config::param_store::ParamStore::new(),
-        );
+        let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
         let result = upload_single_file(data, &policy, &mut refresher)
             .await
             .expect("S3 upload should succeed against the mock");

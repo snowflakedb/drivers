@@ -1284,6 +1284,7 @@ pub async fn download_from_gcs_streaming(
     per_file_index: usize,
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
     // Ranged (multipart) download applies only on the access-token path — a
@@ -1299,6 +1300,7 @@ pub async fn download_from_gcs_streaming(
             policy,
             multipart,
             refresher,
+            unsafe_file_write,
             spill_target,
         )
         .await?
@@ -1389,6 +1391,7 @@ async fn gcs_try_ranged_download(
     policy: &RetryPolicy,
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
     let client = create_gcs_client(stage_info)?;
@@ -1410,8 +1413,16 @@ async fn gcs_try_ranged_download(
                 let Some(token) = token else {
                     return Ok(None);
                 };
-                gcs_ranged_download_attempt(&client, &url, token, multipart, policy, spill_target)
-                    .await
+                gcs_ranged_download_attempt(
+                    &client,
+                    &url,
+                    token,
+                    multipart,
+                    policy,
+                    unsafe_file_write,
+                    spill_target,
+                )
+                .await
             }
         }
     };
@@ -1435,6 +1446,7 @@ async fn gcs_ranged_download_attempt(
     token: &str,
     multipart: MultipartParams,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsAttemptError<GcsDownloadError>> {
     // HEAD probe. A 401 must refresh; any other probe failure degrades to the
@@ -1484,6 +1496,7 @@ async fn gcs_ranged_download_attempt(
         chunk_size,
         multipart.concurrency,
         policy,
+        unsafe_file_write,
         spill_target,
     )
     .await
@@ -1510,9 +1523,9 @@ async fn gcs_ranged_download_attempt(
 ///
 /// Every argument is a distinct input (connection + request identity, the
 /// object's size and chosen chunk size, how many ranges to fetch at once, the
-/// retry policy, and the spill target); Azure's `azure_range_download` stays
-/// under the limit only because its auth rides in the URL/SAS rather than a
-/// separate bearer `token` argument.
+/// retry policy, the spill target, and output-file permissions); S3/Azure omit
+/// a separate bearer `token` argument because auth rides in the SDK client or
+/// SAS URL respectively.
 #[allow(clippy::too_many_arguments)]
 async fn gcs_range_download(
     client: &reqwest::Client,
@@ -1522,6 +1535,7 @@ async fn gcs_range_download(
     chunk_size: u64,
     concurrency: usize,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, GcsRequestError> {
     let mk_temp_err = |detail: String| GcsRequestError::TempFile { detail };
@@ -1536,6 +1550,7 @@ async fn gcs_range_download(
         chunk_size,
         concurrency,
         target,
+        unsafe_file_write,
         mk_temp_err,
         mk_range_err,
         move |range| async move { gcs_get_range(client, url, token, &range, policy).await },
@@ -3139,6 +3154,7 @@ mod tests {
             0,
             always_multipart(),
             &mut None,
+            false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
         .await
@@ -3183,6 +3199,7 @@ mod tests {
             0,
             always_multipart(),
             &mut None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await
@@ -3196,6 +3213,12 @@ mod tests {
                     payload,
                     "the .part must hold the whole reassembled object"
                 );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&part_path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o600, "ranged .part must be owner-only");
+                }
             }
             _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
         }
@@ -3228,6 +3251,7 @@ mod tests {
             0,
             always_multipart(),
             &mut None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await;
