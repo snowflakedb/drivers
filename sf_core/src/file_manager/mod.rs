@@ -1260,6 +1260,13 @@ pub struct DownloadStreamOpen {
     pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, FileManagerError>>,
     /// Background task draining and decrypting/gunzipping the S3 body into `chunks`.
     pub task: tokio::task::JoinHandle<()>,
+    /// Abort handle for the *inner* producer task reading the S3 body (see
+    /// `cloud_http::spawn_s3_byte_stream_producer`). Aborting `task` alone
+    /// stops the decrypt/gunzip pipeline but leaves this task parked on
+    /// `body.next()` if the connection has stalled; a caller tearing the
+    /// session down early must abort both. Callers should abort this handle
+    /// *and* `task`, not `task` alone.
+    pub producer_abort: tokio::task::AbortHandle,
     pub cloud_byte_count: i64,
 }
 
@@ -1290,7 +1297,7 @@ pub async fn open_s3_download_stream(
         .context(S3DownloadSnafu)?;
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, FileManagerError>>(8);
-    let reader = spawn_s3_byte_stream_producer(body);
+    let (reader, producer_abort) = spawn_s3_byte_stream_producer(body);
 
     // Decrypt/gunzip is blocking work, so it runs off the async executor.
     // Both ends (reader recv, writer blocking_send) park rather than spin
@@ -1317,6 +1324,7 @@ pub async fn open_s3_download_stream(
     Ok(DownloadStreamOpen {
         chunks: rx,
         task,
+        producer_abort,
         cloud_byte_count,
     })
 }

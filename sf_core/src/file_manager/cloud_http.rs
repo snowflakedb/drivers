@@ -162,18 +162,20 @@ pub(super) fn spawn_byte_stream_producer(response: reqwest::Response) -> StreamR
 
 /// S3 analogue of [`spawn_byte_stream_producer`]: drains an
 /// `aws_sdk_s3::primitives::ByteStream` into a bounded mpsc channel and
-/// returns a [`StreamReader`]. Needs its own drain loop because
-/// `ByteStream::next` isn't a `futures_core::Stream`, but feeds the same
-/// `StreamReader` as the GCS/Azure paths.
+/// returns a [`StreamReader`] plus a [`tokio::task::AbortHandle`] so a caller
+/// (`download_stream_close`, via `DownloadStreamOpen::producer_abort`) can
+/// cancel a producer stalled mid-read on `body.next()`. Needs its own drain
+/// loop because `ByteStream::next` isn't a `futures_core::Stream`, but feeds
+/// the same `StreamReader` as the GCS/Azure paths.
 ///
 /// Same tradeoff as the GCS/Azure producer: the AWS SDK's retry only covers
 /// opening the GET. Once the body is in hand, a mid-body failure surfaces to
 /// the consumer as `io::Error::other(...)` with no retry and no Range-resume.
 pub(super) fn spawn_s3_byte_stream_producer(
     mut body: aws_sdk_s3::primitives::ByteStream,
-) -> StreamReader {
+) -> (StreamReader, tokio::task::AbortHandle) {
     let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(8);
-    tokio::spawn(async move {
+    let join_handle = tokio::spawn(async move {
         while let Some(chunk_result) = body.next().await {
             let mapped = chunk_result.map_err(std::io::Error::other);
             // `.await`, not blocking send — see `spawn_byte_stream_producer`.
@@ -189,7 +191,8 @@ pub(super) fn spawn_s3_byte_stream_producer(
         }
         // tx is dropped here, signalling EOF to the receiver.
     });
-    StreamReader::new(rx)
+    let abort_handle = join_handle.abort_handle();
+    (StreamReader::new(rx), abort_handle)
 }
 
 /// Client-side-encryption inputs a download carries for the decrypt path,

@@ -110,4 +110,27 @@ impl<T> HandleManager<T> {
             }
         }
     }
+
+    /// Deregisters and returns every currently-live value matching `pred`,
+    /// leaving non-matching handles untouched. Used by session reaping (e.g.
+    /// `stream_transfer::reap_connection_streams`) to sweep up a connection's
+    /// handles without knowing their ids up front. Matching values are
+    /// swapped out via `Option::take` rather than removed from the backing
+    /// `Vec`, preserving every other handle's `id` (its index).
+    pub fn drain_matching<F: Fn(&T) -> bool>(&self, pred: F) -> Vec<Arc<T>> {
+        let span = span!(target: "handle_manager", Level::INFO, "HandleManager::drain_matching");
+        let _enter = span.enter();
+        let mut handles = self.handles.write_recover();
+
+        let mut drained = Vec::new();
+        for handle_value in handles.iter_mut() {
+            if handle_value.value.as_ref().is_some_and(|val| pred(val))
+                && let Some(val) = handle_value.value.take()
+            {
+                drained.push(val);
+            }
+        }
+        tracing::trace!(target: "handle_manager", "Drained {} handle(s)", drained.len());
+        drained
+    }
 }

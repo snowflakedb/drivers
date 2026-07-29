@@ -7,7 +7,7 @@ use super::connection::{Connection, WrapperIdentity};
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
-use super::stream_transfer::UploadStreamSession;
+use super::stream_transfer::{DownloadStream, UploadStreamSession};
 use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -102,6 +102,10 @@ pub struct DatabaseDriverV1 {
     /// `conn_handle`/`sql` fields are set once and never mutated), so it is
     /// stored directly rather than double-wrapped.
     pub(super) upload_streams: HandleManager<UploadStreamSession>,
+    /// Pending chunked downloads; see `stream_transfer::DownloadStream` for
+    /// the registration/mutation/teardown lifecycle (`download_stream_begin`,
+    /// `download_stream_chunk`, `download_stream_close`).
+    pub(super) download_streams: HandleManager<DownloadStream>,
     token_cache: once_cell::sync::OnceCell<Arc<dyn TokenCache>>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -133,6 +137,7 @@ impl DatabaseDriverV1 {
             statements: HandleManager::new(),
             results: HandleManager::new(),
             upload_streams: HandleManager::new(),
+            download_streams: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
