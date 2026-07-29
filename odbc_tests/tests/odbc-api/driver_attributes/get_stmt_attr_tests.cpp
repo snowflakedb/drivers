@@ -28,3 +28,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetStmtAttr: HY010 during SQL_NEED_D
 
   SQLCancel(stmt_handle());
 }
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetStmtAttr: SQL_ROWSET_SIZE returns the value set",
+                 "[odbc-api][getstmtattr][driver_attributes]") {
+  // Given SQL_ROWSET_SIZE has been set via SQLSetStmtAttr
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ROWSET_SIZE, reinterpret_cast<SQLPOINTER>(7), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When SQLGetStmtAttr reads it back
+  SQLULEN rowset_size = 0;
+  ret = SQLGetStmtAttr(stmt_handle(), SQL_ROWSET_SIZE, &rowset_size, SQL_IS_UINTEGER, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then it round-trips the value that was set
+  REQUIRE(rowset_size == 7);
+}

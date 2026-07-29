@@ -882,15 +882,10 @@ TEST_CASE("Replay: excel vba_ado prepared_exec", "[excel][vba_ado][prepared_exec
     CHECK(numAttr == 2);
   }
 
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE: the new driver ships SQLExtendedFetch but rejects
-  // SQL_ROWSET_SIZE (the ODBC 2.x attribute that configures it) with S1092, and its
-  // SQLExtendedFetch reads SQL_ATTR_ROW_ARRAY_SIZE instead. The reference driver accepts it.
-  // Remove this skip once SNOW-3779798 implements SQL_ROWSET_SIZE for SQLExtendedFetch.
+  // SQLSetStmtAttr - SQL_ROWSET_SIZE (ODBC 2.x, attr 9) — configures SQLExtendedFetch rowset size.
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ROWSET_SIZE, (SQLPOINTER)2, -6);
-    SKIP_NEW_DRIVER("SNOW-3779798",
-                    "SQL_ROWSET_SIZE (ODBC 2.x, attr 9) rejected with S1092; new driver's "
-                    "SQLExtendedFetch uses SQL_ATTR_ROW_ARRAY_SIZE instead of SQL_ROWSET_SIZE");
+
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
@@ -961,12 +956,10 @@ TEST_CASE("Replay: excel vba_ado prepared_exec", "[excel][vba_ado][prepared_exec
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE (SNOW-3779798; see first occurrence above)
+  // SQLSetStmtAttr - SQL_ROWSET_SIZE
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ROWSET_SIZE, (SQLPOINTER)1, -6);
-    SKIP_NEW_DRIVER("SNOW-3779798",
-                    "SQL_ROWSET_SIZE (ODBC 2.x, attr 9) rejected with S1092; new driver's "
-                    "SQLExtendedFetch uses SQL_ATTR_ROW_ARRAY_SIZE instead of SQL_ROWSET_SIZE");
+
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
@@ -1205,12 +1198,10 @@ TEST_CASE("Replay: excel vba_ado prepared_exec", "[excel][vba_ado][prepared_exec
     CHECK(numAttr == 2);
   }
 
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE (SNOW-3779798; see first occurrence above)
+  // SQLSetStmtAttr - SQL_ROWSET_SIZE
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ROWSET_SIZE, (SQLPOINTER)2, -6);
-    SKIP_NEW_DRIVER("SNOW-3779798",
-                    "SQL_ROWSET_SIZE (ODBC 2.x, attr 9) rejected with S1092; new driver's "
-                    "SQLExtendedFetch uses SQL_ATTR_ROW_ARRAY_SIZE instead of SQL_ROWSET_SIZE");
+
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
@@ -1280,12 +1271,10 @@ TEST_CASE("Replay: excel vba_ado prepared_exec", "[excel][vba_ado][prepared_exec
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE (SNOW-3779798; see first occurrence above)
+  // SQLSetStmtAttr - SQL_ROWSET_SIZE
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ROWSET_SIZE, (SQLPOINTER)1, -6);
-    SKIP_NEW_DRIVER("SNOW-3779798",
-                    "SQL_ROWSET_SIZE (ODBC 2.x, attr 9) rejected with S1092; new driver's "
-                    "SQLExtendedFetch uses SQL_ATTR_ROW_ARRAY_SIZE instead of SQL_ROWSET_SIZE");
+
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
