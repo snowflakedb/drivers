@@ -296,6 +296,7 @@ pub(super) async fn assemble_ranged_download<E, Fut, G, M, MR>(
     chunk_size: u64,
     concurrency: usize,
     target: CloudSpillTarget<'_>,
+    unsafe_file_write: bool,
     mk_temp_err: M,
     mk_range_err: MR,
     get_range: G,
@@ -320,15 +321,7 @@ where
     let (assembly, file): (Assembly, Arc<std::fs::File>) = tokio::task::spawn_blocking(move || {
         let (is_part, path_or_dir) = owned_target;
         if is_part {
-            // TODO(SNOW-3832603): the SSE ranged-download `.part` is created with the
-            // process umask, bypassing the owner-only 0o600 hardening that
-            // `create_output_file` applies when `unsafe_file_write == false`. This is a
-            // shared cross-cloud gap for S3/Azure/GCS, which all assemble through this
-            // helper, and `unsafe_file_write` is not threaded into any streaming
-            // ranged-download signature. Thread `unsafe_file_write` through and route
-            // Part creation via `create_output_file` so SSE plaintext ranged downloads
-            // on all three clouds get owner-only perms.
-            let f = std::fs::File::create(&path_or_dir)?;
+            let f = super::create_output_file(&path_or_dir, unsafe_file_write)?;
             f.set_len(content_length)?; // pre-allocate for out-of-order pwrite
             Ok::<_, std::io::Error>((Assembly::Part(path_or_dir), Arc::new(f)))
         } else {

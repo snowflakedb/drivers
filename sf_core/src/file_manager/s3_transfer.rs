@@ -835,6 +835,7 @@ pub(super) async fn download_from_s3(
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
@@ -848,7 +849,15 @@ pub(super) async fn download_from_s3(
             let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
                 .await
                 .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
-            s3_download_attempt(&s3_client, &stage_info, &s3_key, multipart, spill_target).await
+            s3_download_attempt(
+                &s3_client,
+                &stage_info,
+                &s3_key,
+                multipart,
+                unsafe_file_write,
+                spill_target,
+            )
+            .await
         }
     };
 
@@ -871,6 +880,7 @@ async fn s3_download_attempt(
     stage_info: &StageInfo,
     s3_key: &str,
     multipart: MultipartParams,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<S3Download, S3AttemptError<DownloadFileError>> {
     let head = s3_head_object(s3_client, stage_info, s3_key).await?;
@@ -895,6 +905,7 @@ async fn s3_download_attempt(
             content_length,
             chunk_size,
             multipart.concurrency,
+            unsafe_file_write,
             spill_target,
         )
         .await?;
@@ -1034,6 +1045,7 @@ async fn s3_get_whole(
 /// Ranges are fetched up to `concurrency` at a time and written at their
 /// absolute offset (`pwrite`), so out-of-order completion is fine. Thin
 /// wrapper around the shared [`cloud_http::assemble_ranged_download`] helper.
+#[allow(clippy::too_many_arguments)]
 async fn s3_range_download(
     s3_client: &S3Client,
     stage_info: &StageInfo,
@@ -1041,6 +1053,7 @@ async fn s3_range_download(
     content_length: u64,
     chunk_size: u64,
     concurrency: usize,
+    unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, S3AttemptError<DownloadFileError>> {
     let mk_temp_err = |detail: String| {
@@ -1052,6 +1065,7 @@ async fn s3_range_download(
         chunk_size,
         concurrency,
         target,
+        unsafe_file_write,
         mk_temp_err,
         mk_temp_err,
         move |range| async move { s3_get_range(s3_client, stage_info, s3_key, &range).await },
@@ -2499,6 +2513,7 @@ mod tests {
             &base_policy(),
             always_multipart(),
             &mut None,
+            false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
         )
         .await
@@ -2551,6 +2566,7 @@ mod tests {
             &base_policy(),
             always_multipart(),
             &mut None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await
@@ -2564,6 +2580,12 @@ mod tests {
                     payload,
                     "the .part must hold the whole reassembled object"
                 );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&part_path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o600, "ranged .part must be owner-only");
+                }
             }
             _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
         }
@@ -2594,6 +2616,7 @@ mod tests {
             &base_policy_with_attempts(1), // single attempt: fail fast
             always_multipart(),
             &mut None,
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
         )
         .await;
