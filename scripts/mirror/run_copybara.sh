@@ -188,7 +188,7 @@ case "${SUBCOMMAND}" in
     fi
     python3 "${REPO_ROOT}/scripts/mirror/prepare_import_paths.py" "${PR_NUMBER}" "${import_draft_args[@]}"
     # --nogit-destination-rebase: the mirror is a strict subset of the
-    # internal repo (no copy.bara.sky, _internal/, adr/, .github/, …).
+    # internal repo (no copy.bara.sky, NOMIRROR directories, adr/, .github/, …).
     # Rebasing the mirror PR branch onto internal main fails with
     # modify/delete conflicts on those internal-only files. Skipping the
     # rebase applies the PR diff as-is on top of internal main — safe
