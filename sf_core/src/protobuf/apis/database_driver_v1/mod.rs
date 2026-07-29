@@ -724,6 +724,66 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream_begin",
+        skip(self, input)
+    )]
+    async fn connection_download_stream_begin(
+        &self,
+        input: ConnectionDownloadStreamBeginRequest,
+    ) -> Result<ConnectionDownloadStreamBeginResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let (download_handle, total_len) = self
+            .driver
+            .download_stream_begin(
+                conn_handle.into(),
+                input.stage_name,
+                input.source_filename,
+                input.decompress,
+            )
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamBeginResponse {
+            download_handle: Some(download_handle.into()),
+            total_len,
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream_chunk",
+        skip(self, input)
+    )]
+    async fn connection_download_stream_chunk(
+        &self,
+        input: ConnectionDownloadStreamChunkRequest,
+    ) -> Result<ConnectionDownloadStreamChunkResponse, DriverException> {
+        let download_handle =
+            required(input.download_handle, "Download stream handle is required")?;
+        let (data, eof) = self
+            .driver
+            .download_stream_chunk(download_handle.into(), input.max_len)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamChunkResponse { data, eof })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream_close",
+        skip(self, input)
+    )]
+    async fn connection_download_stream_close(
+        &self,
+        input: ConnectionDownloadStreamCloseRequest,
+    ) -> Result<ConnectionDownloadStreamCloseResponse, DriverException> {
+        let download_handle =
+            required(input.download_handle, "Download stream handle is required")?;
+        self.driver
+            .download_stream_close(download_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamCloseResponse {})
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_get_query_status",
         skip(self, input)
     )]

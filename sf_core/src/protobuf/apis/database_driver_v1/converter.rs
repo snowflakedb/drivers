@@ -186,6 +186,24 @@ impl From<Handle> for UploadStreamHandle {
     }
 }
 
+impl From<DownloadStreamHandle> for Handle {
+    fn from(handle: DownloadStreamHandle) -> Self {
+        Handle {
+            id: handle.id as u64,
+            magic: handle.magic as u64,
+        }
+    }
+}
+
+impl From<Handle> for DownloadStreamHandle {
+    fn from(handle: Handle) -> Self {
+        DownloadStreamHandle {
+            id: handle.id as i64,
+            magic: handle.magic as i64,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Chunk format conversions (native ↔ proto)
 // ---------------------------------------------------------------------------

@@ -671,6 +671,61 @@ message ConnectionDownloadStreamResponse {
   bytes data = 1;
 }
 
+// Handle for a chunked download stream session opened by
+// ConnectionDownloadStreamBegin. Opaque outside sf_core, same shape as the
+// other handle types.
+message DownloadStreamHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// Chunked streaming GET, part 1/3: resolves the stage location and opens a
+// session that streams the file from cloud storage without ever landing the
+// whole file on local disk or fully buffering it in memory. The core keeps
+// only a small bounded window of bytes in flight regardless of file size.
+// S3-backed stages only in this RPC generation; other cloud providers return
+// an error (use ConnectionDownloadStream for those in the meantime).
+message ConnectionDownloadStreamBeginRequest {
+  ConnectionHandle conn_handle = 1;
+  string stage_name = 2;
+  string source_filename = 3;
+  // When true, the core gunzips the downloaded bytes before returning
+  // (opt-in; the bytes are returned verbatim otherwise).
+  bool decompress = 4;
+}
+
+message ConnectionDownloadStreamBeginResponse {
+  DownloadStreamHandle download_handle = 1;
+  // Size of the file in the stage, in bytes, when known up front (before
+  // any decompression). Absent if the size could not be determined.
+  optional int64 total_len = 2;
+}
+
+// Chunked streaming GET, part 2/3: pulls up to max_len bytes of the session
+// opened by ConnectionDownloadStreamBegin. The core clamps max_len to 8 MiB
+// per call regardless of what is requested here — this is an enforced cap,
+// not just advisory guidance — to keep its bounded-memory guarantee a real
+// guarantee. eof is true once the producer has finished and no more bytes
+// remain.
+message ConnectionDownloadStreamChunkRequest {
+  DownloadStreamHandle download_handle = 1;
+  int64 max_len = 2;
+}
+
+message ConnectionDownloadStreamChunkResponse {
+  bytes data = 1;
+  bool eof = 2;
+}
+
+// Chunked streaming GET, part 3/3: closes the session, aborting the
+// in-flight download if it has not already finished. Safe to call after
+// eof, or early (e.g. the caller's consumer failed mid-read).
+message ConnectionDownloadStreamCloseRequest {
+  DownloadStreamHandle download_handle = 1;
+}
+
+message ConnectionDownloadStreamCloseResponse {}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -1058,6 +1113,12 @@ service DatabaseDriver {
   rpc ConnectionUploadStreamFinish(ConnectionUploadStreamFinishRequest) returns (ConnectionUploadStreamFinishResponse);
   rpc ConnectionUploadStreamAbort(ConnectionUploadStreamAbortRequest) returns (ConnectionUploadStreamAbortResponse);
   rpc ConnectionDownloadStream(ConnectionDownloadStreamRequest) returns (ConnectionDownloadStreamResponse);
+  // Chunked streaming GET: begin a session, pull chunks, then close.
+  // Zero-disk, bounded-memory streaming download. S3-backed stages only;
+  // begin fails for other providers pending a future PR.
+  rpc ConnectionDownloadStreamBegin(ConnectionDownloadStreamBeginRequest) returns (ConnectionDownloadStreamBeginResponse);
+  rpc ConnectionDownloadStreamChunk(ConnectionDownloadStreamChunkRequest) returns (ConnectionDownloadStreamChunkResponse);
+  rpc ConnectionDownloadStreamClose(ConnectionDownloadStreamCloseRequest) returns (ConnectionDownloadStreamCloseResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core
