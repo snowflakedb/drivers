@@ -860,6 +860,9 @@ pub enum StmtAttr {
     Concurrency = 7,
     /// `SQL_ATTR_KEYSET_SIZE` (8) — keyset size for keyset-driven cursors.
     KeysetSize = 8,
+    /// `SQL_ROWSET_SIZE` (9) — ODBC 2.x rowset size for `SQLExtendedFetch`.
+    /// Kept separate from `SQL_ATTR_ROW_ARRAY_SIZE` (27), which drives `SQLFetch`/`SQLFetchScroll`.
+    RowsetSize = 9,
     /// `SQL_ATTR_SIMULATE_CURSOR` (10) — how to simulate positioned update/delete statements.
     SimulateCursor = 10,
     /// `SQL_ATTR_RETRIEVE_DATA` (11) — whether to retrieve data after a positioned update.
@@ -931,6 +934,7 @@ impl TryFrom<i32> for StmtAttr {
             6 => Ok(StmtAttr::CursorType),
             7 => Ok(StmtAttr::Concurrency),
             8 => Ok(StmtAttr::KeysetSize),
+            9 => Ok(StmtAttr::RowsetSize),
             10 => Ok(StmtAttr::SimulateCursor),
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
@@ -2233,6 +2237,10 @@ pub struct StatementInner {
     pub max_length: sql::ULen,
     /// `SQL_ATTR_METADATA_ID` — inherited from connection at allocation time (default false).
     pub metadata_id: bool,
+    /// `SQL_ROWSET_SIZE` (9) — ODBC 2.x rowset size used by `SQLExtendedFetch`.
+    /// Distinct from `SQL_ATTR_ROW_ARRAY_SIZE` (27) which drives `SQLFetch`/`SQLFetchScroll`.
+    /// Default 1.
+    pub rowset_size: sql::ULen,
     /// Set when `SQLExtendedFetch` has been used on this statement.
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
@@ -2427,6 +2435,7 @@ impl Statement {
                 get_data_state: None,
                 cursor_type: CursorType::ForwardOnly,
                 max_length: 0,
+                rowset_size: 1,
                 used_extended_fetch: false,
                 prepared_param_count: None,
                 prepared_array_bind_supported: None,

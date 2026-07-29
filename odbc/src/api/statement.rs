@@ -2278,6 +2278,12 @@ pub fn set_stmt_attr(
             inner.keyset_size = val;
             Ok(())
         }
+        StmtAttr::RowsetSize => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: RowsetSize (SQL_ROWSET_SIZE) = {}", val);
+            inner.rowset_size = val.max(1);
+            Ok(())
+        }
         StmtAttr::SimulateCursor => {
             if inner.state.as_ref().has_open_cursor() {
                 return InvalidCursorStateSnafu.fail();
@@ -2639,6 +2645,15 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::KeysetSize => {
             if !value_ptr.is_null() {
                 unsafe { *(value_ptr as *mut sql::ULen) = inner.keyset_size };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::RowsetSize => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.rowset_size };
             }
             if !string_length_ptr.is_null() {
                 unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
