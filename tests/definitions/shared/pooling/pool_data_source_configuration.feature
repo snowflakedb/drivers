@@ -1,37 +1,30 @@
 # ============================================================================
 # SnowflakeConnectionPoolDataSource configuration & DataSource API surface
 #
-# SPEC-ONLY feature file: scenarios are intentionally left UNTAGGED (TODO) so
-# they carry no test-method requirement yet. The format validator reports them
-# as TODO without failing CI. The scenario-level @jdbc_int tags and the mirrored
-# JUnit tests (PoolDataSourceConfigurationTests) land in the implementation PR.
+# BDD feature for the offline configuration / API surface of the pooled data
+# source (SnowflakeConnectionPoolDataSource, implemented by
+# SnowflakePooledConnectionDataSource, which extends SnowflakeBasicDataSource).
+# Every scenario is @jdbc_int and is mirrored by a test method in
+# jdbc/src/test/java/net/snowflake/jdbc/integration/pooling/PoolDataSourceConfigurationTests.java
+# These tests never open a Snowflake session; they assert what each setter
+# stores/exposes on the pooled data source.
 #
-# Covers the offline configuration / API surface of the pooled data source
-# (SnowflakeConnectionPoolDataSource, implemented by
-# SnowflakePooledConnectionDataSource, which extends SnowflakeBasicDataSource):
-# the inherited DataSource / CommonDataSource / java.sql.Wrapper methods and
-# every SnowflakeDataSource configuration setter. Live pooling behavior
-# (getPooledConnection / getConnection round-trips, borrowing logical
-# connections, authentication) is covered separately by the e2e feature
-# tests/definitions/shared/pooling/connection_pool.feature.
+# Live pooling behavior (getPooledConnection / getConnection round-trips,
+# borrowing logical connections, authentication) is covered separately by the
+# e2e feature tests/definitions/shared/pooling/connection_pool.feature.
 #
 # In the storage Scenario Outlines the "property" column is the EXACT key the
-# setter writes into getProperties() (i.e. SessionProperty.getKey()), so a
-# future @jdbc_int test can assert getProperties().getProperty(<property>).
+# setter writes into getProperties() (i.e. SessionProperty.getKey()), so the
+# mirrored @jdbc_int test asserts getProperties().getProperty(<property>).
 #
-# Related behavior differences: BD#5 / BD#44 (MFA credential-cache
-# consolidation), BD#42 (setters stored but not yet consumed by sf_core),
-# BD#43 (HTTP header customizers not wired), BD#45 (browser response timeout
-# does not auto-promote the authenticator).
+# Related behavior differences: BD#5 (MFA credential-cache consolidation),
+# BD#31 (DataSource setters wired to sf_core only).
+# Authenticator auto-promotion when setBrowserResponseTimeout is set is
+# deferred to SNOW-3595091 and is not documented as a behavior difference yet.
 # ============================================================================
 
+@jdbc
 Feature: Connection pool data source configuration
-
-  # TODO: Intentional coverage gaps (error paths deferred to follow-up scenarios):
-  #   - connection creation with invalid credentials (@jdbc_e2e; see connection_pool.feature)
-  #   - getConnection / getPooledConnection with unset or blank URL
-  #   - setUrl with a malformed URL
-  #   - null-argument handling for other nullable/object setters not yet listed below
 
   # ==========================================================================
   # ENDPOINT / URL CONFIGURATION
@@ -39,16 +32,19 @@ Feature: Connection pool data source configuration
   #          setDatabaseName, setSchema, setWarehouse, setRole
   # ==========================================================================
 
+  @jdbc_int
   Scenario: should return the URL that was explicitly set
     Given a new Snowflake connection pool data source
     When the URL is configured with setUrl
     Then getUrl returns the same URL
 
+  @jdbc_int
   Scenario: should build the JDBC URL from the server name and port number
     Given a new Snowflake connection pool data source with no explicit URL
     When the server name is configured with setServerName and the port with setPortNumber
     Then getUrl returns a jdbc:snowflake URL that contains the server name and port
 
+  @jdbc_int
   Scenario Outline: should store the <property> endpoint property
     Given a new Snowflake connection pool data source
     When <setter> is called with a value
@@ -66,10 +62,10 @@ Feature: Connection pool data source configuration
   # AUTHENTICATION CONFIGURATION (storage only)
   # Methods: setAuthenticator, setToken, setPasscode, setPasscodeInPassword,
   #          setDisableSamlURLCheck, setSsl, setPrivateKey, setPrivateKeyFile,
-  #          setPrivateKeyBase64, setEnableClientRequestMfaToken,
-  #          setEnableClientStoreTemporaryCredential
+  #          setPrivateKeyBase64, setClientStoreTemporaryCredential
   # ==========================================================================
 
+  @jdbc_int
   Scenario Outline: should store the <property> authentication property
     Given a new Snowflake connection pool data source
     When <setter> is called with a value
@@ -84,6 +80,7 @@ Feature: Connection pool data source configuration
       | setDisableSamlURLCheck| disable_saml_url_check|
       | setSsl                | ssl                |
 
+  @jdbc_int
   Scenario Outline: should store private key material configured via <setter>
     Given a new Snowflake connection pool data source
     When <setter> is called with the key material
@@ -95,114 +92,76 @@ Feature: Connection pool data source configuration
       | setPrivateKeyFile   |
       | setPrivateKeyBase64 |
 
-  Scenario Outline: should consolidate the legacy credential-cache setter <setter>
+  @jdbc_int
+  Scenario: should store the clientStoreTemporaryCredential property
     Given a new Snowflake connection pool data source
-    When <setter> is called
-    Then the consolidated clientStoreTemporaryCredential property is stored
-    And the legacy property name is not written to the configuration
-
-    Examples:
-      | setter                                 |
-      | setEnableClientRequestMfaToken         |
-      | setEnableClientStoreTemporaryCredential|
+    When setClientStoreTemporaryCredential is called with true
+    Then the clientStoreTemporaryCredential property is stored in the data source configuration
 
   # ==========================================================================
   # PROXY CONFIGURATION
-  # Methods: setUseProxy, setProxyHost, setProxyPort, setProxyUser,
-  #          setProxyPassword, setProxyProtocol, setNonProxyHosts,
-  #          setDisableSocksProxy
+  # Methods: setProxyHost, setProxyPort, setProxyUser, setProxyPassword,
+  #          setNonProxyHosts
   # ==========================================================================
 
+  @jdbc_int
   Scenario Outline: should store the <property> proxy property
     Given a new Snowflake connection pool data source
     When <setter> is called with a value
     Then the <property> is stored in the data source configuration
 
     Examples:
-      | setter              | property          |
-      | setUseProxy         | useProxy          |
-      | setProxyHost        | proxyHost         |
-      | setProxyPort        | proxyPort         |
-      | setProxyUser        | proxyUser         |
-      | setProxyPassword    | proxyPassword     |
-      | setProxyProtocol    | proxyProtocol     |
-      | setNonProxyHosts    | nonProxyHosts     |
-      | setDisableSocksProxy| ignoreJvmSocksProxy |
+      | setter           | property       |
+      | setProxyHost     | proxyHost      |
+      | setProxyPort     | proxyPort      |
+      | setProxyUser     | proxyUser      |
+      | setProxyPassword | proxyPassword  |
+      | setNonProxyHosts | nonProxyHosts  |
 
   # ==========================================================================
-  # CLIENT BEHAVIOR & FORMAT TOGGLES
-  # (some stored-only until sf_core support lands, BD#42)
-  # Methods: setTracing, setApplication, setClientConfigFile,
-  #          setAllowUnderscoresInHost, setDisableGcsDefaultCredentials,
-  #          setArrowTreatDecimalAsInt, setStringsQuotedForColumnDef,
-  #          setEnablePutGet, setEnablePatternSearch, setOcspFailOpen,
-  #          setJDBCDefaultFormatDateWithTimezone, setGetDateUseNullTimezone
+  # CLIENT BEHAVIOR
+  # Methods: setApplication, setAllowUnderscoresInHost
   # ==========================================================================
 
+  @jdbc_int
   Scenario Outline: should store the <property> client behavior property
     Given a new Snowflake connection pool data source
     When <setter> is called with a value
     Then the <property> is stored in the data source configuration
 
     Examples:
-      | setter                       | property                  |
-      | setTracing                   | tracing                   |
-      | setApplication               | application               |
-      | setClientConfigFile          | clientConfigFile          |
-      | setAllowUnderscoresInHost    | allowUnderscoresInHost    |
-      | setDisableGcsDefaultCredentials | isGcsDefaultCredentialsDisabled |
-      | setArrowTreatDecimalAsInt    | treatDecimalAsInt         |
-      | setStringsQuotedForColumnDef | stringsQuotedForColumnDef |
-      | setEnablePutGet              | enablePutGet              |
-      | setEnablePatternSearch       | enablePatternSearch       |
-      | setOcspFailOpen              | ocspFailOpen              |
-
-  Scenario Outline: should store the nullable <property> when <setter> is called with a non-null value
-    Given a new Snowflake connection pool data source
-    When <setter> is called with a non-null Boolean value
-    Then the <property> is stored in the data source configuration
-
-    Examples:
-      | setter                              | property                         |
-      | setJDBCDefaultFormatDateWithTimezone| JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE|
-      | setGetDateUseNullTimezone           | getDateUseNullTimezone           |
-
-  Scenario Outline: should remove the nullable <property> when <setter> is called with null
-    Given a Snowflake connection pool data source with the nullable <property> previously stored
-    When <setter> is called with null
-    Then the <property> is removed from the data source configuration
-
-    Examples:
-      | setter                              | property                         |
-      | setJDBCDefaultFormatDateWithTimezone| JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE|
-      | setGetDateUseNullTimezone           | getDateUseNullTimezone           |
+      | setter                    | property               |
+      | setApplication            | application            |
+      | setAllowUnderscoresInHost | allowUnderscoresInHost |
 
   # ==========================================================================
   # TIMEOUTS & RETRIES
-  # Methods: setNetworkTimeout, setQueryTimeout, setMaxHttpRetries,
-  #          setPutGetMaxRetries, setBrowserResponseTimeout,
-  #          setLoginTimeout, getLoginTimeout
-  # Note: setBrowserResponseTimeout does not auto-promote the authenticator (BD#45).
+  # Methods: setQueryTimeout, setMaxHttpRetries, setPutGetMaxRetries,
+  #          setBrowserResponseTimeout, setLoginTimeout, getLoginTimeout
+  # Note: authenticator auto-promotion when setBrowserResponseTimeout is set is
+  # deferred to SNOW-3595091 (not documented as a BD yet).
   # ==========================================================================
 
+  @jdbc_int
   Scenario Outline: should store the <property> timeout or retry property
     Given a new Snowflake connection pool data source
     When <setter> is called with a value
     Then the <property> is stored in the data source configuration
 
     Examples:
-      | setter                   | property               |
-      | setNetworkTimeout        | networkTimeoutSeconds  |
-      | setQueryTimeout          | queryTimeoutSeconds    |
-      | setMaxHttpRetries        | maxHttpRetries         |
-      | setPutGetMaxRetries      | putGetMaxRetries       |
-      | setBrowserResponseTimeout| BROWSER_RESPONSE_TIMEOUT |
+      | setter                    | property                 |
+      | setQueryTimeout           | queryTimeoutSeconds      |
+      | setMaxHttpRetries         | maxHttpRetries           |
+      | setPutGetMaxRetries       | putGetMaxRetries         |
+      | setBrowserResponseTimeout | browser_response_timeout |
 
+  @jdbc_int
   Scenario: should round-trip the login timeout
     Given a new Snowflake connection pool data source
     When the login timeout is configured with setLoginTimeout
     Then getLoginTimeout returns the configured value
 
+  @jdbc_int
   Scenario: should not auto-promote the authenticator when the browser response timeout is set
     Given a new Snowflake connection pool data source
     When setBrowserResponseTimeout is called
@@ -213,6 +172,7 @@ Feature: Connection pool data source configuration
   # Methods: setEnableDiagnostics, setDiagnosticsAllowlistFile
   # ==========================================================================
 
+  @jdbc_int
   Scenario Outline: should store the <property> diagnostics property
     Given a new Snowflake connection pool data source
     When <setter> is called with a value
@@ -224,22 +184,11 @@ Feature: Connection pool data source configuration
       | setDiagnosticsAllowlistFile | diagnosticsAllowlistFile |
 
   # ==========================================================================
-  # HTTP HEADER CUSTOMIZERS
-  # Methods: setHttpHeadersCustomizers
-  # Note: customizers are retained on the DataSource but not forwarded to
-  # sf_core today (BD#43).
-  # ==========================================================================
-
-  Scenario: should retain HTTP header customizers on the data source
-    Given a new Snowflake connection pool data source
-    When setHttpHeadersCustomizers is called with a list of customizers
-    Then the customizers are retained on the data source without being forwarded to sf_core
-
-  # ==========================================================================
   # UNSUPPORTED CommonDataSource OPERATIONS
   # Methods: getLogWriter, setLogWriter, getParentLogger
   # ==========================================================================
 
+  @jdbc_int
   Scenario Outline: should reject the unsupported operation <operation>
     Given a new Snowflake connection pool data source
     When <operation> is invoked on the data source
@@ -256,16 +205,19 @@ Feature: Connection pool data source configuration
   # Methods: unwrap(Class), isWrapperFor(Class), getProperties
   # ==========================================================================
 
+  @jdbc_int
   Scenario: should unwrap the data source to a supported interface
     Given a new Snowflake connection pool data source
     When isWrapperFor and unwrap are called with a supported interface
     Then isWrapperFor returns true and unwrap returns the data source instance
 
+  @jdbc_int
   Scenario: should reject unwrapping to an unsupported interface
     Given a new Snowflake connection pool data source
     When isWrapperFor and unwrap are called with an unsupported interface
     Then isWrapperFor returns false and unwrap throws a SQLException
 
+  @jdbc_int
   Scenario: should expose the configuration as a defensive copy of properties
     Given a Snowflake connection pool data source with configuration applied
     When getProperties is called and the returned map is mutated

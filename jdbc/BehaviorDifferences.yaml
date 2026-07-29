@@ -553,28 +553,19 @@ behavior_differences:
       Intentional fix; trades the legacy event-then-flag ordering for a consistently-closed handle
       during listener callbacks.
   31:
-    name: "SnowflakeConnectionPoolDataSource exposes a reduced DataSource configuration surface"
+    name: "DataSource exposes a trimmed, sf_core-supported configuration surface"
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: medium
-    old_driver_behavior: |
-      The legacy ConnectionPoolDataSource extends a SnowflakeDataSource that exposes a large
-      configuration surface (50+ setters covering tracing, proxy host/port, put/get, diagnostics,
-      arrow/result-format toggles, setEnableClientRequestMfaToken, and many other knobs).
-    new_driver_behavior: |
-      SnowflakeConnectionPoolDataSource extends the universal driver's SnowflakeDataSource, which
-      currently exposes only the core connection-configuration setters. Callers that configured a
-      pooled DataSource through legacy-only setters must set the equivalent connection property
-      instead, where one exists.
-    description: |
-      The pooled DataSource inherits the universal SnowflakeDataSource API; this entry tracks the
-      pooling-visible portion of the broader DataSource API reduction. MFA-token consolidation is
-      tracked separately as BD#5.
     status_rationale: |
-      Not yet reviewed. The reduced surface is a deliberate simplification, but the full set of
-      dropped setters and their property equivalents needs an explicit compatibility decision.
+      Legacy snowflake-jdbc exposes 50+ DataSource setters on SnowflakeBasicDataSource and
+      SnowflakeConnectionPoolDataSource, including client-side JDBC knobs (tracing, OCSP,
+      PUT/GET toggles, useProxy, HttpHeadersCustomizer, etc.) that sf_core does not consume.
+      The universal driver keeps setters whose values sf_core understands at connect time and
+      drops the rest rather than storing silent no-ops. Wired setters are normalized and
+      forwarded at connect time. OCSP and HttpHeadersCustomizer are covered by BD#46 and BD#43.
   32:
     name: "setClientInfo failures no longer fire connectionErrorOccurred"
     status: allowed
@@ -806,3 +797,47 @@ behavior_differences:
     status_rationale: |
       Legacy snowflake-jdbc on Linux ignores clientStoreTemporaryCredential for id-token cache I/O unless
       CLIENT_STORE_TEMPORARY_CREDENTIAL is also set; universal driver does not.
+  43:
+    name: "HttpHeadersCustomizer is not ported"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy snowflake-jdbc exposes HttpHeadersCustomizer / setHttpHeadersCustomizers for custom REST
+      headers. sf_core has no equivalent hook, so the universal driver omits the surface rather than
+      accepting customizers that would be ignored.
+  44:
+    name: "DataSource.getProperties() returns a copy, not the live map"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy getProperties() returns the live internal map; mutating it changes DataSource state, and
+      getConnection(user, password) persists credentials into that shared map. The universal driver
+      returns a defensive copy so per-call credentials are not stored on the DataSource.
+  45:
+    name: "DataSource.getConnection does not require a username up front"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy getConnection(username, password) rejects a missing username for most authenticators.
+      The universal driver passes credentials through to sf_core and lets connect-time validation
+      decide (companion to the password relaxation in BD#1).
+  46:
+    name: "OCSP is not supported"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    status_rationale: |
+      Legacy snowflake-jdbc performs OCSP revocation checking and exposes setOcspFailOpen. The
+      universal driver does not support OCSP or expose that setter; revocation is CRL-based only
+      (disabled by default via crl_check_mode).
