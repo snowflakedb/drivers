@@ -664,3 +664,18 @@ behavior_differences:
       `enable_crl_file_cache` → `crl_enable_disk_caching` (both default `True`).
       Callers who previously disabled caching via `enable_crl_cache=False` must
       set both toggles to `False` explicitly.
+  43:
+    name: "file_stream on a non-PUT statement raises ProgrammingError instead of being silently ignored"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `cursor.execute(sql, file_stream=...)` silently ignores the `file_stream` keyword
+      argument when `sql` is not a PUT statement; the statement runs normally and the
+      stream is never consumed.
+    new_driver_behavior: |
+      `cursor.execute(sql, file_stream=...)` raises `ProgrammingError` when `sql` is not a
+      PUT statement, so a mismatched `file_stream` argument is caught immediately instead
+      of being silently discarded.

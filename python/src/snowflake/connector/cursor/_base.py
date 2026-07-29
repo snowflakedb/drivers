@@ -6,9 +6,9 @@ import abc
 import logging
 
 from collections.abc import Callable, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, BinaryIO, overload
 
-from .._internal.api_client.client_api import core_driver
+from .._internal.api_client.client_api import CHUNK_SIZE, core_driver
 from .._internal.arrow_context import ArrowConverterContext
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -188,6 +188,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         params: Sequence[Any] | dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
         _statement_params: dict[str, str] | None = None,
+        file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -216,6 +217,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 sent to Snowflake with this query only. Never persisted on the
                 cursor; forwarded as query-request parameters, so they tag only
                 this query without mutating session state.
+            file_stream: When set, ``operation`` must be a PUT statement with
+                a ``file://`` path (only the basename is used as the
+                destination filename). Its contents come from this stream
+                instead of disk, forwarded to the core driver in chunks so
+                the whole payload is never buffered in the wrapper. Non-PUT
+                ``operation`` raises ProgrammingError.
         """
         parameters = _resolve_alias(parameters, params, "parameters", "params")  # type: ignore[assignment]
 
@@ -234,6 +241,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _is_put_get,
             statement_parameters=statement_parameters,
             _force_qmark_paramstyle=_force_qmark_paramstyle,
+            file_stream=file_stream,
             **kwargs,
         )
 
@@ -245,9 +253,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         statement_parameters: dict[str, Any] | None = None,
         _force_qmark_paramstyle: bool = False,
+        file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        if file_stream is not None:
+            self._execute_upload_stream(operation, file_stream)
+            self._rownumber = -1
+            return self
+
         if logger.is_enabled_for(logging.INFO) and self._connection.config.log_query_text:
             logger.info("query: [%s]", self._format_query_for_log(operation))
 
@@ -268,6 +282,29 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
+
+    def _execute_upload_stream(self, query: str, file_stream: BinaryIO) -> None:
+        """Chunked streaming PUT: feed *file_stream* to the core driver in bounded chunks.
+
+        Bytes cross the RPC boundary via begin/chunk/finish, bounding wrapper
+        memory to one chunk. A failure after begin aborts the session
+        server-side before re-raising.
+        """
+        upload_handle = core_driver.upload_stream_begin(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            sql=query,
+        ).upload_handle
+        try:
+            while chunk := file_stream.read(CHUNK_SIZE):
+                core_driver.upload_stream_chunk(upload_handle, chunk)
+            finish_response = core_driver.upload_stream_finish(upload_handle)
+        except BaseException:
+            try:
+                core_driver.upload_stream_abort(upload_handle)
+            except Exception:
+                logger.debug("upload_stream_abort during cleanup failed; propagating original error", exc_info=True)
+            raise
+        self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
 
     def _apply_statement_parameters(
         self,

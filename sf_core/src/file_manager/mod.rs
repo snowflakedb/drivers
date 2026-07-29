@@ -4,6 +4,7 @@ mod encryption;
 mod gcs_transfer;
 mod multipart;
 mod s3_transfer;
+mod spool;
 
 mod path_expansion;
 pub mod types;
@@ -159,6 +160,7 @@ pub use gcs_transfer::{
     GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
 };
 pub use multipart::{FileTooLargeError, MultipartParams, MultipartThreshold};
+pub(crate) use spool::{SPOOL_MEM_THRESHOLD, SpooledBuffer};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
@@ -404,11 +406,13 @@ pub async fn upload_in_memory_file(
     upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, refresher).await
 }
 
-/// Shared core of the upload path used by both `upload_single_file` (file
-/// source) and `upload_in_memory_file` (in-memory source). Taking the
-/// `ByteSource` as a parameter lets both callers reuse the same preprocess +
-/// cloud dispatch with no behavior drift.
-async fn upload_prepared_source(
+/// Shared core of the upload path used by `upload_single_file` (file
+/// source), `upload_in_memory_file` (in-memory source), and the chunked
+/// upload stream path (`build_and_upload_stream`, which may pass either a
+/// `ByteSource::Bytes` or a `ByteSource::Path` pointing at a spooled temp
+/// file). Taking the `ByteSource` as a parameter lets every caller reuse the
+/// same preprocess + cloud dispatch with no behavior drift.
+pub(crate) async fn upload_prepared_source(
     source: ByteSource,
     data: SingleUploadData,
     policy: &RetryPolicy,

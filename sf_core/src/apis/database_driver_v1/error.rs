@@ -209,4 +209,10 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to write upload stream chunk to spool buffer: {source}"))]
+    SpoolBufferWrite {
+        #[snafu(implicit)]
+        location: Location,
+        source: std::io::Error,
+    },
 }

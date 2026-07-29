@@ -57,6 +57,14 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionSetSessionParametersResponse,
     ConnectionTokenRequest,
     ConnectionTokenResponse,
+    ConnectionUploadStreamAbortRequest,
+    ConnectionUploadStreamAbortResponse,
+    ConnectionUploadStreamBeginRequest,
+    ConnectionUploadStreamBeginResponse,
+    ConnectionUploadStreamChunkRequest,
+    ConnectionUploadStreamChunkResponse,
+    ConnectionUploadStreamFinishRequest,
+    ConnectionUploadStreamFinishResponse,
     DatabaseFetchChunkRequest,
     DatabaseFetchChunkResponse,
     DatabaseHandle,
@@ -95,6 +103,7 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     TelemetrySendResponse,
     TelemetrySendWrapperErrorRequest,
     TokenRequestType,
+    UploadStreamHandle,
     WrapperIdentity,
 )
 from ..protobuf_gen.database_driver_v1_pb2 import (
@@ -112,6 +121,11 @@ from ..protobuf_gen.proto_exception import (
     ProtoTransportException,
 )
 from .bridge import ProtoTransport
+
+
+# Chunk size for ConnectionUploadStreamChunk; bounds wrapper memory to ~one
+# chunk. Matches JDBC's chunked upload default.
+CHUNK_SIZE = 8 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +433,28 @@ class CoreDriver:
         return self.client.connection_send_http(request)
 
     # =====================================================================
+    # Connection chunked upload streaming (PUT)
+    # =====================================================================
+
+    def upload_stream_begin(self, conn_handle: ConnectionHandle, sql: str) -> ConnectionUploadStreamBeginResponse:
+        request = ConnectionUploadStreamBeginRequest(conn_handle=conn_handle, sql=sql)
+        return self.client.connection_upload_stream_begin(request)
+
+    def upload_stream_chunk(
+        self, upload_handle: UploadStreamHandle, data: bytes
+    ) -> ConnectionUploadStreamChunkResponse:
+        request = ConnectionUploadStreamChunkRequest(upload_handle=upload_handle, data=data)
+        return self.client.connection_upload_stream_chunk(request)
+
+    def upload_stream_finish(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamFinishResponse:
+        request = ConnectionUploadStreamFinishRequest(upload_handle=upload_handle)
+        return self.client.connection_upload_stream_finish(request)
+
+    def upload_stream_abort(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamAbortResponse:
+        request = ConnectionUploadStreamAbortRequest(upload_handle=upload_handle)
+        return self.client.connection_upload_stream_abort(request)
+
+    # =====================================================================
     # Connection tokens/params
     # =====================================================================
 
@@ -693,6 +729,32 @@ class AsyncCoreDriver:
     ) -> ConnectionTokenResponse:
         return await self.client.connection_request_token(
             ConnectionTokenRequest(conn_handle=conn_handle, request_type=request_type)
+        )
+
+    # =====================================================================
+    # Connection chunked upload streaming (PUT)
+    # =====================================================================
+
+    async def upload_stream_begin(self, conn_handle: ConnectionHandle, sql: str) -> ConnectionUploadStreamBeginResponse:
+        return await self.client.connection_upload_stream_begin(
+            ConnectionUploadStreamBeginRequest(conn_handle=conn_handle, sql=sql)
+        )
+
+    async def upload_stream_chunk(
+        self, upload_handle: UploadStreamHandle, data: bytes
+    ) -> ConnectionUploadStreamChunkResponse:
+        return await self.client.connection_upload_stream_chunk(
+            ConnectionUploadStreamChunkRequest(upload_handle=upload_handle, data=data)
+        )
+
+    async def upload_stream_finish(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamFinishResponse:
+        return await self.client.connection_upload_stream_finish(
+            ConnectionUploadStreamFinishRequest(upload_handle=upload_handle)
+        )
+
+    async def upload_stream_abort(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamAbortResponse:
+        return await self.client.connection_upload_stream_abort(
+            ConnectionUploadStreamAbortRequest(upload_handle=upload_handle)
         )
 
     # =====================================================================
