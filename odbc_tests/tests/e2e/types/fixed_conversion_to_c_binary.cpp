@@ -44,11 +44,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_BINARY", "[fixed][conv
   }
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQL_C_BINARY buffer too small returns 22003",
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQL_C_BINARY buffer too small",
                  "[fixed][conversion][c_binary][22003]") {
+  // BD#12: old driver does not check BufferLength for SQL_NUMERIC_STRUCT output; a physical
+  //        allocation smaller than sizeof(SQL_NUMERIC_STRUCT) (19 bytes) has undefined behavior
   SKIP_OLD_DRIVER("BD#12",
-                  "Old driver does not return SQL_ERROR (22003) when SQL_C_BINARY buffer is too small for "
-                  "SQL_NUMERIC_STRUCT");
+                  "old driver does not check BufferLength when writing SQL_NUMERIC_STRUCT; "
+                  "a physically small buffer has undefined behavior");
+
   // Given A Snowflake connection is established
 
   // When A NUMBER value is fetched as SQL_C_BINARY into a buffer smaller than SQL_NUMERIC_STRUCT

@@ -253,19 +253,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQL_C_CHAR buffer handling", "[
   // When NUMBER values are fetched into various buffer sizes
   (void)0;  // SECTIONs below perform the fetch
   // Then The driver returns appropriate SQLSTATE codes for buffer overflow, truncation, and exact fit
-  SECTION("whole digits do not fit returns 22003") {
-    SKIP_OLD_DRIVER("BD#11",
-                    "Old driver returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in "
-                    "SQL_C_CHAR buffer");
-
+  SECTION("whole digits do not fit") {
     auto stmt = conn.execute_fetch("SELECT 123456::NUMBER(10,0)");
 
     char small_buffer[4];
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
 
-    CHECK(ret == SQL_ERROR);
-    CHECK(get_sqlstate(stmt) == "22003");
+    // BD#11: old driver truncates and returns SQL_SUCCESS_WITH_INFO; new returns 22003
+    OLD_DRIVER_ONLY("BD#11") { CHECK(ret == SQL_SUCCESS_WITH_INFO); }
+    NEW_DRIVER_ONLY("BD#11") {
+      CHECK(ret == SQL_ERROR);
+      CHECK(get_sqlstate(stmt) == "22003");
+    }
   }
 
   SECTION("fractional-only truncation returns 01004") {
@@ -291,19 +291,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQL_C_CHAR buffer handling", "[
     CHECK(std::string(exact_buffer) == "42");
   }
 
-  SECTION("negative whole digits do not fit returns 22003") {
-    SKIP_OLD_DRIVER("BD#11",
-                    "Old driver returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in "
-                    "SQL_C_CHAR buffer");
-
+  SECTION("negative whole digits do not fit") {
     auto stmt = conn.execute_fetch("SELECT -123::NUMBER(10,0)");
 
     char small_buffer[4];
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
 
-    CHECK(ret == SQL_ERROR);
-    CHECK(get_sqlstate(stmt) == "22003");
+    // BD#11: old driver truncates and returns SQL_SUCCESS_WITH_INFO; new returns 22003
+    OLD_DRIVER_ONLY("BD#11") { CHECK(ret == SQL_SUCCESS_WITH_INFO); }
+    NEW_DRIVER_ONLY("BD#11") {
+      CHECK(ret == SQL_ERROR);
+      CHECK(get_sqlstate(stmt) == "22003");
+    }
   }
 
   SECTION("negative fractional-only truncation returns 01004") {

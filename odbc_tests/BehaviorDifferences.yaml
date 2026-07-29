@@ -174,7 +174,7 @@ behavior_differences:
       Applications that used the raw EVP_PKEY* pointers will fail to connect. The user would need to parse the EVP_PKEY in the PRIV_KEY_CONTENT or PRIV_KEY_BASE64 format on their own.
 
   11:
-    name: "SQL_C_CHAR returns SQL_ERROR (22003) instead of SQL_SUCCESS when whole digits do not fit in buffer"
+    name: "SQL_C_CHAR returns SQL_ERROR (22003) instead of SQL_SUCCESS_WITH_INFO when whole digits do not fit in buffer"
     status: allowed
     type: bugfix
     reviewed: true
@@ -183,13 +183,13 @@ behavior_differences:
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      When SQLGetData is called with SQL_C_CHAR on a DECIMAL/NUMERIC column and the buffer is too small to hold even the whole (non-fractional) digits, the old driver returns SQL_SUCCESS and silently truncates the data.
+      When SQLGetData is called with SQL_C_CHAR on a DECIMAL/NUMERIC column and the buffer is too small to hold even the whole (non-fractional) digits, the old driver returns SQL_SUCCESS_WITH_INFO and silently truncates the data without raising SQLSTATE 22003.
     new_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range), per the ODBC specification which distinguishes between truncation of fractional digits only (01004) and loss of whole digits (22003).
     description: |
       Applications that previously received truncated whole digits silently will now receive an error. This is a spec-compliance improvement — the ODBC specification mandates 22003 when whole digits are lost during numeric-to-char conversion.
   12:
-    name: "SQL_C_BINARY returns SQL_SUCCESS instead of SQL_ERROR (22003) when buffer is too small for SQL_NUMERIC_STRUCT"
+    name: "SQL_C_BINARY returns SQL_ERROR (22003) for undersized SQL_NUMERIC_STRUCT buffers; old driver ignores BufferLength"
     status: allowed
     type: bugfix
     reviewed: true
@@ -198,7 +198,7 @@ behavior_differences:
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      When SQLGetData is called with SQL_C_BINARY on a DECIMAL/NUMERIC column and the buffer is smaller than sizeof(SQL_NUMERIC_STRUCT), the old driver silently writes a partial struct and returns SQL_SUCCESS.
+      When SQLGetData is called with SQL_C_BINARY on a DECIMAL/NUMERIC or DECFLOAT column and the buffer is smaller than sizeof(SQL_NUMERIC_STRUCT) (19 bytes), the old driver ignores the BufferLength argument and writes the full 19-byte SQL_NUMERIC_STRUCT into the caller's buffer regardless of its stated size. When the physical allocation is smaller than 19 bytes this overruns the allocation, causing undefined behavior.
     new_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range), per the ODBC specification which states that when byte length of data exceeds BufferLength for SQL_C_BINARY, the result is undefined and SQLSTATE 22003 must be returned.
     description: |
@@ -233,7 +233,7 @@ behavior_differences:
     description: |
       Applications requesting SQL_C_BINARY for floating-point columns now receive a standards-compliant SQL_NUMERIC_STRUCT instead of raw double bytes.
   15:
-    name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_SUCCESS_WITH_INFO instead of SQL_ERROR for fractional values"
+    name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_SUCCESS_WITH_INFO 01004; old driver may omit the SQLSTATE"
     status: allowed
     type: bugfix
     reviewed: true
@@ -242,11 +242,11 @@ behavior_differences:
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      When SQLGetData is called with SQL_C_CHAR on a FLOAT/DOUBLE/REAL column and the buffer is too small to hold the full string representation, the old driver returns SQL_ERROR.
+      When SQLGetData is called with SQL_C_CHAR on a FLOAT/DOUBLE/REAL column and the buffer is too small to hold the full string representation, the old driver returns SQL_SUCCESS_WITH_INFO but does not set SQLSTATE 01004.
     new_driver_behavior: |
       Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 (String data, right truncation), per the ODBC specification for string data truncation.
     description: |
-      Applications providing small buffers for SQL_C_CHAR on FLOAT columns will now receive a truncated result with a warning instead of an error.
+      Applications providing small buffers for SQL_C_CHAR on FLOAT columns now receive SQLSTATE 01004 with the truncated result; the old driver returned SQL_SUCCESS_WITH_INFO without posting 01004.
   16:
     name: "NaN FLOAT value returns SQL_ERROR (22003) instead of silently converting to 0 for integer and BIT targets"
     status: allowed
