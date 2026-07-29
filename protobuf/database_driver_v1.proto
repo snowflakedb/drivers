@@ -597,6 +597,65 @@ message ConnectionUploadStreamResponse {
   ResultSetDescriptor result_descriptor = 2;
 }
 
+// Handle for a chunked upload stream session opened by
+// ConnectionUploadStreamBegin. Opaque outside sf_core, same shape as the
+// other handle types.
+message UploadStreamHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// Chunked streaming PUT, part 1/3: registers the PUT SQL and opens a session
+// that accumulates chunks handed in via ConnectionUploadStreamChunk. The core
+// does not contact GS until ConnectionUploadStreamFinish — bounding wrapper
+// memory to ~one chunk while preserving the existing upload path (digest,
+// retry, CSE, multipart) unchanged. Backs JDBC `uploadStream` and Python
+// `cursor.execute(file_stream=…)`.
+message ConnectionUploadStreamBeginRequest {
+  ConnectionHandle conn_handle = 1;
+  // The PUT SQL statement. Must begin with PUT and reference a `file://`
+  // path whose basename is used as the destination filename in the stage.
+  string sql = 2;
+}
+
+message ConnectionUploadStreamBeginResponse {
+  UploadStreamHandle upload_handle = 1;
+}
+
+// Chunked streaming PUT, part 2/3: appends one chunk of the source to the
+// session opened by ConnectionUploadStreamBegin. Callers should keep chunks
+// bounded (e.g. 8 MiB) to preserve the wrapper memory bound this RPC exists
+// for.
+message ConnectionUploadStreamChunkRequest {
+  UploadStreamHandle upload_handle = 1;
+  bytes data = 2;
+}
+
+message ConnectionUploadStreamChunkResponse {}
+
+// Chunked streaming PUT, part 3/3: closes the session, reassembles the
+// buffered chunks into a re-readable source, and runs the PUT exactly as
+// ConnectionUploadStream does. Mirrors `ResultSetResponse`: a PUT-shaped
+// result set (handle + descriptor), so the caller can read the standard
+// 8-column PUT rowset.
+message ConnectionUploadStreamFinishRequest {
+  UploadStreamHandle upload_handle = 1;
+}
+
+message ConnectionUploadStreamFinishResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
+}
+
+// Aborts a chunked upload session opened by ConnectionUploadStreamBegin
+// without running the PUT (e.g. the caller's source stream failed mid-read).
+// Any buffered/spooled bytes are discarded.
+message ConnectionUploadStreamAbortRequest {
+  UploadStreamHandle upload_handle = 1;
+}
+
+message ConnectionUploadStreamAbortResponse {}
+
 // Streaming GET: download a file from a stage and return its bytes. Backs
 // JDBC `downloadStream`.
 message ConnectionDownloadStreamRequest {
@@ -988,8 +1047,16 @@ service DatabaseDriver {
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
   // Abort a running query by Snowflake Query ID
   rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
-  // Streaming PUT (upload bytes) / GET (download to bytes) from a stage
+  // Streaming PUT (upload bytes) / GET (download to bytes) from a stage.
+  // ConnectionUploadStream buffers the whole source before uploading; kept
+  // for JDBC, which has not yet migrated to the chunked RPCs below.
   rpc ConnectionUploadStream(ConnectionUploadStreamRequest) returns (ConnectionUploadStreamResponse);
+  // Chunked streaming PUT: begin a session, feed it chunks, then finish (or
+  // abort). Bounds wrapper memory to ~one chunk regardless of source size.
+  rpc ConnectionUploadStreamBegin(ConnectionUploadStreamBeginRequest) returns (ConnectionUploadStreamBeginResponse);
+  rpc ConnectionUploadStreamChunk(ConnectionUploadStreamChunkRequest) returns (ConnectionUploadStreamChunkResponse);
+  rpc ConnectionUploadStreamFinish(ConnectionUploadStreamFinishRequest) returns (ConnectionUploadStreamFinishResponse);
+  rpc ConnectionUploadStreamAbort(ConnectionUploadStreamAbortRequest) returns (ConnectionUploadStreamAbortResponse);
   rpc ConnectionDownloadStream(ConnectionDownloadStreamRequest) returns (ConnectionDownloadStreamResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);

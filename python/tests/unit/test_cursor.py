@@ -3,13 +3,14 @@ Unit tests for PEP 249 Cursor class.
 """
 
 import asyncio
+import io
 
 from decimal import Decimal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from snowflake.connector._internal.api_client.client_api import core_driver
+from snowflake.connector._internal.api_client.client_api import CHUNK_SIZE, async_core_driver, core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle, parse_stage_binding_threshold
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
 from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_NO_PYARROW
@@ -25,6 +26,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     ResultSetHandle,
     StatementHandle,
+    UploadStreamHandle,
 )
 from snowflake.connector.aio.cursor import SnowflakeCursor as AsyncSnowflakeCursor
 from snowflake.connector.constants import QueryStatus, StatementParameterName
@@ -2678,3 +2680,125 @@ class TestParamsAliasAndForceQmark:
         assert request.bindings is not None  # flag survived to inner execute()
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated
+
+
+class TestFileStreamUpload:
+    """Unit tests for cursor.execute(sql, file_stream=...), mocking the core client.
+
+    `_apply_result_set` is patched out so these assert only the
+    begin/chunk/finish/abort streaming behavior, not result-set wiring.
+    """
+
+    @pytest.fixture
+    def cursor(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        conn.conn_handle = ConnectionHandle(id=1)
+        return SnowflakeCursor(conn)
+
+    @pytest.fixture
+    def async_mock_core_client(self):
+        """Mock (upload-stream RPCs as AsyncMock) patched into async_core_driver.client."""
+        mock = MagicMock()
+        mock.connection_upload_stream_begin = AsyncMock(
+            return_value=MagicMock(upload_handle=UploadStreamHandle(id=3, magic=1))
+        )
+        mock.connection_upload_stream_chunk = AsyncMock()
+        mock.connection_upload_stream_finish = AsyncMock()
+        mock.connection_upload_stream_abort = AsyncMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    def test_streams_all_chunks_then_finishes(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        payload = b"a" * (CHUNK_SIZE + 100)  # spans two reads
+        with patch.object(SnowflakeCursor, "_apply_result_set"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(payload))
+
+        assert mock_core_client.connection_upload_stream_begin.call_count == 1
+        assert mock_core_client.connection_upload_stream_finish.call_count == 1
+        assert mock_core_client.connection_upload_stream_chunk.call_count == 2
+        sent = b"".join(c.args[0].data for c in mock_core_client.connection_upload_stream_chunk.call_args_list)
+        assert sent == payload  # full payload forwarded, in order
+        mock_core_client.connection_upload_stream_abort.assert_not_called()
+
+    def test_empty_stream_finishes_without_chunks(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        with patch.object(SnowflakeCursor, "_apply_result_set"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b""))
+
+        mock_core_client.connection_upload_stream_chunk.assert_not_called()
+        mock_core_client.connection_upload_stream_finish.assert_called_once()
+
+    def test_aborts_and_reraises_on_chunk_failure(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        mock_core_client.connection_upload_stream_chunk.side_effect = DatabaseError(msg="mid-upload failure")
+
+        with pytest.raises(DatabaseError):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data"))
+
+        mock_core_client.connection_upload_stream_abort.assert_called_once()
+        mock_core_client.connection_upload_stream_finish.assert_not_called()
+
+    def test_original_error_propagates_when_finish_fails_and_abort_also_fails(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        mock_core_client.connection_upload_stream_finish.side_effect = DatabaseError(msg="finish failed")
+        mock_core_client.connection_upload_stream_abort.side_effect = ProgrammingError(msg="abort also failed")
+
+        with pytest.raises(DatabaseError, match="finish failed"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data"))
+
+        mock_core_client.connection_upload_stream_abort.assert_called_once()
+
+    def test_async_aborts_and_reraises_on_chunk_failure(self, async_mock_core_client):
+        conn = MagicMock()
+        conn.is_closed = AsyncMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        async_mock_core_client.connection_upload_stream_chunk.side_effect = DatabaseError(msg="mid-upload failure")
+
+        with pytest.raises(DatabaseError):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data")))
+
+        async_mock_core_client.connection_upload_stream_abort.assert_awaited_once()
+        async_mock_core_client.connection_upload_stream_finish.assert_not_awaited()
+
+    def test_async_original_error_propagates_when_finish_fails_and_abort_also_fails(self, async_mock_core_client):
+        conn = MagicMock()
+        conn.is_closed = AsyncMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        async_mock_core_client.connection_upload_stream_finish.side_effect = DatabaseError(msg="finish failed")
+        async_mock_core_client.connection_upload_stream_abort.side_effect = ProgrammingError(msg="abort also failed")
+
+        with pytest.raises(DatabaseError, match="finish failed"):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data")))
+
+        async_mock_core_client.connection_upload_stream_abort.assert_awaited_once()
+
+    def test_async_streams_all_chunks_then_finishes(self, async_mock_core_client):
+        conn = MagicMock()
+        conn.is_closed = AsyncMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        payload = b"b" * (CHUNK_SIZE + 50)
+        with patch.object(AsyncSnowflakeCursor, "_apply_result_set", new=AsyncMock()):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(payload)))
+        assert async_mock_core_client.connection_upload_stream_chunk.await_count == 2
+        sent = b"".join(c.args[0].data for c in async_mock_core_client.connection_upload_stream_chunk.call_args_list)
+        assert sent == payload
+        async_mock_core_client.connection_upload_stream_finish.assert_awaited_once()
+        async_mock_core_client.connection_upload_stream_abort.assert_not_awaited()

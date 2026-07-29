@@ -2562,6 +2562,7 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
 
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
+    // TODO(SNOW-3704961): reap open upload/download stream sessions on connection_close (built in the PR2a session-reaper)
 
     Ok(())
 }

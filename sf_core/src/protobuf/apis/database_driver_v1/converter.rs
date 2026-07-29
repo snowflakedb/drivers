@@ -168,6 +168,24 @@ impl From<Handle> for ResultSetHandle {
     }
 }
 
+impl From<UploadStreamHandle> for Handle {
+    fn from(handle: UploadStreamHandle) -> Self {
+        Handle {
+            id: handle.id as u64,
+            magic: handle.magic as u64,
+        }
+    }
+}
+
+impl From<Handle> for UploadStreamHandle {
+    fn from(handle: Handle) -> Self {
+        UploadStreamHandle {
+            id: handle.id as i64,
+            magic: handle.magic as i64,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Chunk format conversions (native ↔ proto)
 // ---------------------------------------------------------------------------
@@ -854,6 +872,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::CancelTimeout { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
+        ApiError::SpoolBufferWrite { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
     }
 }
 
@@ -1033,6 +1054,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         // language wrappers can surface HYT00 / OperationalError correctly.
         ApiError::QueryTimeout { .. } => StatusCode::GenericError,
         ApiError::CancelTimeout { .. } => StatusCode::GenericError,
+        // Local temp-file / in-memory spool I/O failure while buffering a
+        // chunked upload-stream chunk — a driver-side fault, not caller input.
+        ApiError::SpoolBufferWrite { .. } => StatusCode::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);

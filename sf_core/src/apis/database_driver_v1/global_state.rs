@@ -7,6 +7,7 @@ use super::connection::{Connection, WrapperIdentity};
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
+use super::stream_transfer::UploadStreamSession;
 use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -95,6 +96,12 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     pub(super) results: HandleManager<Mutex<ResultSet>>,
+    /// Pending chunked uploads; see `stream_transfer::UploadStreamSession` for
+    /// the registration/mutation/consumption lifecycle. `UploadStreamSession`
+    /// carries its own interior `Mutex` around the growing buffer (its
+    /// `conn_handle`/`sql` fields are set once and never mutated), so it is
+    /// stored directly rather than double-wrapped.
+    pub(super) upload_streams: HandleManager<UploadStreamSession>,
     token_cache: once_cell::sync::OnceCell<Arc<dyn TokenCache>>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -125,6 +132,7 @@ impl DatabaseDriverV1 {
             connections: HandleManager::new(),
             statements: HandleManager::new(),
             results: HandleManager::new(),
+            upload_streams: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),

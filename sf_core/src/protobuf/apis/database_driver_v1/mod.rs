@@ -631,6 +631,77 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_begin",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_begin(
+        &self,
+        input: ConnectionUploadStreamBeginRequest,
+    ) -> Result<ConnectionUploadStreamBeginResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let upload_handle = self
+            .driver
+            .connection_upload_stream_begin(conn_handle.into(), input.sql)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamBeginResponse {
+            upload_handle: Some(upload_handle.into()),
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_chunk",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_chunk(
+        &self,
+        input: ConnectionUploadStreamChunkRequest,
+    ) -> Result<ConnectionUploadStreamChunkResponse, DriverException> {
+        let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
+        self.driver
+            .connection_upload_stream_chunk(upload_handle.into(), input.data)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamChunkResponse {})
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_finish",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_finish(
+        &self,
+        input: ConnectionUploadStreamFinishRequest,
+    ) -> Result<ConnectionUploadStreamFinishResponse, DriverException> {
+        let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
+        let rs_info = self
+            .driver
+            .connection_upload_stream_finish(upload_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamFinishResponse {
+            result_set_handle: Some(rs_info.handle.into()),
+            result_descriptor: Some(rs_info.descriptor.into()),
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_abort",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_abort(
+        &self,
+        input: ConnectionUploadStreamAbortRequest,
+    ) -> Result<ConnectionUploadStreamAbortResponse, DriverException> {
+        let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
+        self.driver
+            .connection_upload_stream_abort(upload_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamAbortResponse {})
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_download_stream",
         skip(self, input)
     )]
