@@ -922,6 +922,109 @@ async fn s3_download_attempt(
     })
 }
 
+/// A streaming S3 GET, opened but not drained: the `ByteStream` body plus
+/// the same digest/CSE metadata as `S3Download`. Unlike `S3Download`, the
+/// body isn't buffered or spilled to disk — the caller drains it directly
+/// (see `file_manager::open_s3_download_stream`). One request total: no
+/// separate HEAD, since `GetObjectOutput` already exposes
+/// `content_length`/`metadata`.
+pub(super) struct S3StreamingDownload {
+    pub(super) body: ByteStream,
+    pub(super) digest: Option<String>,
+    pub(super) file_metadata: Option<EncryptedFileMetadata>,
+    /// On-cloud byte count from the GET's `Content-Length`. `0` if absent
+    /// (chunked transfer-encoding) or the object is empty — indistinguishable
+    /// here, but S3 GETs practically always report a length.
+    pub(super) cloud_byte_count: i64,
+}
+
+/// Opens a streaming GET against S3, returning the body as a `ByteStream`
+/// with no buffering or disk spill (contrast [`download_from_s3`], which
+/// fully materializes the object). See `upload_to_s3_or_skip` for
+/// `refresher` semantics.
+///
+/// Only opening the GET is covered by the STS-refresh retry; once the body
+/// streams, a transport failure surfaces as a read error with no retry.
+pub(super) async fn download_from_s3_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    base_policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<S3StreamingDownload, DownloadFileError> {
+    let s3_key = format!("{}{filename}", stage_info.key_prefix);
+    let policy = s3_retry_policy(base_policy);
+
+    let attempt = |creds: CloudCredentials| {
+        let stage_info = with_creds(stage_info, creds);
+        let s3_key = s3_key.clone();
+        let policy = policy.clone();
+        async move {
+            let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy)
+                .await
+                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            s3_get_streaming(&s3_client, &stage_info, &s3_key).await
+        }
+    };
+
+    run_s3_with_sts_refresh(
+        refresher,
+        &stage_info.creds,
+        |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
+        |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
+        attempt,
+    )
+    .await
+}
+
+/// One streaming GET attempt: issues `GetObject`, returns the body stream
+/// plus digest/CSE metadata from its headers (no HEAD call). Folds
+/// `ExpiredToken` into `StsExpired` so the STS-refresh loop can retry
+/// opening the stream.
+async fn s3_get_streaming(
+    s3_client: &S3Client,
+    stage_info: &StageInfo,
+    s3_key: &str,
+) -> Result<S3StreamingDownload, S3AttemptError<DownloadFileError>> {
+    tracing::info!(
+        method = "GET",
+        bucket = %stage_info.bucket,
+        key = ?s3_key,
+        "S3 GetObject (streaming)"
+    );
+    let out = match s3_client
+        .get_object()
+        .bucket(stage_info.bucket.clone())
+        .key(s3_key)
+        .send()
+        .await
+    {
+        Ok(out) => out,
+        Err(sdk_err) => {
+            tracing::warn!(
+                cause = std::any::type_name_of_val(&sdk_err),
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 GetObject (streaming) failed"
+            );
+            return Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |e| {
+                download_file_error::S3DownloadSnafu.into_error(e)
+            }));
+        }
+    };
+
+    let cloud_byte_count = out.content_length().unwrap_or(0).max(0);
+    let metadata_map = out.metadata().cloned().unwrap_or_default();
+    let (digest, file_metadata) =
+        parse_s3_file_metadata(&metadata_map).map_err(S3AttemptError::Other)?;
+
+    Ok(S3StreamingDownload {
+        body: out.body,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
+}
+
 /// Parses the `sfc-digest` and the CSE metadata headers (`x-amz-matdesc` /
 /// `x-amz-key` / `x-amz-iv`) from an S3 user-metadata map. All three CSE
 /// headers must be present together or all absent (SSE); a partial set is an

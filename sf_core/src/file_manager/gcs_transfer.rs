@@ -1263,9 +1263,10 @@ fn try_get_header(
 /// the integration-test / retry-test surface.
 ///
 /// The body is streamed from the HTTP response through a tokio-spawned producer
-/// task into a `std::sync::mpsc::sync_channel`. `StreamReader` consumes from
-/// the channel, implementing `Read` so `decrypt_ciphertext_to_writer` (which is
-/// sync) can consume the body without blocking the async runtime.
+/// task into a `tokio::sync::mpsc::channel`. `StreamReader` consumes from the
+/// channel via `blocking_recv`, implementing `Read` so `decrypt_ciphertext_to_writer`
+/// (which is sync) can consume the body from inside `spawn_blocking` without
+/// blocking an async runtime worker.
 ///
 /// `pub` so the cfg-gated `file_manager::internal` re-export in `mod.rs`
 /// can surface it to integration tests via `pub use`; the parent module
