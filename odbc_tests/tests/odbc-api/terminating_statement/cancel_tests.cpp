@@ -976,8 +976,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel clears diagnost
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrupts execution with HY008",
                  "[odbc-api][cancel][terminating_statement][cross_thread]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHSTMT stmt = stmt_handle();
   odbc_test::CrossThreadCancel ctx;
   // 5-second delay lets the query reach the server before cancel fires.

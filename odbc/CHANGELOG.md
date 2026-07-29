@@ -8,6 +8,7 @@ Bug fixes:
 
 New features:
 
+- Added cross-thread `SQLCancel` / `SQLCancelHandle` support: both now fire a server-side abort for the statement's in-flight query (via the core `StatementCancel` RPC) before signalling the local cancellation token, so a query executing on another thread is actually stopped on the server. The canceled query surfaces `HY008` whether the server abort or the local token wins the race. `SQLCancelHandle(SQL_HANDLE_STMT)` delegates to the same path as `SQLCancel`. (snowflakedb/universal-driver#629)
 - Added `SQLColumns` and `SQLColumnsW` support for querying column metadata via ODBC catalog functions. (snowflakedb/universal-driver#369)
 - Implemented `SQLSpecialColumns`, `SQLColumnPrivileges`, `SQLTablePrivileges`, and `SQLStatistics` catalog functions. Snowflake does not expose row identifiers, version columns, column/table-level privilege metadata, or index statistics over ODBC, so all four return a correctly-structured empty result set matching the reference driver's behavior. (snowflakedb/universal-driver#386)
 - Implemented `SQLPrimaryKeys` and `SQLPrimaryKeysW` catalog functions using `SHOW PRIMARY KEYS`. (snowflakedb/universal-driver#455)

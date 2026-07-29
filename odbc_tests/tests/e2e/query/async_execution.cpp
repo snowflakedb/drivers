@@ -502,7 +502,6 @@ TEST_CASE("should treat SQLCancel on idle async-enabled statement as no-op", "[q
 // =============================================================================
 
 TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_thread]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
