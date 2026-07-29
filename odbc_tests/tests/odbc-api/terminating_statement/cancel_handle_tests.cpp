@@ -842,7 +842,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cross-thread cancel in
       "iODBC's libiodbc.dylib does not export SQLCancelHandle "
       "(ODBC 3.8 addition); the test's compat stub returns "
       "SQL_INVALID_HANDLE before either driver is reached");
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLHSTMT stmt = stmt_handle();
   odbc_test::CrossThreadCancel ctx;

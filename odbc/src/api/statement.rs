@@ -33,7 +33,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ExecuteQueryResponse, QueryBindings,
     ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
-    StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
+    StatementCancelRequest, StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
     StatementSetOptionsRequest, StatementSetSqlQueryRequest, config_setting,
     execute_query_response, query_bindings,
 };
@@ -3300,7 +3300,30 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={statement_handle:?}");
     let guard = stmt_from_handle(statement_handle)?;
 
-    // Fast path: cancel any in-flight execution via the token.
+    // Server-side cancel FIRST, then signal the local token. Ordering is
+    // load-bearing: signalling the token drops the in-flight execute future,
+    // which drops core's `InflightGuard` and clears the requestId slot — so a
+    // `statement_cancel` fired *after* the token would find an empty slot and
+    // send no abort-request. Firing it here (while the slot is still populated)
+    // lets the server actually stop the running query.
+    //
+    // Best-effort: any error — including the no-op when nothing is in flight,
+    // or a transport failure — is swallowed. Per ODBC 3.5, cross-thread
+    // `SQLCancel` neither posts diagnostics nor fails; the app re-polls or
+    // re-issues. The core call is already bounded, so this cannot hang cancel.
+    let stmt_handle = guard.stmt_handle;
+    if let Ok(g) = global() {
+        let client = g.client();
+        let _ = g.block_on(async move |_c| {
+            client
+                .statement_cancel(StatementCancelRequest {
+                    stmt_handle: Some(stmt_handle),
+                })
+                .await
+        });
+    }
+
+    // Then cancel any in-flight execution via the local token.
     {
         let token = guard.cancel_token.lock();
         if let Some(ref t) = *token {

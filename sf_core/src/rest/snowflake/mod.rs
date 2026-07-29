@@ -79,6 +79,13 @@ async fn request_text_with_retry(
 }
 
 // ─── Snowflake GS protocol error codes ───────────────────────────────────────
+/// GS error code returned when a running query has been canceled (server-side
+/// abort, statement timeout, or `SQLCancel`). The query-request / result
+/// response carries this code so the ODBC wrapper can classify the failure as a
+/// cancellation (ODBC `HY008`) rather than a generic error — see
+/// `odbc/src/api/error.rs`. Matches the reference driver's
+/// `Statement::S_QUERY_CANCELED`.
+pub const QUERY_CANCELED: i32 = 604;
 /// GS error code returned when a session no longer exists on the server.
 /// Logout callers treat this as success — the goal (an invalidated session) is achieved.
 pub const SESSION_GONE: i32 = 390111;
