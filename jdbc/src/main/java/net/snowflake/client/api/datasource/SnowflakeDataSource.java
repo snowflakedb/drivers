@@ -8,11 +8,13 @@ import javax.sql.DataSource;
  * Snowflake-specific extension of {@link DataSource} that provides configuration methods for
  * Snowflake JDBC connections.
  *
+ * <p>The setter surface is limited to parameters supported by sf_core (see {@code
+ * BehaviorDifferences.yaml} BD#31). Legacy JDBC DataSource setters without a core parameter are
+ * intentionally not ported.
+ *
  * <p>Use {@link SnowflakeDataSourceFactory} to create instances of this interface.
  */
 public interface SnowflakeDataSource extends DataSource {
-  // Only a minimal set of DataSource parameters has been migrated here.
-  // More will be added once the parameter strategy for the core driver is finalized.
 
   void setUrl(String url);
 
@@ -41,6 +43,8 @@ public interface SnowflakeDataSource extends DataSource {
   void setAuthenticator(String authenticator);
 
   void setToken(String token);
+
+  void setOauthToken(String oauthToken);
 
   void setPrivateKey(PrivateKey privateKey);
 
@@ -71,6 +75,32 @@ public interface SnowflakeDataSource extends DataSource {
   void setOauthScope(String oauthScope);
 
   void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens);
+
+  void setApplication(String application);
+
+  void setAllowUnderscoresInHost(boolean allowUnderscoresInHost);
+
+  void setQueryTimeout(int queryTimeoutSeconds);
+
+  void setMaxHttpRetries(int maxHttpRetries);
+
+  void setPutGetMaxRetries(int putGetMaxRetries);
+
+  void setProxyHost(String proxyHost);
+
+  void setProxyPort(int proxyPort);
+
+  void setProxyUser(String proxyUser);
+
+  void setProxyPassword(String proxyPassword);
+
+  void setNonProxyHosts(String nonProxyHosts);
+
+  void setEnableDiagnostics(boolean enableDiagnostics);
+
+  void setDiagnosticsAllowlistFile(String diagnosticsAllowlistFile);
+
+  void setBrowserResponseTimeout(int browserResponseTimeoutSeconds);
 
   String getUrl();
 

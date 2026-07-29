@@ -8,6 +8,11 @@ import net.snowflake.client.internal.api.implementation.datasource.SnowflakeBasi
 
 public class SnowflakePooledConnectionDataSource extends SnowflakeBasicDataSource
     implements SnowflakeConnectionPoolDataSource {
+
+  // Explicit UID: this ConnectionPoolDataSource is the type typically bound in JNDI, so pin the
+  // serialized form (the Serializable base class is SnowflakeBasicDataSource).
+  private static final long serialVersionUID = 1L;
+
   @Override
   public PooledConnection getPooledConnection() throws SQLException {
     return wrap(super.getConnection());

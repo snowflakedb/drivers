@@ -774,6 +774,9 @@ tasks.register('referenceTest', Test) {
     // Tests that reference symbols only present in this module's SnowflakeDriver
     // (not on the legacy snowflake-jdbc artifact) must be excluded from this run.
     exclude '**/SnowflakeDriverVersionTest.class'
+    // Offline config-surface tests that reference SnowflakePooledConnectionDataSource, which is
+    // absent from the legacy artifact.
+    exclude '**/integration/pooling/PoolDataSourceConfigurationTest*.class'
     // Parity tests are designed to be invoked only via the parityTest task; their harness
     // assumes both drivers are loaded into isolated URLClassLoaders, which the legacy-driver
     // reference run does not provide.
