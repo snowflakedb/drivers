@@ -19,7 +19,8 @@ load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
 # Policy (decided 2026-06-18): publish the full repo — CI/build infrastructure
 # included (.github/, ci/, scripts/, .buildkite/, .ci/, shell.nix) — except the
 # small internal-only set below. New files are PUBLIC by default; put anything
-# internal-only under one of the excluded prefixes.
+# internal-only below a directory named NOMIRROR or under another excluded
+# prefix.
 #
 # The GPG-encrypted e2e credential bundle (.github/secrets/*.gpg) IS published:
 # the files decrypt only with the PARAMETERS_SECRET CI secret, so they're inert
@@ -34,9 +35,15 @@ load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
 #   2. The verify_match guards in the `mirror` workflow below FAIL the sync if a
 #      mirrored file names the internal repo, an internal hostname, or the
 #      internal 1Password vault.
-EXCLUDED_PATHS = [
-    # Internal-only material — never published.
-    "_internal/**",
+NOMIRROR_PATHS = [
+    # Internal-only material — never published. Both patterns are required:
+    # the first matches the root directory and the second matches an exact
+    # NOMIRROR path element anywhere below the root.
+    "NOMIRROR/**",
+    "**/NOMIRROR/**",
+]
+
+EXCLUDED_PATHS = NOMIRROR_PATHS + [
     ".ai/**",
     ".cursor/**",
     ".claude/**",
@@ -62,9 +69,10 @@ EXCLUDED_PATHS = [
 ]
 
 # Per-path overrides that re-include specific files from inside an EXCLUDED_PATHS
-# prefix. Kept as a seam (unioned into origin_files below): add a path here to
-# republish a single file from an otherwise-excluded prefix without reopening
-# the whole prefix.
+# prefix. NOMIRROR_PATHS remain excluded even if an override names one of them.
+# Kept as a seam (unioned into origin_files below): add a path here to republish
+# a single file from an otherwise-excluded prefix without reopening the whole
+# prefix.
 EXCLUDED_PATH_OVERRIDES = []
 
 
@@ -94,7 +102,12 @@ core.workflow(
     ),
     # Default-deny denylist + override seam: mirror everything except
     # EXCLUDED_PATHS, then re-include any EXCLUDED_PATH_OVERRIDES (empty today).
-    origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
+    # The override glob repeats the NOMIRROR exclusion to keep that directory
+    # convention unconditional.
+    origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(
+        EXCLUDED_PATH_OVERRIDES,
+        exclude = NOMIRROR_PATHS,
+    ),
     transformations = [
         # Strip GitHub-appended PR numbers (e.g. " (#123)") from commit messages.
         metadata.scrubber(
