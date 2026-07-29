@@ -197,6 +197,9 @@ jobs:
         run: ./scripts/decode_secrets.sh aws
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       # run_tests_unix.sh forwards trailing args to ctest; `-L long_running`
       # selects exactly the tests carrying the Catch2 `[long_running]` tag
