@@ -13,6 +13,33 @@ fi
 
 set -euo pipefail
 
+# ── Fork path: plaintext per-cloud parameters (PARAMETERS_JSON_<CLOUD>) ──────
+# A fork of the public mirror cannot decrypt the committed .github/secrets/*.gpg
+# bundle: that needs the PARAMETERS_SECRET passphrase, which is not (and must
+# not be) available outside the maintainers' own CI. Instead a fork owner runs
+# CI against their OWN account by setting a repository secret
+# PARAMETERS_JSON_<CLOUD> (e.g. PARAMETERS_JSON_AWS) whose value is the full
+# contents of a parameters.json for that cloud. Provide one per cloud you want
+# to exercise (PARAMETERS_JSON_AWS / _GCP / _AZURE) — see CONTRIBUTING.md.
+#
+# Precedence: plaintext PARAMETERS_JSON_<CLOUD>  >  PARAMETERS_SECRET (GPG)  >
+# 1Password. The maintainers' own CI sets PARAMETERS_SECRET and never sets
+# PARAMETERS_JSON_*, so this branch is inert there and the GPG path below is
+# byte-for-byte unchanged.
+#
+# When this branch is taken we deliberately skip the GPG decrypt AND the bulk
+# directory decode (decode_dir) below — both require the passphrase a fork does
+# not have. Tests read the account via PARAMETER_PATH=<...>/parameters.json.
+CLOUD_UPPER="$(printf '%s' "${CLOUD}" | tr '[:lower:]' '[:upper:]')"
+PLAINTEXT_VAR="PARAMETERS_JSON_${CLOUD_UPPER}"
+if [[ -n "${!PLAINTEXT_VAR:-}" ]]; then
+    echo "Using plaintext ${PLAINTEXT_VAR} (fork path) — skipping GPG bundle"
+    printf '%s' "${!PLAINTEXT_VAR}" > "${OUTPUT_FILE}"
+    echo "  ✓ ${OUTPUT_FILE} (from ${PLAINTEXT_VAR})"
+    echo "Successfully wrote parameters from plaintext secret"
+    exit 0
+fi
+
 # Read param secret from 1password if not set
 if [ -z "${PARAMETERS_SECRET:-}" ]; then
     echo "PARAMETERS_SECRET not set, reading from 1password"
