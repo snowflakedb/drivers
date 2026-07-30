@@ -66,4 +66,27 @@ class EnvironmentHandleWrapper : public HandleWrapper {
   ConnectionHandleWrapper createConnectionHandle() { return {this->handle, SQL_HANDLE_DBC}; }
 };
 
+/// Takes ownership of an externally allocated, already-connected SQLHDBC.
+/// Destructor calls SQLDisconnect then SQLFreeHandle so a mid-test REQUIRE
+/// failure cannot leak open connections.
+class ConnectedConnectionWrapper {
+ public:
+  explicit ConnectedConnectionWrapper(SQLHDBC h) noexcept : handle_(h) {}
+  ConnectedConnectionWrapper(const ConnectedConnectionWrapper&) = delete;
+  ConnectedConnectionWrapper& operator=(const ConnectedConnectionWrapper&) = delete;
+  ConnectedConnectionWrapper(ConnectedConnectionWrapper&& other) noexcept : handle_(other.handle_) {
+    other.handle_ = SQL_NULL_HDBC;
+  }
+  ~ConnectedConnectionWrapper() {
+    if (handle_ != SQL_NULL_HDBC) {
+      (void)SQLDisconnect(handle_);
+      (void)SQLFreeHandle(SQL_HANDLE_DBC, handle_);
+    }
+  }
+  [[nodiscard]] SQLHDBC getHandle() const noexcept { return handle_; }
+
+ private:
+  SQLHDBC handle_ = SQL_NULL_HDBC;
+};
+
 #endif  // HANDLE_WRAPPER_HPP

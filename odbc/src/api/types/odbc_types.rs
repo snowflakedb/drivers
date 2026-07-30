@@ -14,6 +14,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
 };
 use snafu::ResultExt;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -2077,6 +2078,19 @@ impl StatementState {
             Self::AsyncExecDirect { .. } | Self::AsyncPrepare { .. } | Self::AsyncExecute { .. }
         )
     }
+
+    /// Returns `true` for any post-execution state (S4–S7): DdlExecuted, DmlExecuted,
+    /// QueryExecuted, Fetching, Done. SQLSetCursorName must return 24000 in all of these.
+    pub fn is_executed_state(&self) -> bool {
+        matches!(
+            self,
+            StatementState::DdlExecuted { .. }
+                | StatementState::DmlExecuted { .. }
+                | StatementState::QueryExecuted { .. }
+                | StatementState::Fetching { .. }
+                | StatementState::Done { .. }
+        )
+    }
 }
 
 pub struct State<T> {
@@ -2231,6 +2245,13 @@ pub struct StatementInner {
     pub active_apd: Option<(HandleId, ExplicitDesc)>,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
+    /// Cursor name associated with this statement (`SQLSetCursorName` /
+    /// `SQLGetCursorName`). Snowflake has no server-side named cursors, so
+    /// this is a purely client-side label: it is never used for positioned
+    /// updates/deletes. Seeded at allocation with an auto-generated
+    /// `SQL_CUR`-prefixed default that is unique per statement, and replaced
+    /// verbatim by `SQLSetCursorName`.
+    pub cursor_name: String,
     /// `SQL_ATTR_CURSOR_TYPE` — default `ForwardOnly`.
     pub cursor_type: CursorType,
     /// `SQL_ATTR_MAX_LENGTH` — default 0 (no limit). Stored but not enforced.
@@ -2413,6 +2434,25 @@ impl StatementInner {
     }
 }
 
+/// Monotonic source of unique suffixes for auto-generated cursor names.
+static NEXT_CURSOR_NAME_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Produce a driver-default cursor name for a freshly allocated statement.
+///
+/// The name deliberately carries the reserved `SQL_CUR` prefix (per the ODBC
+/// spec, implementation-generated cursor names begin with `SQL_CUR`) and is
+/// unique per statement so sibling statements never collide in the
+/// `SQLSetCursorName` duplicate check. Kept short (well under the 18-char
+/// guidance) so it always round-trips through `SQLGetCursorName`.
+///
+/// This default is written straight into `StatementInner::cursor_name`; it
+/// must never be routed through `set_cursor_name`, whose `34000` validation
+/// deliberately rejects the very `SQL_CUR` prefix used here.
+fn generate_default_cursor_name() -> String {
+    let n = NEXT_CURSOR_NAME_ID.fetch_add(1, Ordering::Relaxed);
+    format!("SQL_CUR{n}")
+}
+
 impl Statement {
     /// Construct a new Statement for the given connection.
     pub fn new(conn_id: HandleId, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
@@ -2433,6 +2473,7 @@ impl Statement {
                 active_apd: None,
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
+                cursor_name: generate_default_cursor_name(),
                 cursor_type: CursorType::ForwardOnly,
                 max_length: 0,
                 rowset_size: 1,
