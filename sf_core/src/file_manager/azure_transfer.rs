@@ -515,7 +515,7 @@ pub(super) async fn upload_to_azure_or_skip(
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, AzureUploadError> {
     let key = format!("{}{filename}", stage_info.key_prefix);
-    let head_needed = !overwrite || skip_upload_on_content_match;
+    let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
 
     // Build the client once — TLS config is creds-independent; only the SAS in
     // `stage_info.creds` rotates on refresh — and clone it into each attempt.
