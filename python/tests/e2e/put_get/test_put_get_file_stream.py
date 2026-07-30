@@ -136,3 +136,49 @@ def test_should_file_stream_non_put_diverges_by_driver(connection):
             cursor.execute("SELECT 1", file_stream=stream)
             # Then the reference driver silently ignores file_stream and runs the SQL normally
             assert cursor.fetchone() == (1,)
+
+
+@pytest.mark.skipif(OLD_DRIVER_ONLY("chunked-download-stream"), reason="new driver only")
+def test_should_download_stream_round_trip(connection):
+    """Uploads via file_stream, downloads via download_stream, bytes match exactly."""
+    payload = b"col1,col2\n" + b"a,b\n" * 5000  # multiple chunks
+    dest_filename = "dl_roundtrip.csv"
+
+    with connection.cursor() as cursor:
+        # Given A multi-chunk payload uploaded to a stage via file_stream
+        stage_name = create_temporary_stage(cursor, "TEST_DOWNLOAD_STREAM_RT")
+
+        # PUT stage-path args don't support ? bindings; neither value here is user input, so interpolation is safe.
+        cursor.execute(
+            f"PUT file://{dest_filename} @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
+            file_stream=io.BytesIO(payload),
+        )
+        assert cursor.fetchone()[6] == "UPLOADED"
+
+        # When The file is read back through the chunked zero-disk download stream
+        with cursor.download_stream(f"@{stage_name}/{dest_filename}") as stream:
+            # Then The streamed bytes match the original payload exactly
+            assert stream.read() == payload, "download_stream content mismatch"
+
+
+@pytest.mark.skipif(OLD_DRIVER_ONLY("chunked-download-stream"), reason="new driver only")
+def test_should_download_stream_decompress(connection):
+    """download_stream(decompress=True) gunzips an AUTO_COMPRESS'd stage file."""
+    payload = b"col1,col2\n1,2\n3,4\n"
+    dest_filename = "dl_gz.csv"
+
+    with connection.cursor() as cursor:
+        # Given An AUTO_COMPRESS'd (.gz) file uploaded to a stage via file_stream
+        stage_name = create_temporary_stage(cursor, "TEST_DOWNLOAD_STREAM_GZ")
+
+        # PUT stage-path args don't support ? bindings; neither value here is user input, so interpolation is safe.
+        cursor.execute(
+            f"PUT file://{dest_filename} @{stage_name} AUTO_COMPRESS=TRUE OVERWRITE=TRUE",
+            file_stream=io.BytesIO(payload),
+        )
+        assert cursor.fetchone()[6] == "UPLOADED"
+
+        # When The .gz file is downloaded with decompress=True (core gunzips it)
+        with cursor.download_stream(f"@{stage_name}/{dest_filename}.gz", decompress=True) as stream:
+            # Then The decompressed bytes match the original payload
+            assert stream.read() == payload, "decompressed content mismatch"

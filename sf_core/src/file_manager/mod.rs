@@ -166,7 +166,7 @@ use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
-use azure_transfer::{download_from_azure_streaming, upload_to_azure_or_skip};
+use azure_transfer::{azure_get_streaming, download_from_azure_streaming, upload_to_azure_or_skip};
 use cloud_http::{
     CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo,
     spawn_s3_byte_stream_producer,
@@ -175,7 +175,7 @@ use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
 use flate2::write::GzDecoder;
-use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
+use gcs_transfer::{download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy};
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{
     DownloadFileError, S3Download, S3DownloadBody, S3StreamingDownload, UploadFileError,
@@ -1266,21 +1266,22 @@ pub async fn download_single_file(
     })
 }
 
-/// Result of [`open_s3_download_stream`]: the chunk channel, background
-/// task, and on-cloud byte count from the GET's `Content-Length` (`0` if
-/// absent or the object is empty).
+/// Result of [`open_download_stream_for_stage`]: the chunk channel
+/// `download_stream_chunk` drains, the background producer task, and the
+/// on-cloud byte count from the GET's `Content-Length` (`0` if absent or the
+/// object is empty).
 pub struct DownloadStreamOpen {
     /// Plaintext chunks, in order. Terminal `Err` is the last item; clean
     /// EOF is the channel closing, not a final `Ok`.
     pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, FileManagerError>>,
-    /// Background task draining and decrypting/gunzipping the S3 body into `chunks`.
+    /// The background `spawn_blocking` task draining the cloud body (and,
+    /// in-flight, decrypting/gunzipping it) into `chunks`' sender half.
     pub task: tokio::task::JoinHandle<()>,
-    /// Abort handle for the *inner* producer task reading the S3 body (see
-    /// `cloud_http::spawn_s3_byte_stream_producer`). Aborting `task` alone
-    /// stops the decrypt/gunzip pipeline but leaves this task parked on
-    /// `body.next()` if the connection has stalled; a caller tearing the
-    /// session down early must abort both. Callers should abort this handle
-    /// *and* `task`, not `task` alone.
+    /// Abort handle for the *inner* producer task reading the cloud body
+    /// (see `cloud_http::spawn_s3_byte_stream_producer` /
+    /// `spawn_byte_stream_producer`). Aborting `task` alone stops the
+    /// decrypt/gunzip pipeline but leaves this parked on `body.next()` if
+    /// the connection stalled — abort both.
     pub producer_abort: tokio::task::AbortHandle,
     pub cloud_byte_count: i64,
 }
@@ -1311,19 +1312,189 @@ pub async fn open_s3_download_stream(
         .await
         .context(S3DownloadSnafu)?;
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, FileManagerError>>(8);
+    let cse_info = match (file_metadata, digest) {
+        (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+        _ => None,
+    };
     let (reader, producer_abort) = spawn_s3_byte_stream_producer(body);
 
-    // Decrypt/gunzip is blocking work, so it runs off the async executor.
-    // Both ends (reader recv, writer blocking_send) park rather than spin
-    // when running ahead of the other.
+    Ok(spawn_download_stream_pipeline(
+        reader,
+        producer_abort,
+        encryption_material,
+        cse_info,
+        decompress,
+        cloud_byte_count,
+    ))
+}
+
+/// Opens a zero-disk, chunked streaming download against a GCS-backed stage.
+/// See [`open_s3_download_stream`] for the shared contract; the only
+/// difference is the cloud-specific GET (`download_from_gcs_streaming`).
+pub async fn open_gcs_download_stream(
+    stage_info: &StageInfo,
+    src_location: &str,
+    per_file_presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let using_presigned_url =
+        per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
+    // Zero-disk needs a single unranged, abortable GET. Call
+    // `gcs_get_streaming` directly, not `download_from_gcs_streaming`, which
+    // may route large downloads to a ranged/spilled body that
+    // `open_cloud_download_stream` can't consume.
+    let dl = gcs_get_streaming(
+        stage_info,
+        src_location,
+        per_file_presigned_url,
+        &gcs_retry_policy(using_presigned_url, policy),
+        0,
+        refresher,
+    )
+    .await
+    .context(GcsDownloadSnafu)?;
+
+    open_cloud_download_stream(dl, encryption_material, decompress)
+}
+
+/// Opens a zero-disk, chunked streaming download against an Azure-backed
+/// stage. See [`open_s3_download_stream`] for the shared contract; the only
+/// difference is the cloud-specific GET (`azure_get_streaming`).
+pub async fn open_azure_download_stream(
+    stage_info: &StageInfo,
+    src_location: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let dl = azure_get_streaming(stage_info, src_location, policy, refresher)
+        .await
+        .context(AzureDownloadSnafu)?;
+
+    open_cloud_download_stream(dl, encryption_material, decompress)
+}
+
+/// Shared tail of [`open_gcs_download_stream`] and [`open_azure_download_stream`]:
+/// unwraps a single-GET [`cloud_http::CloudStreamingDownload`] into its
+/// live-network reader and hands off to [`spawn_download_stream_pipeline`].
+///
+/// `body` is always [`cloud_http::CloudDownloadBody::Streamed`] in practice,
+/// since GCS's and Azure's zero-disk GETs never route to a ranged/spilled
+/// body. The `Spilled` case is just a guard against a ranged/spilled
+/// `CloudStreamingDownload` (e.g. Azure's HEAD-routed
+/// `download_from_azure_streaming`) being wired in here by mistake — this
+/// path can't support one.
+fn open_cloud_download_stream(
+    dl: cloud_http::CloudStreamingDownload,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let cloud_http::CloudStreamingDownload {
+        cloud_byte_count,
+        cse_info,
+        body,
+        ..
+    } = dl;
+
+    let cloud_http::CloudDownloadBody::Streamed {
+        reader,
+        producer_abort,
+    } = body
+    else {
+        return Err(io::Error::other(
+            "zero-disk download requires a single-GET streamed body",
+        ))
+        .context(IoSnafu);
+    };
+
+    Ok(spawn_download_stream_pipeline(
+        reader,
+        producer_abort,
+        encryption_material,
+        cse_info,
+        decompress,
+        cloud_byte_count,
+    ))
+}
+
+/// Dispatches to the right cloud's [`open_s3_download_stream`] /
+/// [`open_gcs_download_stream`] / [`open_azure_download_stream`] based on
+/// `stage_info.location_type`. `LocationType` is exhaustive (S3/Gcs/Azure),
+/// so this `match` needs no fallback arm.
+pub async fn open_download_stream_for_stage(
+    stage_info: &StageInfo,
+    src_location: &str,
+    presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    match stage_info.location_type {
+        LocationType::S3 => {
+            open_s3_download_stream(
+                stage_info,
+                src_location,
+                policy,
+                refresher,
+                encryption_material,
+                decompress,
+            )
+            .await
+        }
+        LocationType::Gcs => {
+            open_gcs_download_stream(
+                stage_info,
+                src_location,
+                presigned_url,
+                policy,
+                refresher,
+                encryption_material,
+                decompress,
+            )
+            .await
+        }
+        LocationType::Azure => {
+            open_azure_download_stream(
+                stage_info,
+                src_location,
+                policy,
+                refresher,
+                encryption_material,
+                decompress,
+            )
+            .await
+        }
+    }
+}
+
+/// Wires a live cloud body into a background `spawn_blocking` decrypt/gunzip
+/// pipeline, returning the [`DownloadStreamOpen`] shared by every
+/// `open_*_download_stream` variant.
+///
+/// Decrypt/gunzip is CPU-bound, so it runs off the async executor. The only
+/// blocking points are the reader's `recv` and the writer's `blocking_send`,
+/// so this task parks instead of spinning when it runs ahead of either end.
+fn spawn_download_stream_pipeline<R: Read + Send + 'static>(
+    reader: R,
+    producer_abort: tokio::task::AbortHandle,
+    encryption_material: Option<EncryptionMaterial>,
+    cse_info: Option<CseDownloadInfo>,
+    decompress: bool,
+    cloud_byte_count: i64,
+) -> DownloadStreamOpen {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, FileManagerError>>(8);
+
     let error_tx = tx.clone();
     let task = tokio::task::spawn_blocking(move || {
         let outcome = run_streaming_download_pipeline(
             reader,
             encryption_material,
-            file_metadata,
-            digest,
+            cse_info,
             decompress,
             ChannelWriter { tx },
         );
@@ -1336,12 +1507,12 @@ pub async fn open_s3_download_stream(
         // extra empty chunk.
     });
 
-    Ok(DownloadStreamOpen {
+    DownloadStreamOpen {
         chunks: rx,
         task,
         producer_abort,
         cloud_byte_count,
-    })
+    }
 }
 
 /// Sync `Write` counterpart to [`cloud_http::StreamReader`], over a bounded
@@ -1399,15 +1570,16 @@ impl<W: Write> OutputSink<W> {
     }
 }
 
-/// Runs the blocking half of a streaming S3 download: reads `reader` to EOF,
-/// optionally decrypting (CSE) and/or gunzipping, and writes plaintext to
-/// `output`. Mirrors `write_cloud_download`'s CSE/git-stage/SSE cases, but
-/// through a channel sink instead of a file.
-fn run_streaming_download_pipeline(
-    mut reader: cloud_http::StreamReader,
+/// Runs the blocking half of a cloud streaming download: reads `reader` to
+/// EOF, optionally decrypting (CSE: `encryption_material` and `cse_info`
+/// both present) and/or gunzipping (`decompress`), writing plaintext into
+/// `output`. Mirrors `write_cloud_download`'s match arms, but writes through
+/// a live channel sink instead of a file. Generic over `R` since the reader
+/// is a live network body for S3, GCS, or Azure.
+fn run_streaming_download_pipeline<R: Read>(
+    mut reader: R,
     encryption_material: Option<EncryptionMaterial>,
-    file_metadata: Option<EncryptedFileMetadata>,
-    digest: Option<String>,
+    cse_info: Option<CseDownloadInfo>,
     decompress: bool,
     output: ChannelWriter,
 ) -> Result<(), FileManagerError> {
@@ -1417,24 +1589,26 @@ fn run_streaming_download_pipeline(
         OutputSink::Raw(output)
     };
 
-    match (encryption_material, file_metadata, digest) {
-        // CSE: decrypt the ciphertext, verifying the digest at the end.
-        (Some(enc_material), Some(enc_metadata), Some(d)) => {
+    match (encryption_material, cse_info) {
+        // Client-side-encrypted object: decrypt the ciphertext stream,
+        // verifying the SHA-256 digest at finalize time.
+        (Some(enc_material), Some(CseDownloadInfo { metadata, digest })) => {
             decrypt_ciphertext_to_writer(
                 &mut reader,
-                &enc_metadata,
-                d.as_str(),
+                &metadata,
+                digest.as_str(),
                 &enc_material,
                 &mut sink,
             )
             .context(DecryptionSnafu)?;
         }
-        // encryption_material set but no CSE headers on the object (e.g. S3
-        // git-stage objects) — stream raw bytes instead of decrypting.
-        (maybe_enc, _, _) => {
+        // `encryption_material` present but no CSE headers (e.g. git-stage
+        // objects — same handling as `download_single_file` /
+        // `write_cloud_download`'s non-streaming path) — stream raw bytes.
+        (maybe_enc, _) => {
             if maybe_enc.is_some() {
                 tracing::debug!(
-                    "encryption_material present but S3 encryption headers absent; \
+                    "encryption_material present but cloud encryption headers absent; \
                      streaming raw bytes"
                 );
             }
@@ -1532,7 +1706,7 @@ fn write_cloud_download(
                 CloudDownloadBody::Spilled(CloudSpilledBody::Temp(temp)) => {
                     Ok((cloud_byte_count_hint, Some(temp)))
                 }
-                CloudDownloadBody::Streamed(reader) => {
+                CloudDownloadBody::Streamed { reader, .. } => {
                     let mut output_file =
                         create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
                     let result = std::io::copy(&mut { reader }, &mut output_file)
@@ -1559,7 +1733,7 @@ fn write_cloud_download(
                 unreachable!("Temp spill with no encryption material")
             }
             // Single buffered GET: copy the network stream to disk.
-            CloudDownloadBody::Streamed(reader) => {
+            CloudDownloadBody::Streamed { reader, .. } => {
                 let mut output_file =
                     create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
                 let result = std::io::copy(&mut { reader }, &mut output_file)

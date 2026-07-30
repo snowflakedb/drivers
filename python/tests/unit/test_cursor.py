@@ -24,6 +24,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ABORT_QUERY_OUTCOME_ABORTED,
     ABORT_QUERY_OUTCOME_NOT_RUNNING,
     ConnectionHandle,
+    DownloadStreamHandle,
     ResultSetHandle,
     StatementHandle,
     UploadStreamHandle,
@@ -2833,3 +2834,122 @@ class TestFileStreamUpload:
         assert sent == payload
         async_mock_core_client.connection_upload_stream_finish.assert_awaited_once()
         async_mock_core_client.connection_upload_stream_abort.assert_not_awaited()
+
+
+def _dl_chunk(data: bytes, eof: bool):
+    """Fake ConnectionDownloadStreamChunkResponse."""
+    return MagicMock(data=data, eof=eof)
+
+
+class TestDownloadStream:
+    """Unit tests for Cursor.download_stream (chunked GET), mocking the core client."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        conn.conn_handle = ConnectionHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_does_not_fetch_chunks_until_read(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+
+        out = cursor.download_stream("@stg/data.csv")
+        try:
+            mock_core_client.connection_download_stream_chunk.assert_not_called()
+            mock_core_client.connection_download_stream_close.assert_not_called()
+        finally:
+            out.close()
+
+    def test_reassembles_chunks_and_closes_on_eof(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = [
+            _dl_chunk(b"foo", False),
+            _dl_chunk(b"bar", False),
+            _dl_chunk(b"", True),
+        ]
+
+        out = cursor.download_stream("@stg/data.csv")
+
+        assert out.read() == b"foobar"
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_readall_does_not_truncate_on_empty_non_final_chunk(self, cursor, mock_core_client):
+        # data=b"" with eof=False is a legal core response; readinto must keep
+        # pulling rather than return 0, which io.RawIOBase.readall() would read as
+        # EOF and truncate on (regression guard for the empty-chunk fix).
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = [
+            _dl_chunk(b"", False),
+            _dl_chunk(b"foobar", True),
+        ]
+
+        out = cursor.download_stream("@stg/data.csv")
+
+        assert out.read() == b"foobar"
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_closing_without_reading_still_releases_handle(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+
+        with cursor.download_stream("@stg/data.csv"):
+            mock_core_client.connection_download_stream_chunk.assert_not_called()
+
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_splits_stage_location_and_forwards_decompress(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+
+        cursor.download_stream("@my_stage/sub/dir/file.csv.gz", decompress=True)
+
+        req = mock_core_client.connection_download_stream_begin.call_args.args[0]
+        assert req.stage_name == "@my_stage/sub/dir"
+        assert req.source_filename == "file.csv.gz"
+        assert req.decompress is True
+
+    def test_closes_session_on_error_during_read(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = DatabaseError(msg="mid-stream failure")
+
+        out = cursor.download_stream("@stg/data.csv")
+        mock_core_client.connection_download_stream_close.assert_not_called()
+
+        with pytest.raises(DatabaseError):
+            out.read()
+
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_read_size_returns_at_most_one_chunk(self, cursor, mock_core_client):
+        # read(size) is RawIOBase-style: one chunk pull, up to size bytes, short read before EOF is fine.
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = [
+            _dl_chunk(b"foo", False),
+            _dl_chunk(b"bar", False),
+            _dl_chunk(b"", True),
+        ]
+
+        out = cursor.download_stream("@stg/data.csv")
+        try:
+            assert out.read(5) == b"foo"
+            assert mock_core_client.connection_download_stream_chunk.call_count == 1
+            assert out.read(5) == b"bar"
+        finally:
+            out.close()

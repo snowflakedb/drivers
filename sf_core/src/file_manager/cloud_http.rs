@@ -114,9 +114,13 @@ impl std::io::Read for StreamReader {
 }
 
 /// Spawns a tokio task that drains `response.bytes_stream()` into a bounded
-/// mpsc channel and returns the corresponding [`StreamReader`]. Channel
-/// capacity is 8 chunks (≈2 MiB at typical 256 KiB chunks) — enough to keep
-/// the producer busy while the consumer decrypts.
+/// mpsc channel, returning the [`StreamReader`] plus an
+/// [`tokio::task::AbortHandle`] for the task — the reqwest-based (GCS/Azure)
+/// analogue of [`spawn_s3_byte_stream_producer`]'s abort handle, so a
+/// stalled connection can be cancelled the same way instead of parking
+/// forever on `bytes_stream().next()`. Channel capacity is 8 chunks (≈2 MiB
+/// at typical 256 KiB chunks) — enough to keep the producer busy while the
+/// consumer decrypts.
 ///
 /// NOTE: the retry/backoff loop upstream (`gcs_get_with_refresh` /
 /// `azure_request_with_retry`) covers only up to the point where response
@@ -130,10 +134,12 @@ impl std::io::Read for StreamReader {
 /// scope; revisit if Range-resume becomes a requirement. The
 /// `gcs_streaming_mid_body_disconnect_surfaces_error` test pins this
 /// behaviour.
-pub(super) fn spawn_byte_stream_producer(response: reqwest::Response) -> StreamReader {
+pub(super) fn spawn_byte_stream_producer(
+    response: reqwest::Response,
+) -> (StreamReader, tokio::task::AbortHandle) {
     let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(8);
     let stream = response.bytes_stream();
-    tokio::spawn(async move {
+    let join_handle = tokio::spawn(async move {
         let mut stream = stream;
         while let Some(chunk_result) = stream.next().await {
             let mapped = chunk_result.map_err(std::io::Error::other);
@@ -157,7 +163,8 @@ pub(super) fn spawn_byte_stream_producer(response: reqwest::Response) -> StreamR
         }
         // tx is dropped here, signalling EOF to the receiver.
     });
-    StreamReader::new(rx)
+    let abort_handle = join_handle.abort_handle();
+    (StreamReader::new(rx), abort_handle)
 }
 
 /// S3 analogue of [`spawn_byte_stream_producer`]: drains an
@@ -237,10 +244,56 @@ pub struct CloudStreamingDownload {
     /// the size is already known from the HEAD `Content-Length`, so this stays 0
     /// and the hint is used instead.
     pub cloud_bytes_read: Arc<AtomicU64>,
-    /// Download body — a live network stream (single GET) or a spilled tempfile
-    /// (parallel ranged GETs). On the SSE / non-decrypting path a `Spilled` body
-    /// is renamed into place rather than copied; see `download_single_file`.
+    /// Download body — a live network stream (single GET, carrying its own
+    /// producer abort handle) or a spilled tempfile (parallel ranged GETs,
+    /// already complete — nothing left to abort). On the SSE / non-decrypting
+    /// path a `Spilled` body is renamed into place rather than copied; see
+    /// `download_single_file`. Only the zero-disk `download_stream_*` RPC path
+    /// (`file_manager::open_cloud_download_stream`) uses the `Streamed` abort
+    /// handle, to cancel a stalled producer; the buffered `download_single_file`
+    /// path ignores it.
     pub body: CloudDownloadBody,
+}
+
+impl CloudStreamingDownload {
+    /// Builds a [`CloudStreamingDownload`] from a single-GET reqwest
+    /// `response` whose body streams straight off the network — the shared
+    /// tail `gcs_transfer::download_from_gcs_streaming` and
+    /// `azure_transfer::azure_get_streaming` delegate to after parsing their
+    /// cloud-specific headers into `digest` / `file_metadata`. Not used by
+    /// `download_from_azure_streaming`'s streamed branch, whose
+    /// `cloud_byte_count` comes from an earlier HEAD probe instead.
+    pub(super) fn from_reqwest_response(
+        response: reqwest::Response,
+        digest: Option<String>,
+        file_metadata: Option<EncryptedFileMetadata>,
+    ) -> Self {
+        let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+        // Git-stage objects carry encryption headers but no sfc-digest —
+        // treat as non-CSE, matching every other download path.
+        let cse_info = match (file_metadata, digest) {
+            (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+            (Some(_), None) => {
+                tracing::debug!(
+                    "encryptiondata present but sfc-digest absent (git-stage object); \
+                     treating as non-CSE"
+                );
+                None
+            }
+            (None, _) => None,
+        };
+        let (reader, producer_abort) = spawn_byte_stream_producer(response);
+        let cloud_bytes_read = reader.bytes_read_handle();
+        Self {
+            cloud_byte_count,
+            cse_info,
+            cloud_bytes_read,
+            body: CloudDownloadBody::Streamed {
+                reader: Box::new(reader),
+                producer_abort,
+            },
+        }
+    }
 }
 
 /// Where a streaming download's bytes live. Mirrors S3's `S3DownloadBody`: a
@@ -249,8 +302,15 @@ pub struct CloudStreamingDownload {
 /// destination directory — can be renamed into place with no extra full-file
 /// copy.
 pub enum CloudDownloadBody {
-    /// Live reqwest byte stream from a single GET (below the multipart threshold).
-    Streamed(Box<dyn Read + Send>),
+    /// Live reqwest byte stream from a single GET (below the multipart
+    /// threshold), paired with the abort handle for the task draining it —
+    /// carried here (rather than as a sibling `Option` on
+    /// [`CloudStreamingDownload`]) so a stalled producer can only be aborted
+    /// when there is actually a producer task to abort.
+    Streamed {
+        reader: Box<dyn Read + Send>,
+        producer_abort: tokio::task::AbortHandle,
+    },
     /// File assembled by parallel ranged GETs, living in the destination dir.
     Spilled(CloudSpilledBody),
 }
@@ -292,7 +352,7 @@ impl CloudDownloadBody {
     /// `Part`).
     pub fn into_reader(self) -> std::io::Result<Box<dyn Read + Send>> {
         match self {
-            CloudDownloadBody::Streamed(reader) => Ok(reader),
+            CloudDownloadBody::Streamed { reader, .. } => Ok(reader),
             // The decrypt/copy step only reads a spilled body for CSE, which is
             // always a `Temp`; a `Part` body is the final plaintext and is
             // finalized by rename, not read back. Handle both for totality.
