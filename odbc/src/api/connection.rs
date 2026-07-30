@@ -2281,8 +2281,7 @@ impl OdbcFunction {
     fn is_supported(self) -> bool {
         !matches!(
             self,
-            Self::BrowseConnect
-                | Self::BulkOperations
+            Self::BulkOperations
                 | Self::DataSources
                 | Self::Drivers
                 | Self::ParamOptions
