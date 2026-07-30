@@ -22,11 +22,10 @@ jobs:
             name: macOS Universal
             driver_lib: libSnowflake.dylib
             driver_manager: unixodbc
-          # TODO SNOW-3858024: Fix the timeouts
-          # - os: windows-latest
-          #   name: Windows x64
-          #   driver_lib: sfodbc.dll
-          #   driver_manager: unixodbc
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
+            driver_manager: unixodbc
           - os: macos-latest
             name: macOS Universal + iODBC
             driver_lib: libSnowflake.dylib
@@ -51,6 +50,7 @@ jobs:
         with:
           mode: restore
           kind: test-deps
+          key-suffix: reference
 
       - name: Restore ccache
         id: ccache-ref
@@ -58,6 +58,7 @@ jobs:
         with:
           mode: restore
           kind: ccache
+          key-suffix: reference
 
       # VCPKG_VER must be in the cache key because vcpkg's package
       # ABI hashes change with the runner's vcpkg version.
@@ -137,6 +138,18 @@ jobs:
           # `DRIVER_MANAGER` when invoking run_tests_unix.sh.
           brew install unixodbc libiodbc ccache ninja
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> "$GITHUB_ENV"
+
+      # setup-msvc puts cl.exe and VS-bundled Ninja on PATH (via vcvarsall.bat),
+      # which lets run_tests_windows.ps1 choose the Ninja generator and enables
+      # ccache with /Z7 embedded debug info.  Without this step the script falls
+      # back to MSBuild, which uses /Zi (shared PDB) — a format ccache cannot
+      # cache — causing a full cold rebuild on every run.
+      - name: Setup MSVC environment (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: amd64
+          restore-cmake-dir: 'true'
 
       - name: Install reference ODBC driver
         uses: ./.github/actions/install-reference-odbc
@@ -263,6 +276,7 @@ jobs:
         with:
           mode: save
           kind: test-deps
+          key-suffix: reference
           cache-hit: ${{ steps.test-deps-cache-ref.outputs.cache-hit }}
 
       - name: Save ccache
@@ -272,6 +286,7 @@ jobs:
         with:
           mode: save
           kind: ccache
+          key-suffix: reference
           cache-hit: ${{ steps.ccache-ref.outputs.cache-hit }}
 
       - name: Save vcpkg binary cache (Windows)
