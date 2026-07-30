@@ -19,19 +19,20 @@ import org.junit.jupiter.api.Test;
 class SnowflakeDataSourceReferenceParityTest {
 
   /**
-   * Setter names the universal {@link SnowflakeDataSource} commits to. The surface is limited to
-   * sf_core-supported connection parameters rather than the full classic SnowflakeBasicDataSource
-   * setter list (see BehaviorDifferences.yaml BD#31).
+   * Setter names the universal {@link SnowflakeDataSource} commits to. The surface covers
+   * sf_core-supported connection parameters plus JDBC client-side knobs the wrapper already honors
+   * (see BehaviorDifferences.yaml BD#31).
    *
    * <p>Intentionally dropped setters include OCSP ({@code setOcspFailOpen}), HTTP header
    * customizers ({@code setHttpHeadersCustomizers}), easy-logging ({@code setClientConfigFile}),
-   * and other legacy-only or no-op properties such as {@code setTracing}, {@code
-   * setNetworkTimeout}, {@code setEnablePutGet}, {@code setEnablePatternSearch}, {@code
-   * setArrowTreatDecimalAsInt}, {@code setStringsQuotedForColumnDef}, {@code setUseProxy}/{@code
-   * setProxyProtocol}/ {@code setDisableSocksProxy}, {@code setDisableGcsDefaultCredentials},
-   * {@code setEnableClientRequestMfaToken}, {@code setEnableClientStoreTemporaryCredential} (see
-   * BD#5), and date/timezone toggles ({@code setJDBCDefaultFormatDateWithTimezone}, {@code
-   * setGetDateUseNullTimezone}).
+   * and other legacy-only or no-op properties such as {@code setNetworkTimeout}, {@code
+   * setEnablePutGet}, {@code setStringsQuotedForColumnDef}, {@code setUseProxy}/{@code
+   * setProxyProtocol}/{@code setDisableSocksProxy}, {@code setDisableGcsDefaultCredentials}, {@code
+   * setEnableClientRequestMfaToken}, and {@code setEnableClientStoreTemporaryCredential} (see BD#5;
+   * replaced by {@code setClientStoreTemporaryCredential}).
+   *
+   * <p>{@code setArrowTreatDecimalAsInt} stores {@code JDBC_TREAT_DECIMAL_AS_INT} rather than
+   * legacy {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT}.
    */
   private static final Set<String> REFERENCE_SETTERS =
       Collections.unmodifiableSet(
@@ -79,7 +80,12 @@ class SnowflakeDataSourceReferenceParityTest {
                   "setNonProxyHosts",
                   "setEnableDiagnostics",
                   "setDiagnosticsAllowlistFile",
-                  "setBrowserResponseTimeout")));
+                  "setBrowserResponseTimeout",
+                  "setTracing",
+                  "setEnablePatternSearch",
+                  "setArrowTreatDecimalAsInt",
+                  "setJDBCDefaultFormatDateWithTimezone",
+                  "setGetDateUseNullTimezone")));
 
   @Test
   void shouldNotExposeSettersOutsideTheReferenceSurface() {
