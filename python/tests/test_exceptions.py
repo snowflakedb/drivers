@@ -84,14 +84,29 @@ class TestExceptionInstantiation:
         assert error.sqlstate is None
         assert error.sfqid is None
         assert error.query is None
+        assert error.request_id is None
 
     def test_error_full_attributes(self):
-        error = Error("oops", errno=42, sqlstate="HY000", sfqid="abc-123", query="SELECT 1")
+        error = Error(
+            "oops",
+            errno=42,
+            sqlstate="HY000",
+            sfqid="abc-123",
+            query="SELECT 1",
+            request_id="550e8400-e29b-41d4-a716-446655440000",
+        )
         assert error.raw_msg == "oops"
         assert error.errno == 42
         assert error.sqlstate == "HY000"
         assert error.sfqid == "abc-123"
         assert error.query == "SELECT 1"
+        assert error.request_id == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_request_id_distinct_from_sfqid(self):
+        error = Error(sfqid="01abc-query-id", request_id="550e8400-e29b-41d4-a716-446655440000")
+        # sfqid is the server-assigned query id; request_id is the client UUID.
+        # They live in different id spaces and must not be conflated.
+        assert error.sfqid != error.request_id
 
     def test_error_with_errno(self):
         error = Error("fail", errno=1003)
@@ -339,6 +354,44 @@ class TestConvertProtoError:
         # vendor_code from proto takes priority over status-code-based mapping
         assert result.errno == 1003
         assert result.sqlstate == "42000"
+
+    def test_application_exception_populates_query_id_and_request_id(self):
+        """query_id maps to sfqid and request_id is surfaced on the exception."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="SQL compilation error: syntax error",
+            status_code=STATUS_CODE_INTERNAL_ERROR,
+            vendor_code=1003,
+            sql_state="42000",
+            query_id="01abc-def-12345",
+            request_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert result.sfqid == "01abc-def-12345"
+        assert result.request_id == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_application_exception_omits_ids_when_absent(self):
+        """When the proto carries neither id, both stay None on the exception."""
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="SQL compilation error",
+            status_code=STATUS_CODE_INTERNAL_ERROR,
+            vendor_code=1003,
+            sql_state="42000",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert result.sfqid is None
+        assert result.request_id is None
 
     def test_application_exception_message_has_no_wrapper_prefixes(self):
         """Regression test: match old snowflake-connector-python error format.

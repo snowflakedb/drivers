@@ -129,6 +129,9 @@ message DriverException {
   optional string root_cause = 7;
   // Snowflake Query ID (sfqid) associated with the failed query, if available.
   optional string query_id = 8;
+  // Client-generated UUID v4 sent as ?requestId= on the query submission
+  // request. Present when the error originated from a query execution attempt.
+  optional string request_id = 9;
 }
 
 // Column metadata for description

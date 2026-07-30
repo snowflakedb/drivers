@@ -171,6 +171,30 @@ class TestErrorAttributes:
             cursor.execute("SELEC 1")
         assert excinfo.value.__cause__ is None
 
+    @pytest.mark.skipif(is_old_driver(), reason="request_id on errors is a new-driver feature")
+    def test_error_exposes_request_id(self, cursor):
+        """Test that a failed query surfaces the client-generated request_id as a UUID."""
+        with pytest.raises(Error) as excinfo:
+            cursor.execute("SELEC 1")
+        error = excinfo.value
+        assert error.request_id, "expected a request_id on the query error"
+        # request_id is a client-generated UUID v4.
+        uuid.UUID(error.request_id)
+        # It also lands on the cursor and is distinct from the server query id.
+        assert cursor.request_id == error.request_id
+        assert error.request_id != error.sfqid
+
+    @pytest.mark.skipif(is_old_driver(), reason="new-driver sfqid-on-error contract")
+    def test_error_exposes_sfqid(self, cursor):
+        """Test that a failed query against a real table surfaces the server query id (sfqid)."""
+        table_name = f"nonexistent_table_{uuid.uuid4().hex[:8]}"
+        with pytest.raises(Error) as excinfo:
+            cursor.execute("SELECT * FROM IDENTIFIER(?)", params=(table_name,), _force_qmark_paramstyle=True)
+        error = excinfo.value
+        # The server assigns a query id even for failed compilation.
+        assert error.sfqid, "expected an sfqid on the query error"
+        assert cursor.sfqid == error.sfqid
+
 
 class TestErrorMessageFormat:
     """Reference tests asserting the exact on-the-wire error message format.
@@ -187,6 +211,19 @@ class TestErrorMessageFormat:
         msg = str(excinfo.value)
         assert "Query execution failed" not in msg
         assert "Query failed:" not in msg
+
+    @pytest.mark.skipif(is_old_driver(), reason="request_id/sfqid in error message is a new-driver feature")
+    def test_error_message_contains_request_id_and_sfqid(self, cursor):
+        """Test that the formatted error message includes both request_id and sfqid for support."""
+        table_name = f"nonexistent_table_{uuid.uuid4().hex[:8]}"
+        with pytest.raises(Error) as excinfo:
+            cursor.execute("SELECT * FROM IDENTIFIER(?)", params=(table_name,), _force_qmark_paramstyle=True)
+        error = excinfo.value
+        msg = str(error)
+        assert error.request_id, "expected a request_id on the query error"
+        assert error.sfqid, "expected an sfqid on the query error"
+        assert error.request_id in msg, f"expected request_id in error message, got: {msg!r}"
+        assert error.sfqid in msg, f"expected sfqid in error message, got: {msg!r}"
 
     def test_query_error_message_format_matches_old_driver(self, cursor):
         """End-to-end: the formatted message has the exact shape the old driver produces."""
