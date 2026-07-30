@@ -39,8 +39,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Renaming cursor repla
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Can rename in prepared state",
                  "[odbc-api][cursorname][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -57,8 +55,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Can rename in prepare
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Can set after SQLCloseCursor",
                  "[odbc-api][cursorname][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -78,8 +74,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Can set after SQLClos
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: With explicit name length instead of SQL_NTS",
                  "[odbc-api][cursorname][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("ExplicitLen"), 11);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -93,8 +87,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: With explicit name le
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Explicit length shorter than string uses partial name",
                  "[odbc-api][cursorname][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Pass length 4 for "LongName" -> should only use "Long"
   SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("LongName"), 4);
   REQUIRE(ret == SQL_SUCCESS);
@@ -109,8 +101,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Explicit length short
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Empty cursor name succeeds",
                  "[odbc-api][cursorname][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar(""), SQL_NTS);
   WINDOWS_ONLY {
     // Windows DM rejects empty cursor name

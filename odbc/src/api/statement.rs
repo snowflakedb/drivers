@@ -1852,6 +1852,60 @@ pub fn set_cursor_name<E: OdbcEncoding>(
     Ok(())
 }
 
+/// Return the statement's cursor name (`SQLGetCursorName` / `SQLGetCursorNameW`).
+///
+/// ODBC 3.x always yields a name: either one set by `SQLSetCursorName` or the
+/// auto-generated `SQL_CUR`-prefixed default, so `HY015` is never produced.
+/// The name lives on `StatementInner` and is unaffected by prepare/execute/
+/// close, so it persists across the statement's lifetime.
+///
+/// Buffer conventions (character-count `BufferLength`, matching `SQLDescribeCol`):
+/// - `BufferLength < 0` -> `HY090`.
+/// - `CursorName` null -> success, only `*NameLengthPtr` (full length) written.
+/// - Truncation -> `01004` warning (`SQL_SUCCESS_WITH_INFO`), full untruncated
+///   length reported in `*NameLengthPtr`.
+/// - `HY010` if an async operation is in progress (S11/S12) or the statement
+///   is mid data-at-execution (`SQL_NEED_DATA`).
+pub fn get_cursor_name<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    cursor_name_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("get_cursor_name: statement_handle={statement_handle:?}");
+    let _exit = ApiExitLogDebug("SQLGetCursorName");
+
+    // Validate the handle before the buffer length so a bad handle reports
+    // INVALID_HANDLE rather than HY090, matching `describe_col` and the other
+    // statement functions in this module.
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
+
+    if inner.state.as_ref().is_async_executing() {
+        return AsyncInProgressSnafu.fail();
+    }
+    if inner.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
+    crate::api::encoding::write_string_chars::<E>(
+        &inner.cursor_name,
+        cursor_name_ptr as *mut E::Char,
+        buffer_length,
+        name_length_ptr,
+        Some(warnings),
+    );
+    Ok(())
+}
+
 /// Return the number of parameters in the statement via the IPD descriptor.
 ///
 /// After `SQLPrepare`, auto-IPD populates the IPD with one record per `?`

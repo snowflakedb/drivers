@@ -2285,7 +2285,6 @@ impl OdbcFunction {
                 | Self::BulkOperations
                 | Self::DataSources
                 | Self::Drivers
-                | Self::GetCursorName
                 | Self::ParamOptions
                 | Self::SetPos
                 | Self::SetScrollOptions

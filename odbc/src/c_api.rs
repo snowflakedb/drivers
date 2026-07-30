@@ -963,6 +963,72 @@ pub unsafe extern "system" fn SQLSetCursorNameW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetCursorName(
+    statement_handle: sql::Handle,
+    cursor_name: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetCursorName");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_cursor_name::<Narrow>(
+        statement_handle,
+        cursor_name as sql::Pointer,
+        buffer_length,
+        name_length_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLGetCursorNameW(
+    statement_handle: sql::Handle,
+    cursor_name: *mut WideChar,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLGetCursorName");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_cursor_name::<Wide>(
+        statement_handle,
+        cursor_name as sql::Pointer,
+        buffer_length,
+        name_length_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
 ///
 /// ODBC allows SQLCancel to be called from a different thread.
 /// Uses a two-path design via `Statement::cancel_token`:

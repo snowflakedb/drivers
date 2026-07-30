@@ -9,6 +9,7 @@ Bug fixes:
 New features:
 
 - Implemented `SQLSetCursorName` and `SQLSetCursorNameW`: assigns a client-side cursor-name label to a statement handle. (snowflake-eng/universal-driver#758)
+- Implemented `SQLGetCursorName` and `SQLGetCursorNameW`: returns the cursor name assigned via `SQLSetCursorName`, or a driver-generated `SQL_CUR`-prefixed name if none was set. (snowflake-eng/universal-driver#759)
 - Added cross-thread `SQLCancel` / `SQLCancelHandle` support: both now fire a server-side abort for the statement's in-flight query (via the core `StatementCancel` RPC) before signalling the local cancellation token, so a query executing on another thread is actually stopped on the server. The canceled query surfaces `HY008` whether the server abort or the local token wins the race. `SQLCancelHandle(SQL_HANDLE_STMT)` delegates to the same path as `SQLCancel`. (snowflakedb/universal-driver#629)
 - Implemented `SQLTransact` (ODBC 2.x) mapping to `SQLEndTran` for direct-link and ODBC 2.x applications that bypass the Driver Manager. (snowflakedb/universal-driver#TBD)
 - Added `SQLColumns` and `SQLColumnsW` support for querying column metadata via ODBC catalog functions. (snowflakedb/universal-driver#369)
