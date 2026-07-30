@@ -2,8 +2,8 @@ use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRet
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
-    MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
+    StageInfoRefresher, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -27,12 +27,18 @@ const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 
 /// Uploads a file to GCS, skipping when either:
 ///   * the object already exists and `overwrite` is false (existence skip), or
-///   * the remote object's stored SHA-256 (`x-goog-meta-sfc-digest`) matches
-///     the local payload's SHA-256 — even under `OVERWRITE=TRUE` (digest skip).
+///   * the caller opted in via `skip_upload_on_content_match` and the remote
+///     object's stored SHA-256 (`x-goog-meta-sfc-digest`) matches the local
+///     payload's SHA-256 under `OVERWRITE=TRUE` (content-match skip).
 ///
-/// The existence check runs first (cheap, gated on `!overwrite`); the
-/// content-match check runs regardless of `overwrite`. The HEAD is always
-/// issued so both checks can share its result.
+/// The decision is shared with S3 and Azure via `super::skip_upload_decision`;
+/// gating the content-match skip on the flag restores legacy-Python parity
+/// (GCS previously skipped matching content unconditionally).
+///
+/// The HEAD probe is elided entirely when neither skip could fire
+/// (`head_needed = !overwrite || skip_upload_on_content_match`) — matching
+/// the "no HEAD issued when overwrite=true and skip=false" behavior of the
+/// other clouds.
 ///
 /// `refresher` drives the reactive stage-info recovery introduced by gaps
 /// 2.1 (URL expiry) and 2.4 (token expiry):
@@ -50,11 +56,15 @@ const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 /// When `refresher` is `None`, neither recovery fires and the old shape is
 /// preserved (400 stays on the wire-level retry list via `gcs_retry_policy`;
 /// 401 surfaces as `TokenExpired` exactly as before).
+// One arg over the 7-arg clippy threshold (multipart + the opt-in
+// `skip_upload_on_content_match`); mirrors Azure's `upload_to_azure_or_skip`.
+#[allow(clippy::too_many_arguments)]
 pub async fn upload_to_gcs_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
@@ -100,27 +110,35 @@ pub async fn upload_to_gcs_or_skip(
                 let (url, token) = resolve_url_and_token(&stage_info, &key, None)
                     .map_err(map_gcs_request_error_for_attempt)?;
 
-                let head = check_file_exists_gcs(&client, &url, token).await;
-
-                if !overwrite && matches!(head, GcsHeadResult::Found { .. }) {
-                    tracing::info!("File already exists in GCS: {key:?}");
-                    return Ok(UploadStatus::Skipped);
-                }
+                // Elide the HEAD when neither skip branch could fire (mirrors
+                // Azure/S3): with overwrite=true and the flag off there is
+                // nothing to check, so we go straight to the PUT.
+                let head_needed = !overwrite || skip_upload_on_content_match;
+                let head = if head_needed {
+                    check_file_exists_gcs(&client, &url, token).await
+                } else {
+                    GcsHeadResult::NotFound
+                };
 
                 // `prepared.digest` is the SHA-256 of the (compressed) plaintext for both
                 // SSE and CSE stages (see `encryption.rs`), so it is stable across uploads
                 // of identical content and matches the digest stored by this and other
-                // drivers. The skip therefore fires whenever the remote content matches,
-                // regardless of the encryption mode.
-                if let GcsHeadResult::Found {
-                    digest: Some(ref d),
-                } = head
-                    && d == &prepared.digest
-                {
-                    tracing::info!(
-                        "Remote GCS object matches local content digest, skipping upload: {key:?}"
-                    );
-                    return Ok(UploadStatus::Skipped);
+                // drivers, regardless of the encryption mode.
+                let remote_head = match &head {
+                    GcsHeadResult::Found { digest } => super::RemoteHead::Present {
+                        digest: digest.as_deref(),
+                    },
+                    GcsHeadResult::NotFound => super::RemoteHead::Absent,
+                };
+                if let Some(status) = super::skip_upload_decision(
+                    LocationType::Gcs,
+                    overwrite,
+                    skip_upload_on_content_match,
+                    &remote_head,
+                    &prepared.digest,
+                    &key,
+                ) {
+                    return Ok(status);
                 }
 
                 // Large files on the access-token path take the XML-API
@@ -2063,6 +2081,7 @@ pub enum GcsDownloadError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::config::retry::Jitter;
@@ -2893,30 +2912,18 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // `upload_to_gcs_or_skip` — digest-based skip-on-content-match
+    // `upload_to_gcs_or_skip` — skip-on-content-match decision
     //
-    // Mirrors Python connector `storage_client.py:213-220` order:
+    // Decision order (shared with S3/Azure via `super::skip_upload_decision`):
     //   1. existence skip (gated on `!overwrite`)
-    //   2. digest skip (fires even when `overwrite=true`)
+    //   2. content-match skip (gated on `overwrite && skip_upload_on_content_match`)
     //   3. PUT
     //
     // Each test mounts a `HEAD` mock with a configurable response and a
     // `PUT` mock with `.expect(0)` or `.expect(1)` to assert the skip
-    // path was (or wasn't) taken without relying on side effects.
+    // path was (or wasn't) taken without relying on side effects. The
+    // opt-out and no-HEAD tests at the end pin the flag-off behavior.
     // ---------------------------------------------------------------
-
-    /// Constructs a SSE-shaped `PreparedUpload` whose `digest` field is
-    /// the caller-supplied marker string. The actual `data` bytes are
-    /// irrelevant — the skip branch never gets to PUT them.
-    fn make_prepared_for_skip(digest: &str) -> PreparedUpload {
-        PreparedUpload {
-            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(
-                b"payload-bytes",
-            )),
-            digest: digest.to_string(),
-            cse: None,
-        }
-    }
 
     /// Constructs a CSE-shaped `PreparedUpload` — the only structural
     /// difference is that `cse` is `Some(_)`. The `digest` field drives the
@@ -2987,11 +2994,8 @@ mod tests {
     async fn gcs_resumable_upload_initiates_then_puts_chunks() {
         let server = MockServer::start().await;
 
-        // Existence-check HEAD: 404 so the upload proceeds.
-        Mock::given(method("HEAD"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
+        // overwrite=true + skip_upload_on_content_match=false ⇒ head_needed=false,
+        // so no HEAD is issued and none is mocked.
         // Initiation POST → 201 with the session URL in `Location`.
         let session_path = "/resumable-session/abc";
         Mock::given(method("POST"))
@@ -3031,6 +3035,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            false,
             always_multipart(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
@@ -3069,10 +3074,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn gcs_resumable_upload_deletes_session_on_chunk_failure() {
         let server = MockServer::start().await;
-        Mock::given(method("HEAD"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
+        // overwrite=true + skip_upload_on_content_match=false ⇒ head_needed=false,
+        // so no HEAD is issued and none is mocked.
         let session_path = "/resumable-session/xyz";
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(201).insert_header(
@@ -3111,6 +3114,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            false,
             always_multipart(),
             &test_policy(false, 1),
             &mut None,
@@ -3266,9 +3270,10 @@ mod tests {
 
     #[tokio::test]
     async fn upload_to_gcs_or_skip_skips_when_digest_matches_under_overwrite_true() {
-        // Python parity: `storage_client.py:214-220` — content-match
-        // skip fires regardless of the `overwrite` flag (the existence
-        // skip above it is gated on `!overwrite`; this branch is not).
+        // With the opt-in flag set, the content-match skip fires under
+        // `overwrite=true`: the remote digest equals the local one, so the
+        // redundant upload is skipped (`storage_client.py:214-220` parity,
+        // now gated by `skip_upload_on_content_match`).
         let server = MockServer::start().await;
         let digest = "ZGlnZXN0Lw==";
         mount_head_and_put(
@@ -3279,11 +3284,12 @@ mod tests {
         .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip(digest);
+        let prepared = prepared_upload_with_digest(digest);
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
+            true,
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3311,11 +3317,12 @@ mod tests {
         .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip(digest);
+        let prepared = prepared_upload_with_digest(digest);
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
+            false,
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3338,11 +3345,12 @@ mod tests {
         .await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
+            true,
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3364,11 +3372,12 @@ mod tests {
         mount_head_and_put(&server, ResponseTemplate::new(200), 1).await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
+            true,
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3390,11 +3399,12 @@ mod tests {
         mount_head_and_put(&server, ResponseTemplate::new(200), 0).await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
+            false,
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3412,11 +3422,12 @@ mod tests {
         mount_head_and_put(&server, ResponseTemplate::new(404), 1).await;
 
         let stage = make_stage_for_mock(&server.uri());
-        let prepared = make_prepared_for_skip("local-digest-value");
+        let prepared = prepared_upload_with_digest("local-digest-value");
         let status = upload_to_gcs_or_skip(
             prepared,
             &stage,
             "file.csv",
+            false,
             false,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3450,6 +3461,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
@@ -3479,6 +3491,7 @@ mod tests {
             prepared,
             &stage,
             "file.csv",
+            true,
             true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
@@ -3517,6 +3530,7 @@ mod tests {
             &stage,
             "file.csv",
             true,
+            true,
             MultipartParams::default(),
             &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             &mut None,
@@ -3525,5 +3539,83 @@ mod tests {
         .unwrap();
 
         assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_uploads_when_digest_matches_but_opt_in_off() {
+        // The core SNOW-3715266 regression: `overwrite=true` with the flag
+        // OFF makes `head_needed` false, so the content-match skip is elided
+        // and the file is re-uploaded. GCS previously skipped here
+        // unconditionally, diverging from legacy Python; this pins the
+        // restored opt-in parity.
+        //
+        // Because the HEAD is elided, the matching digest mounted below is
+        // never fetched or compared under these args — the test would pass
+        // the same with a mismatching or absent one. It stays as a guard:
+        // were the code to regress to the old *unconditional* content-match
+        // skip, that matching digest would make it skip and this `Uploaded`
+        // assertion would fail.
+        let server = MockServer::start().await;
+        let digest = "ZGlnZXN0Lw==";
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
+            1,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = prepared_upload_with_digest(digest);
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            false,
+            MultipartParams::default(),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_issues_no_head_when_overwrite_true_and_opt_in_off() {
+        // `overwrite=true` + flag OFF => neither skip branch can fire, so the
+        // HEAD probe is elided entirely (mirrors Azure/S3). Assert zero HEAD
+        // requests and exactly one PUT.
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = prepared_upload_with_digest("local-digest-value");
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "file.csv",
+            true,
+            false,
+            MultipartParams::default(),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            &mut None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
     }
 }

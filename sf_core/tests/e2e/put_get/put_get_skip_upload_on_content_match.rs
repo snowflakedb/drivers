@@ -53,29 +53,30 @@ fn assert_status(stream: ResultSetGetStreamResponse, expected: &str) {
     );
 }
 
-/// Four-case matrix exercising the cursor kwarg → HEAD digest pipeline
+/// Five-case matrix exercising the cursor kwarg → HEAD digest pipeline
 /// against the cloud-backed stage of whatever provider the test account
 /// targets:
 ///
-/// | Round | content | overwrite | skip_match | expected status     |
-/// |------:|---------|-----------|------------|---------------------|
-/// |   1   | "A"     | TRUE      | false      | UPLOADED            |
-/// |   2   | "A"     | TRUE      | true       | SKIPPED (digest)    |
-/// |   3   | "B"     | TRUE      | true       | UPLOADED (mismatch) |
-/// |   4   | "C"     | FALSE     | false      | SKIPPED (existence) |
+/// | Round | content | overwrite | skip_match | expected status       |
+/// |------:|---------|-----------|------------|-----------------------|
+/// |   1   | "A"     | TRUE      | false      | UPLOADED (fresh)      |
+/// |   2   | "A"     | TRUE      | true       | SKIPPED (digest)      |
+/// |   3   | "B"     | TRUE      | true       | UPLOADED (mismatch)   |
+/// |   4   | "B"     | TRUE      | false      | UPLOADED (opt-out)    |
+/// |   5   | "C"     | FALSE     | false      | SKIPPED (existence)   |
 ///
-/// Round 4 pins that existence wins under !overwrite even when the
-/// local content differs from what's on stage.
+/// Round 4 is the direct SNOW-3715266 regression: it re-PUTs the SAME
+/// content already on stage (from round 3) with OVERWRITE=TRUE and the
+/// flag OFF, and expects UPLOADED — proving the content-match skip is
+/// opt-in on every cloud (GCS previously skipped this unconditionally,
+/// diverging from legacy Python). Round 5 pins that existence wins under
+/// !overwrite even when the local content differs from what's on stage.
 ///
-/// Scope: this is a cross-provider round-trip smoke test — it proves the
-/// kwarg → HEAD → skip pipeline works on the backing store, but it does NOT
-/// prove the flag is *required*. The one round that would distinguish an
-/// opt-in cloud (S3/Azure) from an unconditional one (GCS) —
-/// `overwrite=TRUE + matching digest + skip_match=FALSE` → UPLOADED on opt-in,
-/// SKIPPED on unconditional — is deliberately absent (it would fail the GCS
-/// lane at this SHA; #728 adds it). A green run here is therefore NOT proof
-/// that the opt-in gate holds; that gate is pinned at the unit layer by
-/// `content_match_skip_does_not_fire_for_s3_without_opt_in`.
+/// Caveat: this matrix runs against whatever provider the test account
+/// targets, so Round 4 exercises the actual *GCS* regression only on the
+/// GCP lane. On the default AWS lane Round 4 hits S3 (already opt-in
+/// before this PR) and the `put_get_overwrite` GCS case self-skips — so a
+/// green non-GCP run is not evidence the GCS regression is fixed.
 #[test]
 fn should_skip_upload_on_content_match_round_trip_matrix() {
     let client = SnowflakeTestClient::connect_with_default_auth();
@@ -112,15 +113,27 @@ fn should_skip_upload_on_content_match_round_trip_matrix() {
     // Then the upload runs because the digest mismatch defeats the skip
     assert_status(r3, "UPLOADED");
 
-    // And Round 4 modifies content to "C" with OVERWRITE=FALSE and skip flag off
-    std::fs::write(&file_path, b"content C").expect("write C");
+    // And Round 4 re-PUTs the SAME content "B" (already on stage from round 3)
+    // with OVERWRITE=TRUE and the skip flag OFF — the direct SNOW-3715266
+    // regression. GCS used to skip this unconditionally; every cloud must now
+    // re-upload because the content-match skip is opt-in.
     let r4 = run_put_with_kwarg(
+        &client,
+        &build_put_sql(&stage_name, &file_path, /*overwrite*/ true),
+        /*skip_match*/ false,
+    );
+    // Then the upload runs: matching content does not skip without the flag
+    assert_status(r4, "UPLOADED");
+
+    // And Round 5 modifies content to "C" with OVERWRITE=FALSE and skip flag off
+    std::fs::write(&file_path, b"content C").expect("write C");
+    let r5 = run_put_with_kwarg(
         &client,
         &build_put_sql(&stage_name, &file_path, /*overwrite*/ false),
         /*skip_match*/ false,
     );
     // Then existence wins and the upload is skipped without comparing digests
-    assert_status(r4, "SKIPPED");
+    assert_status(r5, "SKIPPED");
 }
 
 /// Pure regression pin for the `\` → `/` PUT-path normalization in

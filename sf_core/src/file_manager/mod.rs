@@ -465,6 +465,7 @@ pub(crate) async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.skip_upload_on_content_match,
             data.multipart,
             // Build the policy here, where `using_presigned_url` is known, and
             // pass it by reference so the test seam can inject zero backoff.
@@ -2984,19 +2985,18 @@ mod tests {
     // S3 / GCS scope pin: skip_upload_on_content_match cross-cloud
     // coverage.
     //
-    // SNOW-3715266 ported the opt-in content-match skip to S3 (mirroring
-    // Azure): under `overwrite=true && skip_upload_on_content_match=true`
-    // with a matching remote `sfc-digest`, S3 now returns Skipped without
-    // re-uploading. `content_match_skip_fires_for_s3` below drives that
-    // through the full `upload_single_file` dispatch path (end-to-end,
-    // not just the lower-level wiremock tests in `s3_transfer.rs`) so a
-    // regression in the dispatch wiring (e.g. dropping the flag from the
-    // `LocationType::S3` match arm) is caught here too.
-    //
-    // GCS remains unconditional: `upload_to_gcs_or_skip`'s signature drops
-    // the `skip_upload_on_content_match` kwarg entirely, so GCS issues its
-    // existence/content HEAD regardless of the flag. No GCS sibling test
-    // lives here; that behaviour is pinned in `gcs_transfer.rs`.
+    // SNOW-3715266 made the opt-in content-match skip uniform across all
+    // three clouds (S3, Azure, GCS): under
+    // `overwrite=true && skip_upload_on_content_match=true` with a matching
+    // remote `sfc-digest`, the upload returns Skipped without re-uploading;
+    // with the flag off it re-uploads regardless (the legacy-Python parity
+    // the ticket restored for GCS). The `content_match_skip_fires_for_*`
+    // and `content_match_skip_does_not_fire_for_*_without_opt_in` pairs
+    // below drive that through the full `upload_single_file` dispatch path
+    // (end-to-end, not just the lower-level wiremock tests in
+    // `s3_transfer.rs` / `gcs_transfer.rs`) so a regression in the dispatch
+    // wiring (e.g. dropping the flag from a `LocationType` match arm) is
+    // caught here too.
     // ---------------------------------------------------------------
 
     fn write_local_payload(content: &[u8]) -> tempfile::NamedTempFile {
@@ -3106,8 +3106,8 @@ mod tests {
     /// Companion pin: with `skip_upload_on_content_match=false` (default),
     /// S3 must upload even though `overwrite=true` and the remote object
     /// exists — the opt-in flag, not mere existence, gates the S3
-    /// content-match branch (mirrors Azure's opt-in semantics, unlike
-    /// GCS's unconditional skip).
+    /// content-match branch (the opt-in semantics now shared by all three
+    /// clouds).
     #[tokio::test(flavor = "multi_thread")]
     async fn content_match_skip_does_not_fire_for_s3_without_opt_in() {
         let mock = MockServer::start().await;
@@ -3132,6 +3132,86 @@ mod tests {
         let result = upload_single_file(data, &policy, &mut refresher)
             .await
             .expect("S3 upload should succeed against the mock");
+        assert_eq!(result.status, "UPLOADED");
+    }
+
+    /// End-to-end (dispatch-level) pin for SNOW-3715266: GCS now honors the
+    /// opt-in flag exactly like S3/Azure. Under
+    /// `overwrite=true && skip_upload_on_content_match=true` with a matching
+    /// remote `x-goog-meta-sfc-digest`, GCS must short-circuit to `Skipped`
+    /// without issuing the PUT — driven through the full `upload_single_file`
+    /// dispatch path so the `LocationType::Gcs` arm wiring the flag through
+    /// stays honest.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_fires_for_gcs() {
+        let payload = b"hello-gcs-content-match";
+        let real_digest =
+            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
+                .expect("digest");
+
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-goog-meta-sfc-digest", real_digest.as_str()),
+            )
+            .mount(&mock)
+            .await;
+        // Load-bearing: skip must fire (no PUT) for this path.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(payload);
+        let data =
+            single_upload_data_for(LocationType::Gcs, &mock.uri(), tmp.path().to_str().unwrap());
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let result = upload_single_file(data, &policy, &mut refresher)
+            .await
+            .expect("GCS upload should succeed against the mock");
+        assert_eq!(result.status, "SKIPPED");
+    }
+
+    /// Companion pin (the core SNOW-3715266 regression): with
+    /// `skip_upload_on_content_match=false` (default) and `overwrite=true`,
+    /// GCS re-uploads. What this proves is that the `LocationType::Gcs`
+    /// dispatch arm threads the flag through, so `head_needed` is false and
+    /// the content-match skip is elided — pinned by the `HEAD .expect(0)` +
+    /// `PUT .expect(1)` mocks (no digest is mounted, fetched, or compared).
+    /// GCS previously skipped here unconditionally, diverging from legacy
+    /// Python; this pins the restored parity.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_does_not_fire_for_gcs_without_opt_in() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(b"hello-gcs-no-op");
+        let mut data =
+            single_upload_data_for(LocationType::Gcs, &mock.uri(), tmp.path().to_str().unwrap());
+        data.skip_upload_on_content_match = false;
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let result = upload_single_file(data, &policy, &mut refresher)
+            .await
+            .expect("GCS upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");
     }
 }

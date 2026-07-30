@@ -195,11 +195,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
             _skip_upload_on_content_match (bool, optional): On PUT, skip
-                re-upload when the remote ``x-ms-meta-sfcdigest`` matches the
-                locally-computed SHA-256. Opt-in optimization for racing
-                concurrent uploaders; only meaningful with ``OVERWRITE=TRUE``.
-                Underscore-prefixed for parity with the legacy
-                Python-connector kwarg name.
+                re-upload when the remote stored digest metadata (S3
+                ``x-amz-meta-sfc-digest`` / Azure ``x-ms-meta-sfcdigest`` / GCS
+                ``x-goog-meta-sfc-digest``) matches the locally-computed
+                SHA-256. Opt-in optimization for racing concurrent uploaders;
+                only meaningful with ``OVERWRITE=TRUE``. Underscore-prefixed
+                for parity with the legacy Python-connector kwarg name.
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
                 the connection's paramstyle is pyformat/format. Used by
                 callers that emit ``?`` placeholders unconditionally.

@@ -679,3 +679,19 @@ behavior_differences:
       `cursor.execute(sql, file_stream=...)` raises `ProgrammingError` when `sql` is not a
       PUT statement, so a mismatched `file_stream` argument is caught immediately instead
       of being silently discarded.
+
+  44:
+    name: "GCS PUT on matching content re-uploads by default (honors skip_upload_on_content_match)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      On GCS, a `PUT ... OVERWRITE=TRUE` whose local payload matched the remote object's
+      stored `x-goog-meta-sfc-digest` was skipped unconditionally. This diverged from legacy
+      Python, which re-uploads on a content match unless the caller opts into skipping.
+    new_driver_behavior: |
+      GCS honors the opt-in `_skip_upload_on_content_match` cursor kwarg like S3 and Azure.
+      With the flag off (the default), a content-matching `PUT ... OVERWRITE=TRUE` re-uploads,
+      matching legacy Python; the content-match skip fires only when the caller opts in.
