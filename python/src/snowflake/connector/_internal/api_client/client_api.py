@@ -235,7 +235,11 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
 
     sfqid = _get_optional_str(driver_exc, "query_id")
 
-    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid)
+    # Client-generated requestId used for the query submission, when the error
+    # originated from a query execution attempt.
+    request_id = _get_optional_str(driver_exc, "request_id")
+
+    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid, request_id=request_id)
 
 
 def _get_optional_int(msg: Any, field: str) -> int | None:

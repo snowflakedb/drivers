@@ -77,12 +77,17 @@ class Error(Exception):
         sqlstate: str | None = None,
         sfqid: str | None = None,
         query: str | None = None,
+        request_id: str | None = None,
         **kwargs: Any,  # absorbs extra keys for backward compatibility with old driver code
     ) -> None:
         self.errno = errno
         self.sqlstate = sqlstate
         self.sfqid = sfqid
         self.query = query
+        # Client-generated ``requestId`` sent on the query submission request.
+        # Populated for errors that originate from a query execution attempt;
+        # ``None`` for non-query errors (auth, config, transport).
+        self.request_id = request_id
         self.raw_msg = msg
         self.msg = self._format_message(msg)
         super().__init__(self.msg)
@@ -96,7 +101,15 @@ class Error(Exception):
     def _format_message(self, msg: str) -> str:
         code_str = f"{self.errno:06d}" if isinstance(self.errno, int) and self.errno >= 0 else "------"
         sqlstate_str = f" ({self.sqlstate})" if self.sqlstate else ""
-        return f"{code_str}{sqlstate_str}: {msg}" if msg else ""
+        base = f"{code_str}{sqlstate_str}: {msg}" if msg else ""
+        if not base:
+            return base
+        ids = []
+        if self.request_id:
+            ids.append(f"request_id={self.request_id}")
+        if self.sfqid:
+            ids.append(f"sfqid={self.sfqid}")
+        return f"{base} ({', '.join(ids)})" if ids else base
 
     # ------------------------------------------------------------------
     # Error-handler protocol (PEP 249 / backward compatible)
@@ -165,6 +178,7 @@ class Error(Exception):
                 errno=error_value.get("errno", -1),
                 sqlstate=error_value.get("sqlstate"),
                 sfqid=error_value.get("sfqid"),
+                request_id=error_value.get("request_id"),
             )
         return error_class(error_value)
 

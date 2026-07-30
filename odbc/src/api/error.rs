@@ -1744,6 +1744,7 @@ mod tests {
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            request_id: None,
             root_cause: None,
         }));
 
@@ -1772,6 +1773,7 @@ mod tests {
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            request_id: None,
             root_cause: None,
         }));
 
@@ -1801,6 +1803,7 @@ mod tests {
             vendor_code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: Some("01c5e53c-030b-3d59-0000-be792a6d538e".to_string()),
+            request_id: None,
             root_cause: None,
         }));
 
@@ -1827,6 +1830,7 @@ mod tests {
             vendor_code: None,
             sql_state: None,
             query_id: None,
+            request_id: None,
             root_cause: None,
         }));
 

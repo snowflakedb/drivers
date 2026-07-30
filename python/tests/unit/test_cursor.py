@@ -755,6 +755,37 @@ class TestSfqidOnFailedQuery:
 
         assert cursor.sfqid is None
 
+    def test_request_id_set_from_error_on_failed_execute(self, cursor, mock_core_client):
+        """Both request_id and sfqid appear in the error message for user troubleshooting."""
+        request_id = "550e8400-e29b-41d4-a716-446655440000"
+        sfqid = "01abc-def-12345"
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError(
+            "SQL error",
+            sfqid=sfqid,
+            request_id=request_id,
+        )
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.execute("INVALID SQL")
+
+        error = excinfo.value
+        msg = str(error)
+        # Both IDs must be visible in the formatted message so users can share it with support.
+        assert request_id in msg, f"expected request_id in error message: {msg!r}"
+        assert sfqid in msg, f"expected sfqid in error message: {msg!r}"
+        # And mirrored on the cursor.
+        assert cursor.request_id == error.request_id
+        assert cursor.sfqid == error.sfqid
+
+    def test_request_id_none_when_error_has_no_request_id(self, cursor, mock_core_client):
+        """request_id is None when the error carries no request_id."""
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", sfqid="01abc-def-12345")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.request_id is None
+
 
 class TestQueryResultStats:
     """Unit tests for QueryResultStats NamedTuple."""

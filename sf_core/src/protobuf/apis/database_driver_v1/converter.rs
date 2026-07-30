@@ -943,6 +943,27 @@ fn extract_query_id(error: &ApiError) -> Option<String> {
     match error {
         ApiError::Query { source, .. } => match source.as_ref() {
             RestError::QueryFailed { query_id, .. } => query_id.clone(),
+            RestError::AsyncQuery { query_id, .. } => query_id.map(|id| id.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Extract the client-generated `requestId` used for the query submission.
+///
+/// Unlike [`extract_query_id`] (the server-assigned Snowflake Query ID), this
+/// is the UUID the driver sent as `?requestId=` on the submission request. It
+/// is useful for correlating a failure with server-side dedup/retry logs.
+///
+/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
+/// New query-related error variants should be added here as they are
+/// introduced.
+fn extract_request_id(error: &ApiError) -> Option<String> {
+    match error {
+        ApiError::Query { source, .. } => match source.as_ref() {
+            RestError::QueryFailed { request_id, .. } => request_id.map(|id| id.to_string()),
+            RestError::AsyncQuery { request_id, .. } => request_id.map(|id| id.to_string()),
             _ => None,
         },
         _ => None,
@@ -1079,6 +1100,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
     let query_id = extract_query_id(&error);
+    let request_id = extract_request_id(&error);
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
@@ -1102,6 +1124,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         sql_state,
         root_cause,
         query_id,
+        request_id,
     }
 }
 
@@ -1152,6 +1175,7 @@ mod tests {
                 code,
                 sql_state: sql_state.map(|s| s.to_owned()),
                 query_id: None,
+                request_id: None,
                 location: loc(),
             }),
         }
@@ -1260,6 +1284,7 @@ mod tests {
                 code: Some(2003),
                 sql_state: Some("42S02".to_owned()),
                 query_id: None,
+                request_id: None,
                 location: loc(),
             }),
         };
@@ -1280,10 +1305,90 @@ mod tests {
                 code: Some(1003),
                 sql_state: Some("42000".to_owned()),
                 query_id: None,
+                request_id: None,
                 location: loc(),
             }),
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.message, "SQL compilation error: syntax error line 1");
+    }
+
+    #[test]
+    fn query_failed_populates_query_id_and_request_id() {
+        // A synchronous query failure carries both the server-assigned query_id
+        // and the client-generated request_id all the way to DriverException.
+        let request_id = uuid::Uuid::new_v4();
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::QueryFailed {
+                message: "SQL compilation error".to_owned(),
+                code: Some(1003),
+                sql_state: Some("42000".to_owned()),
+                query_id: Some("01abc-def-12345".to_owned()),
+                request_id: Some(request_id),
+                location: loc(),
+            }),
+        };
+        assert_eq!(extract_query_id(&err), Some("01abc-def-12345".to_owned()));
+        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, Some("01abc-def-12345".to_owned()));
+        assert_eq!(exc.request_id, Some(request_id.to_string()));
+    }
+
+    #[test]
+    fn async_query_populates_query_id_and_request_id() {
+        // The async-poll failure path carries UUID query_id/request_id which are
+        // stringified onto DriverException.
+        let request_id = uuid::Uuid::new_v4();
+        let query_id = uuid::Uuid::new_v4();
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::AsyncQuery {
+                location: loc(),
+                request_id: Some(request_id),
+                query_id: Some(query_id),
+                source: SfError::SnowflakeBody {
+                    code: 1003,
+                    message: "boom".to_owned(),
+                    location: loc(),
+                },
+            }),
+        };
+        assert_eq!(extract_query_id(&err), Some(query_id.to_string()));
+        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, Some(query_id.to_string()));
+        assert_eq!(exc.request_id, Some(request_id.to_string()));
+    }
+
+    #[test]
+    fn query_failed_without_ids_leaves_fields_unset() {
+        // When the server omits the query_id and no request_id was recorded,
+        // both fields stay None on DriverException.
+        let err = query_failed(Some(1003), Some("42000"));
+        assert_eq!(extract_query_id(&err), None);
+        assert_eq!(extract_request_id(&err), None);
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.request_id, None);
+    }
+
+    #[test]
+    fn non_query_error_leaves_ids_unset() {
+        // Non-query errors (e.g. invalid argument) never carry query correlation ids.
+        let err = crate::apis::database_driver_v1::error::InvalidArgumentSnafu {
+            argument: "bad".to_owned(),
+        }
+        .build();
+        assert_eq!(extract_query_id(&err), None);
+        assert_eq!(extract_request_id(&err), None);
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.request_id, None);
     }
 }
