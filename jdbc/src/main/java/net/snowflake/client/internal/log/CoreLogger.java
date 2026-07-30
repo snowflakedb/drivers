@@ -4,7 +4,6 @@ import java.util.function.BooleanSupplier;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.internal.unicore.CoreLoggingBridge;
-import net.snowflake.client.internal.util.MaskedException;
 
 /**
  * Routes wrapper logs through {@code sf_core} and back onto the configured delivery logger. See
@@ -59,12 +58,12 @@ public class CoreLogger extends AbstractSFLogger {
   }
 
   @Override
-  protected void logPlain(LogLevel level, String msg, boolean isMasked) {
+  protected void logPlain(LogLevel level, String msg) {
     try {
       if (!isLevelEnabled(level)) {
         return;
       }
-      route(level, isMasked ? LogFormatter.mask(msg) : msg);
+      route(level, msg);
     } catch (Throwable ignored) {
       // Logging must never throw.
     }
@@ -97,14 +96,13 @@ public class CoreLogger extends AbstractSFLogger {
       if (!isLevelEnabled(level)) {
         return;
       }
-      Throwable masked = t == null ? null : new MaskedException(t);
       if (LogFormatter.deferThrowableDetailToDebug(level, t)) {
-        route(level, LogFormatter.withTypeOnlyCause(LogFormatter.mask(msg), t));
+        route(level, LogFormatter.withTypeOnlyCause(msg, t));
         if (isLevelEnabled(LogLevel.DEBUG)) {
-          route(LogLevel.DEBUG, LogFormatter.appendThrowable(LogFormatter.mask(msg), masked));
+          route(LogLevel.DEBUG, LogFormatter.appendThrowable(msg, t));
         }
       } else {
-        route(level, LogFormatter.appendThrowable(LogFormatter.mask(msg), masked));
+        route(level, LogFormatter.appendThrowable(msg, t));
       }
     } catch (Throwable ignored) {
       // Logging must never throw.
@@ -132,16 +130,16 @@ public class CoreLogger extends AbstractSFLogger {
   private void fallback(LogLevel level, String message) {
     switch (level) {
       case ERROR:
-        delegate.error(message, false);
+        delegate.error(message);
         break;
       case WARN:
-        delegate.warn(message, false);
+        delegate.warn(message);
         break;
       case INFO:
-        delegate.info(message, false);
+        delegate.info(message);
         break;
       case DEBUG:
-        delegate.debug(message, false);
+        delegate.debug(message);
         break;
       default:
         break;

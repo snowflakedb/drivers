@@ -3522,14 +3522,11 @@ tests:
     ud_tests: []
   util.SecretDetectorTest.java:
   - test_name: sasTokenFilterTest
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#sasTokenFilterTest
+    ud_tests: []
   - test_name: testEncryptionMaterialFilter
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testEncryptionMaterialFilter
+    ud_tests: []
   - test_name: testMaskAWSSecret
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskAWSSecret
+    ud_tests: []
   - test_name: testMaskJacksonObject
     ud_tests: []
   - test_name: testMaskJsonArray
@@ -3537,23 +3534,17 @@ tests:
   - test_name: testMaskJsonObject
     ud_tests: []
   - test_name: testMaskOAuthSecrets
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskOAuthSecrets
+    ud_tests: []
   - test_name: testMaskParameterValue
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskParameterValue
+    ud_tests: []
   - test_name: testMaskPasswordFromConnectionString
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskPasswordFromConnectionString
+    ud_tests: []
   - test_name: testMaskSASToken
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskSASToken
+    ud_tests: []
   - test_name: testMaskSecrets
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskSecrets
+    ud_tests: []
   - test_name: testMaskconnectionToken
-    ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/util/SecretDetectorTest.java#testMaskconnectionToken
+    ud_tests: []
   util.StopwatchTest.java:
   - test_name: testGetMillisWhenStopped
     ud_tests: []

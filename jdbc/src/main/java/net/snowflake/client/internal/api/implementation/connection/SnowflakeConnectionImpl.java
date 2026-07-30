@@ -347,7 +347,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public void setReadOnly(boolean readOnly) throws SQLException {
     checkClosed();
-    logger.debug("setReadOnly not supported.", false);
+    logger.debug("setReadOnly not supported.");
   }
 
   @Override
