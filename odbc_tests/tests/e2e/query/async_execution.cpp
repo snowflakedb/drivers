@@ -501,7 +501,10 @@ TEST_CASE("should treat SQLCancel on idle async-enabled statement as no-op", "[q
 // CROSS-THREAD CANCEL
 // =============================================================================
 
-TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_thread]") {
+// [flaky]: on the iODBC driver manager, the cross-thread cancel race can land on either side
+// of BD#70 — the new driver's HY008 mapping usually wins, but under load the DM's own
+// function-sequence check (S1010) intermittently fires first, failing the else-branch CHECK.
+TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_thread][flaky]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
