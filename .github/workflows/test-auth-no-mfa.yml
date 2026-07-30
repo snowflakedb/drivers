@@ -44,6 +44,9 @@ jobs:
         run: ./tests/auth/auth_no_mfa_jdbc.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
           SF_TEST_NO_MFA: true
 
       - name: Save Rust cache
@@ -85,6 +88,9 @@ jobs:
         run: ./tests/auth/auth_no_mfa_python.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
           SF_TEST_NO_MFA: true
 
       - name: Save Rust cache
@@ -131,6 +137,9 @@ jobs:
         run: ./tests/auth/auth_no_mfa_odbc.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
           SF_TEST_NO_MFA: true
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 

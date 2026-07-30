@@ -2196,6 +2196,7 @@ enum OdbcFunction {
     Cancel = 5,
     CancelHandle = 1022,
     CloseCursor = 1003,
+    Transact = 23,
     EndTran = 1005,
 }
 
@@ -2268,6 +2269,7 @@ impl TryFrom<u16> for OdbcFunction {
             5    => Ok(Self::Cancel),
             1022 => Ok(Self::CancelHandle),
             1003 => Ok(Self::CloseCursor),
+            23   => Ok(Self::Transact),
             1005 => Ok(Self::EndTran),
             _    => Err(()),
         }
@@ -2279,13 +2281,10 @@ impl OdbcFunction {
     fn is_supported(self) -> bool {
         !matches!(
             self,
-            Self::BrowseConnect
-                | Self::BulkOperations
+            Self::BulkOperations
                 | Self::DataSources
                 | Self::Drivers
-                | Self::GetCursorName
                 | Self::ParamOptions
-                | Self::SetCursorName
                 | Self::SetPos
                 | Self::SetScrollOptions
         )
@@ -2355,6 +2354,7 @@ impl OdbcFunction {
         Self::Cancel,
         Self::CancelHandle,
         Self::CloseCursor,
+        Self::Transact,
         Self::EndTran,
     ];
 }
@@ -3195,6 +3195,14 @@ mod tests {
     /// before the driver's entry point ever runs (iODBC / Windows dispatch
     /// regardless, which is why the regression only showed up under unixODBC).
     #[test]
+    fn transact_is_reported_supported() {
+        assert!(
+            OdbcFunction::Transact.is_supported(),
+            "SQLTransact is exported in c_api.rs; SQLGetFunctions must report it supported"
+        );
+    }
+
+    #[test]
     fn end_tran_is_reported_supported() {
         assert!(
             OdbcFunction::EndTran.is_supported(),
@@ -3225,6 +3233,13 @@ mod tests {
             odbc3_bit_set(&bitmap, OdbcFunction::EndTran as u16),
             "SQL_API_SQLENDTRAN bit must be set in the ODBC3 all-functions bitmap"
         );
+    }
+
+    #[test]
+    fn odbc2_array_marks_transact_supported() {
+        let mut array = [SQL_FALSE_U16; 100];
+        fill_odbc2_array(array.as_mut_ptr());
+        assert_eq!(array[OdbcFunction::Transact as usize], SQL_TRUE_U16);
     }
 
     #[test]

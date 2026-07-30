@@ -19,8 +19,11 @@ MIRROR_REPO = "snowflakedb/universal-driver"
 OUTPUT = Path(__file__).resolve().parents[2] / "ci" / "mirroring" / "import_paths.bara.sky"
 
 # Keep in sync with ci/mirroring/copy.bara.sky.
-EXCLUDED_PATHS = [
-    "_internal/**",
+NOMIRROR_PATHS = [
+    "NOMIRROR/**",
+    "**/NOMIRROR/**",
+]
+EXCLUDED_PATHS = NOMIRROR_PATHS + [
     ".ai/**",
     ".cursor/**",
     ".claude/**",
@@ -48,6 +51,8 @@ def _matches_any(path: str, patterns: list[str]) -> bool:
 
 
 def is_mirrored_path(path: str) -> bool:
+    if _matches_any(path, NOMIRROR_PATHS):
+        return False
     if _matches_any(path, EXCLUDED_PATH_OVERRIDES):
         return True
     if _matches_any(path, EXCLUDED_PATHS):

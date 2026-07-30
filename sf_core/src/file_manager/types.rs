@@ -100,8 +100,9 @@ pub struct UploadData {
     /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
     /// of the `infer` crate.
     pub legacy_odbc_compression_autodetect: bool,
-    /// When true, PUT skips re-uploading a blob whose stored
-    /// `x-ms-meta-sfcdigest` matches the locally-computed SHA-256.
+    /// When true, PUT skips re-uploading an object whose stored digest
+    /// metadata (S3 `x-amz-meta-sfc-digest` / Azure `x-ms-meta-sfcdigest` /
+    /// GCS `x-goog-meta-sfc-digest`) matches the locally-computed SHA-256.
     /// Mirrors Python's `_skip_upload_on_content_match` cursor kwarg
     /// (`storage_client.py:214-218`). Only consulted when the caller
     /// also passes `overwrite=true`; the existence-only branch
@@ -248,6 +249,16 @@ pub enum LocationType {
     S3,
     Gcs,
     Azure,
+}
+
+impl fmt::Display for LocationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LocationType::S3 => f.write_str("S3"),
+            LocationType::Gcs => f.write_str("GCS"),
+            LocationType::Azure => f.write_str("Azure"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

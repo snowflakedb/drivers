@@ -669,7 +669,6 @@ behavior_differences:
       `enable_crl_file_cache` → `crl_enable_disk_caching` (both default `True`).
       Callers who previously disabled caching via `enable_crl_cache=False` must
       set both toggles to `False` explicitly.
-
   43:
     name: "ResultMetadataV2 lacks vector_dimension and fields attributes"
     status: todo
@@ -737,3 +736,35 @@ behavior_differences:
     description: |
       TODO: implement OOB telemetry in the Universal Driver and wire up
       `TelemetryService` to the real implementation.
+
+  49:
+    name: "file_stream on a non-PUT statement raises ProgrammingError instead of being silently ignored"
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `cursor.execute(sql, file_stream=...)` silently ignores the `file_stream` keyword
+      argument when `sql` is not a PUT statement; the statement runs normally and the
+      stream is never consumed.
+    new_driver_behavior: |
+      `cursor.execute(sql, file_stream=...)` raises `ProgrammingError` when `sql` is not a
+      PUT statement, so a mismatched `file_stream` argument is caught immediately instead
+      of being silently discarded.
+
+  50:
+    name: "GCS PUT on matching content re-uploads by default (honors skip_upload_on_content_match)"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      On GCS, a `PUT ... OVERWRITE=TRUE` whose local payload matched the remote object's
+      stored `x-goog-meta-sfc-digest` was skipped unconditionally. This diverged from legacy
+      Python, which re-uploads on a content match unless the caller opts into skipping.
+    new_driver_behavior: |
+      GCS honors the opt-in `_skip_upload_on_content_match` cursor kwarg like S3 and Azure.
+      With the flag off (the default), a content-matching `PUT ... OVERWRITE=TRUE` re-uploads,
+      matching legacy Python; the content-match skip fires only when the caller opts in.

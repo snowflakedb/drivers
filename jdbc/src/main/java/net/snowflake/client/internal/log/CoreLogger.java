@@ -77,7 +77,15 @@ public class CoreLogger extends AbstractSFLogger {
         return;
       }
       LogFormatter.Formatted formatted = LogFormatter.format(msg, arguments);
-      route(level, LogFormatter.appendThrowable(formatted.getMessage(), formatted.getThrowable()));
+      Throwable throwable = formatted.getThrowable();
+      if (LogFormatter.deferThrowableDetailToDebug(level, throwable)) {
+        route(level, LogFormatter.withTypeOnlyCause(formatted.getMessage(), throwable));
+        if (isLevelEnabled(LogLevel.DEBUG)) {
+          route(LogLevel.DEBUG, LogFormatter.appendThrowable(formatted.getMessage(), throwable));
+        }
+      } else {
+        route(level, LogFormatter.appendThrowable(formatted.getMessage(), throwable));
+      }
     } catch (Throwable ignored) {
       // Logging must never throw.
     }
@@ -89,10 +97,15 @@ public class CoreLogger extends AbstractSFLogger {
       if (!isLevelEnabled(level)) {
         return;
       }
-      route(
-          level,
-          LogFormatter.appendThrowable(
-              LogFormatter.mask(msg), t == null ? null : new MaskedException(t)));
+      Throwable masked = t == null ? null : new MaskedException(t);
+      if (LogFormatter.deferThrowableDetailToDebug(level, t)) {
+        route(level, LogFormatter.withTypeOnlyCause(LogFormatter.mask(msg), t));
+        if (isLevelEnabled(LogLevel.DEBUG)) {
+          route(LogLevel.DEBUG, LogFormatter.appendThrowable(LogFormatter.mask(msg), masked));
+        }
+      } else {
+        route(level, LogFormatter.appendThrowable(LogFormatter.mask(msg), masked));
+      }
     } catch (Throwable ignored) {
       // Logging must never throw.
     }

@@ -1521,6 +1521,7 @@ mod tests {
             code: Some(3001),
             sql_state: Some("42501".to_string()),
             query_id: None,
+            request_id: None,
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(map_execute_show_error(err, "SHOW TABLES", false).is_err());
@@ -1534,6 +1535,7 @@ mod tests {
             code: Some(2003),
             sql_state: Some("42S02".to_string()),
             query_id: None,
+            request_id: None,
             location: snafu::Location::new("test", 1, 1),
         });
         assert!(

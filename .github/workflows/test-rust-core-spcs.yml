@@ -80,6 +80,9 @@ jobs:
         run: ./scripts/decode_secrets.sh aws
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Set up Python
         uses: actions/setup-python@v5

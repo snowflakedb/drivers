@@ -518,6 +518,36 @@ class TestPassedArgumentNames:
 class TestPassedArgumentsThroughStack:
     """End-to-end: argument names reach the TelemetrySendApiUsageRequest."""
 
+    def test_connect_init_omits_unset_named_params(self, mock_db_api):
+        """connect() must not forward defaulted connection_name/config kwargs."""
+        from snowflake.connector import connect
+
+        with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
+            connect(user="test_user", account="test_account")
+
+        init_calls = [
+            list(call[0][0].passed_arguments)
+            for call in mock_db_api.telemetry_send_api_usage.call_args_list
+            if call[0][0].api_method == "Connection.__init__"
+        ]
+        assert len(init_calls) == 1
+        passed = set(init_calls[0])
+        assert passed == {"user", "account"}, f"unexpected Connection.__init__ api_arguments: {passed}"
+
+    def test_connect_init_records_explicit_connection_name(self, mock_db_api):
+        from snowflake.connector import connect
+
+        with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
+            connect(connection_name="myconn", user="test_user", account="test_account")
+
+        init_calls = [
+            list(call[0][0].passed_arguments)
+            for call in mock_db_api.telemetry_send_api_usage.call_args_list
+            if call[0][0].api_method == "Connection.__init__"
+        ]
+        assert len(init_calls) == 1
+        assert "connection_name" in init_calls[0]
+
     def test_execute_records_only_passed_arguments(self, cursor, mock_db_api):
         cursor.execute("SELECT 1")
         assert _passed_arguments_for(mock_db_api, "SnowflakeCursor.execute") == ["operation"]

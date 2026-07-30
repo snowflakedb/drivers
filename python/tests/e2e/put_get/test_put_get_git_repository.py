@@ -1,14 +1,13 @@
-import os
 import tempfile
 
 from pathlib import Path
 
 import pytest
 
-from tests.config import get_test_parameters
 from tests.e2e.put_get.put_get_helper import (
     as_file_uri,
     create_temporary_stage,
+    is_aws_test_account,
     list_stage_contents,
 )
 
@@ -16,23 +15,9 @@ from tests.e2e.put_get.put_get_helper import (
 _GIT_REPO_NAME = "testing_setup.public.ud_test_homebrew_git_repo"
 
 
-def _is_aws_test_account() -> bool:
-    """Return whether the active test account is the AWS CI cell.
-
-    ``ci/account_setup.sql`` is provisioned on the AWS account only for now.
-    CI decodes a cloud-specific ``parameters.json``; when ``CLOUD_PROVIDER`` is
-    unset, infer the cloud from the regional host suffix.
-    """
-    cloud = os.environ.get("CLOUD_PROVIDER", "").lower()
-    if cloud:
-        return cloud == "aws"
-
-    host = (get_test_parameters().get("SNOWFLAKE_TEST_HOST") or "").lower()
-    return ".gcp." not in host and ".azure." not in host
-
-
+# ``ci/account_setup.sql`` is provisioned on the AWS account only for now.
 pytestmark = pytest.mark.skipif(
-    not _is_aws_test_account(),
+    not is_aws_test_account(),
     reason="Git repository e2e tests require ci/account_setup.sql on the AWS test account only",
 )
 

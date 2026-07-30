@@ -3,9 +3,10 @@ use crate::api::TimestampSubtype;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBatchConcatSnafu, ArrowBatchReadSnafu,
-    AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu, CsvBindingSnafu, CursorAlreadyOpenSnafu,
-    DaeRequiredSnafu, DisconnectedSnafu, InternalSnafu, InvalidAttributeValueSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
+    AsyncInProgressSnafu, AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu, CsvBindingSnafu,
+    CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu, DuplicateCursorNameSnafu,
+    InternalSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorNameSnafu,
+    InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
     InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu,
     JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
     OdbcRuntimeSnafu, OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required,
@@ -15,6 +16,7 @@ use crate::api::error::{
 use crate::api::handle_registry::HandleId;
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
+use crate::api::utils::ApiExitLogDebug;
 use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, ExplicitDesc,
     FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK,
@@ -33,7 +35,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ExecuteQueryResponse, QueryBindings,
     ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
-    StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
+    StatementCancelRequest, StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
     StatementSetOptionsRequest, StatementSetSqlQueryRequest, config_setting,
     execute_query_response, query_bindings,
 };
@@ -1753,6 +1755,157 @@ pub fn close_cursor(statement_handle: sql::Handle) -> OdbcResult<()> {
     free_stmt(statement_handle, FreeStmtOption::Close)
 }
 
+/// Set the cursor name on a statement (`SQLSetCursorName` / `SQLSetCursorNameW`).
+///
+/// Snowflake has no server-side named cursors, so the name is stored purely as
+/// a client-side label on `StatementInner`; it is never used for positioned
+/// updates/deletes. Validation follows the ODBC spec (and the reference
+/// driver) in this order:
+///
+/// 1. `HY010` if the statement is mid data-at-execution (`SQL_NEED_DATA`).
+/// 2. `24000` if a cursor is already open (name may only change while
+///    allocated or prepared).
+/// 3. `HY009` if `CursorName` is null or `NameLength` is negative and not
+///    `SQL_NTS` (the reference driver reports `HY009`, not `HY090`, here).
+/// 4. `34000` if the name (case-insensitively) begins with the reserved
+///    `SQL_CUR` / `SQLCUR` prefix.
+/// 5. `3C000` if a sibling statement on the same connection already holds the
+///    name.
+///
+/// The driver does not impose a maximum cursor-name length (it advertises
+/// `SQL_MAX_CURSOR_NAME_LEN = 0`, matching the reference driver, which accepts
+/// arbitrarily long names).
+pub fn set_cursor_name<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    cursor_name_ptr: sql::Pointer,
+    name_length: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("set_cursor_name: statement_handle={statement_handle:?}");
+    let _exit = ApiExitLogDebug("SQLSetCursorName");
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let self_id = HandleId::from(statement_handle);
+
+    // Lock the connection first (upholds the documented Connection->inner
+    // ordering) and hold it across the whole operation so no two
+    // `set_cursor_name` calls on the same connection race the duplicate scan.
+    let dbc = guard.conn()?;
+    let connection = dbc.connection.lock();
+
+    // Acquire this statement's `inner` once and hold it through the final write
+    // so the state validation (1, 2) and the assignment are atomic: no
+    // concurrent operation can open a cursor or enter data-at-execution between
+    // the check and the write. Holding `inner` across the sibling scan below
+    // cannot deadlock — the connection lock (held above) serializes every
+    // same-connection `set_cursor_name`, so only one thread ever holds more
+    // than one statement `inner` on a connection at a time, and the scan skips
+    // `self_id` so we never re-lock our own `inner`.
+    let mut inner = guard.inner.lock();
+
+    // (1) HY010: async executing (S11/S12), need-data (S8–S10); (2) 24000: any
+    // post-execution state (S4–S7).
+    if inner.state.as_ref().is_async_executing() {
+        return AsyncInProgressSnafu.fail();
+    }
+    if inner.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+    if inner.state.as_ref().is_executed_state() {
+        return InvalidCursorStateSnafu.fail();
+    }
+
+    // (3) HY009: null pointer or an explicit negative length.
+    if cursor_name_ptr.is_null() {
+        return NullPointerSnafu.fail();
+    }
+    let name_length = name_length as sql::Integer;
+    if name_length < 0 && name_length != sql::NTS as sql::Integer {
+        return NullPointerSnafu.fail();
+    }
+
+    // Decode honoring SQL_NTS or the explicit character count. `NameLength`
+    // is in characters, which for the narrow path equals bytes and for the
+    // wide path equals DM-side code units, so it maps directly onto
+    // `read_string`.
+    let name = E::read_string(cursor_name_ptr as *const E::Char, name_length)?;
+
+    // (4) 34000: reserved prefix.
+    let upper = name.to_ascii_uppercase();
+    if upper.starts_with("SQL_CUR") || upper.starts_with("SQLCUR") {
+        return InvalidCursorNameSnafu { name: name.clone() }.fail();
+    }
+
+    // (5) 3C000: duplicate among sibling statements on this connection.
+    let g = global().context(OdbcRuntimeSnafu)?;
+    for &child_id in &connection.child_statements {
+        if child_id == self_id {
+            continue;
+        }
+        if let Ok(sibling) = g.stmt_registry.get(child_id)
+            && sibling.inner.lock().cursor_name == name
+        {
+            return DuplicateCursorNameSnafu { name: name.clone() }.fail();
+        }
+    }
+
+    inner.cursor_name = name;
+    Ok(())
+}
+
+/// Return the statement's cursor name (`SQLGetCursorName` / `SQLGetCursorNameW`).
+///
+/// ODBC 3.x always yields a name: either one set by `SQLSetCursorName` or the
+/// auto-generated `SQL_CUR`-prefixed default, so `HY015` is never produced.
+/// The name lives on `StatementInner` and is unaffected by prepare/execute/
+/// close, so it persists across the statement's lifetime.
+///
+/// Buffer conventions (character-count `BufferLength`, matching `SQLDescribeCol`):
+/// - `BufferLength < 0` -> `HY090`.
+/// - `CursorName` null -> success, only `*NameLengthPtr` (full length) written.
+/// - Truncation -> `01004` warning (`SQL_SUCCESS_WITH_INFO`), full untruncated
+///   length reported in `*NameLengthPtr`.
+/// - `HY010` if an async operation is in progress (S11/S12) or the statement
+///   is mid data-at-execution (`SQL_NEED_DATA`).
+pub fn get_cursor_name<E: OdbcEncoding>(
+    statement_handle: sql::Handle,
+    cursor_name_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("get_cursor_name: statement_handle={statement_handle:?}");
+    let _exit = ApiExitLogDebug("SQLGetCursorName");
+
+    // Validate the handle before the buffer length so a bad handle reports
+    // INVALID_HANDLE rather than HY090, matching `describe_col` and the other
+    // statement functions in this module.
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
+
+    if inner.state.as_ref().is_async_executing() {
+        return AsyncInProgressSnafu.fail();
+    }
+    if inner.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
+    crate::api::encoding::write_string_chars::<E>(
+        &inner.cursor_name,
+        cursor_name_ptr as *mut E::Char,
+        buffer_length,
+        name_length_ptr,
+        Some(warnings),
+    );
+    Ok(())
+}
+
 /// Return the number of parameters in the statement via the IPD descriptor.
 ///
 /// After `SQLPrepare`, auto-IPD populates the IPD with one record per `?`
@@ -2278,6 +2431,12 @@ pub fn set_stmt_attr(
             inner.keyset_size = val;
             Ok(())
         }
+        StmtAttr::RowsetSize => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: RowsetSize (SQL_ROWSET_SIZE) = {}", val);
+            inner.rowset_size = val.max(1);
+            Ok(())
+        }
         StmtAttr::SimulateCursor => {
             if inner.state.as_ref().has_open_cursor() {
                 return InvalidCursorStateSnafu.fail();
@@ -2639,6 +2798,15 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::KeysetSize => {
             if !value_ptr.is_null() {
                 unsafe { *(value_ptr as *mut sql::ULen) = inner.keyset_size };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::RowsetSize => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.rowset_size };
             }
             if !string_length_ptr.is_null() {
                 unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
@@ -3300,7 +3468,30 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={statement_handle:?}");
     let guard = stmt_from_handle(statement_handle)?;
 
-    // Fast path: cancel any in-flight execution via the token.
+    // Server-side cancel FIRST, then signal the local token. Ordering is
+    // load-bearing: signalling the token drops the in-flight execute future,
+    // which drops core's `InflightGuard` and clears the requestId slot — so a
+    // `statement_cancel` fired *after* the token would find an empty slot and
+    // send no abort-request. Firing it here (while the slot is still populated)
+    // lets the server actually stop the running query.
+    //
+    // Best-effort: any error — including the no-op when nothing is in flight,
+    // or a transport failure — is swallowed. Per ODBC 3.5, cross-thread
+    // `SQLCancel` neither posts diagnostics nor fails; the app re-polls or
+    // re-issues. The core call is already bounded, so this cannot hang cancel.
+    let stmt_handle = guard.stmt_handle;
+    if let Ok(g) = global() {
+        let client = g.client();
+        let _ = g.block_on(async move |_c| {
+            client
+                .statement_cancel(StatementCancelRequest {
+                    stmt_handle: Some(stmt_handle),
+                })
+                .await
+        });
+    }
+
+    // Then cancel any in-flight execution via the local token.
     {
         let token = guard.cancel_token.lock();
         if let Some(ref t) = *token {

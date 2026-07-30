@@ -11,7 +11,7 @@ use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::{
     ByteSource, DownloadResult, SingleUploadData, StageInfoCache, StageInfoRefreshError,
-    StageInfoSnapshot, UploadResult, download_files, upload_files, upload_in_memory_file,
+    StageInfoSnapshot, UploadResult, download_files, upload_files, upload_prepared_source,
 };
 use crate::query_types::RowType;
 use crate::rest;
@@ -145,30 +145,33 @@ pub(super) async fn perform_put_get_transfer(
     }
 }
 
-/// Uploads `bytes` (already drained from the caller's stream) to the stage
-/// described by a GS PUT response, returning a single-row `RowsetData::Upload`.
-/// Mirrors the UPLOAD arm of [`perform_put_get_transfer`] but sources the data
-/// from memory instead of expanding a local glob — backs
-/// `connection_upload_stream` (JDBC `uploadStream`, Python `file_stream`).
+/// Uploads `payload` (already reassembled from the caller's stream — either
+/// an in-memory buffer or a spooled temp file, see `SpooledBuffer`) to the
+/// stage described by a GS PUT response, returning a single-row
+/// `RowsetData::Upload`. Mirrors the UPLOAD arm of [`perform_put_get_transfer`]
+/// but sources the data from `payload` instead of expanding a local glob —
+/// backs `connection_upload_stream` and the chunked
+/// `connection_upload_stream_{begin,chunk,finish}` RPCs (JDBC `uploadStream`,
+/// Python `file_stream`).
 ///
 /// The destination filename is the basename of the PUT command's `file://`
 /// token (echoed back by GS as `src_location_pattern`); auto-compress,
 /// overwrite, and encryption all follow the GS response, exactly as a normal
 /// file-path PUT.
-pub(super) async fn perform_stream_upload(
+pub(super) async fn build_and_upload_stream(
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
-    bytes: Vec<u8>,
+    payload: ByteSource,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     let upload_data = data
         .to_file_upload_data(
             wrapper_presets.put_get_resultset_flavor.clone(),
             wrapper_presets.legacy_odbc_compression_autodetect,
-            // In-memory stream PUT never skips on content match: the API has no
-            // cursor kwarg to opt into it and always uploads the supplied bytes.
+            // Stream PUT never skips on content match: the API has no cursor
+            // kwarg to opt into it and always uploads the supplied source.
             false,
             use_s3_regional_url_session_param,
         )
@@ -193,9 +196,13 @@ pub(super) async fn perform_stream_upload(
         .map(|r| r as &mut dyn file_manager::StageInfoRefresher);
 
     let single = SingleUploadData {
-        // `upload_in_memory_file` overrides `source` with `bytes` below; this
-        // placeholder only satisfies the struct (the result's `source` column
-        // is derived from `filename` for in-memory uploads).
+        // `upload_prepared_source` reads from `source` (below), not this
+        // field; this placeholder only satisfies the struct. It also drives
+        // `upload_result_source`'s Windows+ODBC "full local path" branch,
+        // which is intentionally skipped here — a stream/chunked upload has
+        // no meaningful local path (memory or a core-internal spool file) —
+        // so the result's `source` column falls back to `filename` on every
+        // (flavor, host) combination, matching the pre-chunking behavior.
         source: ByteSource::Bytes(bytes::Bytes::new()),
         filename,
         stage_info: upload_data.stage_info,
@@ -209,7 +216,7 @@ pub(super) async fn perform_stream_upload(
         multipart: upload_data.multipart,
     };
 
-    let result = upload_in_memory_file(bytes, single, put_get_policy, &mut refresher_handle)
+    let result = upload_prepared_source(payload, single, put_get_policy, &mut refresher_handle)
         .await
         .context(FileUploadSnafu)?;
 

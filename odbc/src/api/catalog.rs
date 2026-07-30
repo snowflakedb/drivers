@@ -19,7 +19,7 @@ use crate::api::runtime::global;
 use crate::api::statement::{
     collect_nested_batch, execute_show_query_collect_batch, set_state_for_catalog,
 };
-use crate::api::utils::{catalog_arg_to_pattern, escape_like_wildcards};
+use crate::api::utils::{ApiExitLog, catalog_arg_to_pattern, escape_like_wildcards};
 use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
@@ -678,16 +678,6 @@ fn map_show_primary_keys_to_odbc(
         ],
     )
     .context(crate::api::error::RecordBatchBuildSnafu)
-}
-
-/// Logs `"{name}: exit"` at INFO when dropped — pair with an entry log at the top
-/// of a public wrapper API function per the logging guidelines.
-struct ApiExitLog(&'static str);
-
-impl Drop for ApiExitLog {
-    fn drop(&mut self) {
-        tracing::info!("{}: exit", self.0);
-    }
 }
 
 /// Implements `SQLPrimaryKeys`: returns primary-key column metadata for a table.

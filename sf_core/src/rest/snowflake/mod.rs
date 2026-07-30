@@ -79,6 +79,13 @@ async fn request_text_with_retry(
 }
 
 // ─── Snowflake GS protocol error codes ───────────────────────────────────────
+/// GS error code returned when a running query has been canceled (server-side
+/// abort, statement timeout, or `SQLCancel`). The query-request / result
+/// response carries this code so the ODBC wrapper can classify the failure as a
+/// cancellation (ODBC `HY008`) rather than a generic error — see
+/// `odbc/src/api/error.rs`. Matches the reference driver's
+/// `Statement::S_QUERY_CANCELED`.
+pub const QUERY_CANCELED: i32 = 604;
 /// GS error code returned when a session no longer exists on the server.
 /// Logout callers treat this as success — the goal (an invalidated session) is achieved.
 pub const SESSION_GONE: i32 = 390111;
@@ -1719,9 +1726,11 @@ async fn execute_sync_with_retry<'a>(
 
 /// Map a Snowflake query response into a `Result`, converting
 /// `response.success == false` into `RestError::QueryFailed` with
-/// the server's message, error code, SQL state, and query ID.
+/// the server's message, error code, SQL state, query ID, and the
+/// client-generated `request_id` used for the submission (when known).
 fn into_query_result(
     response: query_response::Response,
+    request_id: Option<Uuid>,
 ) -> Result<query_response::Response, RestError> {
     if !response.success {
         let message = response
@@ -1736,6 +1745,7 @@ fn into_query_result(
             code,
             sql_state,
             query_id,
+            request_id,
         }
         .fail();
     }
@@ -1860,7 +1870,7 @@ async fn execute_sync_query<'a>(
         query_response
     };
 
-    into_query_result(query_response)
+    into_query_result(query_response, Some(request_id))
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -1924,7 +1934,7 @@ pub async fn snowflake_get_query_result(
         query_id: Some(uuid),
     })?;
 
-    into_query_result(query_response)
+    into_query_result(query_response, None)
 }
 
 /// Result of a query status check via the monitoring endpoint.
@@ -2000,6 +2010,7 @@ pub async fn get_query_status(
             code,
             sql_state: None::<String>,
             query_id: Some(query_id.to_owned()),
+            request_id: None,
         }
         .fail();
     }
@@ -2494,6 +2505,8 @@ pub enum RestError {
         sql_state: Option<String>,
         /// Snowflake Query ID associated with the failed query.
         query_id: Option<String>,
+        /// Client-generated `requestId` sent on the query submission request.
+        request_id: Option<Uuid>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2807,7 +2820,7 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp) {
+            match into_query_result(resp, None) {
                 Ok(r) => assert!(r.success),
                 Err(e) => panic!("expected Ok, got {:?}", e),
             }
@@ -2827,18 +2840,21 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp) {
+            let request_id = Uuid::new_v4();
+            match into_query_result(resp, Some(request_id)) {
                 Err(RestError::QueryFailed {
                     message,
                     code,
                     sql_state,
                     query_id,
+                    request_id: rid,
                     ..
                 }) => {
                     assert_eq!(message, "SQL compilation error");
                     assert_eq!(code, Some(1003));
                     assert_eq!(sql_state, Some("42000".to_owned()));
                     assert_eq!(query_id, Some("01abc-def-12345".to_owned()));
+                    assert_eq!(rid, Some(request_id));
                 }
                 Err(other) => panic!("expected QueryFailed, got {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),
@@ -2855,18 +2871,20 @@ mod tests {
                 }
             }));
 
-            match into_query_result(resp) {
+            match into_query_result(resp, None) {
                 Err(RestError::QueryFailed {
                     message,
                     code,
                     sql_state,
                     query_id,
+                    request_id,
                     ..
                 }) => {
                     assert_eq!(message, "Unknown error");
                     assert_eq!(code, None);
                     assert_eq!(sql_state, None);
                     assert_eq!(query_id, None);
+                    assert_eq!(request_id, None);
                 }
                 Err(other) => panic!("expected QueryFailed, got {:?}", other),
                 Ok(_) => panic!("expected Err, got Ok"),

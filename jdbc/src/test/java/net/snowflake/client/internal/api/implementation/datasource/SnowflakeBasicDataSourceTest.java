@@ -8,14 +8,25 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Proxy;
+import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.util.Base64;
 import java.util.Properties;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class SnowflakeBasicDataSourceTest {
 
@@ -401,11 +412,22 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void shouldSetTokenStoreProperty() {
+  public void shouldSetTokenStorePropertyWithoutTouchingAuthenticator() {
     dataSource.setToken("my_pat_token_value");
 
     Properties props = dataSource.getProperties();
     assertEquals("my_pat_token_value", props.getProperty("token"));
+    // setToken does not auto-promote authenticator (SNOW-3595091).
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  public void shouldSetOauthTokenStoreAuthenticatorAndToken() {
+    dataSource.setOauthToken("my_oauth_access_token");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("OAUTH", props.getProperty("authenticator"));
+    assertEquals("my_oauth_access_token", props.getProperty("token"));
   }
 
   @Test
@@ -454,7 +476,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testOauthSettersStoreSnakeCaseProperties() {
+  public void shouldStoreOauthSettersAsSnakeCaseProperties() {
     dataSource.setOauthClientId("client-id-value");
     dataSource.setOauthClientSecret("client-secret-value");
     dataSource.setOauthAuthorizationUrl("https://idp.example.com/oauth/authorize");
@@ -473,5 +495,245 @@ public class SnowflakeBasicDataSourceTest {
     assertEquals("http://127.0.0.1:8080/callback", props.getProperty("oauth_redirect_uri"));
     assertEquals("session:role:my_role", props.getProperty("oauth_scope"));
     assertEquals("true", props.getProperty("oauth_enable_single_use_refresh_tokens"));
+  }
+
+  static Stream<Arguments> legacyDataSourceSetterProperties() {
+    return Stream.of(
+        Arguments.of(
+            "application", "MyApp", (DataSourceConfigurer) ds -> ds.setApplication("MyApp")),
+        Arguments.of(
+            "queryTimeoutSeconds", "120", (DataSourceConfigurer) ds -> ds.setQueryTimeout(120)),
+        Arguments.of("maxHttpRetries", "5", (DataSourceConfigurer) ds -> ds.setMaxHttpRetries(5)),
+        Arguments.of(
+            "putGetMaxRetries", "3", (DataSourceConfigurer) ds -> ds.setPutGetMaxRetries(3)),
+        Arguments.of(
+            "allowUnderscoresInHost",
+            "true",
+            (DataSourceConfigurer) ds -> ds.setAllowUnderscoresInHost(true)),
+        Arguments.of(
+            "proxyHost",
+            "proxy.example.com",
+            (DataSourceConfigurer) ds -> ds.setProxyHost("proxy.example.com")),
+        Arguments.of("proxyPort", "8080", (DataSourceConfigurer) ds -> ds.setProxyPort(8080)),
+        Arguments.of(
+            "proxyUser", "proxy-user", (DataSourceConfigurer) ds -> ds.setProxyUser("proxy-user")),
+        Arguments.of(
+            "proxyPassword",
+            "proxy-pass",
+            (DataSourceConfigurer) ds -> ds.setProxyPassword("proxy-pass")),
+        Arguments.of(
+            "nonProxyHosts",
+            "localhost",
+            (DataSourceConfigurer) ds -> ds.setNonProxyHosts("localhost")),
+        Arguments.of(
+            "enableDiagnostics",
+            "true",
+            (DataSourceConfigurer) ds -> ds.setEnableDiagnostics(true)),
+        Arguments.of(
+            "diagnosticsAllowlistFile",
+            "/tmp/allowlist.json",
+            (DataSourceConfigurer) ds -> ds.setDiagnosticsAllowlistFile("/tmp/allowlist.json")),
+        Arguments.of(
+            "browser_response_timeout",
+            "60",
+            (DataSourceConfigurer) ds -> ds.setBrowserResponseTimeout(60)),
+        Arguments.of("tracing", "FINE", (DataSourceConfigurer) ds -> ds.setTracing("FINE")),
+        Arguments.of(
+            "enablePatternSearch",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setEnablePatternSearch(false)),
+        Arguments.of(
+            "JDBC_TREAT_DECIMAL_AS_INT",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setArrowTreatDecimalAsInt(false)),
+        Arguments.of(
+            "JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setJDBCDefaultFormatDateWithTimezone(false)),
+        Arguments.of(
+            "JDBC_GET_DATE_USE_NULL_TIMEZONE",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setGetDateUseNullTimezone(false)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("legacyDataSourceSetterProperties")
+  void shouldStoreLegacyDataSourceSetterProperties(
+      String propertyKey, String expectedValue, DataSourceConfigurer configurer) {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    configurer.configure(ds);
+
+    assertEquals(expectedValue, ds.getProperties().getProperty(propertyKey));
+  }
+
+  @Test
+  void shouldSetDatabaseNameStoreDatabaseProperty() {
+    dataSource.setDatabaseName("mydb");
+
+    assertEquals("mydb", dataSource.getProperties().getProperty("database"));
+  }
+
+  @Test
+  void shouldSetDisableSamlURLCheckStoreProperty() {
+    dataSource.setDisableSamlURLCheck(true);
+
+    assertEquals("true", dataSource.getProperties().getProperty("disable_saml_url_check"));
+  }
+
+  @Test
+  void shouldSetOktaUsernameStoreProperty() {
+    dataSource.setOktaUsername("okta.user@example.com");
+
+    assertEquals("okta.user@example.com", dataSource.getProperties().getProperty("okta_username"));
+  }
+
+  @Test
+  void shouldSetPrivateKeyStoreBase64AndNotTouchAuthenticator() throws Exception {
+    PrivateKey privateKey = generateRsaPrivateKey();
+    String expectedBase64 = Base64.getEncoder().encodeToString(privateKey.getEncoded());
+
+    dataSource.setPrivateKey(privateKey);
+
+    Properties props = dataSource.getProperties();
+    assertEquals(expectedBase64, props.getProperty("private_key"));
+    // Reference 4.3.1 stored the PrivateKey object and promoted authenticator=SNOWFLAKE_JWT; the
+    // universal driver stores a base64 string and does not auto-promote authenticator
+    // (SNOW-3595091).
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  void shouldSetPrivateKeyFileStoreLocationAndPasswordAndNotTouchAuthenticator() {
+    dataSource.setPrivateKeyFile("/keys/rsa_key.p8", "secret");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("/keys/rsa_key.p8", props.getProperty("private_key_file"));
+    assertEquals("secret", props.getProperty("private_key_password"));
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  void shouldNotStorePrivateKeyFilePasswordWhenNullOrEmpty() {
+    SnowflakeBasicDataSource nullPwd = new TestableSnowflakeBasicDataSource();
+    nullPwd.setPrivateKeyFile("/keys/rsa_key.p8", null);
+    assertNull(nullPwd.getProperties().getProperty("private_key_password"));
+
+    SnowflakeBasicDataSource emptyPwd = new TestableSnowflakeBasicDataSource();
+    emptyPwd.setPrivateKeyFile("/keys/rsa_key.p8", "");
+    assertNull(emptyPwd.getProperties().getProperty("private_key_password"));
+  }
+
+  @Test
+  void shouldClearPrivateKeyFilePasswordWhenSubsequentCallOmitsPassword() {
+    SnowflakeBasicDataSource ds = new TestableSnowflakeBasicDataSource();
+    ds.setPrivateKeyFile("/keys/a.p8", "secret");
+    assertEquals("secret", ds.getProperties().getProperty("private_key_password"));
+
+    ds.setPrivateKeyFile("/keys/b.p8", null);
+    assertEquals("/keys/b.p8", ds.getProperties().getProperty("private_key_file"));
+    assertNull(ds.getProperties().getProperty("private_key_password"));
+
+    ds.setPrivateKeyBase64("KEY", "secret");
+    ds.setPrivateKeyBase64("KEY2", "");
+    assertNull(ds.getProperties().getProperty("private_key_password"));
+  }
+
+  @Test
+  void shouldSetPrivateKeyBase64StoreValueAndPasswordAndNotTouchAuthenticator() {
+    dataSource.setPrivateKeyBase64("BASE64KEY", "secret");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("BASE64KEY", props.getProperty("private_key"));
+    assertEquals("secret", props.getProperty("private_key_password"));
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  void shouldNotStorePrivateKeyBase64PasswordWhenNullOrEmpty() {
+    SnowflakeBasicDataSource nullPwd = new TestableSnowflakeBasicDataSource();
+    nullPwd.setPrivateKeyBase64("BASE64KEY", null);
+    assertNull(nullPwd.getProperties().getProperty("private_key_password"));
+
+    SnowflakeBasicDataSource emptyPwd = new TestableSnowflakeBasicDataSource();
+    emptyPwd.setPrivateKeyBase64("BASE64KEY", "");
+    assertNull(emptyPwd.getProperties().getProperty("private_key_password"));
+  }
+
+  @Test
+  void shouldSetBrowserResponseTimeoutAndNotTouchAuthenticator() {
+    dataSource.setBrowserResponseTimeout(60);
+
+    Properties props = dataSource.getProperties();
+    assertEquals("60", props.getProperty("browser_response_timeout"));
+    // Reference 4.3.1 promoted authenticator=EXTERNALBROWSER; universal driver does not
+    // auto-promote authenticator (SNOW-3595091).
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  void shouldGetConnectionWithTokenAuthAndNoPassword() throws Exception {
+    dataSource.setAuthenticator("PROGRAMMATIC_ACCESS_TOKEN");
+    dataSource.setToken("pat-token");
+    TestableSnowflakeBasicDataSource testable = (TestableSnowflakeBasicDataSource) dataSource;
+    Connection mockConnection = createDummyConnection();
+    testable.setNextConnection(mockConnection);
+
+    // Reference 4.3.1 threw because password was missing; the universal driver allows token auth
+    // without a password (BD#1) and without a username (BD#45).
+    Connection result = dataSource.getConnection(null, null);
+
+    assertSame(mockConnection, result);
+    Properties props = testable.getLastProperties();
+    assertEquals("pat-token", props.getProperty("token"));
+    assertNull(props.getProperty("password"));
+  }
+
+  @Test
+  void shouldRemainSerializableForJndiParity() throws Exception {
+    SnowflakeBasicDataSource ds = new SnowflakeBasicDataSource();
+    ds.setUrl("jdbc:snowflake://acct.snowflakecomputing.com");
+    ds.setAccount("myaccount");
+    ds.setLoginTimeout(42);
+
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+      out.writeObject(ds);
+    }
+
+    Object restored;
+    try (ObjectInputStream in =
+        new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+      restored = in.readObject();
+    }
+
+    SnowflakeBasicDataSource restoredDs = (SnowflakeBasicDataSource) restored;
+    assertEquals("jdbc:snowflake://acct.snowflakecomputing.com", restoredDs.getUrl());
+    assertEquals("myaccount", restoredDs.getProperties().getProperty("account"));
+    assertEquals(42, restoredDs.getLoginTimeout());
+  }
+
+  @Test
+  void shouldNotPersistPerCallCredentialsOntoDataSource() throws Exception {
+    TestableSnowflakeBasicDataSource testable = (TestableSnowflakeBasicDataSource) dataSource;
+    testable.setNextConnection(createDummyConnection());
+
+    dataSource.getConnection("call-user", "call-pass");
+
+    // BD#44: per-call credentials are applied to the connect copy only, not persisted on the
+    // DataSource (reference wrote them into the shared properties map).
+    Properties props = dataSource.getProperties();
+    assertNull(props.getProperty("user"));
+    assertNull(props.getProperty("password"));
+  }
+
+  private static PrivateKey generateRsaPrivateKey() throws Exception {
+    KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+    generator.initialize(2048);
+    return generator.generateKeyPair().getPrivate();
+  }
+
+  @FunctionalInterface
+  private interface DataSourceConfigurer {
+    void configure(SnowflakeBasicDataSource dataSource);
   }
 }

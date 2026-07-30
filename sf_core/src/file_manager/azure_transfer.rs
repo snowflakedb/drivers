@@ -2,9 +2,10 @@ use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRet
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
-    MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
+    StageInfoRefresher, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
+use super::{RemoteHead, skip_upload_decision};
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -514,7 +515,7 @@ pub(super) async fn upload_to_azure_or_skip(
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, AzureUploadError> {
     let key = format!("{}{filename}", stage_info.key_prefix);
-    let head_needed = !overwrite || skip_upload_on_content_match;
+    let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
 
     // Build the client once — TLS config is creds-independent; only the SAS in
     // `stage_info.creds` rotates on refresh — and clone it into each attempt.
@@ -575,24 +576,21 @@ pub(super) async fn upload_to_azure_or_skip(
                 None
             };
 
-            match classify_pre_upload_skip(
+            let remote_head = match &remote {
+                Some(h) => RemoteHead::Present {
+                    digest: h.digest.as_deref(),
+                },
+                None => RemoteHead::Absent,
+            };
+            if let Some(status) = skip_upload_decision(
+                LocationType::Azure,
                 overwrite,
                 skip_upload_on_content_match,
-                remote.as_ref(),
+                &remote_head,
                 &prepared.digest,
+                &key,
             ) {
-                SkipDecision::Existence => {
-                    tracing::info!("Blob already exists in Azure: {:?}", key);
-                    return Ok(UploadStatus::Skipped);
-                }
-                SkipDecision::ContentMatch => {
-                    tracing::info!(
-                        "Blob content matches local digest, skipping upload: {:?}",
-                        key
-                    );
-                    return Ok(UploadStatus::Skipped);
-                }
-                SkipDecision::Upload => {}
+                return Ok(status);
             }
 
             if body_len >= multipart.threshold.bytes() {
@@ -635,45 +633,6 @@ pub(super) async fn upload_to_azure_or_skip(
     result
 }
 
-/// Outcome of the pre-upload skip check. Extracted so the decision is
-/// testable independent of the HEAD elision in `upload_to_azure_or_skip`
-/// (the elision can hide a missing guard in the content-match branch).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SkipDecision {
-    /// The blob is visible on stage and the caller didn't request overwrite.
-    /// Skip without comparing content — stale stage bytes are preserved.
-    Existence,
-    /// The caller opted into content-match skipping and the remote digest
-    /// equals the local one. Skip the redundant upload; the bytes on stage
-    /// are already what we'd have written.
-    ContentMatch,
-    /// Neither skip applies; upload proceeds.
-    Upload,
-}
-
-/// Pure decision: which skip branch (if any) fires. Existence-only is checked
-/// first so a `!overwrite` caller never reaches the content-match branch — a
-/// blob that exists is treated as authoritative regardless of digest. A
-/// missing remote digest cannot match, so the content branch falls through
-/// to `Upload` in that case.
-fn classify_pre_upload_skip(
-    overwrite: bool,
-    skip_upload_on_content_match: bool,
-    remote: Option<&RemoteBlobHeader>,
-    local_digest: &str,
-) -> SkipDecision {
-    if !overwrite && remote.is_some() {
-        return SkipDecision::Existence;
-    }
-    if overwrite
-        && skip_upload_on_content_match
-        && remote.and_then(|h| h.digest.as_deref()) == Some(local_digest)
-    {
-        return SkipDecision::ContentMatch;
-    }
-    SkipDecision::Upload
-}
-
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
 ///
@@ -711,15 +670,6 @@ pub async fn download_from_azure(
 #[derive(Debug, Clone)]
 struct RemoteBlobHeader {
     digest: Option<String>,
-}
-
-#[cfg(test)]
-impl RemoteBlobHeader {
-    fn with_digest(digest: &str) -> Self {
-        Self {
-            digest: Some(digest.to_string()),
-        }
-    }
 }
 
 /// Probes the blob with HEAD. Returns:
@@ -1221,6 +1171,7 @@ async fn azure_head_attempt(
 /// (expired SAS) fast-fails as `SasExpired`, so the whole ranged download
 /// re-drives with a fresh SAS (whole-download restart, like the PUT multipart
 /// path); other errors pass through as `Other`.
+#[allow(clippy::too_many_arguments)]
 async fn azure_range_attempt(
     client: &reqwest::Client,
     full_url: &str,
@@ -1228,6 +1179,7 @@ async fn azure_range_attempt(
     chunk_size: u64,
     concurrency: usize,
     base: &RetryPolicy,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, AzureAttemptError<AzureDownloadError>> {
     let policy = azure_403_fastfail_policy(base);
@@ -1238,6 +1190,7 @@ async fn azure_range_attempt(
         chunk_size,
         concurrency,
         &policy,
+        unsafe_file_write,
         spill_target,
     )
     .await
@@ -1273,6 +1226,7 @@ pub async fn download_from_azure_streaming(
     filename: &str,
     multipart: MultipartParams,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
@@ -1322,6 +1276,8 @@ pub async fn download_from_azure_streaming(
 
             // Route on size: parallel ranged GETs into a spill file above the
             // threshold, a single streamed GET below. Both fast-fail 403.
+            // Only the streamed branch carries a producer task to abort — the
+            // ranged/spilled branch has already finished all its I/O.
             let (body, cloud_bytes_read) = if content_length >= multipart.threshold.bytes() {
                 let chunk_size =
                     multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
@@ -1339,9 +1295,12 @@ pub async fn download_from_azure_streaming(
                     chunk_size,
                     multipart.concurrency,
                     &base,
+                    unsafe_file_write,
                     spill_target,
                 )
                 .await?;
+                // Ranged: size came from HEAD, so no byte tracking needed
+                // and no producer task to cancel.
                 (
                     cloud_http::CloudDownloadBody::Spilled(spilled),
                     std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1350,10 +1309,13 @@ pub async fn download_from_azure_streaming(
                 let response = azure_get_attempt(&client, &full_url, &base)
                     .await
                     .map_err(|e| e.map_other(AzureDownloadError::from))?;
-                let reader = cloud_http::spawn_byte_stream_producer(response);
+                let (reader, producer_abort) = cloud_http::spawn_byte_stream_producer(response);
                 let handle = reader.bytes_read_handle();
                 (
-                    cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
+                    cloud_http::CloudDownloadBody::Streamed {
+                        reader: Box::new(reader),
+                        producer_abort,
+                    },
                     handle,
                 )
             };
@@ -1388,11 +1350,43 @@ pub async fn download_from_azure_streaming(
     result
 }
 
+/// Downloads a file from Azure with a single unranged GET, returning a
+/// [`CloudStreamingDownload`] whose body streams straight off the network.
+///
+/// Unlike [`download_from_azure_streaming`], this never HEAD-probes the blob
+/// size or routes to ranged GETs — always one GET, any size. That trades
+/// away parallelism and resumability for a single round-trip, the same
+/// tradeoff PR2a accepted for S3's zero-disk path
+/// (`file_manager::open_azure_download_stream`).
+pub(super) async fn azure_get_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<CloudStreamingDownload, AzureDownloadError> {
+    // Issue the single GET under the SAS-refresh-on-403 layer so an
+    // already-expired SAS is rotated and retried, matching `gcs_get_streaming`
+    // and `download_from_azure_streaming`. Without a `refresher` it runs once
+    // and a 403 surfaces terminally (the prior behaviour).
+    let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
+
+    let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
+    // Content-Length byte count, git-stage fallback, and spawning the
+    // byte-stream producer are shared with GCS's single-GET path — see
+    // `CloudStreamingDownload::from_reqwest_response`.
+    Ok(CloudStreamingDownload::from_reqwest_response(
+        response,
+        digest,
+        file_metadata,
+    ))
+}
+
 /// Downloads the blob with parallel ranged GETs into a pre-allocated file,
 /// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
 /// Ranges are fetched up to `concurrency` at a time and written at their
 /// absolute offset, so out-of-order completion is fine. Thin wrapper around
 /// the shared [`cloud_http::assemble_ranged_download`] helper.
+#[allow(clippy::too_many_arguments)]
 async fn azure_range_download(
     client: &reqwest::Client,
     full_url: &str,
@@ -1400,6 +1394,7 @@ async fn azure_range_download(
     chunk_size: u64,
     concurrency: usize,
     policy: &RetryPolicy,
+    unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
 ) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
     let mk_temp_err = |detail: String| azure_download_error::TempFileSnafu { detail }.build();
@@ -1409,6 +1404,7 @@ async fn azure_range_download(
         chunk_size,
         concurrency,
         target,
+        unsafe_file_write,
         mk_temp_err,
         mk_temp_err,
         move |range| async move { azure_get_range(client, full_url, &range, policy).await },
@@ -1666,6 +1662,7 @@ pub enum AzureDownloadError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::config::retry::Jitter;
@@ -2018,14 +2015,6 @@ mod tests {
         }
     }
 
-    fn prepared_with_digest(digest: &str) -> PreparedUpload {
-        PreparedUpload {
-            source: ByteSource::Bytes(b"hello-azure".to_vec().into()).into(),
-            digest: digest.to_string(),
-            cse: None,
-        }
-    }
-
     // ---- Refresh-on-403: predicate, marker, and HEAD-recovery coverage ----
     // (Restored from PR #248; the GET-redrive proof lands with the per-range
     // work.)
@@ -2157,7 +2146,7 @@ mod tests {
         let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2204,7 +2193,7 @@ mod tests {
         let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("d"),
+            prepared_upload_with_digest("d"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2256,7 +2245,7 @@ mod tests {
         let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("d"),
+            prepared_upload_with_digest("d"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2344,15 +2333,26 @@ mod tests {
             "file.csv",
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
             &mut refresher_opt,
         )
         .await
         .expect("streaming GET must refresh on the routing-HEAD 403 and succeed");
 
-        let mut body = Vec::new();
-        std::io::Read::read_to_end(&mut dl.body.into_reader().expect("into_reader"), &mut body)
-            .expect("read body after re-drive");
+        // `into_reader()` on a `Streamed` body drains a `cloud_http::StreamReader`,
+        // whose `Read` impl calls `blocking_recv` — only valid off the tokio
+        // runtime (see `StreamReader`'s doc comment), so the read happens on a
+        // blocking-pool thread here, mirroring how the production download path
+        // (`write_cloud_download`) always drives it inside `spawn_blocking`.
+        let body = tokio::task::spawn_blocking(move || -> Vec<u8> {
+            let mut body = Vec::new();
+            std::io::Read::read_to_end(&mut dl.body.into_reader().expect("into_reader"), &mut body)
+                .expect("read body after re-drive");
+            body
+        })
+        .await
+        .expect("blocking read task must not panic");
         assert_eq!(
             body, BLOB_BODY,
             "body after re-drive must match served bytes"
@@ -2393,6 +2393,7 @@ mod tests {
             "file.csv",
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
             &mut None,
         )
@@ -2430,7 +2431,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2465,7 +2466,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2547,7 +2548,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2579,7 +2580,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2613,7 +2614,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2628,80 +2629,9 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // 8. Skip-decision in isolation — kills mutants the wiremock scenarios
-    //    can't (see SkipDecision / classify_pre_upload_skip docs).
-    //
-    //    The six wiremock scenarios above couple the `skip_upload_on_content_match &&`
-    //    guard with the HEAD-elision optimization (head_needed = !overwrite ||
-    //    skip_match). The case that would expose a missing guard —
-    //    overwrite=true, skip_match=false, remote-digest matches local — is
-    //    UNREACHABLE through `upload_to_azure_or_skip` because HEAD is elided
-    //    in that configuration. These direct unit tests bypass the elision so
-    //    a guard regression fails here even when the integration scenarios
-    //    still pass.
+    // 8. Skip-decision isolation tests live in `file_manager::tests`
+    //    (`classify_*`), since the decision is shared across clouds.
     // ---------------------------------------------------------------
-
-    /// Mutation guard: dropping `skip_upload_on_content_match &&` from the
-    /// content branch flips this to `ContentMatch` and the assertion fails.
-    #[test]
-    fn classify_does_not_fire_content_branch_without_opt_in() {
-        let h = RemoteBlobHeader::with_digest("abc");
-        let decision = classify_pre_upload_skip(
-            /* overwrite */ true,
-            /* skip_upload_on_content_match */ false,
-            Some(&h),
-            "abc",
-        );
-        assert_eq!(
-            decision,
-            SkipDecision::Upload,
-            "content-match must require the opt-in flag"
-        );
-    }
-
-    /// Positive control: the same digest match WITH the flag set fires.
-    #[test]
-    fn classify_fires_content_branch_with_opt_in() {
-        let h = RemoteBlobHeader::with_digest("abc");
-        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::ContentMatch);
-    }
-
-    /// Existence wins over content-match when `!overwrite`: a blob that
-    /// exists is treated as authoritative, digest comparison is skipped.
-    #[test]
-    fn classify_existence_wins_under_no_overwrite() {
-        let h = RemoteBlobHeader::with_digest("abc");
-        let decision = classify_pre_upload_skip(false, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::Existence);
-    }
-
-    /// `!overwrite` with no remote means upload — blob doesn't exist yet.
-    /// Common first-upload path.
-    #[test]
-    fn classify_uploads_when_remote_absent_under_no_overwrite() {
-        let decision = classify_pre_upload_skip(false, false, None, "abc");
-        assert_eq!(decision, SkipDecision::Upload);
-    }
-
-    /// `overwrite && skip_match && remote present but digest absent` — the
-    /// HEAD returned 200 but no `x-ms-meta-sfcdigest` header. Cannot compare,
-    /// so upload runs (fail-open at the comparison site).
-    #[test]
-    fn classify_uploads_when_remote_digest_missing() {
-        let h = RemoteBlobHeader { digest: None };
-        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::Upload);
-    }
-
-    /// `overwrite && skip_match && remote digest differs` — the racing
-    /// uploader had different content; we must overwrite, not skip.
-    #[test]
-    fn classify_uploads_when_digests_differ() {
-        let h = RemoteBlobHeader::with_digest("xyz");
-        let decision = classify_pre_upload_skip(true, true, Some(&h), "abc");
-        assert_eq!(decision, SkipDecision::Upload);
-    }
 
     // ---------------------------------------------------------------
     // 9. Parametrized fail-open over HEAD error classes — only 404 is
@@ -2930,7 +2860,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2964,7 +2894,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3008,7 +2938,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -3041,7 +2971,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3079,7 +3009,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest"),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3218,6 +3148,7 @@ mod tests {
             "file.dat",
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
             &mut None,
         )
@@ -3264,6 +3195,7 @@ mod tests {
             "file.dat",
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             &mut None,
         )
@@ -3278,6 +3210,12 @@ mod tests {
                     payload,
                     "the .part must hold the whole reassembled object"
                 );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&part_path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o600, "ranged .part must be owner-only");
+                }
             }
             _ => panic!("a non-encrypted ranged download must assemble into `.part`"),
         }
@@ -3311,6 +3249,7 @@ mod tests {
             "file.dat",
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             &mut None,
         )
