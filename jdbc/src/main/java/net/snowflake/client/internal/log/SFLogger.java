@@ -9,25 +9,25 @@ public interface SFLogger {
 
   boolean isWarnEnabled();
 
-  void debug(String msg, boolean isMasked);
+  void debug(String msg);
 
   void debug(String msg, Object... arguments);
 
   void debug(String msg, Throwable t);
 
-  void error(String msg, boolean isMasked);
+  void error(String msg);
 
   void error(String msg, Object... arguments);
 
   void error(String msg, Throwable t);
 
-  void info(String msg, boolean isMasked);
+  void info(String msg);
 
   void info(String msg, Object... arguments);
 
   void info(String msg, Throwable t);
 
-  void warn(String msg, boolean isMasked);
+  void warn(String msg);
 
   void warn(String msg, Object... arguments);
 

@@ -460,14 +460,6 @@ java:
         java:
           unit: "*Logger*"
 
-    - name: security
-      paths:
-        - "jdbc/**/util/MaskedExceptionTest*"
-        - "jdbc/**/util/SecretDetectorTest*"
-      tests:
-        java:
-          unit: "*MaskedExceptionTest|*SecretDetectorTest"
-
   # JDBC fallback: changes here run ALL JDBC tests (but not other wrappers)
   fallback_paths:
     - "jdbc_bridge/**"

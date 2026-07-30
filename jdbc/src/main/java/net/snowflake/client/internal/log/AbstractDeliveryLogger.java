@@ -1,17 +1,15 @@
 package net.snowflake.client.internal.log;
 
-import net.snowflake.client.internal.util.MaskedException;
-
-/** Direct delivery backend with shared formatting, masking, and never-throw guard. */
+/** Direct delivery backend with shared formatting and never-throw guard. */
 abstract class AbstractDeliveryLogger extends AbstractSFLogger {
 
   @Override
-  protected final void logPlain(LogLevel level, String msg, boolean isMasked) {
+  protected final void logPlain(LogLevel level, String msg) {
     try {
       if (!isLevelEnabled(level)) {
         return;
       }
-      deliver(level, isMasked ? LogFormatter.mask(msg) : msg, null);
+      deliver(level, msg, null);
     } catch (Throwable ignored) {
       // Logging must never throw.
     }
@@ -45,13 +43,12 @@ abstract class AbstractDeliveryLogger extends AbstractSFLogger {
         return;
       }
       if (LogFormatter.deferThrowableDetailToDebug(level, t)) {
-        deliver(level, LogFormatter.withTypeOnlyCause(LogFormatter.mask(msg), t), null);
+        deliver(level, LogFormatter.withTypeOnlyCause(msg, t), null);
         if (isLevelEnabled(LogLevel.DEBUG)) {
-          deliver(
-              LogLevel.DEBUG, LogFormatter.mask(msg), t == null ? null : new MaskedException(t));
+          deliver(LogLevel.DEBUG, msg, t);
         }
       } else {
-        deliver(level, LogFormatter.mask(msg), t == null ? null : new MaskedException(t));
+        deliver(level, msg, t);
       }
     } catch (Throwable ignored) {
       // Logging must never throw.

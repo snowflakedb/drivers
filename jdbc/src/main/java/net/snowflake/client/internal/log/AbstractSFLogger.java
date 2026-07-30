@@ -12,7 +12,7 @@ abstract class AbstractSFLogger implements SFLogger {
 
   protected abstract boolean isLevelEnabled(LogLevel level);
 
-  protected abstract void logPlain(LogLevel level, String msg, boolean isMasked);
+  protected abstract void logPlain(LogLevel level, String msg);
 
   protected abstract void logFormat(LogLevel level, String msg, Object... arguments);
 
@@ -39,8 +39,8 @@ abstract class AbstractSFLogger implements SFLogger {
   }
 
   @Override
-  public final void debug(String msg, boolean isMasked) {
-    logPlain(LogLevel.DEBUG, msg, isMasked);
+  public final void debug(String msg) {
+    logPlain(LogLevel.DEBUG, msg);
   }
 
   @Override
@@ -54,8 +54,8 @@ abstract class AbstractSFLogger implements SFLogger {
   }
 
   @Override
-  public final void error(String msg, boolean isMasked) {
-    logPlain(LogLevel.ERROR, msg, isMasked);
+  public final void error(String msg) {
+    logPlain(LogLevel.ERROR, msg);
   }
 
   @Override
@@ -69,8 +69,8 @@ abstract class AbstractSFLogger implements SFLogger {
   }
 
   @Override
-  public final void info(String msg, boolean isMasked) {
-    logPlain(LogLevel.INFO, msg, isMasked);
+  public final void info(String msg) {
+    logPlain(LogLevel.INFO, msg);
   }
 
   @Override
@@ -84,8 +84,8 @@ abstract class AbstractSFLogger implements SFLogger {
   }
 
   @Override
-  public final void warn(String msg, boolean isMasked) {
-    logPlain(LogLevel.WARN, msg, isMasked);
+  public final void warn(String msg) {
+    logPlain(LogLevel.WARN, msg);
   }
 
   @Override

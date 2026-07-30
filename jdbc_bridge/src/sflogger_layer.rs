@@ -1,5 +1,4 @@
 use jni::JavaVM;
-use jni::objects::JValue;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
@@ -7,18 +6,16 @@ use tracing_subscriber::layer::Context;
 /// Logger name for core-originated events (those with no wrapper logger name).
 const CORE_LOGGER_NAME: &str = "net.snowflake.client.CoreLogger";
 
-// Wrapper round-trip events already carry a fully formatted, secret-masked
-// message; deliver it verbatim to the originating logger. Core-originated
-// events have no wrapper logger name, so keep the source-location prefix
-// and re-mask on the Java side (is_masked = true).
-fn delivery_fields(fields: &sf_core::logging::NormalizedEvent) -> (String, String, bool) {
+// Wrapper round-trip events carry a fully formatted message; deliver it verbatim
+// to the originating logger. Core-originated events have no wrapper logger name,
+// so prefix with source location before handing to the delivery logger.
+fn delivery_fields(fields: &sf_core::logging::NormalizedEvent) -> (String, String) {
     if !fields.logger_name.is_empty() {
-        (fields.logger_name.clone(), fields.message.clone(), false)
+        (fields.logger_name.clone(), fields.message.clone())
     } else {
         (
             CORE_LOGGER_NAME.to_owned(),
             format!("[{}:{}] {}", fields.file, fields.line, fields.message),
-            true,
         )
     }
 }
@@ -39,7 +36,7 @@ where
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let fields = sf_core::logging::normalize_event(event);
-        let (logger_name, log_msg, is_masked) = delivery_fields(&fields);
+        let (logger_name, log_msg) = delivery_fields(&fields);
 
         let level_str = match fields.level {
             0 => "error",
@@ -111,8 +108,8 @@ where
         if let Err(e) = env.call_method(
             logger,
             level_str,
-            "(Ljava/lang/String;Z)V",
-            &[(&java_log_msg).into(), JValue::Bool(u8::from(is_masked))],
+            "(Ljava/lang/String;)V",
+            &[(&java_log_msg).into()],
         ) {
             eprintln!("Failed to call SFLogger.{level_str}: {e:?}");
             let _ = env.exception_clear();
@@ -140,24 +137,22 @@ mod tests {
     }
 
     #[test]
-    fn should_prefix_core_event_and_request_masking() {
+    fn should_prefix_core_event_with_source_location() {
         let fields = sample_fields();
-        let (logger_name, log_msg, is_masked) = delivery_fields(&fields);
+        let (logger_name, log_msg) = delivery_fields(&fields);
         assert_eq!(logger_name, CORE_LOGGER_NAME);
         assert_eq!(log_msg, "[foo.rs:42] hello");
-        assert!(is_masked);
     }
 
     #[test]
-    fn should_deliver_wrapper_round_trip_verbatim_without_masking() {
+    fn should_deliver_wrapper_round_trip_verbatim() {
         let mut fields = sample_fields();
         fields.logger_name = "net.snowflake.client.Foo".to_owned();
-        fields.message = "already masked".to_owned();
+        fields.message = "formatted message".to_owned();
 
-        let (logger_name, log_msg, is_masked) = delivery_fields(&fields);
+        let (logger_name, log_msg) = delivery_fields(&fields);
 
         assert_eq!(logger_name, "net.snowflake.client.Foo");
-        assert_eq!(log_msg, "already masked");
-        assert!(!is_masked);
+        assert_eq!(log_msg, "formatted message");
     }
 }
