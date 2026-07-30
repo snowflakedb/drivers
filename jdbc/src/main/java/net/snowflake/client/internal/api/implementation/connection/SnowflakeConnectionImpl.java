@@ -268,7 +268,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     try {
       coreDriverApi.connectionClose(connectionHandle);
     } catch (SQLException e) {
-      logger.warn("Error during connection close: {}", e.getMessage());
+      logger.warn("Error during connection close: {}", e.getClass().getName());
       logger.debug("Connection close error details", e);
       throw e;
     } finally {

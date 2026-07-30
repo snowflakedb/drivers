@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.internal.unicore.CoreLoggingBridge;
 import org.junit.jupiter.api.Test;
@@ -117,6 +119,29 @@ public class CoreLoggerTest {
 
     @Override
     public void warn(String msg, Throwable t) {}
+  }
+
+  @Test
+  public void shouldDeferForeignThrowableDetailFromWarnToDebug() {
+    List<Integer> levels = new ArrayList<>();
+    List<String> messages = new ArrayList<>();
+    CoreLogger.CoreLogEventSink sink =
+        (level, message, file, line, function, name) -> {
+          levels.add(level);
+          messages.add(message);
+          return CoreLoggingBridge.CORE_DELIVERED;
+        };
+    RecordingDelegate delegate = new RecordingDelegate();
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
+
+    logger.warn("handled failure", new RuntimeException("secret=TopSecret"));
+
+    assertEquals(2, levels.size());
+    assertEquals(WIRE_WARN, (int) levels.get(0));
+    assertEquals("handled failure: java.lang.RuntimeException", messages.get(0));
+    assertFalse(messages.get(0).contains("TopSecret"));
+    assertEquals(WIRE_DEBUG, (int) levels.get(1));
+    assertTrue(messages.get(1).contains("TopSecret"));
   }
 
   @Test

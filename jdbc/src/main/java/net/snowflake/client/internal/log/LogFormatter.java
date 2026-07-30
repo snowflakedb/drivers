@@ -39,6 +39,19 @@ class LogFormatter {
     return new Formatted(message, masked);
   }
 
+  /** Append the exception type when the full cause must not appear at WARN/INFO. */
+  static String withTypeOnlyCause(String message, Throwable throwable) {
+    if (throwable == null) {
+      return message;
+    }
+    return message + ": " + throwable.getClass().getName();
+  }
+
+  static boolean deferThrowableDetailToDebug(AbstractSFLogger.LogLevel level, Throwable throwable) {
+    return throwable != null
+        && (level == AbstractSFLogger.LogLevel.WARN || level == AbstractSFLogger.LogLevel.INFO);
+  }
+
   /** Core carries one string; append a masked stack trace when needed. */
   static String appendThrowable(String message, Throwable throwable) {
     if (throwable == null) {
