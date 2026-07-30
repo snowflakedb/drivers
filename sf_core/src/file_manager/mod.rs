@@ -227,6 +227,19 @@ pub(crate) enum SkipDecision {
     Upload,
 }
 
+/// Whether a pre-upload HEAD is worth issuing. This MUST stay the disjunction
+/// of every condition under which [`classify_pre_upload_skip`] can return a
+/// non-`Upload` decision on a *present* object: existence-skip needs the HEAD
+/// under `!overwrite`, and content-match needs it under
+/// `skip_upload_on_content_match`. Add a third skip trigger and this predicate
+/// has to gain the matching term in lockstep, or a cloud will silently elide a
+/// HEAD it needs. Kept beside the classifier so "when to probe" lives next to
+/// "what the probe means"; every cloud's upload path calls it to decide whether
+/// to run its HEAD.
+pub(crate) fn head_needed(overwrite: bool, skip_upload_on_content_match: bool) -> bool {
+    !overwrite || skip_upload_on_content_match
+}
+
 /// Pure decision: which skip branch (if any) fires. Existence-only is checked
 /// first so a `!overwrite` caller never reaches the content-match branch — a
 /// remote object that exists is treated as authoritative regardless of
@@ -440,6 +453,7 @@ pub(crate) async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.skip_upload_on_content_match,
             policy,
             data.multipart,
             refresher,
@@ -2967,10 +2981,22 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // S3 / GCS scope pin: skip_upload_on_content_match is Azure-only
-    // per gap-5 findings. These tests assert current no-op behaviour.
-    // If a future change wires the flag for S3 or GCS, update findings.md
-    // (cross-cloud parity scope) and this test deliberately.
+    // S3 / GCS scope pin: skip_upload_on_content_match cross-cloud
+    // coverage.
+    //
+    // SNOW-3715266 ported the opt-in content-match skip to S3 (mirroring
+    // Azure): under `overwrite=true && skip_upload_on_content_match=true`
+    // with a matching remote `sfc-digest`, S3 now returns Skipped without
+    // re-uploading. `content_match_skip_fires_for_s3` below drives that
+    // through the full `upload_single_file` dispatch path (end-to-end,
+    // not just the lower-level wiremock tests in `s3_transfer.rs`) so a
+    // regression in the dispatch wiring (e.g. dropping the flag from the
+    // `LocationType::S3` match arm) is caught here too.
+    //
+    // GCS remains unconditional: `upload_to_gcs_or_skip`'s signature drops
+    // the `skip_upload_on_content_match` kwarg entirely, so GCS issues its
+    // existence/content HEAD regardless of the flag. No GCS sibling test
+    // lives here; that behaviour is pinned in `gcs_transfer.rs`.
     // ---------------------------------------------------------------
 
     fn write_local_payload(content: &[u8]) -> tempfile::NamedTempFile {
@@ -3030,22 +3056,60 @@ mod tests {
         }
     }
 
-    /// Pin: under `overwrite=true && skip_match=true`, S3 must NOT issue a
-    /// HEAD probe (it doesn't read the flag). A regression where S3 begins
-    /// honoring the flag would issue HEAD for digest comparison; this test
-    /// catches that drift via `Mock::given(method("HEAD")).expect(0)`.
-    ///
-    /// No GCS sibling test: PR #57 (SNOW-3406389) made GCS issue HEAD
-    /// unconditionally (the `upload_to_gcs_or_skip` signature drops the
-    /// `skip_upload_on_content_match` kwarg entirely; HEAD fires whether
-    /// the flag is set or not). Cross-cloud picture is therefore: S3
-    /// no-ops the kwarg (this test), Azure honors it (azure_transfer.rs
-    /// tests), GCS unconditionally probes (gcs_transfer.rs tests, layer
-    /// below dispatch). S3 remains the only "no-op" cloud worth pinning
-    /// here; tracked as a follow-up (S3 HEAD fail-OPEN clobber +
-    /// skip-match parity).
+    /// End-to-end (dispatch-level) pin for SNOW-3715266: under
+    /// `overwrite=true && skip_upload_on_content_match=true`, when the
+    /// remote object's `sfc-digest` metadata already matches the local
+    /// digest, S3 must short-circuit to `Skipped` without ever issuing the
+    /// PUT — driven through the full `upload_single_file` dispatch path
+    /// (not just the lower-level `s3_transfer.rs` unit tests), so the
+    /// `LocationType::S3` match arm wiring the flag through stays honest.
     #[tokio::test(flavor = "multi_thread")]
-    async fn skip_upload_on_content_match_is_no_op_on_s3() {
+    async fn content_match_skip_fires_for_s3() {
+        let payload = b"hello-s3-content-match";
+        let real_digest =
+            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
+                .expect("digest");
+
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-amz-meta-sfc-digest", real_digest.as_str()),
+            )
+            .mount(&mock)
+            .await;
+        // Load-bearing: skip must fire (no PutObject) for this path.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(payload);
+        let mut data =
+            single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
+        // Set the flag explicitly (rather than leaning on the builder default)
+        // so this pin stays meaningful if that default ever changes — mirrors
+        // the companion `..._without_opt_in` test.
+        data.skip_upload_on_content_match = true;
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let result = upload_single_file(data, &policy, &mut refresher)
+            .await
+            .expect("S3 upload should succeed against the mock");
+        assert_eq!(result.status, "SKIPPED");
+    }
+
+    /// Companion pin: with `skip_upload_on_content_match=false` (default),
+    /// S3 must upload even though `overwrite=true` and the remote object
+    /// exists — the opt-in flag, not mere existence, gates the S3
+    /// content-match branch (mirrors Azure's opt-in semantics, unlike
+    /// GCS's unconditional skip).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_does_not_fire_for_s3_without_opt_in() {
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
             .respond_with(ResponseTemplate::new(200))
@@ -3059,8 +3123,9 @@ mod tests {
             .await;
 
         let tmp = write_local_payload(b"hello-s3-no-op");
-        let data =
+        let mut data =
             single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
+        data.skip_upload_on_content_match = false;
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
         let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());

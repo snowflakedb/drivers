@@ -2,8 +2,8 @@ use super::cloud_http;
 use super::encryption::Encryptor;
 use super::multipart::{self, MultipartConfig, MultipartParams};
 use super::types::{
-    ByteSource, CloudCredentials, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
+    ByteSource, CloudCredentials, EncryptedFileMetadata, LocationType, MaterialDescription,
+    PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
 };
 use crate::config::retry::RetryPolicy;
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -35,6 +35,12 @@ const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
 const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
+/// S3 object metadata key holding the local SHA-256 digest computed at
+/// upload time. Written by `put_object` / `s3_create_multipart_upload` and
+/// read back by `probe_remote_object` for the opt-in content-match skip.
+/// Mirrors Azure's `x-ms-meta-sfcdigest` (see `AZURE_META_SFC_DIGEST`).
+const S3_META_SFC_DIGEST: &str = "sfc-digest";
+
 /// S3 Transfer Acceleration global endpoint. AWS routes the request to the
 /// nearest edge location, which then forwards over the AWS backbone.
 const S3_ACCELERATE_ENDPOINT: &str = "https://s3-accelerate.amazonaws.com";
@@ -51,11 +57,21 @@ const INTERNAL_STAGE_BUCKET_PREFIX: &str = "sfc-";
 /// full attempt can complete.
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
-/// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
+/// Uploads a file to S3, skipping when a HEAD probe says either "the object
+/// exists and overwrite is off" or "the object's content matches the local
+/// digest and the caller opted into content-match skipping"
+/// (`skip_upload_on_content_match`). HEAD is elided when neither skip branch
+/// can fire (`overwrite=true` and `skip_upload_on_content_match=false`),
+/// saving a round-trip — mirrors Azure's `upload_to_azure_or_skip`. The
+/// actual skip decision is [`super::classify_pre_upload_skip`], shared with
+/// the Azure path so the decision logic and its unit tests live in one
+/// place.
 ///
 /// Files whose on-cloud size (ciphertext length for CSE, source length for SSE)
 /// is at or above `multipart.threshold` take the multipart path
 /// ([`s3_multipart_upload`]); smaller files take the single `PutObject` path.
+/// The skip check gates both paths identically — a content-match hit skips
+/// the upload regardless of which path would otherwise have run.
 ///
 /// On AWS `ExpiredToken` the `refresher` (if any) is invoked to fetch fresh
 /// STS credentials, which it writes into the shared `StageInfoCache`; the
@@ -72,11 +88,13 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 /// When `refresher` is `Some`, the retry loop is driven by
 /// [`crate::refresh::execute_with_refresh`] via the [`S3StsRefresher`]
 /// implementation in this module.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    skip_upload_on_content_match: bool,
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
     refresher: &mut Option<&mut dyn StageInfoRefresher>,
@@ -96,6 +114,12 @@ pub(super) async fn upload_to_s3_or_skip(
     // `>=` matches the Python connector boundary (`upload_size >= threshold`).
     let use_multipart = body_len >= multipart.threshold.bytes();
 
+    // HEAD checks existence (`!overwrite`) or fetches the remote digest for the
+    // opt-in content-match skip; elided otherwise so the common `overwrite=true`,
+    // no-skip path saves a round-trip. The predicate is shared so every cloud's
+    // "when to probe" stays coupled to the classifier — see `super::head_needed`.
+    let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
+
     let attempt = |creds: CloudCredentials| {
         let prepared = prepared.clone();
         let stage_info = with_creds(stage_info, creds);
@@ -106,13 +130,29 @@ pub(super) async fn upload_to_s3_or_skip(
                 .await
                 .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
 
-            if !overwrite
-                && check_if_file_exists(&s3_client, &stage_info, &s3_key)
+            let remote = if head_needed {
+                probe_remote_object(&s3_client, &stage_info, &s3_key, overwrite)
                     .await
                     .map_err(S3AttemptError::Other)?
-            {
-                tracing::info!("File already exists in S3: {:?}", s3_key);
-                return Ok(UploadStatus::Skipped);
+            } else {
+                None
+            };
+
+            let remote_head = match &remote {
+                Some(h) => super::RemoteHead::Present {
+                    digest: h.digest.as_deref(),
+                },
+                None => super::RemoteHead::Absent,
+            };
+            if let Some(status) = super::skip_upload_decision(
+                LocationType::S3,
+                overwrite,
+                skip_upload_on_content_match,
+                &remote_head,
+                &prepared.digest,
+                &s3_key,
+            ) {
+                return Ok(status);
             }
 
             if use_multipart {
@@ -285,15 +325,52 @@ fn with_creds(stage_info: &StageInfo, creds: CloudCredentials) -> StageInfo {
     info
 }
 
-/// Returns true if the file exists in S3, false if it does not.
-/// When the check cannot be performed due to 403 Forbidden (limited
-/// temporary credentials that allow PUT but not HEAD), returns false
-/// so the caller proceeds with upload.
-async fn check_if_file_exists(
+/// Subset of the S3 HEAD response consumed by the upload-or-skip path. Only
+/// constructed when the object exists (200), so existence is carried by the
+/// outer `Option` returned from [`probe_remote_object`] rather than a field —
+/// the illegal "absent but has a digest" state is thus unrepresentable, the
+/// invariant the shared [`super::RemoteHead`] enum forbids. `None` digest means
+/// the object exists but has no parseable `sfc-digest` metadata ("cannot
+/// compare"). Mirrors Azure's `RemoteBlobHeader`.
+#[derive(Debug, Clone)]
+struct S3RemoteObject {
+    digest: Option<String>,
+}
+
+/// Probes `s3_key` with HEAD, feeding both the `!overwrite` existence check
+/// and the opt-in content-match skip from a single request. Returns:
+///
+/// - `Ok(Some(header))` on 200 — the object exists. `header.digest` is the
+///   [`S3_META_SFC_DIGEST`] object-metadata value, or `None` if the header is
+///   absent (e.g. the object was written by a tool that doesn't set
+///   Snowflake's custom metadata).
+/// - `Ok(None)` on 404 — the object does not exist, safe to upload.
+/// - On 403 Forbidden (temporary credentials that allow PUT but not HEAD) the
+///   behavior depends on `overwrite`:
+///   - `overwrite == false`: fail CLOSED (`Err`). Existence can't be verified,
+///     and assuming absence would let the subsequent PUT silently clobber bytes
+///     the caller asked to preserve. This matches Azure's
+///     `send_head_to_azure_blob` and legacy Python S3
+///     (`SnowflakeS3RestClient.get_file_header`, which raises on any
+///     non-200/404) — resolving the prior UD-specific divergence.
+///   - `overwrite == true`: fail OPEN (`Ok(None)`). Here the HEAD only feeds
+///     the opt-in content-match skip; a missed skip is bandwidth waste, not
+///     data loss, and the PUT is allowed to overwrite anyway. Python has no
+///     overwrite-true HEAD path to mirror, so this follows Azure.
+/// - `Err` on any other outcome (5xx after retry exhaustion, transport
+///   error, etc.).
+async fn probe_remote_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-) -> Result<bool, UploadFileError> {
+    overwrite: bool,
+) -> Result<Option<S3RemoteObject>, UploadFileError> {
+    tracing::info!(
+        method = "HEAD",
+        bucket = %stage_info.bucket,
+        key = ?s3_key,
+        "S3 probe_remote_object"
+    );
     match s3_client
         .head_object()
         .bucket(stage_info.bucket.clone())
@@ -301,15 +378,71 @@ async fn check_if_file_exists(
         .send()
         .await
     {
-        Ok(_) => Ok(true),
-        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(SdkError::ServiceError(ref err)) if err.raw().status().as_u16() == 403 => {
-            tracing::warn!(
-                "Access denied when checking if file exists in S3 ({s3_key:?}), proceeding with upload"
+        Ok(out) => {
+            tracing::debug!(
+                status = 200,
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: object exists"
             );
-            Ok(false)
+            let digest = out
+                .metadata()
+                .and_then(|m| m.get(S3_META_SFC_DIGEST))
+                .cloned();
+            Ok(Some(S3RemoteObject { digest }))
         }
-        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(upload_file_error::S3HeadSnafu),
+        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
+            tracing::debug!(
+                status = 404,
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: object not found"
+            );
+            Ok(None)
+        }
+        Err(SdkError::ServiceError(err)) if err.raw().status().as_u16() == 403 => {
+            if overwrite {
+                // Content-match skip only: a missed optimization is not data
+                // loss, and the PUT may clobber anyway. Fail OPEN.
+                tracing::warn!(
+                    status = 403,
+                    bucket = %stage_info.bucket,
+                    key = ?s3_key,
+                    "S3 probe_remote_object: access denied on content-match probe, proceeding with upload"
+                );
+                Ok(None)
+            } else {
+                // Mandatory existence check: assuming absence would silently
+                // clobber preserve-requested bytes. Fail CLOSED (matches Azure +
+                // legacy Python).
+                tracing::warn!(
+                    status = 403,
+                    bucket = %stage_info.bucket,
+                    key = ?s3_key,
+                    "S3 probe_remote_object: access denied verifying existence under OVERWRITE=FALSE; failing closed"
+                );
+                Err(aws_sdk_s3::Error::from(SdkError::ServiceError(err)))
+                    .context(upload_file_error::S3HeadSnafu)
+            }
+        }
+        Err(e) => {
+            let err = aws_sdk_s3::Error::from(e);
+            // Log only the foreign error's type at WARN — its Display can embed
+            // sensitive identifiers; the full message goes to DEBUG.
+            tracing::warn!(
+                error_type = std::any::type_name_of_val(&err),
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: HEAD failed after retries"
+            );
+            tracing::debug!(
+                error = %err,
+                bucket = %stage_info.bucket,
+                key = ?s3_key,
+                "S3 probe_remote_object: HEAD failure detail"
+            );
+            Err(err).context(upload_file_error::S3HeadSnafu)
+        }
     }
 }
 
@@ -432,7 +565,7 @@ async fn put_object(
         .body(body)
         .set_content_length(content_length)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata("sfc-digest", &prepared.digest);
+        .metadata(S3_META_SFC_DIGEST, &prepared.digest);
 
     if let Some(ref enc_meta) = encryption_metadata {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
@@ -550,7 +683,7 @@ async fn s3_create_multipart_upload(
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata("sfc-digest", &prepared.digest);
+        .metadata(S3_META_SFC_DIGEST, &prepared.digest);
 
     if let Some(enc_meta) = prepared.cse.as_ref().map(|c| &c.metadata) {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
@@ -1032,7 +1165,7 @@ async fn s3_get_streaming(
 fn parse_s3_file_metadata(
     metadata_map: &HashMap<String, String>,
 ) -> Result<(Option<String>, Option<EncryptedFileMetadata>), DownloadFileError> {
-    let digest = metadata_map.get("sfc-digest").cloned();
+    let digest = metadata_map.get(S3_META_SFC_DIGEST).cloned();
     let mat_desc = metadata_map.get("x-amz-matdesc");
     let encrypted_key = metadata_map.get("x-amz-key");
     let iv = metadata_map.get("x-amz-iv");
@@ -1602,6 +1735,7 @@ pub enum DownloadFileError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::retry::RetryPolicy;
     use bytes::Bytes;
@@ -2092,12 +2226,13 @@ mod tests {
             storage_account: None,
         };
 
-        // overwrite=true skips the HEAD probe.
+        // overwrite=true, skip_upload_on_content_match=false skips the HEAD probe.
         upload_to_s3_or_skip(
             prepared,
             &stage_info,
             "f.dat",
             true,
+            false,
             &base_policy(),
             MultipartParams::default(),
             &mut None,
@@ -2189,6 +2324,7 @@ mod tests {
                 &stage_info,
                 "f.dat",
                 true,
+                false,
                 &base_policy(),
                 MultipartParams::default(),
                 &mut None,
@@ -2293,6 +2429,7 @@ mod tests {
             &stage_info,
             "f.dat",
             true,
+            false,
             &base_policy(),
             MultipartParams::default(),
             &mut None,
@@ -2313,6 +2450,279 @@ mod tests {
             seen_unsigned_payload.load(Ordering::SeqCst),
             "the CSE body must stay payload-unsigned (STREAMING-UNSIGNED-PAYLOAD-TRAILER)",
         );
+    }
+
+    // --- Pre-upload HEAD probe and skip-decision (wiremock) ---
+    //
+    // Contract: HEAD is issued only when at least one skip branch could fire
+    // (`!overwrite || skip_upload_on_content_match`), and the skip is keyed
+    // on either remote existence or remote-vs-local digest equality via the
+    // shared `classify_pre_upload_skip` (see `file_manager::mod` tests for
+    // the decision-in-isolation coverage that bypasses this HEAD-elision).
+    // Mirrors the equivalent Azure scenarios in `azure_transfer.rs`.
+
+    /// Mount a HEAD responder and a PUT responder with a usage expectation,
+    /// mirroring the GCS test helper. Both are path-anchored to the object
+    /// under `mp_stage` (`/test-bucket/prefix/f.dat`) so stray requests from
+    /// concurrent multi-threaded tests can't satisfy the expectation.
+    async fn mount_head_and_put(
+        server: &MockServer,
+        head_response: ResponseTemplate,
+        expected_puts: u64,
+    ) {
+        use wiremock::matchers::path;
+        Mock::given(method("HEAD"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(head_response)
+            .mount(server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/test-bucket/prefix/f.dat"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(expected_puts)
+            .mount(server)
+            .await;
+    }
+
+    /// Scenario 1: existence-only branch — `!overwrite && exists` returns
+    /// `Skipped` without issuing a PUT.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_false_and_object_exists() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(&mock, ResponseTemplate::new(200), 0).await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ false,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Scenario 2: HEAD elision — `overwrite=true && skip_match=false`
+    /// proves the driver doesn't waste a round-trip on a HEAD that can't
+    /// change the outcome. `Mock::given(method("HEAD")).expect(0)` is the
+    /// load-bearing assertion: any HEAD against the mock fails the test.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_head_issued_when_overwrite_true_and_skip_match_false() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 3: content-match branch — when the remote `sfc-digest`
+    /// metadata equals the local digest, the upload is skipped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_true_and_skip_match_true_and_digests_match() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(
+            &mock,
+            ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "matching-digest"),
+            0,
+        )
+        .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("matching-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// Scenario 4: content-mismatch — same flags as scenario 3, but the
+    /// remote `sfc-digest` differs from the local one. Different content
+    /// cannot be skipped over; upload must proceed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_overwrite_true_and_skip_match_true_and_digests_differ() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(
+            &mock,
+            ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "remote-digest"),
+            1,
+        )
+        .await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 5: 404 on HEAD — object doesn't exist. Even with the flag
+    /// on, there is no remote metadata to compare, so the upload runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_skip_match_true_and_head_404() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(&mock, ResponseTemplate::new(404), 1).await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Scenario 6: HEAD returns 200 but the `x-amz-meta-sfc-digest`
+    /// user-metadata header is absent — e.g. the object was uploaded by a
+    /// tool that doesn't write Snowflake's custom metadata. Cannot compare
+    /// digests, so the content-match branch must NOT skip.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_when_skip_match_true_and_head_200_without_sfc_digest_header() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(&mock, ResponseTemplate::new(200), 1).await;
+
+        let status = upload_to_s3_or_skip(
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload should succeed against the mock");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    /// Existence precedence: content-match is *armed* (`skip_match=true`) but
+    /// `!overwrite`, so the existence branch must win first and the deliberately
+    /// non-matching remote digest is never consulted (a content-match compare
+    /// would have proceeded to upload on the mismatch). This is the genuine
+    /// "content-match armed but existence still wins" pin; pure-unit precedence
+    /// is also covered by `classify_existence_wins_under_no_overwrite`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_when_overwrite_false_and_object_exists_ignores_digest() {
+        let mock = MockServer::start().await;
+        mount_head_and_put(
+            &mock,
+            ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "remote-digest"),
+            0,
+        )
+        .await;
+
+        let status = upload_to_s3_or_skip(
+            // Local digest deliberately differs from the remote header — with
+            // content-match armed, existence must still win outright under
+            // `!overwrite` and the mismatching digest must be ignored.
+            prepared_upload_with_digest("local-digest"),
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ false,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            MultipartParams::default(),
+            &mut None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    /// The skip decision gates the multipart branch identically to the
+    /// single-PUT branch: a body above the multipart threshold with a
+    /// matching remote digest must skip without issuing
+    /// `CreateMultipartUpload`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_on_content_match_also_gates_multipart_branch() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-amz-meta-sfc-digest", "matching-digest"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                7u8;
+                9 << 20
+            ])),
+            digest: "matching-digest".to_string(),
+            cse: None,
+        };
+
+        let status = upload_to_s3_or_skip(
+            prepared,
+            &mp_stage(mock.uri()),
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ true,
+            &base_policy(),
+            always_multipart(),
+            &mut None,
+        )
+        .await
+        .expect("upload-or-skip should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
     }
 
     // --- Acceleration probe (wiremock) ---
@@ -2508,6 +2918,7 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             true,
+            false,
             &base_policy(),
             always_multipart(),
             &mut None,
@@ -2569,6 +2980,7 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             true,
+            false,
             &base_policy_with_attempts(1), // single attempt: fail fast, no SDK retry storm
             always_multipart(),
             &mut None,
