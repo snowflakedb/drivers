@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.unicore;
 
+import com.google.protobuf.UnsafeByteOperations;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
@@ -14,8 +15,12 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamBeginRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamBeginResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamChunkRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamChunkResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamCloseRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoRequest;
@@ -49,8 +54,14 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamAbortRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamAbortResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamBeginRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamBeginResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamChunkRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamChunkResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamFinishRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamFinishResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaRequest;
@@ -64,6 +75,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
@@ -93,6 +105,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Telem
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendWrapperErrorRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TokenRequestType;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 
 /**
@@ -450,29 +463,74 @@ class CoreDriverApiImpl implements CoreDriverApi {
   // =========================================================================
 
   @Override
-  public ConnectionUploadStreamResponse connectionUploadStream(
-      ConnectionHandle connHandle, String sql, byte[] data) throws SQLException {
-    ConnectionUploadStreamRequest request =
-        ConnectionUploadStreamRequest.newBuilder()
+  public ConnectionUploadStreamBeginResponse connectionUploadStreamBegin(
+      ConnectionHandle connHandle, String sql) throws SQLException {
+    ConnectionUploadStreamBeginRequest request =
+        ConnectionUploadStreamBeginRequest.newBuilder()
             .setConnHandle(connHandle)
             .setSql(sql)
-            .setData(com.google.protobuf.ByteString.copyFrom(data))
             .build();
-    return invoke(() -> client.connectionUploadStream(request));
+    return invoke(() -> client.connectionUploadStreamBegin(request));
   }
 
   @Override
-  public ConnectionDownloadStreamResponse connectionDownloadStream(
+  public ConnectionUploadStreamChunkResponse connectionUploadStreamChunk(
+      UploadStreamHandle uploadHandle, byte[] data, int offset, int length) throws SQLException {
+    ConnectionUploadStreamChunkRequest request =
+        ConnectionUploadStreamChunkRequest.newBuilder()
+            .setUploadHandle(uploadHandle)
+            .setData(UnsafeByteOperations.unsafeWrap(data, offset, length))
+            .build();
+    return invoke(() -> client.connectionUploadStreamChunk(request));
+  }
+
+  @Override
+  public ConnectionUploadStreamFinishResponse connectionUploadStreamFinish(
+      UploadStreamHandle uploadHandle) throws SQLException {
+    ConnectionUploadStreamFinishRequest request =
+        ConnectionUploadStreamFinishRequest.newBuilder().setUploadHandle(uploadHandle).build();
+    return invoke(() -> client.connectionUploadStreamFinish(request));
+  }
+
+  @Override
+  public ConnectionUploadStreamAbortResponse connectionUploadStreamAbort(
+      UploadStreamHandle uploadHandle) throws SQLException {
+    ConnectionUploadStreamAbortRequest request =
+        ConnectionUploadStreamAbortRequest.newBuilder().setUploadHandle(uploadHandle).build();
+    return invoke(() -> client.connectionUploadStreamAbort(request));
+  }
+
+  @Override
+  public ConnectionDownloadStreamBeginResponse connectionDownloadStreamBegin(
       ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
       throws SQLException {
-    ConnectionDownloadStreamRequest request =
-        ConnectionDownloadStreamRequest.newBuilder()
+    ConnectionDownloadStreamBeginRequest request =
+        ConnectionDownloadStreamBeginRequest.newBuilder()
             .setConnHandle(connHandle)
             .setStageName(stageName)
             .setSourceFilename(sourceFilename)
             .setDecompress(decompress)
             .build();
-    return invoke(() -> client.connectionDownloadStream(request));
+    return invoke(() -> client.connectionDownloadStreamBegin(request));
+  }
+
+  @Override
+  public ConnectionDownloadStreamChunkResponse connectionDownloadStreamChunk(
+      DownloadStreamHandle downloadHandle, long maxLen) throws SQLException {
+    ConnectionDownloadStreamChunkRequest request =
+        ConnectionDownloadStreamChunkRequest.newBuilder()
+            .setDownloadHandle(downloadHandle)
+            .setMaxLen(maxLen)
+            .build();
+    return invoke(() -> client.connectionDownloadStreamChunk(request));
+  }
+
+  @Override
+  public ConnectionDownloadStreamCloseResponse connectionDownloadStreamClose(
+      DownloadStreamHandle downloadHandle) throws SQLException {
+    ConnectionDownloadStreamCloseRequest request =
+        ConnectionDownloadStreamCloseRequest.newBuilder().setDownloadHandle(downloadHandle).build();
+    return invoke(() -> client.connectionDownloadStreamClose(request));
   }
 
   // =========================================================================

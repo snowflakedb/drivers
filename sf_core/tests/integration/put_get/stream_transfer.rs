@@ -1,16 +1,19 @@
-//! Integration tests for the streaming GET handler (`connection_download_stream`),
-//! which backs JDBC `downloadStream`.
+//! Integration tests for the chunked download RPCs
+//! (`ConnectionDownloadStream{Begin,Chunk,Close}`), which back JDBC
+//! `downloadStream`.
 //!
 //! Unlike `connection_get_query_result` (which downloads to a server-supplied
-//! `localLocation`), `connection_download_stream` synthesizes its own
-//! `GET <stage>/<file> file://<tempdir>` SQL, runs it synchronously through GS
-//! (`POST /queries/v1/query-request`), downloads the single file into a private
-//! tempdir, reads it back, and returns the bytes — optionally gunzipping.
+//! `localLocation`), `download_stream_begin` resolves the stage location
+//! against GS and opens a streaming GET directly against cloud storage; no
+//! bytes ever land on local disk. `download_stream_chunk` drains that stream
+//! incrementally, optionally gunzipping, until EOF; `download_stream_close`
+//! tears the session down. `SnowflakeTestClient::download_stream` drives the
+//! full Begin → Chunk-loop → Close sequence and returns the assembled bytes.
 //!
-//! The synchronous GET POST is matched by `mount_gcs_download_refresh_sql_response`
-//! (any query body containing "GET"); the handler overrides the response's
-//! `localLocation` with its own tempdir, so the file always lands where it reads
-//! it back from.
+//! The GS refresh POST is matched by `mount_gcs_download_refresh_sql_response`
+//! (any query body containing "GET"); its `localLocation` field is unused by
+//! the chunked path (no bytes ever land on local disk) but is required JSON,
+//! so the mock helper still takes a value to fill it with.
 
 use crate::common::mocks;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
@@ -57,7 +60,7 @@ async fn download_stream_returns_file_bytes() {
     tokio::task::spawn_blocking(move || {
         let client = SnowflakeTestClient::connect_integration_test(Some(&sf_uri));
         let bytes = client
-            .connection_download_stream("@mock_stage", "file.csv", false)
+            .download_stream("@mock_stage", "file.csv", false)
             .expect("download_stream must succeed on GCS 200");
         assert_eq!(bytes, b"streamed-download-content");
     })
@@ -90,7 +93,7 @@ async fn download_stream_decompresses_when_requested() {
     tokio::task::spawn_blocking(move || {
         let client = SnowflakeTestClient::connect_integration_test(Some(&sf_uri));
         let bytes = client
-            .connection_download_stream("@mock_stage", "file.csv", true)
+            .download_stream("@mock_stage", "file.csv", true)
             .expect("download_stream with decompress must succeed");
         assert_eq!(
             bytes, b"the quick brown fox jumps over the lazy dog",
