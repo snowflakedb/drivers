@@ -333,7 +333,25 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLEndTran as s
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(supported == SQL_TRUE);
 
-  SQLDisconnect(dbc_handle());
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Reports SQLTransact as supported",
+                 "[odbc-api][getfunctions][driver_info]") {
+  SKIP_IODBC("iODBC DM answers SQLGetFunctions from its static table regardless of the driver's bitmap");
+
+  const std::string dsn = dsn_name();
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLUSMALLINT supported = SQL_FALSE;
+  ret = SQLGetFunctions(dbc_handle(), SQL_API_SQLTRANSACT, &supported);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(supported == SQL_TRUE);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
 }
 
 // ============================================================================

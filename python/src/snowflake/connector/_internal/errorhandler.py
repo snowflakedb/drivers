@@ -120,4 +120,5 @@ def _error_to_value(exc: Error) -> dict[str, Any]:
         "sqlstate": exc.sqlstate,
         "sfqid": exc.sfqid,
         "query": exc.query,
+        "request_id": exc.request_id,
     }

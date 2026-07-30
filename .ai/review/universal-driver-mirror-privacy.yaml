@@ -22,7 +22,7 @@ allowed_folders:
 excluded_folders:
   # Mirrors the EXCLUDED_PATHS denylist in ci/mirroring/copy.bara.sky — these
   # directories never reach the public mirror, so no review needed.
-  - "_internal"
+  - "NOMIRROR"
   - ".ai"
   - ".cursor"
   - ".claude"
@@ -48,16 +48,16 @@ rules:
   - id: ud-potentially-private-file-placement
     rule: |
       **OBJECTIVE**: Catch files added to public (mirrored) directories that contain
-      information belonging in `_internal/` and should not reach the public mirror
+      information belonging below a `NOMIRROR/` directory and should not reach the public mirror
       at snowflakedb/universal-driver.
 
       **CONTEXT**: This repo is mirrored publicly via Copybara. The
       authoritative denylist of internal-only paths lives in
       `ci/mirroring/copy.bara.sky` (`EXCLUDED_PATHS`). Read it before reviewing —
       anything not listed there is public-by-default and reaches the
-      mirror on the next run. The `_internal/` directory is the
-      designated home for any new internal-only material; see
-      `_internal/mirroring.md` for the full boundary description.
+      mirror on the next run. Any directory whose exact name is `NOMIRROR`
+      is excluded at any depth and is the designated home for new internal-only
+      material; see `NOMIRROR/mirroring.md` for the full boundary description.
 
       **REQUIREMENT**: Flag any new or substantially changed file in a public directory
       when it shows one or more of the following signals:
@@ -102,6 +102,6 @@ rules:
 
       **HOW TO FLAG**: If a file triggers any signal above, comment:
       "This file may contain Snowflake-internal information. Consider moving it
-      under `_internal/` (which is excluded from the public mirror by
-      `ci/mirroring/copy.bara.sky`). See `_internal/mirroring.md` for how to add internal-only
+      below a `NOMIRROR/` directory (which is excluded from the public mirror by
+      `ci/mirroring/copy.bara.sky`). See `NOMIRROR/mirroring.md` for how to add internal-only
       files without touching the denylist."

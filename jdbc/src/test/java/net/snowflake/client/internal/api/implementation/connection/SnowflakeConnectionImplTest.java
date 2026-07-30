@@ -28,11 +28,13 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Savepoint;
 import java.sql.Statement;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHeartbeatResponse;
@@ -47,6 +49,7 @@ import net.snowflake.client.internal.util.NotImplementedException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class SnowflakeConnectionImplTest {
 
@@ -1540,6 +1543,28 @@ class SnowflakeConnectionImplTest {
     @Override
     public String getSavepointName() {
       return "fake";
+    }
+  }
+
+  @Nested
+  class ConnectionOptions extends MockCoreApiConnectionSupport {
+
+    @Test
+    void shouldNormalizeDataSourceNonProxyHostsWhenConnecting() throws Exception {
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "dummy");
+      props.setProperty("nonProxyHosts", "*.foo.com|host1");
+
+      @SuppressWarnings("unchecked")
+      ArgumentCaptor<Map<String, ConfigSetting>> optionsCaptor = ArgumentCaptor.forClass(Map.class);
+
+      new SnowflakeConnectionImpl(
+          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+
+      verify(mockCoreApi).connectionSetOptions(any(), optionsCaptor.capture());
+      assertEquals(".foo.com,host1", optionsCaptor.getValue().get("no_proxy").getStringValue());
     }
   }
 

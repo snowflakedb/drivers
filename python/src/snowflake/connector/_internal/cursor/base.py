@@ -159,6 +159,20 @@ class CursorBaseMixin(ErrorHandlerMixin):
 
     @property
     @api_telemetry
+    def request_id(self) -> str | None:
+        """
+        Read-only attribute containing the client-generated ``requestId`` of the last query submission.
+
+        Populated when the last ``execute()`` failed (captured from the raised error);
+        ``None`` otherwise.
+
+        Returns:
+            str | None: Client request UUID, or None when unavailable.
+        """
+        return self._query_result.request_id
+
+    @property
+    @api_telemetry
     def stats(self) -> QueryResultStats:
         """Returns detailed row-level statistics for DML operations."""
         return self._query_result.stats

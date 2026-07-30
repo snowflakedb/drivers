@@ -1598,7 +1598,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
-        description: "Skip re-uploading a PUT blob when the remote x-ms-meta-sfcdigest header equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        description: "Skip re-uploading a PUT object when the remote stored digest (S3 x-amz-meta-sfc-digest / Azure x-ms-meta-sfcdigest / GCS x-goog-meta-sfc-digest) equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
         deprecated_by: None,
         scopes: &[ParamScope::Statement],
         used_at_connect: false,

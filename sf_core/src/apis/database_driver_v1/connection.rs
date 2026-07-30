@@ -2533,6 +2533,13 @@ impl DatabaseDriverV1 {
             return Ok(());
         };
 
+        // Reap any upload/download stream sessions still open on this
+        // connection before logout I/O invalidates its credentials — a
+        // download's background tasks reading from cloud storage with a
+        // soon-to-be-revoked session would otherwise keep running (or sit
+        // stalled) until they hit their own error path.
+        self.reap_connection_streams(conn_handle);
+
         // Flush telemetry before logout — session tokens are still alive and
         // telemetry records the connection's lifetime events (session_init, api_usage).
         self.flush_connection_telemetry(conn_handle).await;
@@ -2562,6 +2569,12 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
 
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
+    // Upload/download stream sessions are reaped in connection_close, before
+    // logout I/O, via DatabaseDriverV1::reap_connection_streams — not here.
+    // TODO(SNOW-3704961): a session that outlives its connection because the
+    // wrapper never calls connection_close (process crash, or a stream begun
+    // and simply abandoned) still leaks until process exit; there is no
+    // idle-timeout reaper for abandoned upload/download stream sessions yet.
 
     Ok(())
 }

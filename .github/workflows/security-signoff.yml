@@ -1,0 +1,70 @@
+# Publishes the `security-signoff` commit status: success unless the PR carries
+# `security-signoff-required` without an approval from a security partner on its
+# current head commit. Branch protection requires the status, so a labeled PR
+# cannot merge until a partner clears it for public disclosure.
+#
+# Roster: .github/security-partners.yml. Process: NOMIRROR/security-signoff.md.
+name: Security sign-off
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+  # Makes the status flip the moment a partner approves, rather than waiting
+  # for the next push or label change.
+  pull_request_review:
+    types: [submitted, dismissed, edited]
+  # A merge queue re-evaluates the same required-check list against the
+  # merge-group head, and GitHub treats a context that never reports there as
+  # failed once the queue's status-check timeout elapses. See merge-group below.
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read # read the roster from the base branch
+  pull-requests: read # read labels + reviews
+  statuses: write # publish the commit status
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Safe to cancel despite writing a status: every run recomputes the verdict
+  # from live PR state, so letting the newest event win avoids an older run
+  # landing a stale verdict after a newer one.
+  cancel-in-progress: true
+
+jobs:
+  security-signoff:
+    name: Security sign-off
+    # Excluded from the mirror in ci/mirroring/copy.bara.sky; this keeps the job
+    # inert rather than failing every PR if that exclusion ever lapses.
+    if: github.event_name != 'merge_group' && github.repository_owner != 'snowflakedb'
+    # Docker container action, built at run time, so it needs a Docker-capable
+    # runner — not the ubuntu-slim this repo uses for script-only bot jobs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # All inputs left at their defaults; no checkout needed, since the action
+      # reads PR state and the roster through the API.
+      - uses: snowflake-eng/security-signoff-action@v0
+
+  merge-group:
+    name: Security sign-off (merge group)
+    # The verdict is PR-scoped — it reads PR labels and reviews, and a merge
+    # group has neither — so it cannot be recomputed here. Publishing success is
+    # sound because a PR cannot enter the queue until the status is already green
+    # on its head commit.
+    #
+    # Skipping the job instead would not work: a skipped job self-reports as a
+    # check run but posts no commit status, and `security-signoff` is a commit
+    # status, so the context would stay unreported and the entry would time out.
+    if: github.event_name == 'merge_group' && github.repository_owner != 'snowflakedb'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Publish sign-off status for the merge group
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state=success \
+            -f context=security-signoff \
+            -f description='Cleared on the PR head before queueing'

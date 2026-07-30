@@ -328,7 +328,14 @@ class TestRouteException:
         captured_values: list[dict] = []
         conn.errorhandler = lambda c, cur, cls, val: captured_values.append(val)
 
-        exc = ProgrammingError(msg="full test", errno=42, sqlstate="HY000", sfqid="qid-123", query="SELECT 1")
+        exc = ProgrammingError(
+            msg="full test",
+            errno=42,
+            sqlstate="HY000",
+            sfqid="qid-123",
+            query="SELECT 1",
+            request_id="rid-456",
+        )
         with pytest.raises(ProgrammingError):
             route_exception(conn, None, exc)
 
@@ -339,3 +346,4 @@ class TestRouteException:
         assert val["sqlstate"] == "HY000"
         assert val["sfqid"] == "qid-123"
         assert val["query"] == "SELECT 1"
+        assert val["request_id"] == "rid-456"

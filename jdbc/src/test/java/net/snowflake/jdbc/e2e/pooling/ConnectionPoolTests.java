@@ -1,6 +1,7 @@
 package net.snowflake.jdbc.e2e.pooling;
 
 import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
+import static net.snowflake.jdbc.utils.PoolingTestCompat.assertGetConnectionAfterPooledCloseFails;
 import static net.snowflake.jdbc.utils.PoolingTestCompat.assertIsValidFalseOnClosedHandle;
 import static net.snowflake.jdbc.utils.PoolingTestCompat.assertNetworkTimeoutAfterSet;
 import static net.snowflake.jdbc.utils.PoolingTestCompat.assertPhysicalConnectionClosedAfterAbort;
@@ -48,6 +49,8 @@ import javax.sql.ConnectionEvent;
 import javax.sql.ConnectionEventListener;
 import javax.sql.DataSource;
 import javax.sql.PooledConnection;
+import javax.sql.StatementEvent;
+import javax.sql.StatementEventListener;
 import net.snowflake.client.api.pooling.SnowflakeConnectionPoolDataSource;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.pooling.SnowflakePooledConnection;
@@ -62,6 +65,8 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
 
   private static final String TABLE_NAME = "test_pooling_" + PoolingTestResources.SUFFIX;
   private static final String EXPECTED_VALUE = "test_str";
+  // Arbitrary non-default value; only needs to differ from the default (0) to prove the round-trip.
+  private static final int NON_DEFAULT_LOGIN_TIMEOUT_SECONDS = 42;
 
   @Test
   public void shouldBorrowLogicalConnectionAndKeepPhysicalConnectionAliveAfterClose()
@@ -190,6 +195,156 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
       assertEquals(1, resultSet.getInt(1));
     }
     pooledConnection.close();
+  }
+
+  @Test
+  public void shouldRejectBorrowingALogicalConnectionAfterThePooledConnectionIsClosed()
+      throws Exception {
+    // Given Snowflake connection pool data source is configured
+    PooledConnection pooledConnection =
+        trackPooledConnection(createConfiguredPoolDataSource().getPooledConnection());
+
+    // When The pooled connection is closed
+    pooledConnection.close();
+
+    // Universal driver throws CONNECTION_CLOSED; legacy throws NullPointerException (BD#27) - the
+    // compat helper asserts the per-driver failure mode.
+    // Then Borrowing a logical connection should raise connection closed error
+    assertGetConnectionAfterPooledCloseFails(pooledConnection);
+  }
+
+  @Test
+  public void shouldInvalidateThePreviousLogicalConnectionWhenANewOneIsBorrowed() throws Exception {
+    // Given Snowflake connection pool data source is configured
+    PooledConnection pooledConnection =
+        trackPooledConnection(createConfiguredPoolDataSource().getPooledConnection());
+
+    Connection firstLogicalConnection = pooledConnection.getConnection();
+    Connection secondLogicalConnection = null;
+    // The javax.sql.PooledConnection contract allows one active handle: the universal driver
+    // invalidates the prior handle (BD#36). assertThrowsConnectionClosed is a no-op on the legacy
+    // reference driver, which does not enforce single-active-handle.
+    try {
+      assertEquals(1, querySingleInt(firstLogicalConnection, "SELECT 1"));
+
+      // When A second logical connection is borrowed while the first is still open
+      secondLogicalConnection = pooledConnection.getConnection();
+
+      // Then The first logical connection should be invalidated and the second should run queries
+      PoolingTestCompat.assertThrowsConnectionClosed(firstLogicalConnection::createStatement);
+      assertEquals(2, querySingleInt(secondLogicalConnection, "SELECT 2"));
+    } finally {
+      firstLogicalConnection.close();
+      if (secondLogicalConnection != null) {
+        secondLogicalConnection.close();
+      }
+    }
+    pooledConnection.close();
+  }
+
+  @Test
+  public void shouldAcceptStatementEventListenersWithoutFiringStatementEvents() throws Exception {
+    // Given Snowflake connection pool data source is configured
+    PooledConnection pooledConnection =
+        trackPooledConnection(createConfiguredPoolDataSource().getPooledConnection());
+    // And A statement event listener is registered
+    TestStatementListener statementListener = new TestStatementListener();
+    pooledConnection.addStatementEventListener(statementListener);
+
+    try (Connection logicalConnection = pooledConnection.getConnection()) {
+      // When A statement is prepared and executed on a logical connection
+      try (PreparedStatement preparedStatement = logicalConnection.prepareStatement("SELECT 1");
+          ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next());
+        assertEquals(1, resultSet.getInt(1));
+      }
+    }
+
+    // Snowflake does no statement pooling, so statement-event listeners are accepted no-ops on both
+    // drivers (BD#39): a registered listener must never receive a callback.
+    // Then No statement events should be fired and the listener can be removed
+    assertEquals(0, statementListener.closedEvents.size());
+    assertEquals(0, statementListener.errorEvents.size());
+    pooledConnection.removeStatementEventListener(statementListener);
+    pooledConnection.close();
+  }
+
+  @Test
+  public void shouldStopFiringConnectionEventsAfterTheListenerIsRemoved() throws Exception {
+    // Given Snowflake connection pool data source is configured
+    PooledConnection pooledConnection =
+        trackPooledConnection(createConfiguredPoolDataSource().getPooledConnection());
+    // And A connection event listener is registered
+    TestConnectionListener listener = new TestConnectionListener();
+    pooledConnection.addConnectionEventListener(listener);
+
+    // When The listener is removed after one logical connection close and another handle is closed
+    try (Connection firstLogicalConnection = pooledConnection.getConnection()) {
+      assertFalse(firstLogicalConnection.isClosed());
+    }
+    assertEquals(1, listener.closedEvents.size());
+    pooledConnection.removeConnectionEventListener(listener);
+    try (Connection secondLogicalConnection = pooledConnection.getConnection()) {
+      assertFalse(secondLogicalConnection.isClosed());
+    }
+
+    // Then Only the close before removal should be delivered to the listener
+    assertEquals(1, listener.closedEvents.size());
+    pooledConnection.close();
+  }
+
+  @Test
+  public void shouldIsolateConnectionEventListenerExceptionsDuringDispatch() throws Exception {
+    // The universal driver isolates listener exceptions during dispatch (BD#28); the legacy
+    // reference driver aborts dispatch on the first throwing listener, so gate to the universal
+    // driver rather than asserting behavior the legacy driver does not provide.
+    assumeTrue(
+        PoolingTestCompat.isUniversalDriverPooling(),
+        "Listener-isolation dispatch is universal-driver behavior (BD#28)");
+    // Given Snowflake connection pool data source is configured
+    PooledConnection pooledConnection =
+        trackPooledConnection(createConfiguredPoolDataSource().getPooledConnection());
+    // And A failing and a recording connection event listener are registered
+    ConnectionEventListener failingListener =
+        new ConnectionEventListener() {
+          @Override
+          public void connectionClosed(ConnectionEvent event) {
+            throw new RuntimeException("listener failure");
+          }
+
+          @Override
+          public void connectionErrorOccurred(ConnectionEvent event) {
+            throw new RuntimeException("listener failure");
+          }
+        };
+    TestConnectionListener recordingListener = new TestConnectionListener();
+    // Register the failing listener first so its thrown exception would abort dispatch to the
+    // recording listener if exceptions were not isolated.
+    pooledConnection.addConnectionEventListener(failingListener);
+    pooledConnection.addConnectionEventListener(recordingListener);
+
+    // When A logical connection is borrowed and closed
+    try (Connection logicalConnection = pooledConnection.getConnection()) {
+      assertFalse(logicalConnection.isClosed());
+    }
+
+    // Then The recording listener should still receive the connection closed event
+    assertEquals(1, recordingListener.closedEvents.size());
+    pooledConnection.removeConnectionEventListener(failingListener);
+    pooledConnection.removeConnectionEventListener(recordingListener);
+    pooledConnection.close();
+  }
+
+  @Test
+  public void shouldGetAndSetLoginTimeoutOnThePoolDataSource() throws Exception {
+    // Given Snowflake connection pool data source is configured
+    SnowflakeConnectionPoolDataSource poolDataSource = createConfiguredPoolDataSource();
+
+    // When The login timeout is set on the pool data source
+    poolDataSource.setLoginTimeout(NON_DEFAULT_LOGIN_TIMEOUT_SECONDS);
+
+    // Then The login timeout getter should return the configured value
+    assertEquals(NON_DEFAULT_LOGIN_TIMEOUT_SECONDS, poolDataSource.getLoginTimeout());
   }
 
   @Test
@@ -1058,6 +1213,21 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
 
     @Override
     public void connectionErrorOccurred(ConnectionEvent event) {
+      errorEvents.add(event);
+    }
+  }
+
+  static class TestStatementListener implements StatementEventListener {
+    final List<StatementEvent> closedEvents = new ArrayList<>();
+    final List<StatementEvent> errorEvents = new ArrayList<>();
+
+    @Override
+    public void statementClosed(StatementEvent event) {
+      closedEvents.add(event);
+    }
+
+    @Override
+    public void statementErrorOccurred(StatementEvent event) {
       errorEvents.add(event);
     }
   }

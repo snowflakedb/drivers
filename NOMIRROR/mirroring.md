@@ -37,10 +37,13 @@ not. The denylist is intentionally short and reviewable; see the
 A denylist defaults to "public" for new files, which is the opposite of
 what a mirror config typically wants. Two mechanisms compensate:
 
-1. **`_internal/` convention.** Put any new internal-only material
-   under `_internal/` and it is covered by the catch-all entry without
-   touching `EXCLUDED_PATHS`. This is the default home for new internal
-   content; new top-level exclusions should be rare.
+1. **`NOMIRROR/` directory convention.** Put new internal-only material
+   below a directory whose exact name is `NOMIRROR`. Copybara excludes
+   `NOMIRROR/**` at the repository root and `**/NOMIRROR/**` at every
+   nested level, so internal content can live near the code it relates to
+   without recreating that path below one repository-level directory.
+   `NOMIRROR` is a directory name, not a marker file; a file with that name
+   does not cause its siblings or parent directory to be excluded.
 
 2. **ArcticOwl reviewer.** The `universal-driver-mirror-privacy` rule
    (`.ai/review/universal-driver-mirror-privacy.yaml`, status: enabled)
@@ -50,7 +53,7 @@ what a mirror config typically wants. Two mechanisms compensate:
    `*_internal*` / `*_security_assessment*`, AI configs that reference
    internal infrastructure). The rule comments on the PR — it does not
    block merging on its own, but a flag is the reviewer's prompt to
-   move the file under `_internal/`.
+   move the file below a `NOMIRROR/` directory.
 
 The Copybara workflow itself also runs two `verify_match` checks at
 mirror time as a defense-in-depth backstop: any mirrored file that
@@ -61,7 +64,8 @@ the sync.
 `EXCLUDED_PATH_OVERRIDES` re-includes specific files inside an
 otherwise-excluded directory (used today for selected `.cursor/` rules
 and commands). Adding a path to that list publishes the file on the
-next mirror run.
+next mirror run unless it is below a `NOMIRROR/` directory, which cannot
+be overridden.
 
 ### Tokens
 
@@ -82,11 +86,18 @@ The outbound workflow injects `DRIVER_MIRROR_TOKEN` via a URL-scoped
 
 ### Adding internal-only files
 
-Put new internal files under `_internal/`. Nothing else is required —
-the denylist already covers `_internal/**`.
+Put new internal files below a directory whose exact name is `NOMIRROR`.
+Nothing else is required. Both root and nested directories are covered,
+for example:
 
-If the file genuinely cannot live under `_internal/` (a new top-level
-directory required by external tooling, for example), add an entry to
+- `NOMIRROR/mirroring.md`
+- `features/auth/NOMIRROR/oauth.md`
+
+The name is case-sensitive. `nomirror/`, `NoMirror/`, and a marker file
+named `NOMIRROR` do not activate the exclusion.
+
+If the file genuinely cannot live below a `NOMIRROR/` directory (a fixed
+path required by external tooling, for example), add an entry to
 `EXCLUDED_PATHS` in `ci/mirroring/copy.bara.sky` and document the reason inline.
 
 ### Adding files that should be mirrored
@@ -99,14 +110,15 @@ the file or refining the content.
 ### Adding a mirrored file inside an otherwise-excluded directory
 
 Append the path to `EXCLUDED_PATH_OVERRIDES` in `ci/mirroring/copy.bara.sky`. The
-file will be included in the next mirror run.
+file will be included in the next mirror run unless it is below a `NOMIRROR/`
+directory, which is always excluded.
 
 ### Responding to an ArcticOwl mirror-privacy comment
 
 The rule flags content that looks Snowflake-internal in a public path.
 Options:
 
-- The flag is correct → move the file under `_internal/` (or rewrite
+- The flag is correct → move the file below a `NOMIRROR/` directory (or rewrite
   the offending content).
 - The flag is a false positive → reply on the PR comment explaining
   why; the rule is advisory, not blocking.

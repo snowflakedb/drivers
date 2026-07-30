@@ -48,6 +48,7 @@ import net.snowflake.client.internal.api.implementation.parameters.ConnectionOpt
 import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
+import net.snowflake.client.internal.api.implementation.parameters.ParameterValueNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
@@ -164,7 +165,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
             return;
           }
           String keyStr = ParameterKeyNormalizer.normalize((String) key);
-          ConfigSetting configSetting = ConfigSettingFactory.from(value);
+          Object normalizedValue = ParameterValueNormalizer.normalize(keyStr, value);
+          ConfigSetting configSetting = ConfigSettingFactory.from(normalizedValue);
           if (configSetting != null) {
             options.put(keyStr, configSetting);
           }
@@ -266,7 +268,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     try {
       coreDriverApi.connectionClose(connectionHandle);
     } catch (SQLException e) {
-      logger.warn("Error during connection close: {}", e.getMessage());
+      logger.warn("Error during connection close: {}", e.getClass().getName());
       logger.debug("Connection close error details", e);
       throw e;
     } finally {

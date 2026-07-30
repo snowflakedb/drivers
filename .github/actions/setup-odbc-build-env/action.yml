@@ -33,7 +33,7 @@ runs:
         CARGO_TERM_COLOR=always
         CCACHE_DIR=${{ github.workspace }}/.ccache
         CCACHE_BASEDIR=${{ github.workspace }}
-        CCACHE_MAXSIZE=1G
+        CCACHE_MAXSIZE=5G
         CCACHE_SLOPPINESS=include_file_mtime,time_macros,pch_defines,clang_index_store
         CCACHE_COMPILERCHECK=content
         CCACHE_DEPEND=true

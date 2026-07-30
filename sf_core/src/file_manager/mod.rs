@@ -4,6 +4,7 @@ mod encryption;
 mod gcs_transfer;
 mod multipart;
 mod s3_transfer;
+mod spool;
 
 mod path_expansion;
 pub mod types;
@@ -159,25 +160,30 @@ pub use gcs_transfer::{
     GcsDownloadError, GcsUploadError, download_from_gcs, upload_to_gcs_or_skip,
 };
 pub use multipart::{FileTooLargeError, MultipartParams, MultipartThreshold};
+pub(crate) use spool::{SPOOL_MEM_THRESHOLD, SpooledBuffer};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
-use azure_transfer::{download_from_azure_streaming, upload_to_azure_or_skip};
-use cloud_http::{CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo};
+use azure_transfer::{azure_get_streaming, download_from_azure_streaming, upload_to_azure_or_skip};
+use cloud_http::{
+    CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo,
+    spawn_s3_byte_stream_producer,
+};
 use encryption::{
     EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
 };
-use gcs_transfer::{download_from_gcs_streaming, gcs_retry_policy};
+use flate2::write::GzDecoder;
+use gcs_transfer::{download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy};
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{
-    DownloadFileError, S3Download, S3DownloadBody, UploadFileError, download_from_s3,
-    upload_to_s3_or_skip,
+    DownloadFileError, S3Download, S3DownloadBody, S3StreamingDownload, UploadFileError,
+    download_from_s3, download_from_s3_streaming, upload_to_s3_or_skip,
 };
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -188,6 +194,123 @@ use std::sync::Arc;
 /// `Python` flavor leaves the `message` column empty for skipped uploads,
 /// matching the historical universal-driver behaviour.
 const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIPPED";
+
+/// Result of the pre-upload HEAD probe, in cloud-agnostic terms. Each cloud
+/// projects its own HEAD response (or a treated-as-absent error) down to this
+/// shape, so the shared skip decision never depends on a cloud SDK type. The
+/// two-variant shape also makes the illegal state "absent but has a digest"
+/// unrepresentable.
+pub(crate) enum RemoteHead<'a> {
+    /// The object is not present (404, or an error the cloud's policy treats
+    /// as absent — e.g. S3's fail-open-on-403).
+    Absent,
+    /// The object exists. `digest` carries the stored `sfc-digest` metadata
+    /// value iff the HEAD response had a parseable one; `None` when the object
+    /// predates digest tagging or the header was malformed.
+    Present { digest: Option<&'a str> },
+}
+
+/// Outcome of the pre-upload skip check, shared by all three cloud upload
+/// paths. Extracted so the decision is testable independent of each cloud's
+/// HEAD-elision optimization (the elision can hide a missing guard in the
+/// content-match branch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkipDecision {
+    /// The remote object is visible and the caller didn't request overwrite.
+    /// Skip without comparing content — stale stage bytes are preserved.
+    Existence,
+    /// The caller opted into content-match skipping and the remote digest
+    /// equals the local one. Skip the redundant upload; the bytes on stage
+    /// are already what we'd have written.
+    ContentMatch,
+    /// Neither skip applies; upload proceeds.
+    Upload,
+}
+
+/// Whether a pre-upload HEAD is worth issuing. This MUST stay the disjunction
+/// of every condition under which [`classify_pre_upload_skip`] can return a
+/// non-`Upload` decision on a *present* object: existence-skip needs the HEAD
+/// under `!overwrite`, and content-match needs it under
+/// `skip_upload_on_content_match`. Add a third skip trigger and this predicate
+/// has to gain the matching term in lockstep, or a cloud will silently elide a
+/// HEAD it needs. Kept beside the classifier so "when to probe" lives next to
+/// "what the probe means"; every cloud's upload path calls it to decide whether
+/// to run its HEAD.
+pub(crate) fn head_needed(overwrite: bool, skip_upload_on_content_match: bool) -> bool {
+    !overwrite || skip_upload_on_content_match
+}
+
+/// Pure decision: which skip branch (if any) fires. Existence-only is checked
+/// first so a `!overwrite` caller never reaches the content-match branch — a
+/// remote object that exists is treated as authoritative regardless of
+/// digest. A missing remote digest cannot match, so the content branch falls
+/// through to `Upload` in that case.
+///
+/// `remote` is a cloud-agnostic [`RemoteHead`], not a cloud SDK response type,
+/// so the decision stays free of any cloud's HEAD-response shape; each cloud's
+/// call site builds a `RemoteHead` from its own probe result.
+pub(crate) fn classify_pre_upload_skip(
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    remote: &RemoteHead<'_>,
+    local_digest: &str,
+) -> SkipDecision {
+    if !overwrite && matches!(remote, RemoteHead::Present { .. }) {
+        return SkipDecision::Existence;
+    }
+    if overwrite
+        && skip_upload_on_content_match
+        && matches!(remote, RemoteHead::Present { digest: Some(d) } if *d == local_digest)
+    {
+        return SkipDecision::ContentMatch;
+    }
+    SkipDecision::Upload
+}
+
+/// Shared pre-upload skip step: classify, and if a skip fires, log it
+/// (tagged with `cloud`) and return `Skipped`. `None` means proceed to
+/// upload. Each cloud still owns its own HEAD probe and error policy; only
+/// this pure decision + log + return step is shared, removing the per-cloud
+/// triplication of the classify/match/log block.
+pub(crate) fn skip_upload_decision(
+    cloud: LocationType,
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    remote: &RemoteHead<'_>,
+    local_digest: &str,
+    key: &str,
+) -> Option<UploadStatus> {
+    match classify_pre_upload_skip(
+        overwrite,
+        skip_upload_on_content_match,
+        remote,
+        local_digest,
+    ) {
+        SkipDecision::Existence => {
+            tracing::info!("{cloud}: remote object already exists, skipping upload: {key}");
+            Some(UploadStatus::Skipped)
+        }
+        SkipDecision::ContentMatch => {
+            tracing::info!("{cloud}: remote content matches local digest, skipping upload: {key}");
+            Some(UploadStatus::Skipped)
+        }
+        SkipDecision::Upload => None,
+    }
+}
+
+/// Test builder for a minimal [`PreparedUpload`] carrying `digest` — an empty
+/// in-memory payload, no CSE. This is the shape all three clouds' skip tests
+/// need; sharing it here removes the copy-pasted per-cloud builders. The skip
+/// branch returns before the body is streamed, so the empty payload is never
+/// read.
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) fn prepared_upload_with_digest(digest: &str) -> PreparedUpload {
+    PreparedUpload {
+        source: types::PreparedSource::Bytes(bytes::Bytes::new()),
+        digest: digest.to_string(),
+        cse: None,
+    }
+}
 
 /// Bytes read from the source for compression auto-detection. Every
 /// `CompressionType` we currently detect has its magic at offset 0 (gzip 0–1,
@@ -300,11 +423,13 @@ pub async fn upload_in_memory_file(
     upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, refresher).await
 }
 
-/// Shared core of the upload path used by both `upload_single_file` (file
-/// source) and `upload_in_memory_file` (in-memory source). Taking the
-/// `ByteSource` as a parameter lets both callers reuse the same preprocess +
-/// cloud dispatch with no behavior drift.
-async fn upload_prepared_source(
+/// Shared core of the upload path used by `upload_single_file` (file
+/// source), `upload_in_memory_file` (in-memory source), and the chunked
+/// upload stream path (`build_and_upload_stream`, which may pass either a
+/// `ByteSource::Bytes` or a `ByteSource::Path` pointing at a spooled temp
+/// file). Taking the `ByteSource` as a parameter lets every caller reuse the
+/// same preprocess + cloud dispatch with no behavior drift.
+pub(crate) async fn upload_prepared_source(
     source: ByteSource,
     data: SingleUploadData,
     policy: &RetryPolicy,
@@ -328,6 +453,7 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.skip_upload_on_content_match,
             policy,
             data.multipart,
             refresher,
@@ -339,6 +465,7 @@ async fn upload_prepared_source(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.skip_upload_on_content_match,
             data.multipart,
             // Build the policy here, where `using_presigned_url` is known, and
             // pass it by reference so the test seam can inject zero backoff.
@@ -790,8 +917,8 @@ pub async fn download_single_file(
             // the correct implicit parent.
             let spill_dir = output_path
                 .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             // A non-encrypted ranged download assembles straight into `.part`
             // (one rename to publish; any hard-kill leftover is a
             // self-overwriting `.part`). An encrypted (or git-stage) download
@@ -813,6 +940,7 @@ pub async fn download_single_file(
                 policy,
                 data.multipart,
                 refresher,
+                unsafe_file_write,
                 spill_target,
             )
             .await
@@ -940,8 +1068,8 @@ pub async fn download_single_file(
             // output_path has no directory component (a bare filename).
             let spill_dir = output_path
                 .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             // A non-encrypted ranged download assembles straight into `.part`
             // (one rename to publish); an encrypted (or git-stage) download has
             // `encryption_material`, so its ciphertext goes to a temp in
@@ -965,6 +1093,7 @@ pub async fn download_single_file(
                 per_file_index,
                 data.multipart,
                 refresher,
+                unsafe_file_write,
                 spill_target,
             )
             .await
@@ -1044,8 +1173,8 @@ pub async fn download_single_file(
             // case "." is the correct implicit parent.
             let spill_dir = output_path
                 .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
             // A non-encrypted ranged download assembles straight into `.part`
             // (one rename to publish); an encrypted (or git-stage) download has
             // `encryption_material`, so its ciphertext goes to a temp in
@@ -1060,6 +1189,7 @@ pub async fn download_single_file(
                 data.src_location.as_str(),
                 data.multipart,
                 policy,
+                unsafe_file_write,
                 spill_target,
                 refresher,
             )
@@ -1136,11 +1266,365 @@ pub async fn download_single_file(
     })
 }
 
+/// Result of [`open_download_stream_for_stage`]: the chunk channel
+/// `download_stream_chunk` drains, the background producer task, and the
+/// on-cloud byte count from the GET's `Content-Length` (`0` if absent or the
+/// object is empty).
+pub struct DownloadStreamOpen {
+    /// Plaintext chunks, in order. Terminal `Err` is the last item; clean
+    /// EOF is the channel closing, not a final `Ok`.
+    pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, FileManagerError>>,
+    /// The background `spawn_blocking` task draining the cloud body (and,
+    /// in-flight, decrypting/gunzipping it) into `chunks`' sender half.
+    pub task: tokio::task::JoinHandle<()>,
+    /// Abort handle for the *inner* producer task reading the cloud body
+    /// (see `cloud_http::spawn_s3_byte_stream_producer` /
+    /// `spawn_byte_stream_producer`). Aborting `task` alone stops the
+    /// decrypt/gunzip pipeline but leaves this parked on `body.next()` if
+    /// the connection stalled — abort both.
+    pub producer_abort: tokio::task::AbortHandle,
+    pub cloud_byte_count: i64,
+}
+
+/// Opens a zero-disk, chunked streaming download from S3: issues one GET,
+/// then a background task drains and decrypts/gunzips the body into
+/// [`DownloadStreamOpen::chunks`]. Unlike [`download_single_file`]'s S3 arm,
+/// nothing is buffered or spilled to disk beyond a few channel-sized chunks.
+///
+/// Only opening the GET is covered by the STS-refresh retry; once the body
+/// is in hand, a mid-body failure surfaces as a terminal channel error with
+/// no retry and no Range-resume (same tradeoff as GCS/Azure — see
+/// `cloud_http::spawn_s3_byte_stream_producer`).
+pub async fn open_s3_download_stream(
+    stage_info: &StageInfo,
+    src_location: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let S3StreamingDownload {
+        body,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    } = download_from_s3_streaming(stage_info, src_location, policy, refresher)
+        .await
+        .context(S3DownloadSnafu)?;
+
+    let cse_info = match (file_metadata, digest) {
+        (Some(metadata), Some(digest)) => Some(CseDownloadInfo { metadata, digest }),
+        _ => None,
+    };
+    let (reader, producer_abort) = spawn_s3_byte_stream_producer(body);
+
+    Ok(spawn_download_stream_pipeline(
+        reader,
+        producer_abort,
+        encryption_material,
+        cse_info,
+        decompress,
+        cloud_byte_count,
+    ))
+}
+
+/// Opens a zero-disk, chunked streaming download against a GCS-backed stage.
+/// See [`open_s3_download_stream`] for the shared contract; the only
+/// difference is the cloud-specific GET (`download_from_gcs_streaming`).
+pub async fn open_gcs_download_stream(
+    stage_info: &StageInfo,
+    src_location: &str,
+    per_file_presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let using_presigned_url =
+        per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
+    // Zero-disk needs a single unranged, abortable GET. Call
+    // `gcs_get_streaming` directly, not `download_from_gcs_streaming`, which
+    // may route large downloads to a ranged/spilled body that
+    // `open_cloud_download_stream` can't consume.
+    let dl = gcs_get_streaming(
+        stage_info,
+        src_location,
+        per_file_presigned_url,
+        &gcs_retry_policy(using_presigned_url, policy),
+        0,
+        refresher,
+    )
+    .await
+    .context(GcsDownloadSnafu)?;
+
+    open_cloud_download_stream(dl, encryption_material, decompress)
+}
+
+/// Opens a zero-disk, chunked streaming download against an Azure-backed
+/// stage. See [`open_s3_download_stream`] for the shared contract; the only
+/// difference is the cloud-specific GET (`azure_get_streaming`).
+pub async fn open_azure_download_stream(
+    stage_info: &StageInfo,
+    src_location: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let dl = azure_get_streaming(stage_info, src_location, policy, refresher)
+        .await
+        .context(AzureDownloadSnafu)?;
+
+    open_cloud_download_stream(dl, encryption_material, decompress)
+}
+
+/// Shared tail of [`open_gcs_download_stream`] and [`open_azure_download_stream`]:
+/// unwraps a single-GET [`cloud_http::CloudStreamingDownload`] into its
+/// live-network reader and hands off to [`spawn_download_stream_pipeline`].
+///
+/// `body` is always [`cloud_http::CloudDownloadBody::Streamed`] in practice,
+/// since GCS's and Azure's zero-disk GETs never route to a ranged/spilled
+/// body. The `Spilled` case is just a guard against a ranged/spilled
+/// `CloudStreamingDownload` (e.g. Azure's HEAD-routed
+/// `download_from_azure_streaming`) being wired in here by mistake — this
+/// path can't support one.
+fn open_cloud_download_stream(
+    dl: cloud_http::CloudStreamingDownload,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let cloud_http::CloudStreamingDownload {
+        cloud_byte_count,
+        cse_info,
+        body,
+        ..
+    } = dl;
+
+    let cloud_http::CloudDownloadBody::Streamed {
+        reader,
+        producer_abort,
+    } = body
+    else {
+        return Err(io::Error::other(
+            "zero-disk download requires a single-GET streamed body",
+        ))
+        .context(IoSnafu);
+    };
+
+    Ok(spawn_download_stream_pipeline(
+        reader,
+        producer_abort,
+        encryption_material,
+        cse_info,
+        decompress,
+        cloud_byte_count,
+    ))
+}
+
+/// Dispatches to the right cloud's [`open_s3_download_stream`] /
+/// [`open_gcs_download_stream`] / [`open_azure_download_stream`] based on
+/// `stage_info.location_type`. `LocationType` is exhaustive (S3/Gcs/Azure),
+/// so this `match` needs no fallback arm.
+pub async fn open_download_stream_for_stage(
+    stage_info: &StageInfo,
+    src_location: &str,
+    presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    encryption_material: Option<EncryptionMaterial>,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    match stage_info.location_type {
+        LocationType::S3 => {
+            open_s3_download_stream(
+                stage_info,
+                src_location,
+                policy,
+                refresher,
+                encryption_material,
+                decompress,
+            )
+            .await
+        }
+        LocationType::Gcs => {
+            open_gcs_download_stream(
+                stage_info,
+                src_location,
+                presigned_url,
+                policy,
+                refresher,
+                encryption_material,
+                decompress,
+            )
+            .await
+        }
+        LocationType::Azure => {
+            open_azure_download_stream(
+                stage_info,
+                src_location,
+                policy,
+                refresher,
+                encryption_material,
+                decompress,
+            )
+            .await
+        }
+    }
+}
+
+/// Wires a live cloud body into a background `spawn_blocking` decrypt/gunzip
+/// pipeline, returning the [`DownloadStreamOpen`] shared by every
+/// `open_*_download_stream` variant.
+///
+/// Decrypt/gunzip is CPU-bound, so it runs off the async executor. The only
+/// blocking points are the reader's `recv` and the writer's `blocking_send`,
+/// so this task parks instead of spinning when it runs ahead of either end.
+fn spawn_download_stream_pipeline<R: Read + Send + 'static>(
+    reader: R,
+    producer_abort: tokio::task::AbortHandle,
+    encryption_material: Option<EncryptionMaterial>,
+    cse_info: Option<CseDownloadInfo>,
+    decompress: bool,
+    cloud_byte_count: i64,
+) -> DownloadStreamOpen {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, FileManagerError>>(8);
+
+    let error_tx = tx.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        let outcome = run_streaming_download_pipeline(
+            reader,
+            encryption_material,
+            cse_info,
+            decompress,
+            ChannelWriter { tx },
+        );
+        if let Err(e) = outcome {
+            // Consumer already disconnected (e.g. close ran first); nobody
+            // is left to hear about the failure, which is fine.
+            let _ = error_tx.blocking_send(Err(e));
+        }
+        // All Senders drop here, closing the channel — a clean EOF, not an
+        // extra empty chunk.
+    });
+
+    DownloadStreamOpen {
+        chunks: rx,
+        task,
+        producer_abort,
+        cloud_byte_count,
+    }
+}
+
+/// Sync `Write` counterpart to [`cloud_http::StreamReader`], over a bounded
+/// channel of plaintext chunks (or a terminal error). Runs inside
+/// `spawn_blocking`, so `blocking_send` is correct, not `send().await`.
+struct ChannelWriter {
+    tx: tokio::sync::mpsc::Sender<Result<Vec<u8>, FileManagerError>>,
+}
+
+impl Write for ChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.tx
+            .blocking_send(Ok(buf.to_vec()))
+            .map_err(|_| io::Error::other("download stream consumer disconnected"))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Where a streaming download's plaintext goes: straight to `W`, or through
+/// gunzip first. An enum, not `Box<dyn Write>` — `GzDecoder::finish` takes
+/// `self` by value to flush the trailer, which a boxed trait object can't do
+/// (see `code-review-design-discipline.md` #5).
+enum OutputSink<W: Write> {
+    Raw(W),
+    Gunzip(GzDecoder<W>),
+}
+
+impl<W: Write> Write for OutputSink<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            OutputSink::Raw(w) => w.write(buf),
+            OutputSink::Gunzip(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            OutputSink::Raw(w) => w.flush(),
+            OutputSink::Gunzip(w) => w.flush(),
+        }
+    }
+}
+
+impl<W: Write> OutputSink<W> {
+    /// Flushes trailing gunzip state and returns the underlying `W`. No-op for `Raw`.
+    fn finish(self) -> io::Result<W> {
+        match self {
+            OutputSink::Raw(w) => Ok(w),
+            OutputSink::Gunzip(w) => w.finish(),
+        }
+    }
+}
+
+/// Runs the blocking half of a cloud streaming download: reads `reader` to
+/// EOF, optionally decrypting (CSE: `encryption_material` and `cse_info`
+/// both present) and/or gunzipping (`decompress`), writing plaintext into
+/// `output`. Mirrors `write_cloud_download`'s match arms, but writes through
+/// a live channel sink instead of a file. Generic over `R` since the reader
+/// is a live network body for S3, GCS, or Azure.
+fn run_streaming_download_pipeline<R: Read>(
+    mut reader: R,
+    encryption_material: Option<EncryptionMaterial>,
+    cse_info: Option<CseDownloadInfo>,
+    decompress: bool,
+    output: ChannelWriter,
+) -> Result<(), FileManagerError> {
+    let mut sink = if decompress {
+        OutputSink::Gunzip(GzDecoder::new(output))
+    } else {
+        OutputSink::Raw(output)
+    };
+
+    match (encryption_material, cse_info) {
+        // Client-side-encrypted object: decrypt the ciphertext stream,
+        // verifying the SHA-256 digest at finalize time.
+        (Some(enc_material), Some(CseDownloadInfo { metadata, digest })) => {
+            decrypt_ciphertext_to_writer(
+                &mut reader,
+                &metadata,
+                digest.as_str(),
+                &enc_material,
+                &mut sink,
+            )
+            .context(DecryptionSnafu)?;
+        }
+        // `encryption_material` present but no CSE headers (e.g. git-stage
+        // objects — same handling as `download_single_file` /
+        // `write_cloud_download`'s non-streaming path) — stream raw bytes.
+        (maybe_enc, _) => {
+            if maybe_enc.is_some() {
+                tracing::debug!(
+                    "encryption_material present but cloud encryption headers absent; \
+                     streaming raw bytes"
+                );
+            }
+            std::io::copy(&mut reader, &mut sink).context(IoSnafu)?;
+        }
+    }
+
+    sink.finish().context(IoSnafu)?;
+    Ok(())
+}
+
 /// Creates the `.part` output file for a GET download, applying owner-only
 /// permissions (`0o600`) on Unix when `unsafe_file_write` is `false`.
 ///
 /// On Unix with `unsafe_file_write = false`, forces mode `0o600`; otherwise uses the process umask.
-fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
+pub(super) fn create_output_file(path: &Path, unsafe_file_write: bool) -> std::io::Result<File> {
     #[cfg(unix)]
     if !unsafe_file_write {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -1222,7 +1706,7 @@ fn write_cloud_download(
                 CloudDownloadBody::Spilled(CloudSpilledBody::Temp(temp)) => {
                     Ok((cloud_byte_count_hint, Some(temp)))
                 }
-                CloudDownloadBody::Streamed(reader) => {
+                CloudDownloadBody::Streamed { reader, .. } => {
                     let mut output_file =
                         create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
                     let result = std::io::copy(&mut { reader }, &mut output_file)
@@ -1249,7 +1733,7 @@ fn write_cloud_download(
                 unreachable!("Temp spill with no encryption material")
             }
             // Single buffered GET: copy the network stream to disk.
-            CloudDownloadBody::Streamed(reader) => {
+            CloudDownloadBody::Streamed { reader, .. } => {
                 let mut output_file =
                     create_output_file(partial_path, unsafe_file_write).context(IoSnafu)?;
                 let result = std::io::copy(&mut { reader }, &mut output_file)
@@ -1438,6 +1922,100 @@ impl FileManagerError {
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    // ---------------------------------------------------------------
+    // classify_pre_upload_skip — pure decision tests, shared by all three
+    // clouds. Relocated here (from azure_transfer.rs) when the skip decision
+    // was hoisted so every cloud call site could use it (SNOW-3715266).
+    //
+    // These bypass each cloud's HEAD-elision optimization entirely, so a
+    // guard regression fails here even when the higher-level wiremock
+    // scenarios in azure_transfer.rs / s3_transfer.rs / gcs_transfer.rs still
+    // pass — e.g. the overwrite=true, skip_match=false, remote-digest-matches
+    // case is UNREACHABLE through any `upload_to_*_or_skip` because HEAD is
+    // elided in that configuration (`head_needed = !overwrite || skip_match`).
+    // ---------------------------------------------------------------
+
+    /// Mutation guard: dropping `skip_upload_on_content_match &&` from the
+    /// content branch flips this to `ContentMatch` and the assertion fails.
+    #[test]
+    fn classify_does_not_fire_content_branch_without_opt_in() {
+        let decision = classify_pre_upload_skip(
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &RemoteHead::Present {
+                digest: Some("abc"),
+            },
+            "abc",
+        );
+        assert_eq!(
+            decision,
+            SkipDecision::Upload,
+            "content-match must require the opt-in flag"
+        );
+    }
+
+    /// Positive control: the same digest match WITH the flag set fires.
+    #[test]
+    fn classify_fires_content_branch_with_opt_in() {
+        let decision = classify_pre_upload_skip(
+            true,
+            true,
+            &RemoteHead::Present {
+                digest: Some("abc"),
+            },
+            "abc",
+        );
+        assert_eq!(decision, SkipDecision::ContentMatch);
+    }
+
+    /// Existence wins over content-match when `!overwrite`: a remote object
+    /// that exists is treated as authoritative, digest comparison is skipped.
+    #[test]
+    fn classify_existence_wins_under_no_overwrite() {
+        let decision = classify_pre_upload_skip(
+            false,
+            true,
+            &RemoteHead::Present {
+                digest: Some("abc"),
+            },
+            "abc",
+        );
+        assert_eq!(decision, SkipDecision::Existence);
+    }
+
+    /// `!overwrite` with no remote means upload — the object doesn't exist
+    /// yet. Common first-upload path.
+    #[test]
+    fn classify_uploads_when_remote_absent_under_no_overwrite() {
+        let decision = classify_pre_upload_skip(false, false, &RemoteHead::Absent, "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    /// `overwrite && skip_match && remote present but digest absent` — the
+    /// HEAD returned 200 but no digest metadata header. Cannot compare, so
+    /// upload runs (fail-open at the comparison site).
+    #[test]
+    fn classify_uploads_when_remote_digest_missing() {
+        let decision =
+            classify_pre_upload_skip(true, true, &RemoteHead::Present { digest: None }, "abc");
+        assert_eq!(decision, SkipDecision::Upload);
+    }
+
+    /// `overwrite && skip_match && remote digest differs` — the racing
+    /// uploader had different content; we must overwrite, not skip.
+    #[test]
+    fn classify_uploads_when_digests_differ() {
+        let decision = classify_pre_upload_skip(
+            true,
+            true,
+            &RemoteHead::Present {
+                digest: Some("xyz"),
+            },
+            "abc",
+        );
+        assert_eq!(decision, SkipDecision::Upload);
+    }
 
     #[cfg(unix)]
     #[test]
@@ -2333,10 +2911,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.bin");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(&data)
-            .unwrap();
+        File::create(&path).unwrap().write_all(&data).unwrap();
 
         let (prefix, size) =
             read_prefix_and_size(&ByteSource::Path(path)).expect("read_prefix_and_size");
@@ -2449,8 +3024,8 @@ mod tests {
             region: "us-east-1".to_string(),
             creds: CloudCredentials::S3 {
                 aws_key_id: String::new(),
-                aws_secret_key: crate::sensitive::SensitiveString::from(String::new()),
-                aws_token: crate::sensitive::SensitiveString::from(String::new()),
+                aws_secret_key: SensitiveString::from(String::new()),
+                aws_token: SensitiveString::from(String::new()),
             },
             endpoint: None,
             presigned_url: None,
@@ -2501,8 +3076,7 @@ mod tests {
             .unwrap();
 
         let real_digest =
-            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
-                .expect("digest");
+            compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into())).expect("digest");
 
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
@@ -2555,9 +3129,7 @@ mod tests {
         };
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
-        let policy = crate::config::retry::RetryPolicy::put_get(
-            &crate::config::param_store::ParamStore::new(),
-        );
+        let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
         upload_single_file(data, &policy, &mut refresher)
             .await
             .expect("upload_single_file should succeed against the mock")
@@ -2584,10 +3156,21 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // S3 / GCS scope pin: skip_upload_on_content_match is Azure-only
-    // per gap-5 findings. These tests assert current no-op behaviour.
-    // If a future change wires the flag for S3 or GCS, update findings.md
-    // (cross-cloud parity scope) and this test deliberately.
+    // S3 / GCS scope pin: skip_upload_on_content_match cross-cloud
+    // coverage.
+    //
+    // SNOW-3715266 made the opt-in content-match skip uniform across all
+    // three clouds (S3, Azure, GCS): under
+    // `overwrite=true && skip_upload_on_content_match=true` with a matching
+    // remote `sfc-digest`, the upload returns Skipped without re-uploading;
+    // with the flag off it re-uploads regardless (the legacy-Python parity
+    // the ticket restored for GCS). The `content_match_skip_fires_for_*`
+    // and `content_match_skip_does_not_fire_for_*_without_opt_in` pairs
+    // below drive that through the full `upload_single_file` dispatch path
+    // (end-to-end, not just the lower-level wiremock tests in
+    // `s3_transfer.rs` / `gcs_transfer.rs`) so a regression in the dispatch
+    // wiring (e.g. dropping the flag from a `LocationType` match arm) is
+    // caught here too.
     // ---------------------------------------------------------------
 
     fn write_local_payload(content: &[u8]) -> tempfile::NamedTempFile {
@@ -2647,22 +3230,60 @@ mod tests {
         }
     }
 
-    /// Pin: under `overwrite=true && skip_match=true`, S3 must NOT issue a
-    /// HEAD probe (it doesn't read the flag). A regression where S3 begins
-    /// honoring the flag would issue HEAD for digest comparison; this test
-    /// catches that drift via `Mock::given(method("HEAD")).expect(0)`.
-    ///
-    /// No GCS sibling test: PR #57 (SNOW-3406389) made GCS issue HEAD
-    /// unconditionally (the `upload_to_gcs_or_skip` signature drops the
-    /// `skip_upload_on_content_match` kwarg entirely; HEAD fires whether
-    /// the flag is set or not). Cross-cloud picture is therefore: S3
-    /// no-ops the kwarg (this test), Azure honors it (azure_transfer.rs
-    /// tests), GCS unconditionally probes (gcs_transfer.rs tests, layer
-    /// below dispatch). S3 remains the only "no-op" cloud worth pinning
-    /// here; tracked as a follow-up (S3 HEAD fail-OPEN clobber +
-    /// skip-match parity).
+    /// End-to-end (dispatch-level) pin for SNOW-3715266: under
+    /// `overwrite=true && skip_upload_on_content_match=true`, when the
+    /// remote object's `sfc-digest` metadata already matches the local
+    /// digest, S3 must short-circuit to `Skipped` without ever issuing the
+    /// PUT — driven through the full `upload_single_file` dispatch path
+    /// (not just the lower-level `s3_transfer.rs` unit tests), so the
+    /// `LocationType::S3` match arm wiring the flag through stays honest.
     #[tokio::test(flavor = "multi_thread")]
-    async fn skip_upload_on_content_match_is_no_op_on_s3() {
+    async fn content_match_skip_fires_for_s3() {
+        let payload = b"hello-s3-content-match";
+        let real_digest =
+            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
+                .expect("digest");
+
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-amz-meta-sfc-digest", real_digest.as_str()),
+            )
+            .mount(&mock)
+            .await;
+        // Load-bearing: skip must fire (no PutObject) for this path.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(payload);
+        let mut data =
+            single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
+        // Set the flag explicitly (rather than leaning on the builder default)
+        // so this pin stays meaningful if that default ever changes — mirrors
+        // the companion `..._without_opt_in` test.
+        data.skip_upload_on_content_match = true;
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let result = upload_single_file(data, &policy, &mut refresher)
+            .await
+            .expect("S3 upload should succeed against the mock");
+        assert_eq!(result.status, "SKIPPED");
+    }
+
+    /// Companion pin: with `skip_upload_on_content_match=false` (default),
+    /// S3 must upload even though `overwrite=true` and the remote object
+    /// exists — the opt-in flag, not mere existence, gates the S3
+    /// content-match branch (the opt-in semantics now shared by all three
+    /// clouds).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_does_not_fire_for_s3_without_opt_in() {
         let mock = MockServer::start().await;
         Mock::given(method("HEAD"))
             .respond_with(ResponseTemplate::new(200))
@@ -2676,8 +3297,50 @@ mod tests {
             .await;
 
         let tmp = write_local_payload(b"hello-s3-no-op");
-        let data =
+        let mut data =
             single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
+        data.skip_upload_on_content_match = false;
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
+        let result = upload_single_file(data, &policy, &mut refresher)
+            .await
+            .expect("S3 upload should succeed against the mock");
+        assert_eq!(result.status, "UPLOADED");
+    }
+
+    /// End-to-end (dispatch-level) pin for SNOW-3715266: GCS now honors the
+    /// opt-in flag exactly like S3/Azure. Under
+    /// `overwrite=true && skip_upload_on_content_match=true` with a matching
+    /// remote `x-goog-meta-sfc-digest`, GCS must short-circuit to `Skipped`
+    /// without issuing the PUT — driven through the full `upload_single_file`
+    /// dispatch path so the `LocationType::Gcs` arm wiring the flag through
+    /// stays honest.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_fires_for_gcs() {
+        let payload = b"hello-gcs-content-match";
+        let real_digest =
+            encryption::compute_sha256_digest(&ByteSource::Bytes(payload.to_vec().into()))
+                .expect("digest");
+
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-goog-meta-sfc-digest", real_digest.as_str()),
+            )
+            .mount(&mock)
+            .await;
+        // Load-bearing: skip must fire (no PUT) for this path.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(payload);
+        let data =
+            single_upload_data_for(LocationType::Gcs, &mock.uri(), tmp.path().to_str().unwrap());
 
         let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
         let policy = crate::config::retry::RetryPolicy::put_get(
@@ -2685,7 +3348,44 @@ mod tests {
         );
         let result = upload_single_file(data, &policy, &mut refresher)
             .await
-            .expect("S3 upload should succeed against the mock");
+            .expect("GCS upload should succeed against the mock");
+        assert_eq!(result.status, "SKIPPED");
+    }
+
+    /// Companion pin (the core SNOW-3715266 regression): with
+    /// `skip_upload_on_content_match=false` (default) and `overwrite=true`,
+    /// GCS re-uploads. What this proves is that the `LocationType::Gcs`
+    /// dispatch arm threads the flag through, so `head_needed` is false and
+    /// the content-match skip is elided — pinned by the `HEAD .expect(0)` +
+    /// `PUT .expect(1)` mocks (no digest is mounted, fetched, or compared).
+    /// GCS previously skipped here unconditionally, diverging from legacy
+    /// Python; this pins the restored parity.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_match_skip_does_not_fire_for_gcs_without_opt_in() {
+        let mock = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let tmp = write_local_payload(b"hello-gcs-no-op");
+        let mut data =
+            single_upload_data_for(LocationType::Gcs, &mock.uri(), tmp.path().to_str().unwrap());
+        data.skip_upload_on_content_match = false;
+
+        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let result = upload_single_file(data, &policy, &mut refresher)
+            .await
+            .expect("GCS upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");
     }
 }
