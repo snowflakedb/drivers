@@ -8,9 +8,9 @@ import javax.sql.DataSource;
  * Snowflake-specific extension of {@link DataSource} that provides configuration methods for
  * Snowflake JDBC connections.
  *
- * <p>The setter surface is limited to parameters supported by sf_core (see {@code
- * BehaviorDifferences.yaml} BD#31). Legacy JDBC DataSource setters without a core parameter are
- * intentionally not ported.
+ * <p>The setter surface covers sf_core connection parameters plus JDBC client-side knobs the
+ * wrapper already honors (see {@code BehaviorDifferences.yaml} BD#31). Legacy DataSource setters
+ * without a corresponding parameter remain intentionally unported.
  *
  * <p>Use {@link SnowflakeDataSourceFactory} to create instances of this interface.
  */
@@ -101,6 +101,22 @@ public interface SnowflakeDataSource extends DataSource {
   void setDiagnosticsAllowlistFile(String diagnosticsAllowlistFile);
 
   void setBrowserResponseTimeout(int browserResponseTimeoutSeconds);
+
+  void setTracing(String tracing);
+
+  void setEnablePatternSearch(boolean enablePatternSearch);
+
+  /**
+   * Controls whether scale-0 FIXED/DECIMAL columns are treated as integer types.
+   *
+   * <p>Stores {@code JDBC_TREAT_DECIMAL_AS_INT} (the parameter the universal driver reads). Legacy
+   * snowflake-jdbc stored {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT} instead.
+   */
+  void setArrowTreatDecimalAsInt(boolean treatDecimalAsInt);
+
+  void setJDBCDefaultFormatDateWithTimezone(Boolean jdbcDefaultFormatDateWithTimezone);
+
+  void setGetDateUseNullTimezone(Boolean getDateUseNullTimezone);
 
   String getUrl();
 

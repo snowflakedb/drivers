@@ -536,7 +536,24 @@ public class SnowflakeBasicDataSourceTest {
         Arguments.of(
             "browser_response_timeout",
             "60",
-            (DataSourceConfigurer) ds -> ds.setBrowserResponseTimeout(60)));
+            (DataSourceConfigurer) ds -> ds.setBrowserResponseTimeout(60)),
+        Arguments.of("tracing", "FINE", (DataSourceConfigurer) ds -> ds.setTracing("FINE")),
+        Arguments.of(
+            "enablePatternSearch",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setEnablePatternSearch(false)),
+        Arguments.of(
+            "JDBC_TREAT_DECIMAL_AS_INT",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setArrowTreatDecimalAsInt(false)),
+        Arguments.of(
+            "JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setJDBCDefaultFormatDateWithTimezone(false)),
+        Arguments.of(
+            "JDBC_GET_DATE_USE_NULL_TIMEZONE",
+            "false",
+            (DataSourceConfigurer) ds -> ds.setGetDateUseNullTimezone(false)));
   }
 
   @ParameterizedTest

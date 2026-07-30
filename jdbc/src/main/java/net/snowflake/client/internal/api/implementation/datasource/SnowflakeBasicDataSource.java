@@ -16,6 +16,8 @@ import java.util.Properties;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 import net.snowflake.client.api.datasource.SnowflakeDataSource;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
+import net.snowflake.client.internal.api.implementation.parameters.Property;
 import net.snowflake.client.internal.api.implementation.parameters.SessionProperty;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -394,21 +396,52 @@ public class SnowflakeBasicDataSource
     setProperty(SessionProperty.BROWSER_RESPONSE_TIMEOUT, browserResponseTimeoutSeconds);
   }
 
+  @Override
+  public void setTracing(String tracing) {
+    setProperty(Parameter.TRACING, tracing);
+  }
+
+  @Override
+  public void setEnablePatternSearch(boolean enablePatternSearch) {
+    setProperty(Parameter.ENABLE_PATTERN_SEARCH, enablePatternSearch);
+  }
+
+  @Override
+  public void setArrowTreatDecimalAsInt(boolean treatDecimalAsInt) {
+    setProperty(Parameter.JDBC_TREAT_DECIMAL_AS_INT, treatDecimalAsInt);
+  }
+
+  @Override
+  public void setJDBCDefaultFormatDateWithTimezone(Boolean jdbcDefaultFormatDateWithTimezone) {
+    setProperty(
+        Parameter.JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE, jdbcDefaultFormatDateWithTimezone);
+  }
+
+  @Override
+  public void setGetDateUseNullTimezone(Boolean getDateUseNullTimezone) {
+    setProperty(Parameter.JDBC_GET_DATE_USE_NULL_TIMEZONE, getDateUseNullTimezone);
+  }
+
   // Legacy snowflake-jdbc stores string setters via Properties.put, which rejects null values
   // with NullPointerException; match that contract rather than treating null as "clear".
-  private void setProperty(SessionProperty property, String value) {
+  private void setProperty(Property property, String value) {
     this.properties.setProperty(property.getKey(), value);
   }
 
-  private void setProperty(SessionProperty property, boolean value) {
+  private void setProperty(Property property, boolean value) {
     this.properties.setProperty(property.getKey(), Boolean.toString(value));
   }
 
-  private void setProperty(SessionProperty property, int value) {
+  private void setProperty(Property property, Boolean value) {
+    // Unbox so a null Boolean NPEs like legacy Properties.put(null) / Boolean unboxing.
+    setProperty(property, value.booleanValue());
+  }
+
+  private void setProperty(Property property, int value) {
     this.properties.setProperty(property.getKey(), Integer.toString(value));
   }
 
-  private void clearProperty(SessionProperty property) {
+  private void clearProperty(Property property) {
     this.properties.remove(property.getKey());
   }
 

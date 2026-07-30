@@ -561,11 +561,14 @@ behavior_differences:
     impact: medium
     status_rationale: |
       Legacy snowflake-jdbc exposes 50+ DataSource setters on SnowflakeBasicDataSource and
-      SnowflakeConnectionPoolDataSource, including client-side JDBC knobs (tracing, OCSP,
-      PUT/GET toggles, useProxy, HttpHeadersCustomizer, etc.) that sf_core does not consume.
-      The universal driver keeps setters whose values sf_core understands at connect time and
-      drops the rest rather than storing silent no-ops. Wired setters are normalized and
-      forwarded at connect time. OCSP and HttpHeadersCustomizer are covered by BD#46 and BD#43.
+      SnowflakeConnectionPoolDataSource, including client-side JDBC knobs that sf_core does not
+      consume. The universal driver keeps setters whose values are either understood by sf_core
+      at connect time or honored by the JDBC wrapper (e.g. tracing, enablePatternSearch,
+      JDBC_TREAT_DECIMAL_AS_INT via setArrowTreatDecimalAsInt, JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE,
+      JDBC_GET_DATE_USE_NULL_TIMEZONE) and drops the rest rather than storing silent no-ops.
+      Wired setters are normalized and forwarded at connect time. OCSP and HttpHeadersCustomizer
+      are covered by BD#46 and BD#43. Note setArrowTreatDecimalAsInt writes JDBC_TREAT_DECIMAL_AS_INT
+      (not legacy JDBC_ARROW_TREAT_DECIMAL_AS_INT).
   32:
     name: "setClientInfo failures no longer fire connectionErrorOccurred"
     status: allowed
