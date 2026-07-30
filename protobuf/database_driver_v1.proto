@@ -582,24 +582,6 @@ message ConnectionAbortQueryResponse {
   AbortQueryOutcome outcome = 1;
 }
 
-// Streaming PUT: upload an in-memory byte buffer using a PUT SQL statement.
-// Backs JDBC `uploadStream` and Python `cursor.execute(file_stream=…)`.
-message ConnectionUploadStreamRequest {
-  ConnectionHandle conn_handle = 1;
-  // The PUT SQL statement. Must begin with PUT and reference a `file://`
-  // path whose basename is used as the destination filename in the stage.
-  string sql = 2;
-  // Raw bytes to upload. The caller has already drained the source stream.
-  bytes data = 3;
-}
-
-// Mirrors `ResultSetResponse`: a PUT-shaped result set (handle + descriptor),
-// so the caller can read the standard 8-column PUT rowset.
-message ConnectionUploadStreamResponse {
-  ResultSetHandle result_set_handle = 1;
-  ResultSetDescriptor result_descriptor = 2;
-}
-
 // Handle for a chunked upload stream session opened by
 // ConnectionUploadStreamBegin. Opaque outside sf_core, same shape as the
 // other handle types.
@@ -637,10 +619,9 @@ message ConnectionUploadStreamChunkRequest {
 message ConnectionUploadStreamChunkResponse {}
 
 // Chunked streaming PUT, part 3/3: closes the session, reassembles the
-// buffered chunks into a re-readable source, and runs the PUT exactly as
-// ConnectionUploadStream does. Mirrors `ResultSetResponse`: a PUT-shaped
-// result set (handle + descriptor), so the caller can read the standard
-// 8-column PUT rowset.
+// buffered chunks into a re-readable source, and runs the PUT. Mirrors
+// `ResultSetResponse`: a PUT-shaped result set (handle + descriptor), so the
+// caller can read the standard 8-column PUT rowset.
 message ConnectionUploadStreamFinishRequest {
   UploadStreamHandle upload_handle = 1;
 }
@@ -659,21 +640,6 @@ message ConnectionUploadStreamAbortRequest {
 
 message ConnectionUploadStreamAbortResponse {}
 
-// Streaming GET: download a file from a stage and return its bytes. Backs
-// JDBC `downloadStream`.
-message ConnectionDownloadStreamRequest {
-  ConnectionHandle conn_handle = 1;
-  string stage_name = 2;
-  string source_filename = 3;
-  // When true, the core gunzips the downloaded bytes before returning
-  // (opt-in; the bytes are returned verbatim otherwise).
-  bool decompress = 4;
-}
-
-message ConnectionDownloadStreamResponse {
-  bytes data = 1;
-}
-
 // Handle for a chunked download stream session opened by
 // ConnectionDownloadStreamBegin. Opaque outside sf_core, same shape as the
 // other handle types.
@@ -686,8 +652,7 @@ message DownloadStreamHandle {
 // session that streams the file from cloud storage without ever landing the
 // whole file on local disk or fully buffering it in memory. The core keeps
 // only a small bounded window of bytes in flight regardless of file size.
-// S3-backed stages only in this RPC generation; other cloud providers return
-// an error (use ConnectionDownloadStream for those in the meantime).
+// Supports S3, GCS, and Azure-backed stages.
 message ConnectionDownloadStreamBeginRequest {
   ConnectionHandle conn_handle = 1;
   string stage_name = 2;
@@ -1106,19 +1071,15 @@ service DatabaseDriver {
   // Abort a running query by Snowflake Query ID
   rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
   // Streaming PUT (upload bytes) / GET (download to bytes) from a stage.
-  // ConnectionUploadStream buffers the whole source before uploading; kept
-  // for JDBC, which has not yet migrated to the chunked RPCs below.
-  rpc ConnectionUploadStream(ConnectionUploadStreamRequest) returns (ConnectionUploadStreamResponse);
   // Chunked streaming PUT: begin a session, feed it chunks, then finish (or
   // abort). Bounds wrapper memory to ~one chunk regardless of source size.
   rpc ConnectionUploadStreamBegin(ConnectionUploadStreamBeginRequest) returns (ConnectionUploadStreamBeginResponse);
   rpc ConnectionUploadStreamChunk(ConnectionUploadStreamChunkRequest) returns (ConnectionUploadStreamChunkResponse);
   rpc ConnectionUploadStreamFinish(ConnectionUploadStreamFinishRequest) returns (ConnectionUploadStreamFinishResponse);
   rpc ConnectionUploadStreamAbort(ConnectionUploadStreamAbortRequest) returns (ConnectionUploadStreamAbortResponse);
-  rpc ConnectionDownloadStream(ConnectionDownloadStreamRequest) returns (ConnectionDownloadStreamResponse);
   // Chunked streaming GET: begin a session, pull chunks, then close.
-  // Zero-disk, bounded-memory streaming download. S3-backed stages only;
-  // begin fails for other providers pending a future PR.
+  // Zero-disk, bounded-memory streaming download. Supports S3, GCS, and
+  // Azure-backed stages.
   rpc ConnectionDownloadStreamBegin(ConnectionDownloadStreamBeginRequest) returns (ConnectionDownloadStreamBeginResponse);
   rpc ConnectionDownloadStreamChunk(ConnectionDownloadStreamChunkRequest) returns (ConnectionDownloadStreamChunkResponse);
   rpc ConnectionDownloadStreamClose(ConnectionDownloadStreamCloseRequest) returns (ConnectionDownloadStreamCloseResponse);

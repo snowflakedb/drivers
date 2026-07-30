@@ -540,39 +540,62 @@ impl SnowflakeTestClient {
             .status_name
     }
 
-    /// Streaming PUT: upload `data` using `sql` (JDBC `uploadStream` / Python
-    /// `file_stream` path). Returns the PUT-shaped result set handle + descriptor.
-    pub fn connection_upload_stream(
-        &self,
-        sql: &str,
-        data: Vec<u8>,
-    ) -> Result<ConnectionUploadStreamResponse, String> {
-        self.client
-            .connection_upload_stream_blocking(ConnectionUploadStreamRequest {
-                conn_handle: Some(self.conn_handle),
-                sql: sql.to_string(),
-                data,
-            })
-            .map_err(|e| format!("{e:?}"))
-    }
-
     /// Streaming GET: download `source_filename` from `stage_name` (JDBC
-    /// `downloadStream` path), optionally gunzipping. Returns the raw bytes.
-    pub fn connection_download_stream(
+    /// `downloadStream` path), optionally gunzipping. Drives the chunked
+    /// `ConnectionDownloadStream{Begin,Chunk,Close}` RPCs to completion —
+    /// begin the session, pull chunks until `eof`, then close — mirroring
+    /// how a production wrapper consumes this API. Returns the raw bytes.
+    pub fn download_stream(
         &self,
         stage_name: &str,
         source_filename: &str,
         decompress: bool,
     ) -> Result<Vec<u8>, String> {
-        self.client
-            .connection_download_stream_blocking(ConnectionDownloadStreamRequest {
+        let begin = self
+            .client
+            .connection_download_stream_begin_blocking(ConnectionDownloadStreamBeginRequest {
                 conn_handle: Some(self.conn_handle),
                 stage_name: stage_name.to_string(),
                 source_filename: source_filename.to_string(),
                 decompress,
             })
-            .map(|resp| resp.data)
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        let download_handle = begin.download_handle;
+
+        let mut bytes = Vec::new();
+        // Pull chunks, capturing the outcome instead of `?`-returning early: a
+        // chunk failure must still fall through to the close RPC below so the
+        // server-side download session is always released (no leak on error).
+        let pump_result = loop {
+            match self.client.connection_download_stream_chunk_blocking(
+                ConnectionDownloadStreamChunkRequest {
+                    download_handle,
+                    max_len: 8 * 1024 * 1024,
+                },
+            ) {
+                Ok(chunk) => {
+                    bytes.extend_from_slice(&chunk.data);
+                    if chunk.eof {
+                        break Ok(());
+                    }
+                }
+                Err(e) => break Err(format!("{e:?}")),
+            }
+        };
+
+        // Always close, even if a chunk failed, then surface the first error
+        // (chunk error takes precedence over a close error).
+        let close_result = self
+            .client
+            .connection_download_stream_close_blocking(ConnectionDownloadStreamCloseRequest {
+                download_handle,
+            })
+            .map_err(|e| format!("{e:?}"));
+
+        pump_result?;
+        close_result?;
+
+        Ok(bytes)
     }
 
     pub fn result_set_get_stream(&self, rs_handle: &ResultSetHandle) -> ResultSetGetStreamResponse {

@@ -150,9 +150,8 @@ pub(super) async fn perform_put_get_transfer(
 /// stage described by a GS PUT response, returning a single-row
 /// `RowsetData::Upload`. Mirrors the UPLOAD arm of [`perform_put_get_transfer`]
 /// but sources the data from `payload` instead of expanding a local glob —
-/// backs `connection_upload_stream` and the chunked
-/// `connection_upload_stream_{begin,chunk,finish}` RPCs (JDBC `uploadStream`,
-/// Python `file_stream`).
+/// backs the chunked `connection_upload_stream_{begin,chunk,finish}` RPCs
+/// (JDBC `uploadStream`, Python `file_stream`).
 ///
 /// The destination filename is the basename of the PUT command's `file://`
 /// token (echoed back by GS as `src_location_pattern`); auto-compress,
@@ -223,8 +222,8 @@ pub(super) async fn build_and_upload_stream(
     Ok(RowsetData::Upload(vec![result]))
 }
 
-/// Builds the stage-info refresher used by `connection_download_stream`.
-/// Exposed so `stream_transfer.rs` can drive a streaming GET with the same
+/// Builds the stage-info refresher used by `download_stream_begin`. Exposed
+/// so `stream_transfer.rs` can drive a streaming GET with the same
 /// cred/URL-refresh machinery as the file-path path, without re-exposing the
 /// private `SnowflakeStageInfoRefresher` type.
 pub(super) fn stream_stage_info_refresher(

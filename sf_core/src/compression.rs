@@ -63,22 +63,6 @@ pub fn compress_to_tempfile(source: &ByteSource) -> Result<(PathBuf, TempPath), 
     Ok((temp_path.to_path_buf(), temp_path))
 }
 
-/// Gunzips an in-memory gzip buffer, returning the decompressed bytes. Used by
-/// the streaming GET path (`connection_download_stream`) when the caller opts
-/// into `decompress`. Buffers the full output in heap — acceptable because the
-/// streaming-download API already returns the file as a `Vec<u8>`.
-pub fn decompress_data(input_data: &[u8]) -> Result<Vec<u8>, CompressionError> {
-    use flate2::bufread::GzDecoder;
-    let mut decoder = GzDecoder::new(input_data);
-    let mut decompressed_data = Vec::new();
-    decoder
-        .read_to_end(&mut decompressed_data)
-        .context(IoFailedSnafu {
-            operation: "decompressing gzip data",
-        })?;
-    Ok(decompressed_data)
-}
-
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum CompressionError {
     #[snafu(display("I/O error during {operation}"))]
@@ -99,11 +83,24 @@ mod tests {
         std::fs::read(path).expect("read compressed tempfile")
     }
 
+    /// Test-only gunzip: `compress_to_tempfile` is the only production
+    /// compression entry point left in this module (the streaming GET path
+    /// now decompresses inline via `open_*_download_stream`), so round-trip
+    /// coverage here inflates the compressed tempfile itself rather than
+    /// calling back into production code.
+    fn gunzip(compressed: &[u8]) -> Vec<u8> {
+        use flate2::bufread::GzDecoder;
+        let mut decoder = GzDecoder::new(compressed);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).expect("gunzip");
+        decompressed
+    }
+
     fn roundtrip(payload: &[u8]) {
         let (path, _guard) = compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()))
             .expect("compress bytes");
         let compressed = read_compressed(&path);
-        let decompressed = decompress_data(&compressed).expect("decompress");
+        let decompressed = gunzip(&compressed);
         assert_eq!(
             decompressed,
             payload,
@@ -146,7 +143,7 @@ mod tests {
         let (path, _guard) =
             compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf())).expect("compress");
         let compressed = read_compressed(&path);
-        let decompressed = decompress_data(&compressed).expect("decompress");
+        let decompressed = gunzip(&compressed);
         assert_eq!(decompressed, payload);
     }
 

@@ -1,23 +1,22 @@
 //! Connection-level streaming file transfer handlers.
 //!
-//! Backs `ConnectionUploadStream` / the chunked `ConnectionUploadStream{Begin,
-//! Chunk,Finish,Abort}` RPCs (JDBC `uploadStream`, Python `file_stream`) and
-//! `ConnectionDownloadStream` (JDBC `downloadStream`).
+//! Backs the chunked `ConnectionUploadStream{Begin,Chunk,Finish,Abort}` and
+//! `ConnectionDownloadStream{Begin,Chunk,Close}` RPCs (JDBC `uploadStream` /
+//! `downloadStream`, Python `file_stream`).
 //!
-//! Upload contract: bytes arrive whole (`ConnectionUploadStream`) or in
-//! chunks (`ConnectionUploadStreamChunk`); either way we reassemble them into
-//! a re-readable [`file_manager::ByteSource`] — in memory, or spooled to a
-//! temp file past [`file_manager::SpooledBuffer`]'s threshold — then run the
-//! PUT through the normal file-transfer path (`build_and_upload_stream` →
-//! `upload_prepared_source`). Deliberate store-and-forward tradeoff: the
-//! whole payload lands on local disk before upload starts (no incremental
-//! progress, and needs disk headroom roughly equal to the payload size past
-//! the spool threshold), in exchange for digest/retry/CSE/auto-compress/
-//! multipart for free by reusing the file-path PUT pipeline — matching JDBC's
-//! `FileBackedOutputStream` reference. Genuinely-streaming multipart upload
-//! is a possible future follow-up, not implemented here. The caller shapes
-//! the SQL (AUTO_COMPRESS, OVERWRITE, etc.); we only require it to start with
-//! PUT.
+//! Upload contract: the caller's bytes arrive via `ConnectionUploadStreamChunk`
+//! and the core reassembles them into a re-readable [`file_manager::ByteSource`]
+//! — in memory, or spooled to a temp file past [`file_manager::SpooledBuffer`]'s
+//! threshold — then runs the PUT through the normal file-transfer path
+//! (`build_and_upload_stream` → `upload_prepared_source`). Deliberate
+//! store-and-forward tradeoff: the whole payload lands on local disk before
+//! upload starts (no incremental progress, and needs disk headroom roughly
+//! equal to the payload size past the spool threshold), in exchange for
+//! digest/retry/CSE/auto-compress/multipart for free by reusing the file-path
+//! PUT pipeline — matching JDBC's `FileBackedOutputStream` reference.
+//! Genuinely-streaming multipart upload is a possible future follow-up, not
+//! implemented here. The caller shapes the SQL (AUTO_COMPRESS, OVERWRITE,
+//! etc.); we only require it to start with PUT.
 //!
 //! Chunked RPCs only round-trip to GS in `connection_upload_stream_finish`:
 //! `begin` validates the SQL and opens a session, `chunk` appends to that
@@ -30,12 +29,6 @@
 //! download's tasks. Only the graceful-close path is covered — a session on
 //! a connection that's never closed leaks until process exit; see
 //! `TODO(SNOW-3704961)` in `connection::cleanup_connection`.
-//!
-//! Download contract (whole-file, `connection_download_stream`): synthesizes
-//! a GET SQL against a tempdir, runs `download_single_file`, reads the file
-//! back, optionally gunzips, and returns all the bytes at once. Nothing
-//! reaches the caller until the file is decrypted (if CSE) and its digest
-//! verified — a tampered file never reaches the caller.
 //!
 //! Download contract (chunked, `download_stream_{begin,chunk,close}`):
 //! `download_stream_begin` opens a zero-disk streaming GET against cloud
@@ -70,9 +63,7 @@ use super::query::{StageInfoRefreshContext, build_and_upload_stream, stream_stag
 use super::result_set::{ResultSetInfo, resolve_reader_ctx, response_to_descriptor};
 use super::statement::{query_context, skip_leading_whitespace_and_comments};
 use crate::config::rest_parameters::QueryParameters;
-use crate::file_manager::{
-    self, ByteSource, SPOOL_MEM_THRESHOLD, SingleDownloadData, SpooledBuffer, download_single_file,
-};
+use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
     QueryExecutionMode, QueryInput, RestError, query_response, snowflake_query_with_client,
@@ -145,19 +136,6 @@ pub(super) struct DownloadStream {
 }
 
 impl DatabaseDriverV1 {
-    /// Executes a PUT SQL with already-drained `data` as the upload source.
-    /// Kept for callers not yet on the chunked RPCs (JDBC still uses this).
-    /// Delegates to [`Self::run_put_stream_via_gs`].
-    pub async fn connection_upload_stream(
-        &self,
-        conn_handle: Handle,
-        sql: String,
-        data: Vec<u8>,
-    ) -> Result<ResultSetInfo, ApiError> {
-        self.run_put_stream_via_gs(conn_handle, sql, ByteSource::Bytes(data.into()))
-            .await
-    }
-
     /// Begins a chunked upload: validates `sql` is a PUT statement and opens
     /// a session that `connection_upload_stream_chunk` appends to. Does not
     /// round-trip to GS — that happens once, in
@@ -270,7 +248,7 @@ impl DatabaseDriverV1 {
     /// Shared core: runs `sql` (a PUT) through GS for stage credentials +
     /// encryption material, then uploads `source` via the normal
     /// file-transfer path. Returns a `ResultSetInfo` shaped like a normal
-    /// PUT's. Used by both `connection_upload_stream` and
+    /// PUT's. Used by
     /// `connection_upload_stream_finish`.
     pub(super) async fn run_put_stream_via_gs(
         &self,
@@ -363,162 +341,11 @@ impl DatabaseDriverV1 {
         .await
     }
 
-    /// Download a file from a stage and return its bytes (optionally gunzipped).
-    /// See module docs for the contract.
-    pub async fn connection_download_stream(
-        &self,
-        conn_handle: Handle,
-        stage_name: &str,
-        source_filename: &str,
-        decompress: bool,
-    ) -> Result<Vec<u8>, ApiError> {
-        let session_id = self.session_id_for_conn(conn_handle).await;
-        async {
-            let conn_ptr = self
-                .connections
-                .get_obj(conn_handle)
-                .context(InvalidArgumentSnafu {
-                    argument: "Connection handle not found",
-                })?;
-
-            let stage_path = build_stage_path(stage_name, source_filename);
-            let tmp_dir = tempfile::tempdir().map_err(|e| {
-                InvalidArgumentSnafu {
-                    argument: format!("Failed to create temp directory: {e}"),
-                }
-                .build()
-            })?;
-            // GET syntax does not support parameterized bindings for stage paths
-            // or local locations; stage_name and source_filename are caller-supplied
-            // (mirroring the file-path GET), and the local dir is internally
-            // generated by tempfile::tempdir().
-            let get_sql = build_get_sql(&stage_path, tmp_dir.path());
-
-            let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
-
-            let response = run_sql_against_gs(
-                &conn_ptr,
-                &http_client,
-                &query_parameters,
-                &retry_policy,
-                get_sql.clone(),
-            )
-            .await?;
-
-            let (use_s3_regional_url, unsafe_file_write) = {
-                let conn = conn_ptr.lock().await;
-                let unsafe_file_write = conn.unsafe_file_write();
-                let use_s3_regional_url = conn.use_s3_regional_url_session_param().await;
-                (use_s3_regional_url, unsafe_file_write)
-            };
-
-            let resolved = resolve_download_target(
-                response,
-                self.wrapper_presets.put_get_resultset_flavor.clone(),
-                use_s3_regional_url,
-                unsafe_file_write,
-                source_filename,
-            )?;
-
-            let refresh_ctx = StageInfoRefreshContext {
-                sql: get_sql,
-                query_parameters,
-                conn: conn_ptr.clone(),
-            };
-            let mut refresher = stream_stage_info_refresher(refresh_ctx, resolved.initial_snapshot);
-
-            let put_get_policy = {
-                let conn = conn_ptr.lock().await;
-                crate::config::retry::RetryPolicy::put_get(&conn.connection_seed)
-            };
-
-            let single_download = SingleDownloadData {
-                src_location: resolved.src_location,
-                local_location: tmp_dir.path().to_str().unwrap_or("/tmp").to_string(),
-                stage_info: resolved.stage_info,
-                encryption_material: resolved.encryption_material,
-                presigned_url: resolved.presigned_url,
-                flavor: resolved.flavor,
-                multipart: resolved.multipart,
-                unsafe_file_write: resolved.unsafe_file_write,
-            };
-
-            let mut refresher_dyn: Option<&mut dyn file_manager::StageInfoRefresher> =
-                Some(&mut refresher);
-            download_single_file(single_download, &put_get_policy, 0, &mut refresher_dyn)
-                .await
-                .map_err(|e| {
-                    InvalidArgumentSnafu {
-                        argument: format!("Download failed: {e}"),
-                    }
-                    .build()
-                })?;
-
-            // The downloaded file lives at `<tmp_dir>/<basename(source_filename)>`.
-            // Read the first regular file we find — there will be exactly one.
-            // `read_dir`, the file read, and the (CPU-bound) gzip inflate are all
-            // blocking and the payload can be arbitrarily large, so run the whole
-            // post-download step on the blocking pool rather than the async
-            // executor thread.
-            let dir_path = tmp_dir.path().to_path_buf();
-            let raw_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ApiError> {
-                let path = std::fs::read_dir(&dir_path)
-                    .map_err(|e| {
-                        InvalidArgumentSnafu {
-                            argument: format!("Failed to read temp directory: {e}"),
-                        }
-                        .build()
-                    })?
-                    .next()
-                    .and_then(|r| r.ok())
-                    .map(|e| e.path())
-                    .ok_or_else(|| {
-                        InvalidArgumentSnafu {
-                            argument: "Downloaded file not found in temp directory".to_string(),
-                        }
-                        .build()
-                    })?;
-                let bytes = std::fs::read(&path).map_err(|e| {
-                    InvalidArgumentSnafu {
-                        argument: format!("Failed to read downloaded file: {e}"),
-                    }
-                    .build()
-                })?;
-                if decompress {
-                    crate::compression::decompress_data(&bytes).map_err(|e| {
-                        InvalidArgumentSnafu {
-                            argument: format!("Decompression failed: {e}"),
-                        }
-                        .build()
-                    })
-                } else {
-                    Ok(bytes)
-                }
-            })
-            .await
-            .map_err(|e| {
-                InvalidArgumentSnafu {
-                    argument: format!("Download post-processing task failed: {e}"),
-                }
-                .build()
-            })??;
-            drop(tmp_dir);
-
-            Ok(raw_bytes)
-        }
-        .instrument(crate::snowflake_op_span!(
-            "connection_download_stream",
-            session_id
-        ))
-        .await
-    }
-
     /// Begins a chunked, zero-disk download: resolves `stage_name` +
-    /// `source_filename` against GS like `connection_download_stream`, but
-    /// opens a streaming GET against cloud storage instead of writing to a
-    /// tempdir, and registers a session for `download_stream_chunk` to drain.
-    /// Dispatches on the stage's `location_type` (S3/GCS/Azure) via
-    /// `file_manager::open_download_stream_for_stage`.
+    /// `source_filename` against GS, but opens a streaming GET against cloud
+    /// storage instead of writing to a tempdir, and registers a session for
+    /// `download_stream_chunk` to drain. Dispatches on the stage's
+    /// `location_type` (S3/GCS/Azure) via `file_manager::open_download_stream_for_stage`.
     ///
     /// Returns the new handle plus the on-cloud byte count
     /// (pre-decompression), if the cloud response reported one.
@@ -789,8 +616,7 @@ async fn run_sql_against_gs(
     }
 }
 
-/// Everything both download entry points (`connection_download_stream`,
-/// `download_stream_begin`) need to fetch a file, resolved once by
+/// Everything `download_stream_begin` needs to fetch a file, resolved once by
 /// [`resolve_download_target`] instead of duplicating GS-response parsing.
 #[derive(Debug)]
 struct ResolvedDownload {
@@ -798,18 +624,14 @@ struct ResolvedDownload {
     stage_info: file_manager::StageInfo,
     encryption_material: Option<file_manager::EncryptionMaterial>,
     presigned_url: Option<String>,
-    flavor: PutGetResultsetFlavor,
-    multipart: file_manager::MultipartParams,
-    unsafe_file_write: bool,
     initial_snapshot: file_manager::StageInfoSnapshot,
 }
 
 /// Parses a GET's GS `response` into a [`ResolvedDownload`]: rejects a
 /// server-side failure, then picks out the source location and stage
 /// credentials (always a single file, per the current one-file-per-GET
-/// design). Shared by `connection_download_stream` and
-/// `download_stream_begin`; callers fetch `use_s3_regional_url`/
-/// `unsafe_file_write` themselves before calling in.
+/// design). Used by `download_stream_begin`; callers fetch
+/// `use_s3_regional_url`/`unsafe_file_write` themselves before calling in.
 fn resolve_download_target(
     response: query_response::Response,
     flavor: PutGetResultsetFlavor,
@@ -866,9 +688,6 @@ fn resolve_download_target(
             .next()
             .flatten(),
         presigned_url: download_data.presigned_urls.into_iter().next().flatten(),
-        flavor: download_data.flavor,
-        multipart: download_data.multipart,
-        unsafe_file_write: download_data.unsafe_file_write,
         initial_snapshot,
     })
 }
