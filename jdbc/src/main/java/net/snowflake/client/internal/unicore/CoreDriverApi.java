@@ -8,7 +8,9 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Confi
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCommitResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamBeginResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamChunkResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
@@ -26,7 +28,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamAbortResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamBeginResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamChunkResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamFinishResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseDatabaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUseSchemaResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseFetchChunkResponse;
@@ -34,6 +39,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
@@ -51,6 +57,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TokenRequestType;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 
 public interface CoreDriverApi {
@@ -173,19 +180,58 @@ public interface CoreDriverApi {
   // Stream-based file transfer (gap 4)
 
   /**
-   * Execute a PUT SQL using caller-supplied in-memory bytes as the upload source. The wrapper
-   * synthesizes the PUT SQL (including AUTO_COMPRESS / OVERWRITE clauses); core executes it against
-   * GS, then substitutes {@code data} for the file that would normally be read from disk.
+   * Begins a chunked upload: registers the PUT SQL (including AUTO_COMPRESS / OVERWRITE clauses,
+   * already synthesized by the wrapper) with core, which does not contact GS until {@link
+   * #connectionUploadStreamFinish}. Bounds wrapper memory to ~one chunk regardless of source size.
    */
-  ConnectionUploadStreamResponse connectionUploadStream(
-      ConnectionHandle connHandle, String sql, byte[] data) throws SQLException;
+  ConnectionUploadStreamBeginResponse connectionUploadStreamBegin(
+      ConnectionHandle connHandle, String sql) throws SQLException;
 
   /**
-   * Download a single file from a stage and return its bytes (optionally gunzipped). Core
-   * synthesizes the GET SQL internally because the GET protocol requires a local destination path
-   * that is meaningless across the JNI boundary.
+   * Appends one chunk of the upload source to the session opened by {@link
+   * #connectionUploadStreamBegin}. Only {@code data[offset, offset + length)} is sent — callers
+   * with a reusable read buffer do not need to trim it into a fresh array first.
    */
-  ConnectionDownloadStreamResponse connectionDownloadStream(
+  ConnectionUploadStreamChunkResponse connectionUploadStreamChunk(
+      UploadStreamHandle uploadHandle, byte[] data, int offset, int length) throws SQLException;
+
+  /**
+   * Finishes a chunked upload: closes the session, reassembles the buffered chunks, and runs the
+   * PUT exactly as a file-path PUT would.
+   */
+  ConnectionUploadStreamFinishResponse connectionUploadStreamFinish(UploadStreamHandle uploadHandle)
+      throws SQLException;
+
+  /**
+   * Aborts a chunked upload without running the PUT (e.g. the caller's source stream failed
+   * mid-read). Any buffered bytes are discarded.
+   */
+  ConnectionUploadStreamAbortResponse connectionUploadStreamAbort(UploadStreamHandle uploadHandle)
+      throws SQLException;
+
+  /**
+   * Begins a chunked, zero-disk download: resolves {@code stageName} + {@code sourceFilename}
+   * against GS and opens a streaming GET directly against cloud storage. Core synthesizes the GET
+   * SQL internally because the GET protocol requires a local destination path that is meaningless
+   * across the JNI boundary.
+   */
+  ConnectionDownloadStreamBeginResponse connectionDownloadStreamBegin(
       ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
       throws SQLException;
+
+  /**
+   * Pulls up to {@code maxLen} bytes from the session opened by {@link
+   * #connectionDownloadStreamBegin}. The response's {@code eof} flag is set once the producer has
+   * finished and no more bytes remain.
+   */
+  ConnectionDownloadStreamChunkResponse connectionDownloadStreamChunk(
+      DownloadStreamHandle downloadHandle, long maxLen) throws SQLException;
+
+  /**
+   * Closes the session opened by {@link #connectionDownloadStreamBegin}, aborting the in-flight
+   * download if it has not already finished. Safe to call after eof, or early (e.g. the caller's
+   * consumer failed mid-read).
+   */
+  ConnectionDownloadStreamCloseResponse connectionDownloadStreamClose(
+      DownloadStreamHandle downloadHandle) throws SQLException;
 }
