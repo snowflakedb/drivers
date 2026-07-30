@@ -43,8 +43,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetStmtAttr: SQL_ROWSET_SIZE = 0 coe
     REQUIRE(ret == SQL_SUCCESS);
     // The new driver clamps the invalid 0 to 1 (matching SQL_ATTR_ROW_ARRAY_SIZE); the
     // reference driver stores 0 unchanged.
-    NEW_DRIVER_ONLY("BD#103") { REQUIRE(rowset_size == 1); }
-    OLD_DRIVER_ONLY("BD#103") { REQUIRE(rowset_size == 0); }
+    NEW_DRIVER_ONLY("BD#102") { REQUIRE(rowset_size == 1); }
+    OLD_DRIVER_ONLY("BD#102") { REQUIRE(rowset_size == 0); }
   } else {
     // The DM (unixODBC) validated and rejected the invalid value before the driver.
     REQUIRE(ret == SQL_ERROR);

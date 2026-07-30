@@ -1816,8 +1816,7 @@ behavior_differences:
     description: |
       Analogous to the CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY session-parameter forwarding
       difference (BD#57). The e2e test query/query_tag.cpp asserts both drivers via NEW_DRIVER_ONLY("BD#101") and OLD_DRIVER_ONLY("BD#101").
-
-  103:
+  102:
     name: "SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) coerces to 1 instead of storing 0"
     status: allowed
     type: bugfix
@@ -1833,6 +1832,4 @@ behavior_differences:
       SQLGetStmtAttr(SQL_ROWSET_SIZE) returns 1. The coercion is silent (no 01S02 posted).
     description: |
       SQL_ROWSET_SIZE (ODBC 2.x, attr 9) drives SQLExtendedFetch. A rowset size of 0 is invalid;
-      the new driver normalizes it to 1 for consistency with SQL_ATTR_ROW_ARRAY_SIZE. The odbc-api
-      test driver_attributes/set_stmt_attr_tests.cpp asserts both drivers via
-      NEW_DRIVER_ONLY("BD#103") and OLD_DRIVER_ONLY("BD#103").
+      the new driver normalizes it to 1 for consistency with SQL_ATTR_ROW_ARRAY_SIZE.
