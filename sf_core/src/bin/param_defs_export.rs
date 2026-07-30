@@ -189,6 +189,17 @@ fn is_statement_only(scopes: &[ParamScope]) -> bool {
     !scopes.contains(&ParamScope::Connection) && !scopes.contains(&ParamScope::Session)
 }
 
+/// ODBC-only params (legacy PUT_FASTFAIL/GET_FASTFAIL) excluded from the
+/// generated Python `ConnectionConfig` — Python never exposed them, though
+/// they stay in `PARAM_DEFS` for ODBC's connection-string pipeline.
+const PYTHON_EXCLUDED_PARAMS: &[&str] = &["put_fastfail", "get_fastfail"];
+
+/// Whether `canonical` is intentionally excluded from the generated Python
+/// `ConnectionConfig` (see [`PYTHON_EXCLUDED_PARAMS`]).
+fn is_python_excluded(canonical: &str) -> bool {
+    PYTHON_EXCLUDED_PARAMS.contains(&canonical)
+}
+
 // ---------------------------------------------------------------------------
 // Code generation
 // ---------------------------------------------------------------------------
@@ -248,7 +259,7 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     for p in sorted_params.iter().copied() {
         // Skip statement-only params; they belong on the cursor, not the connection.
         // (A param that is also session/connection-scoped still appears here.)
-        if is_statement_only(p.scopes) {
+        if is_statement_only(p.scopes) || is_python_excluded(p.canonical_name) {
             continue;
         }
 
@@ -297,7 +308,7 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     for p in sorted_params.iter().copied() {
         // Skip statement-only params; they belong on the cursor, not the connection.
         // (A param that is also session/connection-scoped still appears here.)
-        if is_statement_only(p.scopes) {
+        if is_statement_only(p.scopes) || is_python_excluded(p.canonical_name) {
             continue;
         }
 

@@ -448,6 +448,11 @@ impl DatabaseDriverV1 {
             .settings
             .get_bool(param_names::SKIP_UPLOAD_ON_CONTENT_MATCH)
             .unwrap_or(false);
+        // `PUT_FASTFAIL`/`GET_FASTFAIL` have no registry default, so this is `None`
+        // unless set on the statement. Session/connection value and the wrapper
+        // preset are applied later in `extract_rowset_data`, once `conn` is locked.
+        let put_fastfail = stmt.settings.get_bool(param_names::PUT_FASTFAIL);
+        let get_fastfail = stmt.settings.get_bool(param_names::GET_FASTFAIL);
         drop(stmt);
 
         let data = response.data;
@@ -461,6 +466,8 @@ impl DatabaseDriverV1 {
                 data,
                 Some((query, query_parameters)),
                 skip_upload_on_content_match,
+                put_fastfail,
+                get_fastfail,
             )
             .await?;
         let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
@@ -480,6 +487,8 @@ impl DatabaseDriverV1 {
         data: query_response::Data,
         refresh_sql: Option<(String, QueryParameters)>,
         skip_upload_on_content_match: bool,
+        put_fastfail_override: Option<bool>,
+        get_fastfail_override: Option<bool>,
     ) -> Result<query_response::RowsetData, ApiError> {
         match data.command.as_deref() {
             Some(command) => {
@@ -498,6 +507,8 @@ impl DatabaseDriverV1 {
                     use_s3_regional_url_session_param,
                     unsafe_file_write,
                     tls_config,
+                    put_fastfail,
+                    get_fastfail,
                 ) = {
                     let conn = conn.lock().await;
                     (
@@ -505,6 +516,13 @@ impl DatabaseDriverV1 {
                         conn.use_s3_regional_url_session_param().await,
                         conn.unsafe_file_write(),
                         conn.tls_config(),
+                        // precedence: statement setting > session override > connection seed > wrapper preset
+                        put_fastfail_override
+                            .or_else(|| conn.put_fastfail())
+                            .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
+                        get_fastfail_override
+                            .or_else(|| conn.get_fastfail())
+                            .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
                     )
                 };
                 perform_put_get_transfer(
@@ -515,6 +533,8 @@ impl DatabaseDriverV1 {
                     stage_info_refresh_context,
                     use_s3_regional_url_session_param,
                     skip_upload_on_content_match,
+                    put_fastfail,
+                    get_fastfail,
                     unsafe_file_write,
                     tls_config,
                     self.crl_worker.clone(),
@@ -650,11 +670,12 @@ impl DatabaseDriverV1 {
                 }
                 None => None,
             };
-            // PUT/GET is routed to Blocking dispatch by `is_file_transfer`, so
-            // this async result-fetch path is not normally reached for file
-            // transfers; pass skip_upload_on_content_match=false defensively.
+            // PUT/GET routes to Blocking dispatch (`is_file_transfer`), so this async
+            // path rarely runs for file transfers; skip_upload_on_content_match is
+            // defensively false. No `Statement` here for a per-statement override, so
+            // pass `None` — `extract_rowset_data` falls back to connection/session, then wrapper preset.
             let rowset_data = self
-                .extract_rowset_data(&conn_ptr, data, refresh_sql, false)
+                .extract_rowset_data(&conn_ptr, data, refresh_sql, false, None, None)
                 .await?;
             let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
