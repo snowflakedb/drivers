@@ -1564,26 +1564,12 @@ pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> s
     result.to_sql_code()
 }
 
-/// # Safety
-/// This function is called by the ODBC driver manager.
-///
-/// `SQLEndTran` commits or rolls back the open transaction. It accepts
-/// **SQL_HANDLE_DBC** (the connection) and **SQL_HANDLE_ENV** (every
-/// connection on the environment). **SQL_HANDLE_STMT** / **SQL_HANDLE_DESC**
-/// are rejected with SQLSTATE HY092; a null handle returns
-/// `SQL_INVALID_HANDLE`; an invalid completion type yields HY012 (posted by
-/// `end_tran`/`end_tran_env`).
-#[unsafe(no_mangle)]
-pub unsafe extern "system" fn SQLEndTran(
+/// Shared dispatch for `SQLEndTran` and `SQLTransact`.
+unsafe fn end_tran_dispatch(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     completion_type: sql::SmallInt,
 ) -> sql::RetCode {
-    set_dispatch!();
-    record_api!(handle_type, handle, "SQLEndTran");
-    if handle.is_null() {
-        return sql::SqlReturn::INVALID_HANDLE.0;
-    }
     match handle_type {
         sql::HandleType::Dbc => {
             api::diagnostic::clear_diag_info(handle_type, handle);
@@ -1613,6 +1599,56 @@ pub unsafe extern "system" fn SQLEndTran(
         _ => sql::SqlReturn::INVALID_HANDLE.0,
     }
 }
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+///
+/// `SQLEndTran` commits or rolls back the open transaction. It accepts
+/// **SQL_HANDLE_DBC** (the connection) and **SQL_HANDLE_ENV** (every
+/// connection on the environment). **SQL_HANDLE_STMT** / **SQL_HANDLE_DESC**
+/// are rejected with SQLSTATE HY092; a null handle returns
+/// `SQL_INVALID_HANDLE`; an invalid completion type yields HY012 (posted by
+/// `end_tran`/`end_tran_env`).
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLEndTran(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    completion_type: sql::SmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(handle_type, handle, "SQLEndTran");
+    if handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    end_tran_dispatch(handle_type, handle, completion_type)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+///
+/// ODBC 2.x transaction terminator. When `ConnectionHandle` is not
+/// `SQL_NULL_HDBC`, behaves as `SQLEndTran(SQL_HANDLE_DBC, ConnectionHandle,
+/// CompletionType)`; otherwise behaves as `SQLEndTran(SQL_HANDLE_ENV,
+/// EnvironmentHandle, CompletionType)`. Returns `SQL_INVALID_HANDLE` when both
+/// handles are null.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLTransact(
+    environment_handle: sql::Handle,
+    connection_handle: sql::Handle,
+    completion_type: sql::USmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    let (handle_type, handle) = if !connection_handle.is_null() {
+        (sql::HandleType::Dbc, connection_handle)
+    } else if !environment_handle.is_null() {
+        (sql::HandleType::Env, environment_handle)
+    } else {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    };
+    record_api!(handle_type, handle, "SQLTransact");
+    end_tran_dispatch(handle_type, handle, completion_type as sql::SmallInt)
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
