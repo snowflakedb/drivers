@@ -279,30 +279,101 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
 // ---------------------------------------------------------------------------
 // PR-2 streaming round-trip: encrypt → mock cloud server → streaming decrypt
 //
-// Both GCS and Azure go through `cloud_http::spawn_byte_stream_producer` and
-// the same sync-channel bridge into the sync decryptor. The wire-level
-// metadata-header names differ, but the body bytes round-trip identically.
-// We share one fixture and run it twice, once per `Cloud` flavour, so an
-// Azure regression in this layer can't masquerade as "the GCS test still
-// passes".
+// Every cloud goes through `spawn_download_stream_pipeline` and the same
+// sync-channel bridge into the sync decryptor; only the producer (S3's
+// AWS-SDK `ByteStream` vs. GCS/Azure's reqwest body) and the wire-level
+// metadata-header names differ, while the body bytes round-trip identically.
+// The `Cloud` flavour drives both the mock's CSE metadata headers
+// (`insert_cse_headers`) and the `StageInfo` shape (`cloud_stage`), so one
+// fixture can run once per cloud and an Azure regression in this layer can't
+// masquerade as "the S3/GCS test still passes".
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug)]
 enum Cloud {
+    S3,
     Gcs,
     Azure,
 }
 
+/// Inserts the Azure-format `encryptiondata` JSON blob plus digest/matdesc
+/// headers shared by GCS and Azure — only the meta-header prefixes differ
+/// between the two clouds.
+fn insert_blob_cse_headers(
+    tpl: wiremock::ResponseTemplate,
+    enc_meta: &EncryptedFileMetadata,
+    digest: &str,
+    h_digest: &str,
+    h_enc: &str,
+    h_mat: &str,
+) -> wiremock::ResponseTemplate {
+    let enc_data_json = serde_json::json!({
+        "EncryptionMode": "FullBlob",
+        "WrappedContentKey": {
+            "KeyId": "symmKey1",
+            "EncryptedKey": enc_meta.encrypted_key,
+            "Algorithm": "AES_CBC_256"
+        },
+        "EncryptionAgent": {
+            "Protocol": "1.0",
+            "EncryptionAlgorithm": "AES_CBC_256"
+        },
+        "ContentEncryptionIV": enc_meta.iv,
+        "KeyWrappingMetadata": {
+            "EncryptionLibrary": "Rust(OpenSSL)"
+        }
+    });
+    let mat_desc_json = serde_json::json!({
+        "queryId": enc_meta.material_desc.query_id,
+        "smkId":   enc_meta.material_desc.smk_id,
+        "keySize": "256"
+    });
+    tpl.insert_header(h_digest, digest)
+        .insert_header(h_enc, enc_data_json.to_string().as_str())
+        .insert_header(h_mat, mat_desc_json.to_string().as_str())
+}
+
 impl Cloud {
-    /// (digest header, encryption-data header, mat-desc header).
-    fn meta_headers(self) -> (&'static str, &'static str, &'static str) {
+    /// The object/blob name used in the mock GET. For GCS this must match the
+    /// `presigned_url` suffix built in [`cloud_stage`].
+    fn src_location(self) -> &'static str {
         match self {
-            Cloud::Gcs => (
+            Cloud::S3 => "cse-object",
+            Cloud::Gcs => "gcs-object",
+            Cloud::Azure => "azure-blob",
+        }
+    }
+
+    /// Inserts this cloud's client-side-encryption metadata headers onto a
+    /// mock response. S3 carries key/iv/matdesc as discrete `x-amz-meta-*`
+    /// headers; GCS and Azure carry an Azure-format `encryptiondata` JSON blob
+    /// under their respective meta-header prefixes.
+    fn insert_cse_headers(
+        self,
+        tpl: wiremock::ResponseTemplate,
+        enc_meta: &EncryptedFileMetadata,
+        digest: &str,
+    ) -> wiremock::ResponseTemplate {
+        match self {
+            Cloud::S3 => {
+                let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
+                tpl.insert_header("x-amz-meta-sfc-digest", digest)
+                    .insert_header("x-amz-meta-x-amz-matdesc", mat_desc_json.as_str())
+                    .insert_header("x-amz-meta-x-amz-key", enc_meta.encrypted_key.as_str())
+                    .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str())
+            }
+            Cloud::Gcs => insert_blob_cse_headers(
+                tpl,
+                enc_meta,
+                digest,
                 "x-goog-meta-sfc-digest",
                 "x-goog-meta-encryptiondata",
                 "x-goog-meta-matdesc",
             ),
-            Cloud::Azure => (
+            Cloud::Azure => insert_blob_cse_headers(
+                tpl,
+                enc_meta,
+                digest,
                 "x-ms-meta-sfcdigest",
                 "x-ms-meta-encryptiondata",
                 "x-ms-meta-matdesc",
@@ -327,59 +398,39 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
     // --- 2. Start a mock cloud server that serves the ciphertext ---
     let server = MockServer::start().await;
 
-    let enc_data_json = serde_json::json!({
-        "EncryptionMode": "FullBlob",
-        "WrappedContentKey": {
-            "KeyId": "symmKey1",
-            "EncryptedKey": enc_meta.encrypted_key,
-            "Algorithm": "AES_CBC_256"
-        },
-        "EncryptionAgent": {
-            "Protocol": "1.0",
-            "EncryptionAlgorithm": "AES_CBC_256"
-        },
-        "ContentEncryptionIV": enc_meta.iv,
-        "KeyWrappingMetadata": {
-            "EncryptionLibrary": "Rust(OpenSSL)"
-        }
-    });
-    let mat_desc_json = serde_json::json!({
-        "queryId": enc_meta.material_desc.query_id,
-        "smkId":   enc_meta.material_desc.smk_id,
-        "keySize": "256"
-    });
-
-    let (h_digest, h_enc, h_mat) = cloud.meta_headers();
     let cipher_len = ciphertext.len();
     // Azure HEADs the blob first (Get Blob Properties) for size + metadata, so
     // mock it with the metadata headers and a Content-Length-bearing body. GCS
     // never HEADs, so this mock is harmless on that path.
     Mock::given(method("HEAD"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_bytes(vec![0u8; cipher_len])
-                .insert_header(h_digest, digest.as_str())
-                .insert_header(h_enc, enc_data_json.to_string().as_str())
-                .insert_header(h_mat, mat_desc_json.to_string().as_str()),
-        )
+        .respond_with(cloud.insert_cse_headers(
+            ResponseTemplate::new(200).set_body_bytes(vec![0u8; cipher_len]),
+            &enc_meta,
+            &digest,
+        ))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_bytes(ciphertext)
-                .insert_header(h_digest, digest.as_str())
-                .insert_header(h_enc, enc_data_json.to_string().as_str())
-                .insert_header(h_mat, mat_desc_json.to_string().as_str()),
-        )
+        .respond_with(cloud.insert_cse_headers(
+            ResponseTemplate::new(200).set_body_bytes(ciphertext),
+            &enc_meta,
+            &digest,
+        ))
         .mount(&server)
         .await;
 
     // --- 3. Build a stage that points at the mock server and download ---
     // GCS uses `presigned_url`; Azure uses `endpoint` (an `http://`-prefixed
     // value triggers the test-friendly direct-URL branch in
-    // `build_azure_url`).
+    // `build_azure_url`). S3 has no place here: this fixture exercises the
+    // lower-level reqwest `download_from_{gcs,azure}_streaming` API, whereas
+    // S3's streaming download is an AWS-SDK `ByteStream` (covered through the
+    // shared pipeline in `open_download_stream_for_stage_s3_cse_roundtrip`).
     let dl = match cloud {
+        Cloud::S3 => unreachable!(
+            "streaming_roundtrip_for is GCS/Azure-only; S3 uses the AWS-SDK \
+             ByteStream path — see open_download_stream_for_stage_s3_cse_roundtrip"
+        ),
         Cloud::Gcs => {
             let stage = StageInfo {
                 location_type: LocationType::Gcs,
@@ -526,20 +577,29 @@ async fn azure_streaming_bytes_source_encrypt_decrypt_roundtrip() {
 // (hyper) flags the truncated body as an error, which propagates out of the
 // `StreamReader`.
 // ---------------------------------------------------------------------------
-#[tokio::test(flavor = "multi_thread")]
-async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
-    use std::io::Read as _;
-    use std::time::Duration;
+/// Spawns a raw TCP server that accepts one connection, drains whatever
+/// request arrives, replies with a 200 declaring `Content-Length: 1048576`,
+/// writes only 16 body bytes, then either drops the socket immediately
+/// (`hang: false`, simulating a mid-body disconnect a retry loop can't
+/// recover from) or holds the connection open indefinitely (`hang: true`,
+/// simulating a stalled read for abort tests — the caller is expected to
+/// abort its client-side tasks long before this would ever resolve on its
+/// own). Shared by every cloud's mid-body-disconnect / abort test, since the
+/// fixture itself is cloud-agnostic (it never inspects the request, only the
+/// fact that one arrived).
+async fn spawn_truncated_body_server(
+    hang: bool,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let server = tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let (mut sock, _) = listener.accept().await.unwrap();
         // Drain the request — we only need the GET to have arrived before we
-        // reply; the exact bytes are irrelevant.
-        let mut req = [0u8; 1024];
+        // reply; the exact bytes (path, auth headers, ...) are irrelevant.
+        let mut req = [0u8; 4096];
         let _ = sock.read(&mut req).await;
         // Declare a 1 MiB body, then send only 16 bytes and hang up.
         sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\n")
@@ -547,8 +607,21 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
             .unwrap();
         sock.write_all(&[0u8; 16]).await.unwrap();
         sock.flush().await.unwrap();
-        // `sock` dropped here → connection closed mid-body.
+        if hang {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        }
+        // Otherwise `sock` drops here → connection closed mid-body.
     });
+
+    (addr, handle)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
+    use std::io::Read as _;
+    use std::time::Duration;
+
+    let (addr, server) = spawn_truncated_body_server(false).await;
 
     let stage = StageInfo {
         location_type: LocationType::Gcs,
@@ -672,34 +745,75 @@ fn auto_compress_then_encrypt_decrypt_decompress_roundtrip() {
 // spawn_blocking decrypt/gunzip pipeline and the ChannelWriter bridge.
 // ---------------------------------------------------------------------------
 
-/// Builds an S3 `StageInfo` pointed at a mock server `uri`, same shape as
+/// Builds an S3, GCS, or Azure `StageInfo` pointed at a mock server `uri`,
+/// following the same shape as `streaming_roundtrip_for`'s inline stages
+/// above. S3 and Azure are wired via `endpoint`; GCS via `presigned_url`
+/// (Azure's `http://`-prefixed endpoint short-circuits to a direct URL in
+/// `build_azure_url`, exactly like the Azurite test path). The S3 arm matches
 /// `download_single_file_tampered_digest_leaves_no_output`'s inline stage.
-fn s3_stage(uri: String) -> StageInfo {
-    StageInfo {
-        location_type: LocationType::S3,
-        // AWS doc-convention bucket/prefix, matching the AKIA...EXAMPLE creds below.
-        bucket: "examplebucket".to_string(),
-        key_prefix: "photos/2024/".to_string(),
-        region: "us-east-1".to_string(),
-        creds: CloudCredentials::S3 {
-            aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-            aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
-            aws_token: SensitiveString::from(""),
+fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
+    match cloud {
+        Cloud::S3 => StageInfo {
+            location_type: LocationType::S3,
+            // AWS doc-convention bucket/prefix, matching the AKIA...EXAMPLE creds below.
+            bucket: "examplebucket".to_string(),
+            key_prefix: "photos/2024/".to_string(),
+            region: "us-east-1".to_string(),
+            creds: CloudCredentials::S3 {
+                aws_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+                aws_secret_key: SensitiveString::from("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+                aws_token: SensitiveString::from(""),
+            },
+            endpoint: Some(uri),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            storage_account: None,
         },
-        endpoint: Some(uri),
-        presigned_url: None,
-        use_virtual_url: false,
-        use_regional_url: false,
-        use_s3_regional_url: false,
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
-        storage_account: None,
+        Cloud::Gcs => StageInfo {
+            location_type: LocationType::Gcs,
+            bucket: "test-bucket".to_string(),
+            key_prefix: "".to_string(),
+            region: "us-central1".to_string(),
+            creds: CloudCredentials::Gcs {
+                gcs_access_token: None,
+            },
+            endpoint: None,
+            presigned_url: Some(format!("{uri}/gcs-object")),
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            storage_account: None,
+        },
+        Cloud::Azure => StageInfo {
+            location_type: LocationType::Azure,
+            bucket: "test-container".to_string(),
+            key_prefix: "".to_string(),
+            region: "eastus2".to_string(),
+            creds: CloudCredentials::Azure {
+                sas_token: SensitiveString::from("sv=2021&sig=fake"),
+            },
+            endpoint: Some(uri),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            storage_account: Some("mystorageaccount".to_string()),
+        },
     }
 }
 
-/// Drains a [`DownloadStreamOpen`]'s `chunks` channel into a `Vec<u8>`,
-/// propagating the first error and joining the background task so a panic
-/// there fails loudly instead of silently truncating the output.
+/// Drains a [`DownloadStreamOpen`]'s `chunks` channel to a single `Vec<u8>`,
+/// propagating the first terminal error (if any) and joining the background
+/// producer/pipeline task so a panic there fails the test loudly rather than
+/// silently truncating the output.
 async fn drain_download_stream(
     mut opened: sf_core::file_manager::DownloadStreamOpen,
 ) -> Result<Vec<u8>, sf_core::file_manager::FileManagerError> {
@@ -711,9 +825,10 @@ async fn drain_download_stream(
     Ok(out)
 }
 
-/// Zero-backoff retry policy for the success-path tests — no retries are
-/// exercised, so a real backoff would just add latency if one ever fired.
-fn s3_test_retry_policy() -> RetryPolicy {
+/// Zero-backoff put/get retry policy for the success-path streaming tests —
+/// no retries are exercised, so the default backoff config would just add
+/// unnecessary latency if a retry were ever (incorrectly) triggered.
+fn zero_backoff_test_retry_policy() -> RetryPolicy {
     use sf_core::config::retry::{BackoffConfig, Jitter};
     use std::time::Duration;
     RetryPolicy {
@@ -727,51 +842,177 @@ fn s3_test_retry_policy() -> RetryPolicy {
     }
 }
 
-/// CSE round-trip: encrypt, serve ciphertext + CSE headers from a mock S3
-/// GET, stream-decrypt via the chunked pipeline, and check the plaintext
-/// matches. `decompress: false` — gzip is covered separately below.
-#[tokio::test]
-async fn s3_open_download_stream_cse_roundtrip() {
-    use sf_core::file_manager::open_s3_download_stream;
+/// CSE round-trip through the chunked `open_download_stream_for_stage`
+/// pipeline, shared by all three clouds: encrypt → serve ciphertext + the
+/// cloud's CSE metadata headers from a mock GET → dispatch to that cloud's
+/// zero-disk opener → drain the `DownloadStreamOpen::chunks` channel →
+/// assert the decrypted plaintext matches. `decompress: false` — gzip is
+/// covered separately below.
+///
+/// This is the single common CSE test across S3/GCS/Azure. The dispatcher and
+/// `DownloadStreamOpen` are the one API layer all three clouds share (S3 via
+/// the AWS-SDK `ByteStream` producer, GCS/Azure via the reqwest producer), so
+/// a CSE regression in any one cloud's pipeline wiring surfaces here rather
+/// than hiding behind a green test for the other two.
+async fn open_download_stream_cse_roundtrip_for(cloud: Cloud) {
+    use sf_core::file_manager::open_download_stream_for_stage;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
-    let plaintext = b"open_s3_download_stream CSE round-trip payload".to_vec();
+    let plaintext = format!("{cloud:?} open_download_stream CSE round-trip payload").into_bytes();
     let material = test_encryption_material();
     let (ciphertext, enc_meta, digest) =
         encrypt_source(ByteSource::Bytes(plaintext.clone().into()), &material);
-    let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
 
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("x-amz-meta-sfc-digest", digest.as_str())
-                .insert_header("x-amz-meta-x-amz-matdesc", mat_desc_json.as_str())
-                .insert_header("x-amz-meta-x-amz-key", enc_meta.encrypted_key.as_str())
-                .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str())
-                .set_body_bytes(ciphertext),
-        )
+        .respond_with(cloud.insert_cse_headers(
+            ResponseTemplate::new(200).set_body_bytes(ciphertext),
+            &enc_meta,
+            &digest,
+        ))
         .mount(&server)
         .await;
 
-    let stage = s3_stage(server.uri());
-    let opened = open_s3_download_stream(
+    let stage = cloud_stage(cloud, server.uri());
+    let opened = open_download_stream_for_stage(
         &stage,
-        "cse-object",
-        &s3_test_retry_policy(),
+        cloud.src_location(),
+        // GCS reads its presigned URL from the stage; no per-file override.
+        None,
+        &zero_backoff_test_retry_policy(),
         &mut None,
         Some(material),
         false,
     )
     .await
-    .expect("open_s3_download_stream must succeed");
+    .expect("open_download_stream_for_stage must succeed");
 
     let decrypted = drain_download_stream(opened)
         .await
         .expect("streaming decrypt must succeed");
     assert_eq!(
         decrypted, plaintext,
-        "chunked S3 download must reproduce the original plaintext"
+        "{cloud:?}: chunked download must reproduce the original plaintext"
+    );
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_s3_cse_roundtrip() {
+    open_download_stream_cse_roundtrip_for(Cloud::S3).await;
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_gcs_cse_roundtrip() {
+    open_download_stream_cse_roundtrip_for(Cloud::Gcs).await;
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_azure_cse_roundtrip() {
+    open_download_stream_cse_roundtrip_for(Cloud::Azure).await;
+}
+
+/// Minimal `StageInfoRefresher` for the Azure SAS-refresh test: counts
+/// `refresh()` calls and rotates the shared cache to a fresh SAS on each, so
+/// the post-403 retry runs with new credentials. Mirrors the creds-only
+/// refresher shape S3/Azure use in production.
+struct CountingSasRefresher {
+    cache: sf_core::file_manager::types::StageInfoCache,
+    calls: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    fresh: CloudCredentials,
+}
+
+impl sf_core::file_manager::types::StageInfoRefresher for CountingSasRefresher {
+    fn refresh(&mut self) -> sf_core::file_manager::types::RefreshFuture<'_> {
+        let calls = self.calls.clone();
+        let cache = self.cache.clone();
+        let fresh = self.fresh.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            cache.store(sf_core::file_manager::types::StageInfoSnapshot::creds_only(
+                fresh,
+            ));
+            Ok(())
+        })
+    }
+
+    fn refresh_url(&mut self) -> sf_core::file_manager::types::RefreshFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn cache(&self) -> &sf_core::file_manager::types::StageInfoCache {
+        &self.cache
+    }
+}
+
+/// The Azure arm of `open_download_stream_for_stage` must thread the
+/// `refresher` through so an already-expired SAS is rotated and retried — the
+/// zero-disk twin of the buffered `download_from_azure_streaming` refresh
+/// path. Pre-fix the Azure opener took no refresher, so a 403 surfaced
+/// terminally and this download would fail. First GET fast-fails 403 →
+/// SAS-refresh layer → `refresh()` rotates creds → the retry GET succeeds.
+#[tokio::test]
+async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
+    use sf_core::file_manager::open_download_stream_for_stage;
+    use sf_core::file_manager::types::{StageInfoCache, StageInfoRefresher};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = b"azure SAS refresh after 403".to_vec();
+
+    let server = MockServer::start().await;
+    // First GET: 403 (expired SAS) — Azure maps this to SasExpired, routing to
+    // the refresh layer. Exhausts after one call via up_to_n_times.
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_string("<Error><Code>AuthenticationFailed</Code></Error>"),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    // Retry (post-refresh) GET: 200 with the body.
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(plaintext.clone()))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+
+    let stage = cloud_stage(Cloud::Azure, server.uri());
+    let mut refresher = CountingSasRefresher {
+        cache: StageInfoCache::new_with_creds(stage.creds.clone()),
+        calls: Arc::new(AtomicU32::new(0)),
+        fresh: CloudCredentials::Azure {
+            sas_token: SensitiveString::from("sv=2021&sig=refreshed"),
+        },
+    };
+    let calls = refresher.calls.clone();
+    let mut refresher_dyn: Option<&mut dyn StageInfoRefresher> = Some(&mut refresher);
+
+    let opened = open_download_stream_for_stage(
+        &stage,
+        Cloud::Azure.src_location(),
+        None,
+        &zero_backoff_test_retry_policy(),
+        &mut refresher_dyn,
+        None,
+        false,
+    )
+    .await
+    .expect("Azure open must succeed after the SAS is refreshed");
+
+    let out = drain_download_stream(opened)
+        .await
+        .expect("download must succeed via the refreshed SAS");
+    assert_eq!(
+        out, plaintext,
+        "must round-trip the body served after refresh"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "expected exactly one SAS refresh triggered by the 403"
     );
 }
 
@@ -797,11 +1038,11 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
         .mount(&server)
         .await;
 
-    let stage = s3_stage(server.uri());
+    let stage = cloud_stage(Cloud::S3, server.uri());
     let opened = open_s3_download_stream(
         &stage,
         "gzip-object",
-        &s3_test_retry_policy(),
+        &zero_backoff_test_retry_policy(),
         &mut None,
         None,
         true,
@@ -830,32 +1071,16 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
     use sf_core::file_manager::open_s3_download_stream;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (addr, server) = spawn_truncated_body_server(false).await;
 
-    let server = tokio::spawn(async move {
-        let (mut sock, _) = listener.accept().await.unwrap();
-        // Drain the request; exact bytes (path, SigV4 headers) don't matter.
-        let mut req = [0u8; 4096];
-        let _ = sock.read(&mut req).await;
-        // Declare a 1 MiB body, send only 16 bytes, then hang up.
-        sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\n")
-            .await
-            .unwrap();
-        sock.write_all(&[0u8; 16]).await.unwrap();
-        sock.flush().await.unwrap();
-        // `sock` dropped here → connection closed mid-body.
-    });
-
-    let stage = s3_stage(format!("http://{addr}"));
+    let stage = cloud_stage(Cloud::S3, format!("http://{addr}"));
     let opened = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         open_s3_download_stream(
             &stage,
             "disconnect-object",
-            &s3_test_retry_policy(),
+            &zero_backoff_test_retry_policy(),
             &mut None,
             None,
             false,
@@ -879,4 +1104,214 @@ async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
     );
 
     server.await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// open_download_stream_for_stage: the dispatcher (mod.rs) that routes a
+// download_stream_begin call to the right cloud's zero-disk opener based on
+// `stage_info.location_type`. `LocationType` is exhaustive (S3/Gcs/Azure), so
+// the match has no fallback arm — these three tests are the only coverage
+// that actually drives the match itself (each cloud's opener already has its
+// own direct-call coverage above/nearby, but never through the dispatcher).
+// ---------------------------------------------------------------------------
+
+/// Opens through `open_download_stream_for_stage` and drains to a `Vec<u8>`,
+/// with no CSE and no decompression — just enough to prove the dispatch
+/// match reached the right opener and that opener's body round-trips.
+async fn dispatch_raw_roundtrip_for(
+    stage: StageInfo,
+    src_location: &str,
+    per_file_presigned_url: Option<&str>,
+) -> Vec<u8> {
+    use sf_core::file_manager::open_download_stream_for_stage;
+
+    let opened = open_download_stream_for_stage(
+        &stage,
+        src_location,
+        per_file_presigned_url,
+        &zero_backoff_test_retry_policy(),
+        &mut None,
+        None,
+        false,
+    )
+    .await
+    .expect("open_download_stream_for_stage must succeed");
+
+    drain_download_stream(opened)
+        .await
+        .expect("streaming copy must succeed")
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_dispatches_to_s3() {
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = b"dispatch-s3-payload".to_vec();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(plaintext.clone()))
+        .mount(&server)
+        .await;
+
+    let out =
+        dispatch_raw_roundtrip_for(cloud_stage(Cloud::S3, server.uri()), "object", None).await;
+    assert_eq!(
+        out, plaintext,
+        "S3 arm of the dispatch match must round-trip raw bytes"
+    );
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_dispatches_to_gcs() {
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = b"dispatch-gcs-payload".to_vec();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(plaintext.clone()))
+        .mount(&server)
+        .await;
+
+    let stage = cloud_stage(Cloud::Gcs, server.uri());
+    let out = dispatch_raw_roundtrip_for(stage, "gcs-object", None).await;
+    assert_eq!(
+        out, plaintext,
+        "GCS arm of the dispatch match must round-trip raw bytes"
+    );
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_dispatches_to_azure() {
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = b"dispatch-azure-payload".to_vec();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(plaintext.clone()))
+        .mount(&server)
+        .await;
+
+    let stage = cloud_stage(Cloud::Azure, server.uri());
+    let out = dispatch_raw_roundtrip_for(stage, "azure-blob", None).await;
+    assert_eq!(
+        out, plaintext,
+        "Azure arm of the dispatch match must round-trip raw bytes"
+    );
+}
+
+/// `per_file_presigned_url` must take precedence over `stage_info.
+/// presigned_url` — this is the wrapper's per-file URL override path (used
+/// when GS returns a distinct presigned URL for a specific file in a
+/// multi-file GET response). Point `stage_info.presigned_url` at an
+/// unreachable address and `per_file_presigned_url` at the real mock server;
+/// the download only succeeds if the per-file URL actually won.
+#[tokio::test]
+async fn open_gcs_download_stream_per_file_presigned_url_takes_precedence() {
+    use sf_core::file_manager::open_gcs_download_stream;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = b"per-file-presigned-url-wins".to_vec();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(plaintext.clone()))
+        .mount(&server)
+        .await;
+
+    let mut stage = cloud_stage(Cloud::Gcs, server.uri());
+    // Deliberately unreachable: if the stage-level URL were used instead of
+    // the per-file one, this connection would fail (nothing listens there).
+    stage.presigned_url = Some("http://127.0.0.1:1/unreachable-stage-url".to_string());
+
+    let opened = open_gcs_download_stream(
+        &stage,
+        "gcs-object",
+        Some(&format!("{}/gcs-object", server.uri())),
+        &zero_backoff_test_retry_policy(),
+        &mut None,
+        None,
+        false,
+    )
+    .await
+    .expect("per_file_presigned_url must take precedence over stage_info.presigned_url");
+
+    let out = drain_download_stream(opened)
+        .await
+        .expect("streaming copy must succeed");
+    assert_eq!(
+        out, plaintext,
+        "must fetch from the per-file URL, not the unreachable stage-level one"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Abort must actually stop a chunked download whose producer is parked on a
+// stalled read — mirrors `download_stream_close_deregisters_and_aborts_the_
+// task` in stream_transfer.rs, but exercises the real GCS/Azure producer
+// against a genuinely wedged connection instead of a fake `pending()` future.
+// ---------------------------------------------------------------------------
+
+async fn abort_stops_a_hanging_download_for(cloud: Cloud) {
+    use sf_core::file_manager::open_download_stream_for_stage;
+
+    let (addr, hang_server) = spawn_truncated_body_server(true).await;
+    let stage = cloud_stage(cloud, format!("http://{addr}"));
+
+    let opened = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        open_download_stream_for_stage(
+            &stage,
+            "object",
+            stage.presigned_url.as_deref(),
+            &zero_backoff_test_retry_policy(),
+            &mut None,
+            None,
+            false,
+        ),
+    )
+    .await
+    .expect("open must not hang")
+    .expect("header phase must succeed (200 received before the connection wedges)");
+
+    opened.producer_abort.abort();
+    opened.task.abort();
+
+    // `task` is a `spawn_blocking` closure parked in a *synchronous*
+    // `recv()`; aborting its `JoinHandle` doesn't force-interrupt the OS
+    // thread mid-read (spawn_blocking can't be preempted). What actually
+    // unblocks it is the producer's abort tearing down its task — dropping
+    // the response body's `Sender` — which makes the pipeline's `recv()`
+    // return an error and let the closure return on its own. That teardown
+    // happens on a real OS thread, so give it real wall-clock time rather
+    // than spinning `yield_now()` (which can burn through many iterations
+    // faster than the other thread gets scheduled at all, without ever
+    // actually waiting on it).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline
+        && !(opened.producer_abort.is_finished() && opened.task.is_finished())
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        opened.producer_abort.is_finished(),
+        "{cloud:?}: abort must stop the still-pending producer task"
+    );
+    assert!(
+        opened.task.is_finished(),
+        "{cloud:?}: abort must stop the still-pending pipeline task"
+    );
+
+    // The fixture's `hang` branch sleeps 3600s; without this the server task
+    // would stay parked for the rest of the test run instead of dropping with
+    // the connection once this test is done.
+    hang_server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_download_stream_for_stage_abort_stops_a_hanging_gcs_download() {
+    abort_stops_a_hanging_download_for(Cloud::Gcs).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_download_stream_for_stage_abort_stops_a_hanging_azure_download() {
+    abort_stops_a_hanging_download_for(Cloud::Azure).await;
 }
