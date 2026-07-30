@@ -65,7 +65,7 @@ public final class CoreLoggingBridge {
    * Emit a wrapper log event through core.
    *
    * @param level wire level (0=ERROR, 1=WARN, 2=INFO, 3+=DEBUG)
-   * @param message the fully formatted, secret-masked message
+   * @param message the fully formatted message
    * @param file source file (may be empty)
    * @param line source line (0 when unknown)
    * @param function source function (may be empty)

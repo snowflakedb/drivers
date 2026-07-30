@@ -105,8 +105,8 @@ call site.
 
 The flow mirrors Python across JNI instead of the C FFI:
 
-1. `CoreLogger` gates on its delivery logger (`isInfoEnabled`, …) and formats +
-   masks the message before crossing JNI.
+1. `CoreLogger` gates on its delivery logger (`isInfoEnabled`, …) and formats
+   the message before crossing JNI.
 2. It calls `CoreLoggingBridge.logEvent` (JNI), carrying `level`, the formatted
    `message`, and `logger_name` (the originating Java logger, e.g.
    `net.snowflake.client.api.driver.SnowflakeDriver`). The first call loads

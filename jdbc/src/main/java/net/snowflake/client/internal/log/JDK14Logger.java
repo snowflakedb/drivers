@@ -28,15 +28,7 @@ public class JDK14Logger extends AbstractDeliveryLogger {
   private static final Set<String> LOG_METHODS =
       Collections.unmodifiableSet(
           new HashSet<>(
-              Arrays.asList(
-                  "debug",
-                  "error",
-                  "info",
-                  "trace",
-                  "warn",
-                  "debugNoMask",
-                  "logPlain",
-                  "deliver")));
+              Arrays.asList("debug", "error", "info", "trace", "warn", "logPlain", "deliver")));
 
   private static final StdOutConsoleHandler STD_OUT_CONSOLE_HANDLER = new StdOutConsoleHandler();
   private static boolean isLoggerInit = false;
