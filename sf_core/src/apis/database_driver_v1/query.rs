@@ -84,6 +84,8 @@ pub(super) async fn perform_put_get_transfer(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     skip_upload_on_content_match: bool,
+    put_fastfail: bool,
+    get_fastfail: bool,
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
     crl_worker: crate::crl::worker::SharedCrlWorker,
@@ -107,6 +109,7 @@ pub(super) async fn perform_put_get_transfer(
                     wrapper_presets.legacy_odbc_compression_autodetect,
                     skip_upload_on_content_match,
                     use_s3_regional_url_session_param,
+                    put_fastfail,
                 )
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
@@ -122,6 +125,7 @@ pub(super) async fn perform_put_get_transfer(
                     &wrapper_presets.put_get_resultset_flavor,
                     use_s3_regional_url_session_param,
                     unsafe_file_write,
+                    get_fastfail,
                 )
                 .map_err(|e| {
                     if e.to_string().contains("source locations") {
@@ -173,6 +177,10 @@ pub(super) async fn build_and_upload_stream(
             // kwarg to opt into it and always uploads the supplied source.
             false,
             use_s3_regional_url_session_param,
+            // Single-file, in-memory PUT: it builds one `SingleUploadData` and
+            // never enters the `upload_files` batch loop, so `put_fastfail` is
+            // inert here — seed it from the wrapper preset for consistency.
+            wrapper_presets.put_get_fastfail_default,
         )
         .context(FileTransferPreparationSnafu)?;
 

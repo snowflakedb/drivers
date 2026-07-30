@@ -650,7 +650,10 @@ fn resolve_download_target(
 
     let gs_data = response.data;
     let download_data = gs_data
-        .to_file_download_data(&flavor, use_s3_regional_url, unsafe_file_write)
+        // `get_fastfail` is inert here: this single-file stream path only
+        // projects individual fields out of `download_data` into
+        // `ResolvedDownload` and never runs the `download_files` batch loop.
+        .to_file_download_data(&flavor, use_s3_regional_url, unsafe_file_write, false)
         .map_err(|e| {
             InvalidArgumentSnafu {
                 argument: format!("Failed to parse GET response: {e}"),
