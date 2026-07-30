@@ -91,33 +91,36 @@ fn assert_stage_content(
     );
 }
 
-/// GCS-only: when the same file is uploaded twice with `OVERWRITE=TRUE`,
-/// the digest-skip branch fires on the second attempt because the remote
+/// GCS-only: when the same file is uploaded twice with `OVERWRITE=TRUE`
+/// AND the `skip_upload_on_content_match` flag is set, the content-match
+/// skip fires on the second attempt because the remote
 /// `x-goog-meta-sfc-digest` already matches the local SHA-256.
 ///
-/// The digest is the SHA-256 of the (compressed) plaintext, so the skip
-/// fires for both SSE and CSE stages. Not applicable to S3/Azure where no
-/// digest-skip exists — the test self-skips (via `current_cloud()`) when the
-/// connected account is not GCS-backed, since the `gcs_e2e` feature only gates
-/// compilation, not the runtime cloud.
+/// The skip is opt-in on GCS (SNOW-3715266), so the flag must be set for
+/// the skip to fire; without it the second PUT re-uploads. The digest is
+/// the SHA-256 of the (compressed) plaintext, so the skip fires for both
+/// SSE and CSE stages. The test self-skips (via `current_cloud()`) when the
+/// connected account is not GCS-backed, since the `gcs_e2e` feature only
+/// gates compilation, not the runtime cloud.
 #[cfg(feature = "gcs_e2e")]
 #[test]
 fn should_skip_upload_when_content_matches_under_overwrite_true_on_gcs_encryption_type() {
     use crate::common::put_get_common::build_put_command;
-    use crate::common::snowflake_test_client::CloudProvider;
+    use crate::common::snowflake_test_client::{CloudProvider, unwrap_single_rs_handle};
+    use sf_core::protobuf::generated::database_driver_v1::ConfigSetting;
 
     let client = SnowflakeTestClient::connect_with_default_auth();
 
-    // The digest-skip optimisation only exists on the GCS upload path
-    // (`upload_to_gcs_or_skip`); S3/Azure have existence-skip only. Internal
-    // stages live in the deployment cloud, so on a non-GCS account (e.g. CI's
-    // default AWS account, decoded by `scripts/decode_secrets.sh` with no
-    // argument) the second PUT would re-upload. The `gcs_e2e` feature only
-    // gates *compilation*, not the runtime cloud — self-skip here rather than
+    // Internal stages live in the deployment cloud, so the content-match
+    // skip against `x-goog-meta-sfc-digest` only exercises on a GCS-backed
+    // account. On a non-GCS account (e.g. CI's default AWS account, decoded
+    // by `scripts/decode_secrets.sh` with no argument) the object store and
+    // its metadata header differ. The `gcs_e2e` feature only gates
+    // *compilation*, not the runtime cloud — self-skip here rather than
     // assert wrong-cloud behaviour.
     let cloud = client.current_cloud();
     if cloud != CloudProvider::Gcp {
-        eprintln!("Skipping GCS digest-skip test: connected account is {cloud:?}, not GCP");
+        eprintln!("Skipping GCS content-match-skip test: connected account is {cloud:?}, not GCP");
         return;
     }
 
@@ -136,11 +139,20 @@ fn should_skip_upload_when_content_matches_under_overwrite_true_on_gcs_encryptio
         assert_put_result_status(first_result, &filename, "UPLOADED");
 
         // When Same file is uploaded again with OVERWRITE set to true
-        let second_result = client.execute_query(&build_put_command(
-            stage_name,
-            file_path_str,
-            "OVERWRITE=TRUE",
-        ));
+        let stmt = scopeguard::guard(client.new_statement(), |s| client.release_statement(&s));
+        client.set_sql_query(
+            &stmt,
+            &build_put_command(stage_name, file_path_str, "OVERWRITE=TRUE"),
+        );
+        client.set_statement_option(
+            &stmt,
+            "skip_upload_on_content_match",
+            ConfigSetting::from(true),
+        );
+        let result = client.execute_statement_query(&stmt);
+        let rs_handle = unwrap_single_rs_handle(&result);
+        let second_result = client.result_set_get_stream(&rs_handle);
+        client.result_set_release(&rs_handle);
 
         // Then SKIPPED status is returned
         assert_put_result_status(second_result, &filename, "SKIPPED");

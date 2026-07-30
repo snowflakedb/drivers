@@ -1833,3 +1833,23 @@ behavior_differences:
     description: |
       SQL_ROWSET_SIZE (ODBC 2.x, attr 9) drives SQLExtendedFetch. A rowset size of 0 is invalid;
       the new driver normalizes it to 1 for consistency with SQL_ATTR_ROW_ARRAY_SIZE.
+
+  103:
+    name: "GCS PUT OVERWRITE=TRUE on matching content re-uploads instead of skipping"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Against a GCS stage, a PUT with OVERWRITE=TRUE whose local payload matched the remote object's
+      stored x-goog-meta-sfc-digest was skipped: the PUT result set status column reported SKIPPED and
+      no upload occurred. This was a universal-driver-only quirk (GCS skipped content matches
+      unconditionally); the legacy ODBC driver re-uploads.
+    new_driver_behavior: |
+      GCS re-uploads a content-matching PUT with OVERWRITE=TRUE (status = UPLOADED), matching the
+      legacy ODBC driver. The content-match skip is gated behind the opt-in skip_upload_on_content_match
+      flag in sf_core, which ODBC does not set, so the skip never fires by default.
+    description: |
+      GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
+      matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
