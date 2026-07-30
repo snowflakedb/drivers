@@ -2,9 +2,26 @@
 Helper functions for PUT/GET operations in e2e tests.
 """
 
+import os
 import uuid
 
 from pathlib import Path
+
+from tests.config import get_test_parameters
+
+
+def is_aws_test_account() -> bool:
+    """Return whether the active test account is the AWS CI cell.
+
+    CI decodes a cloud-specific ``parameters.json``; when ``CLOUD_PROVIDER`` is
+    unset, infer the cloud from the regional host suffix.
+    """
+    cloud = os.environ.get("CLOUD_PROVIDER", "").lower()
+    if cloud:
+        return cloud == "aws"
+
+    host = (get_test_parameters().get("SNOWFLAKE_TEST_HOST") or "").lower()
+    return ".gcp." not in host and ".azure." not in host
 
 
 def create_temporary_stage(cursor, prefix: str) -> str:

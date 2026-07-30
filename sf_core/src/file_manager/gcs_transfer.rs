@@ -1329,6 +1329,32 @@ pub async fn download_from_gcs_streaming(
     // else: presigned session, or object below the threshold / size not
     // probeable — fall through to the single streamed GET below.
 
+    // Non-ranged fall-through: a single unranged streaming GET.
+    gcs_get_streaming(
+        stage_info,
+        filename,
+        per_file_presigned_url,
+        policy,
+        per_file_index,
+        refresher,
+    )
+    .await
+}
+
+/// Single unranged streaming GET against GCS — the zero-disk path's entry
+/// point (mirrors [`azure_transfer::azure_get_streaming`]). Always issues one
+/// GET straight off the network, so the result always carries a
+/// `producer_abort`, never a spilled body. [`download_from_gcs_streaming`]
+/// delegates here for its non-ranged fall-through; [`super::open_gcs_download_stream`]
+/// calls it directly to guarantee the single-GET body zero-disk needs.
+pub(super) async fn gcs_get_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    per_file_presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    per_file_index: usize,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<CloudStreamingDownload, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
         filename,
@@ -1339,21 +1365,39 @@ pub async fn download_from_gcs_streaming(
     )
     .await?;
 
-    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
-    // Falls back to 0 when the header is absent; mod.rs uses the actual written
-    // byte count as a fallback for the Python flavor.
-    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+    let headers = response.headers();
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
 
-    let cse_info = parse_gcs_cse_info(response.headers())?;
+    let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
+        Some(encryption_data_str) => {
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
 
-    let reader = cloud_http::spawn_byte_stream_producer(response);
-    let cloud_bytes_read = reader.bytes_read_handle();
-    Ok(CloudStreamingDownload {
-        cloud_byte_count,
-        cse_info,
-        cloud_bytes_read,
-        body: cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
-    })
+            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
+                gcs_download_error::MissingMetadataSnafu {
+                    field: GCS_META_MATDESC,
+                },
+            )?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
+
+            Some(EncryptedFileMetadata {
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
+                material_desc,
+            })
+        }
+        None => None,
+    };
+
+    // Content-Length byte count, git-stage fallback, and spawning the
+    // byte-stream producer are shared with Azure's single-GET path — see
+    // `CloudStreamingDownload::from_reqwest_response`.
+    Ok(CloudStreamingDownload::from_reqwest_response(
+        response,
+        digest,
+        file_metadata,
+    ))
 }
 
 /// Parses the `sfc-digest` and (for CSE) the `encryptiondata` / `matdesc` GCS
@@ -1530,6 +1574,8 @@ async fn gcs_ranged_download_attempt(
         cloud_byte_count: content_length as i64,
         cse_info,
         cloud_bytes_read: Arc::new(AtomicU64::new(0)),
+        // Ranged/spilled: parallel GETs already finished, no producer task
+        // left to cancel.
         body: cloud_http::CloudDownloadBody::Spilled(spilled),
     }))
 }

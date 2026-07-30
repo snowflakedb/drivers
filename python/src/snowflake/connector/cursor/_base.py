@@ -48,6 +48,7 @@ from .._internal.statement_utils import statement
 from .._internal.utils import _resolve_alias
 from ..errors import NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
+from ._chunked_download_reader import _ChunkedDownloadReader
 from ._result_set_wrapper import _ResultSetWrapper
 
 
@@ -306,6 +307,32 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 logger.debug("upload_stream_abort during cleanup failed; propagating original error", exc_info=True)
             raise
         self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
+
+    @api_telemetry
+    @requires_open
+    def download_stream(self, stage_location: str, decompress: bool = False) -> BinaryIO:
+        """Return a lazily-read binary stream for a stage file (chunked, bounded memory).
+
+        Splits *stage_location* into stage name and filename on the last ``/``
+        and opens via the Begin RPC. Nothing happens until you read; each read
+        pulls one chunk. Close the stream (or use ``with``) to release the
+        download session early.
+        """
+        logger.info("download_stream: entry")
+        try:
+            stage_name, sep, source_filename = stage_location.rpartition("/")
+            if not sep:
+                # No "/": treat the whole string as the stage name, no filename.
+                stage_name, source_filename = stage_location, ""
+            begin = core_driver.download_stream_begin(
+                conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+                stage_name=stage_name,
+                source_filename=source_filename,
+                decompress=decompress,
+            )
+            return _ChunkedDownloadReader(begin.download_handle)  # type: ignore[return-value]
+        finally:
+            logger.info("download_stream: exit")
 
     def _apply_statement_parameters(
         self,

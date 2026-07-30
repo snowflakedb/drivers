@@ -51,7 +51,10 @@ def _public_methods(cls: type) -> set[str]:
 
 # Methods present only on one side due to deliberate design decisions.
 # Keep these sets lean; every addition should have a comment explaining why.
-_CURSOR_SYNC_ONLY: set[str] = set()  # none today
+_CURSOR_SYNC_ONLY: set[str] = {
+    # `download_stream` is implemented on the sync cursor only.
+    "download_stream",
+}
 _CURSOR_ASYNC_ONLY: set[str] = set()  # none today
 
 _CURSOR_COMMON = (_public_methods(SyncCursor) | _public_methods(AsyncCursor)) - (_CURSOR_SYNC_ONLY | _CURSOR_ASYNC_ONLY)

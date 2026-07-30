@@ -1276,6 +1276,8 @@ pub async fn download_from_azure_streaming(
 
             // Route on size: parallel ranged GETs into a spill file above the
             // threshold, a single streamed GET below. Both fast-fail 403.
+            // Only the streamed branch carries a producer task to abort — the
+            // ranged/spilled branch has already finished all its I/O.
             let (body, cloud_bytes_read) = if content_length >= multipart.threshold.bytes() {
                 let chunk_size =
                     multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
@@ -1297,6 +1299,8 @@ pub async fn download_from_azure_streaming(
                     spill_target,
                 )
                 .await?;
+                // Ranged: size came from HEAD, so no byte tracking needed
+                // and no producer task to cancel.
                 (
                     cloud_http::CloudDownloadBody::Spilled(spilled),
                     std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1305,10 +1309,13 @@ pub async fn download_from_azure_streaming(
                 let response = azure_get_attempt(&client, &full_url, &base)
                     .await
                     .map_err(|e| e.map_other(AzureDownloadError::from))?;
-                let reader = cloud_http::spawn_byte_stream_producer(response);
+                let (reader, producer_abort) = cloud_http::spawn_byte_stream_producer(response);
                 let handle = reader.bytes_read_handle();
                 (
-                    cloud_http::CloudDownloadBody::Streamed(Box::new(reader)),
+                    cloud_http::CloudDownloadBody::Streamed {
+                        reader: Box::new(reader),
+                        producer_abort,
+                    },
                     handle,
                 )
             };
@@ -1341,6 +1348,37 @@ pub async fn download_from_azure_streaming(
     }
 
     result
+}
+
+/// Downloads a file from Azure with a single unranged GET, returning a
+/// [`CloudStreamingDownload`] whose body streams straight off the network.
+///
+/// Unlike [`download_from_azure_streaming`], this never HEAD-probes the blob
+/// size or routes to ranged GETs — always one GET, any size. That trades
+/// away parallelism and resumability for a single round-trip, the same
+/// tradeoff PR2a accepted for S3's zero-disk path
+/// (`file_manager::open_azure_download_stream`).
+pub(super) async fn azure_get_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+    policy: &RetryPolicy,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+) -> Result<CloudStreamingDownload, AzureDownloadError> {
+    // Issue the single GET under the SAS-refresh-on-403 layer so an
+    // already-expired SAS is rotated and retried, matching `gcs_get_streaming`
+    // and `download_from_azure_streaming`. Without a `refresher` it runs once
+    // and a 403 surfaces terminally (the prior behaviour).
+    let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
+
+    let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
+    // Content-Length byte count, git-stage fallback, and spawning the
+    // byte-stream producer are shared with GCS's single-GET path — see
+    // `CloudStreamingDownload::from_reqwest_response`.
+    Ok(CloudStreamingDownload::from_reqwest_response(
+        response,
+        digest,
+        file_metadata,
+    ))
 }
 
 /// Downloads the blob with parallel ranged GETs into a pre-allocated file,

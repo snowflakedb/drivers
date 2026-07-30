@@ -26,6 +26,12 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionAbortQueryResponse,
     ConnectionCloseRequest,
     ConnectionCloseResponse,
+    ConnectionDownloadStreamBeginRequest,
+    ConnectionDownloadStreamBeginResponse,
+    ConnectionDownloadStreamChunkRequest,
+    ConnectionDownloadStreamChunkResponse,
+    ConnectionDownloadStreamCloseRequest,
+    ConnectionDownloadStreamCloseResponse,
     ConnectionGetAllParametersRequest,
     ConnectionGetAllParametersResponse,
     ConnectionGetInfoRequest,
@@ -74,6 +80,7 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     DatabaseNewResponse,
     DatabaseReleaseRequest,
     DatabaseReleaseResponse,
+    DownloadStreamHandle,
     ExecuteQueryResponse,
     QueryBindings,
     ResultChunk,
@@ -457,6 +464,27 @@ class CoreDriver:
     def upload_stream_abort(self, upload_handle: UploadStreamHandle) -> ConnectionUploadStreamAbortResponse:
         request = ConnectionUploadStreamAbortRequest(upload_handle=upload_handle)
         return self.client.connection_upload_stream_abort(request)
+
+    def download_stream_begin(
+        self, conn_handle: ConnectionHandle, stage_name: str, source_filename: str, decompress: bool
+    ) -> ConnectionDownloadStreamBeginResponse:
+        request = ConnectionDownloadStreamBeginRequest(
+            conn_handle=conn_handle,
+            stage_name=stage_name,
+            source_filename=source_filename,
+            decompress=decompress,
+        )
+        return self.client.connection_download_stream_begin(request)
+
+    def download_stream_chunk(
+        self, download_handle: DownloadStreamHandle, max_len: int
+    ) -> ConnectionDownloadStreamChunkResponse:
+        request = ConnectionDownloadStreamChunkRequest(download_handle=download_handle, max_len=max_len)
+        return self.client.connection_download_stream_chunk(request)
+
+    def download_stream_close(self, download_handle: DownloadStreamHandle) -> ConnectionDownloadStreamCloseResponse:
+        request = ConnectionDownloadStreamCloseRequest(download_handle=download_handle)
+        return self.client.connection_download_stream_close(request)
 
     # =====================================================================
     # Connection tokens/params
