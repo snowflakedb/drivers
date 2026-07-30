@@ -1055,7 +1055,13 @@ fn to_driver_exception(error: ApiError) -> DriverException {
                     // error, not a driver fault — surface it as
                     // `InvalidArgument` rather than `InternalError`.
                     s if s.is_file_too_large() => StatusCode::InvalidArgument,
-                    _ => StatusCode::InternalError,
+                    // Everything else here (Io, UploadBatch, cloud
+                    // transport errors, ...) is an environmental/transfer
+                    // failure, not an internal driver bug — `Io` maps to
+                    // `OperationalError` on the Python side, matching the
+                    // reference connector's own classification for the
+                    // same class of failure.
+                    _ => StatusCode::Io,
                 },
                 QueryResponseProcessingError::RemoteFileNotFound { .. } => {
                     StatusCode::RemoteFileNotFound
@@ -1390,5 +1396,46 @@ mod tests {
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
         assert_eq!(exc.request_id, None);
+    }
+
+    #[test]
+    fn file_transfer_io_error_maps_to_io_status_code_not_internal_error() {
+        // A local file-transfer I/O failure (e.g. permission denied reading
+        // the source file) is an environmental/transfer fault, not an
+        // internal driver bug — it must map to `StatusCode::Io`
+        // (-> `OperationalError` in Python), matching the reference
+        // connector's own classification for the same class of failure.
+        use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
+        use crate::file_manager::FileManagerError;
+
+        let upload_err = ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::FileUpload {
+                source: FileManagerError::Io {
+                    source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+                    location: loc(),
+                },
+                location: loc(),
+            }),
+        };
+        assert_eq!(
+            to_driver_exception(upload_err).status_code,
+            StatusCode::Io as i32
+        );
+
+        let download_err = ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::FileDownload {
+                source: FileManagerError::Io {
+                    source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+                    location: loc(),
+                },
+                location: loc(),
+            }),
+        };
+        assert_eq!(
+            to_driver_exception(download_err).status_code,
+            StatusCode::Io as i32
+        );
     }
 }

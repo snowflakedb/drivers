@@ -15,7 +15,8 @@ use tempfile::TempPath;
 use super::encryption::Encryptor;
 use super::multipart::MultipartParams;
 
-/// Result of an upload-or-skip operation.
+/// Result of an upload-or-skip operation. A failed transfer is never
+/// represented here — see `upload_files` for fail-fast vs collect-all handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStatus {
     Uploaded,
@@ -113,6 +114,9 @@ pub struct UploadData {
     /// concurrent-part count. Defaults (200 MiB / 1) apply when the server
     /// omits them.
     pub multipart: MultipartParams,
+    /// Resolved fail-fast (abort) vs collect-all flag; see
+    /// [`WrapperPresets::put_get_fastfail_default`](crate::apis::database_driver_v1::WrapperPresets::put_get_fastfail_default).
+    pub put_fastfail: bool,
 }
 
 // TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
@@ -164,6 +168,9 @@ pub struct DownloadData {
     /// Python's `unsafe_file_write` connection parameter. Unix-only; no-op on
     /// Windows.
     pub unsafe_file_write: bool,
+    /// Resolved fail-fast (abort) vs collect-all flag; see
+    /// [`WrapperPresets::put_get_fastfail_default`](crate::apis::database_driver_v1::WrapperPresets::put_get_fastfail_default).
+    pub get_fastfail: bool,
 }
 
 #[derive(Debug)]

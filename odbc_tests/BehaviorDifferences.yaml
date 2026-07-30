@@ -1853,3 +1853,46 @@ behavior_differences:
     description: |
       GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
       matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+  104:
+    name: "GET writes to a temporary .part file before renaming to the final destination (old driver writes the destination directly)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      Downloading to a `<file>.part` temp file and renaming on success avoids leaving a partially
+      written file at the destination path if the download is interrupted. This is a deliberate
+      safety improvement over the old driver's direct-write behavior.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      GET writes downloaded bytes directly to the final destination path. An interrupted download
+      can leave a partially written file at the destination filename.
+    new_driver_behavior: |
+      GET writes to `<destination>.part` and renames it to the final destination filename only
+      after the download completes successfully. An interrupted download leaves only the `.part`
+      file, never a partial file at the destination filename.
+    description: |
+      A side effect: failure-injection tests that pre-block a destination file to force a local
+      write failure cannot reproduce on the old driver, since it never contends for the `.part` path.
+      The collect-all GET test (put_get_fastfail_default.cpp) and the GET_FASTFAIL override test
+      both skip the old driver for this reason via SKIP_OLD_DRIVER("BD#104", ...).
+  105:
+    name: "PUT_FASTFAIL diagnostic message differs between drivers while both fail fast"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      Both drivers abort the PUT batch at the first failing file when fast-fail is enabled; only the
+      diagnostic text differs. The ODBC spec does not mandate specific message wording, so this is a
+      cosmetic difference, not a functional one.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLGetDiagRec on the aborted PUT statement returns a message containing "Fast fail enabled,
+      Skipped uploading rest of the files."
+    new_driver_behavior: |
+      SQLGetDiagRec on the aborted PUT statement returns a message containing "Failed to read or
+      write file" (the underlying per-file I/O error, e.g. permission denied).
+    description: |
+      Applications that match on the exact diagnostic text (rather than the SQLSTATE) will see a
+      different message on the new driver.

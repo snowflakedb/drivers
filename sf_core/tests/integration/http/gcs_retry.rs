@@ -824,6 +824,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        get_fastfail: true,
     };
 
     let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
@@ -860,6 +861,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        get_fastfail: true,
     };
 
     let err = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
@@ -1799,6 +1801,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        get_fastfail: true,
     };
 
     let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
@@ -1974,6 +1977,7 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        get_fastfail: true,
     };
 
     let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)

@@ -25,6 +25,7 @@ add_custom_target(e2e_auth_no_mfa DEPENDS
 # put_get
 add_odbc_test(e2e_put_get_put_get_auto_compress put_get/put_get_auto_compress.cpp)
 add_odbc_test(e2e_put_get_put_get_basic_operations put_get/put_get_basic_operations.cpp)
+add_odbc_test(e2e_put_get_put_get_fastfail_default put_get/put_get_fastfail_default.cpp)
 add_odbc_test(e2e_put_get_put_get_missing_download_dir put_get/put_get_missing_download_dir.cpp)
 add_odbc_test(e2e_put_get_put_get_overwrite put_get/put_get_overwrite.cpp)
 add_odbc_test(e2e_put_get_put_get_source_compression put_get/put_get_source_compression.cpp)

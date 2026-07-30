@@ -337,6 +337,7 @@ pub async fn upload_files(
     }
 
     let mut results = Vec::with_capacity(file_locations.len());
+    let mut failures: Vec<String> = Vec::new();
 
     // The refresher owns the latest stage info (creds + presigned URLs) for
     // the batch via its shared `StageInfoCache`; per-file calls read from
@@ -348,6 +349,10 @@ pub async fn upload_files(
     for file_location in file_locations {
         let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
         let path = PathBuf::from(&file_location.path);
+        // Retained for the aggregate-failure report: `filename` moves into
+        // `SingleUploadData` below, but a failed transfer still needs a name
+        // to list in `UploadBatch`.
+        let name = file_location.filename.clone();
         let single_upload_data = SingleUploadData {
             source: ByteSource::Path(path),
             filename: file_location.filename,
@@ -362,8 +367,26 @@ pub async fn upload_files(
             multipart: data.multipart,
         };
 
-        let result = upload_single_file(single_upload_data, policy, &mut refresher).await?;
-        results.push(result);
+        match upload_single_file(single_upload_data, policy, &mut refresher).await {
+            Ok(result) => results.push(result),
+            // Fail-fast aborts at the first error; collect-all (the default)
+            // attempts every file and reports all failures together (ODBC parity,
+            // SNOW-3838438).
+            Err(e) => {
+                if data.put_fastfail {
+                    return Err(e);
+                }
+                failures.push(format!("{name}: {e}"));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        return UploadBatchSnafu {
+            failure_count: failures.len(),
+            failures: failures.join("\n"),
+        }
+        .fail();
     }
 
     Ok(results)
@@ -488,10 +511,9 @@ pub(crate) async fn upload_prepared_source(
         .context(AzureUploadSnafu)?,
     };
 
-    // TODO: Right now the message column is only populated for the `Skipped` outcome under
-    // the ODBC wrapper preset. Any failure in the upload process today returns an error before
-    // this point, so an `ERROR` status is never produced. Revisit when error handling is
-    // unified across wrappers.
+    // `message` is populated for `Skipped` under ODBC (see `upload_result_message`).
+    // Failures are handled by the caller, `upload_files` — this success path only
+    // ever returns `Uploaded`/`Skipped`.
     Ok(UploadResult {
         source: file_metadata.source,
         target: file_metadata.target,
@@ -762,6 +784,10 @@ pub async fn download_files(
         .enumerate();
     for (index, ((file_location, encryption_material), presigned_url)) in download_iter {
         let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
+        // Retained for the collect-all ERROR row: `file_location` moves into
+        // `SingleDownloadData` below, but a failed transfer still needs a
+        // `file` column to report.
+        let name = file_location.clone();
         let single_download_data = SingleDownloadData {
             src_location: file_location,
             local_location: data.local_location.clone(),
@@ -773,12 +799,38 @@ pub async fn download_files(
             unsafe_file_write: data.unsafe_file_write,
         };
 
-        let result =
-            download_single_file(single_download_data, policy, index, &mut refresher).await?;
-        results.push(result);
+        match download_single_file(single_download_data, policy, index, &mut refresher).await {
+            Ok(result) => results.push(result),
+            // Fail-fast (`get_fastfail`) aborts the batch on the first error;
+            // collect-all records an ERROR row and continues (ODBC parity,
+            // SNOW-3838438).
+            Err(e) => results.push(on_download_file_error(data.get_fastfail, name, e)?),
+        }
     }
 
     Ok(results)
+}
+
+/// Batch failure policy for a single failed GET. Fail-fast
+/// (`get_fastfail = true`) returns the error to abort the batch; collect-all
+/// (`get_fastfail = false`, ODBC's default) folds it into an `ERROR`-status
+/// result row so the remaining files still download. PUT diverges here: a
+/// failed collect-all PUT raises `UploadBatch` (see `upload_files`),
+/// matching legacy ODBC where GET returns per-file rows but PUT throws.
+fn on_download_file_error(
+    get_fastfail: bool,
+    name: String,
+    error: FileManagerError,
+) -> Result<DownloadResult, FileManagerError> {
+    if get_fastfail {
+        return Err(error);
+    }
+    Ok(DownloadResult {
+        file: name,
+        size: 0,
+        status: "ERROR".to_string(),
+        message: error.to_string(),
+    })
 }
 
 /// GET path guard layer 1 (CWE-73, SNOW-3663590; mirrors JDBC
@@ -1787,7 +1839,7 @@ fn download_result_size(
 // Error types for file manager operations
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum FileManagerError {
-    #[snafu(display("Failed to read or write file"))]
+    #[snafu(display("Failed to read or write file: {source}"))]
     Io {
         source: std::io::Error,
         #[snafu(implicit)]
@@ -1823,7 +1875,7 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to download file from S3"))]
+    #[snafu(display("Failed to download file from S3: {source}"))]
     S3Download {
         source: DownloadFileError,
         #[snafu(implicit)]
@@ -1835,7 +1887,7 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to download file from GCS"))]
+    #[snafu(display("Failed to download file from GCS: {source}"))]
     GcsDownload {
         source: GcsDownloadError,
         #[snafu(implicit)]
@@ -1847,7 +1899,7 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to download file from Azure"))]
+    #[snafu(display("Failed to download file from Azure: {source}"))]
     AzureDownload {
         source: AzureDownloadError,
         #[snafu(implicit)]
@@ -1888,6 +1940,16 @@ pub enum FileManagerError {
     #[snafu(display("Blocking task failed: {source}"))]
     BlockingTask {
         source: tokio::task::JoinError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// One or more files in a collect-all PUT batch failed; `failures` lists
+    /// each failed file and its error. See `on_download_file_error` for the
+    /// fail-fast/collect-all split.
+    #[snafu(display("PUT failed for {failure_count} file(s):\n{failures}"))]
+    UploadBatch {
+        failure_count: usize,
+        failures: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2169,6 +2231,166 @@ mod tests {
             location: Location::new(file!(), line!(), 0),
         };
         assert!(!not_found.is_file_too_large());
+    }
+
+    fn sample_transfer_error() -> FileManagerError {
+        FileManagerError::NoFilesMatched {
+            pattern: "boom".to_string(),
+            location: Location::new(file!(), line!(), 0),
+        }
+    }
+
+    /// Builds an `UploadData` batch for a glob pattern matching every file in
+    /// `dir`, targeting an S3 stage pointed at `mock` (path-style, since the
+    /// endpoint host is an IP literal). `overwrite=true` skips the HEAD probe
+    /// so each file goes straight to a single `PutObject`.
+    fn batch_upload_data_for(
+        dir: &std::path::Path,
+        mock_uri: &str,
+        put_fastfail: bool,
+    ) -> UploadData {
+        UploadData {
+            src_location_pattern: dir.join("*.dat").to_string_lossy().into_owned(),
+            stage_info: StageInfo {
+                location_type: LocationType::S3,
+                bucket: "test-bucket".to_string(),
+                key_prefix: "prefix/".to_string(),
+                region: "us-east-1".to_string(),
+                creds: CloudCredentials::S3 {
+                    aws_key_id: "AKIA-TEST".to_string(),
+                    aws_secret_key: crate::sensitive::SensitiveString::from("secret".to_string()),
+                    aws_token: crate::sensitive::SensitiveString::from("token".to_string()),
+                },
+                endpoint: Some(mock_uri.to_string()),
+                presigned_url: None,
+                use_virtual_url: false,
+                use_regional_url: false,
+                use_s3_regional_url: false,
+                tls_config: crate::tls::config::TlsConfig::default(),
+                crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+                storage_account: None,
+            },
+            encryption_material: None,
+            auto_compress: false,
+            source_compression: SourceCompressionParam::None,
+            overwrite: true,
+            flavor: PutGetResultsetFlavor::Python,
+            legacy_odbc_compression_autodetect: false,
+            skip_upload_on_content_match: false,
+            multipart: MultipartParams::default(),
+            put_fastfail,
+        }
+    }
+
+    /// Sets up good.dat + two failing files against a mock S3 endpoint. Uses a
+    /// plain 400 (not 500) for the failures — mirrors
+    /// `s3_multipart_upload_aborts_on_part_failure`'s technique for a terminal
+    /// per-file failure without triggering an SDK retry storm.
+    async fn setup_mixed_success_and_failure_batch(
+        tmp: &tempfile::TempDir,
+        put_fastfail: bool,
+    ) -> (wiremock::MockServer, UploadData) {
+        for (name, content) in [
+            ("good.dat", "ok"),
+            ("bad1.dat", "boom1"),
+            ("bad2.dat", "boom2"),
+        ] {
+            std::fs::write(tmp.path().join(name), content).unwrap();
+        }
+
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path_regex(r"good\.dat$"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path_regex(r"bad(1|2)\.dat$"))
+            .respond_with(wiremock::ResponseTemplate::new(400).set_body_string("nope"))
+            .mount(&mock)
+            .await;
+
+        let data = batch_upload_data_for(tmp.path(), &mock.uri(), put_fastfail);
+        (mock, data)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_fail_fast_propagates_error_to_abort_batch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data) = setup_mixed_success_and_failure_batch(&tmp, true).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+
+        let result = upload_files(&data, &policy, None).await;
+
+        let err = result.expect_err(
+            "fail-fast must propagate the first per-file error so upload_files aborts the batch",
+        );
+        assert!(
+            !matches!(err, FileManagerError::UploadBatch { .. }),
+            "fail-fast must abort with the raw per-file error, not the collect-all aggregate: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_collect_all_attempts_all_then_raises_aggregate() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data) = setup_mixed_success_and_failure_batch(&tmp, false).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+
+        let result = upload_files(&data, &policy, None).await;
+
+        match result {
+            Err(FileManagerError::UploadBatch {
+                failure_count,
+                failures,
+                ..
+            }) => {
+                assert_eq!(
+                    failure_count, 2,
+                    "both bad1.dat and bad2.dat must be attempted and reported, \
+                     while good.dat succeeds silently"
+                );
+                assert!(
+                    failures.contains("bad1.dat"),
+                    "aggregate failure message must name bad1.dat: {failures}"
+                );
+                assert!(
+                    failures.contains("bad2.dat"),
+                    "aggregate failure message must name bad2.dat: {failures}"
+                );
+            }
+            other => {
+                panic!("collect-all must attempt every file then raise UploadBatch, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn download_fail_fast_propagates_error_to_abort_batch() {
+        let result =
+            on_download_file_error(true, "@stage/f.csv".to_string(), sample_transfer_error());
+        assert!(
+            result.is_err(),
+            "fail-fast must propagate the first error so download_files aborts the batch"
+        );
+    }
+
+    #[test]
+    fn download_collect_all_folds_failure_into_error_row() {
+        let row =
+            on_download_file_error(false, "@stage/f.csv".to_string(), sample_transfer_error())
+                .expect("collect-all must yield an ERROR row rather than abort");
+        assert_eq!(row.status, "ERROR");
+        assert_eq!(row.file, "@stage/f.csv");
+        assert_eq!(row.size, 0);
+        assert!(
+            !row.message.is_empty(),
+            "the ERROR row must carry the failure detail in its message column"
+        );
     }
 
     #[test]

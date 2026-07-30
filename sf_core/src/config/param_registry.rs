@@ -94,6 +94,8 @@ pub mod param_names {
     pub const MULTI_STATEMENT_COUNT: ParamKey = ParamKey("multi_statement_count");
     pub const QUERY_TAG: ParamKey = ParamKey("query_tag");
     pub const SKIP_UPLOAD_ON_CONTENT_MATCH: ParamKey = ParamKey("skip_upload_on_content_match");
+    pub const PUT_FASTFAIL: ParamKey = ParamKey("put_fastfail");
+    pub const GET_FASTFAIL: ParamKey = ParamKey("get_fastfail");
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
@@ -1601,6 +1603,46 @@ static PARAM_DEFS: &[ParamDef] = &[
         description: "Skip re-uploading a PUT object when the remote stored digest (S3 x-amz-meta-sfc-digest / Azure x-ms-meta-sfcdigest / GCS x-goog-meta-sfc-digest) equals the local SHA-256. Optimization for racing concurrent uploaders; only meaningful when overwrite=true. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
         deprecated_by: None,
         scopes: &[ParamScope::Statement],
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::PUT_FASTFAIL.as_str(),
+        aliases: &["PUT_FASTFAIL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        // No registry default: unset must resolve to `None` so the dispatch
+        // site can fall back to `WrapperPresets::put_get_fastfail_default`
+        // (true for Python/JDBC, false for ODBC) instead of a fixed value.
+        default: None,
+        sensitive: false,
+        description: "Controls whether a PUT batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's PUT_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        deprecated_by: None,
+        scopes: &[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ],
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::GET_FASTFAIL.as_str(),
+        aliases: &["GET_FASTFAIL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        // See PUT_FASTFAIL above: `None` is load-bearing, not an oversight.
+        default: None,
+        sensitive: false,
+        description: "Controls whether a GET batch stops at the first failing file (true, fail-fast) or attempts every file and reports failures as ERROR-status rows in the result set (false, collect-all). Defaults to the active wrapper's preset when unset. Mirrors old ODBC's GET_FASTFAIL connection attribute. Set per-statement via statement_set_options before each execute. Client-only, never forwarded to GS.",
+        deprecated_by: None,
+        scopes: &[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ],
         used_at_connect: false,
         mutable_after_connect: true,
     },

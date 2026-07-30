@@ -473,6 +473,7 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        get_fastfail: true,
     };
 
     let results = download_files(data, &RetryPolicy::put_get(&ParamStore::new()), None)
