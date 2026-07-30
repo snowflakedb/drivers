@@ -1058,11 +1058,11 @@ behavior_differences:
       Applications that probe SQLGetFunctions to feature-gate scroll-option calls will see broader api coverage.
   66:
     name: "SQLGetCursorName synthesizes the SQL_CUR-prefixed auto cursor name and persists user-supplied names across SQLCloseCursor under iODBC instead of returning SQL_ERROR"
-    status: allowed
+    status: fixed
     type: bugfix
     reviewed: false
     status_rationale: |
-      The old driver under iODBC doesn't synthesize auto cursor names (returns SQL_ERROR on unprepared statements) and drops user-supplied cursor names after SQLCloseCursor (returns SQL_ERROR on a previously-named cursor that's been closed). The new driver follows the spec on both DMs (SQL_CUR-prefixed auto name; user-supplied name persists across SQLCloseCursor).
+      Originally assumed to be a new-vs-old difference: the new driver was expected to synthesize the SQL_CUR-prefixed auto cursor name and persist user-supplied names across SQLCloseCursor under iODBC, where the old driver returns SQL_ERROR. CI on the new driver under iODBC showed it also returns SQL_ERROR for auto-generated names (unprepared statement) and after SQLCloseCursor — identical to the old driver. This is an iODBC Driver Manager behavior (the DM serves cursor names from its own state and never sees the driver-internal SQL_CUR default; it drops the name once the cursor is closed), not a driver difference: both drivers match under iODBC (SQL_ERROR) and on unixODBC / Windows (SQL_CUR default; user-supplied name persists). No driver-conditional marker remains — the tests gate on IODBC_ONLY.
     is_breaking_change: false
     impact: low
     old_driver_behavior: |

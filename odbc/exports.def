@@ -28,6 +28,7 @@ EXPORTS
     SQLFreeHandle
     SQLFreeStmt
     SQLGetConnectAttrW
+    SQLGetCursorNameW
     SQLGetData
     SQLGetDescFieldW
     SQLGetDescRecW
