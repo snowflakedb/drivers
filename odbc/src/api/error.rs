@@ -314,6 +314,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid cursor name: {name}"))]
+    InvalidCursorName {
+        name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Duplicate cursor name: {name}"))]
+    DuplicateCursorName {
+        name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Statement is in error state"))]
     StatementErrorState {
         #[snafu(implicit)]
@@ -739,6 +753,8 @@ impl OdbcError {
             OdbcError::CountFieldIncorrect { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCatalogName { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidCursorState { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidCursorName { .. } => ErrorSource::ApiMisuse,
+            OdbcError::DuplicateCursorName { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidTransactionState { .. } => ErrorSource::ApiMisuse,
             OdbcError::CursorAlreadyOpen { .. } => ErrorSource::CursorState,
             OdbcError::StatementErrorState { .. } => ErrorSource::CursorState,
@@ -926,6 +942,8 @@ impl OdbcError {
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::InvalidTransactionState { .. } => SqlState::InvalidTransactionState,
             OdbcError::CursorAlreadyOpen { .. } => SqlState::InvalidCursorState,
+            OdbcError::InvalidCursorName { .. } => SqlState::InvalidCursorName,
+            OdbcError::DuplicateCursorName { .. } => SqlState::DuplicateCursorName,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,

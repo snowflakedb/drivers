@@ -47,6 +47,7 @@ EXPORTS
     SQLPutData
     SQLRowCount
     SQLSetConnectAttrW
+    SQLSetCursorNameW
     SQLSetDescFieldW
     SQLSetDescRec
     SQLSetEnvAttr

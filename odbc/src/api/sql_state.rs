@@ -171,6 +171,14 @@ pub enum SqlState {
     /// 2H000 - Invalid collation name
     InvalidCollationName,
 
+    // Invalid cursor name class (34)
+    /// 34000 - Invalid cursor name
+    InvalidCursorName,
+
+    // Duplicate cursor name class (3C)
+    /// 3C000 - Duplicate cursor name
+    DuplicateCursorName,
+
     // Invalid catalog name class (3D)
     /// 3D000 - Invalid catalog name
     InvalidCatalogName,
@@ -381,6 +389,8 @@ impl SqlState {
             SqlState::ReadingSqlDataNotPermitted => "2F004",
             SqlState::FunctionExecutedNoReturnStatement => "2F005",
             SqlState::InvalidCollationName => "2H000",
+            SqlState::InvalidCursorName => "34000",
+            SqlState::DuplicateCursorName => "3C000",
             SqlState::InvalidCatalogName => "3D000",
             SqlState::SyntaxErrorOrAccessRuleViolation => "42000",
             SqlState::BaseTableOrViewAlreadyExists => "42S01",
@@ -559,6 +569,8 @@ impl FromStr for SqlState {
             "2F004" => SqlState::ReadingSqlDataNotPermitted,
             "2F005" => SqlState::FunctionExecutedNoReturnStatement,
             "2H000" => SqlState::InvalidCollationName,
+            "34000" => SqlState::InvalidCursorName,
+            "3C000" => SqlState::DuplicateCursorName,
             "3D000" => SqlState::InvalidCatalogName,
             "42000" => SqlState::SyntaxErrorOrAccessRuleViolation,
             "42S01" => SqlState::BaseTableOrViewAlreadyExists,
