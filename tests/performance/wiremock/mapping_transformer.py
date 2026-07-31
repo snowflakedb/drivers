@@ -173,7 +173,9 @@ class MappingTransformer:
         if response_body and 'alter session' in response_body.lower():
             return True
         
-        # Heuristic 2: Check response characteristics (1 row, no chunks)
+        # Heuristic 2: metadata-only responses (1 row, no chunks) — but SELECT 1
+        # and other small queries match this shape too, so only strip when the
+        # request is not a data query.
         if not response_body:
             return False
         
@@ -191,6 +193,11 @@ class MappingTransformer:
             chunks = data.get('chunks', [])
             
             if total == 1 and returned == 1 and len(chunks) == 0:
+                body_patterns = mapping.get('request', {}).get('bodyPatterns', [])
+                for pattern in body_patterns:
+                    ps = str(pattern).lower()
+                    if 'select' in ps or 'insert' in ps or 'update' in ps or 'delete' in ps:
+                        return False
                 return True
         except (json.JSONDecodeError, KeyError, TypeError):
             # Malformed or unexpected response body — not a metadata-only response
