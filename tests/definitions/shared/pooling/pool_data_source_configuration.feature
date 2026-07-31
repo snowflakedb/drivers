@@ -19,8 +19,6 @@
 #
 # Related behavior differences: BD#5 (MFA credential-cache consolidation),
 # BD#31 (DataSource setters wired to sf_core only).
-# Authenticator auto-promotion when setBrowserResponseTimeout is set is
-# deferred to SNOW-3595091 and is not documented as a behavior difference yet.
 # ============================================================================
 
 @jdbc
@@ -138,8 +136,6 @@ Feature: Connection pool data source configuration
   # TIMEOUTS & RETRIES
   # Methods: setQueryTimeout, setMaxHttpRetries, setPutGetMaxRetries,
   #          setBrowserResponseTimeout, setLoginTimeout, getLoginTimeout
-  # Note: authenticator auto-promotion when setBrowserResponseTimeout is set is
-  # deferred to SNOW-3595091 (not documented as a BD yet).
   # ==========================================================================
 
   @jdbc_int
@@ -162,10 +158,10 @@ Feature: Connection pool data source configuration
     Then getLoginTimeout returns the configured value
 
   @jdbc_int
-  Scenario: should not auto-promote the authenticator when the browser response timeout is set
+  Scenario: should auto-promote the authenticator when the browser response timeout is set
     Given a new Snowflake connection pool data source
     When setBrowserResponseTimeout is called
-    Then the browser response timeout is stored and the authenticator is left unset
+    Then the browser response timeout is stored and the authenticator is promoted to EXTERNALBROWSER
 
   # ==========================================================================
   # DIAGNOSTICS

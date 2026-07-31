@@ -1,6 +1,7 @@
 .gradle/
 /bin/
 jdbc/bin/
+jdbc/decorator-processor/bin/
 .idea/
 target/
 parameters*.json
