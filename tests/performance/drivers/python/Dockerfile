@@ -76,7 +76,7 @@ COPY tests/performance/.tmp/rust_version /etc/rust_version
 # Install the driver — builds Cython extensions via hatch_build.py.
 # SKIP_CORE_BUILD tells hatch to skip cargo build of sf_core (we use the pre-built one above).
 ENV SKIP_CORE_BUILD=1
-RUN pip install --no-cache-dir /workdir/python/
+RUN pip install --no-cache-dir "/workdir/python/[pandas]"
 
 ENV DRIVER_TYPE=universal
 
@@ -92,7 +92,7 @@ CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/r
 # ============================================================================
 FROM base AS old
 
-RUN pip install --no-cache-dir snowflake-connector-python
+RUN pip install --no-cache-dir "snowflake-connector-python[pandas]"
 RUN echo "N/A" > /etc/rust_version
 
 ENV DRIVER_TYPE=old

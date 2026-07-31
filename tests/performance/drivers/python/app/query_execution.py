@@ -1,4 +1,5 @@
 """Query execution and performance measurement."""
+import functools
 import os
 import time
 from common import run_warmup, run_test_iterations, print_timing_stats, get_peak_rss_mb
@@ -17,29 +18,70 @@ except (ImportError, AttributeError):
     _PERF_ENABLED = False
 
 
-def execute_fetch_test(cursor, sql_command, warmup_iterations, iterations):
+def _fetch_many_chunks(cursor):
+    """Fetch all rows via a fetchmany() loop. Returns row count."""
+    row_count = 0
+    while True:
+        rows = cursor.fetchmany(_FETCH_BATCH_SIZE)
+        if not rows:
+            break
+        row_count += len(rows)
+    return row_count
+
+
+def _fetch_one_by_one(cursor):
+    """Fetch all rows via repeated fetchone() calls. Returns row count."""
+    row_count = 0
+    while cursor.fetchone() is not None:
+        row_count += 1
+    return row_count
+
+
+def _fetch_all_at_once(cursor):
+    """Fetch all rows via a single fetchall() call. Returns row count."""
+    return len(cursor.fetchall())
+
+
+def _fetch_pandas_all(cursor):
+    """Fetch all rows as a single pandas DataFrame. Returns row count."""
+    return len(cursor.fetch_pandas_all())
+
+
+_FETCH_STRATEGIES = {
+    "fetchmany": _fetch_many_chunks,
+    "fetchone": _fetch_one_by_one,
+    "fetchall": _fetch_all_at_once,
+    "pandas": _fetch_pandas_all,
+}
+
+
+def execute_fetch_test(cursor, sql_command, warmup_iterations, iterations, fetch_mode="fetchmany"):
     """
     Execute a complete SELECT test: warmup, iterations, and statistics.
-    
+
     Returns:
         tuple: (results list, memory_timeline list)
     """
     print("\n=== Executing SELECT Test ===")
     print(f"Query: {sql_command}")
-    
-    run_warmup(_execute_query, cursor, sql_command, warmup_iterations)
+    print(f"Fetch mode: {fetch_mode}")
+
+    fetch_fn = _FETCH_STRATEGIES[fetch_mode]
+    execute_query = functools.partial(_execute_query, fetch_fn=fetch_fn)
+
+    run_warmup(execute_query, cursor, sql_command, warmup_iterations)
 
     monitor = ResourceMonitor(interval_s=0.1)
     monitor.start()
 
-    results = run_test_iterations(_execute_query, cursor, sql_command, iterations)
+    results = run_test_iterations(execute_query, cursor, sql_command, iterations)
 
     memory_timeline = monitor.stop()
 
     _validate_row_counts(results)
     _print_statistics(results)
     print(f"  Memory timeline: {len(memory_timeline)} samples collected")
-    
+
     return results, memory_timeline
 
 
@@ -113,9 +155,9 @@ def _check_row_count_match(actual_count, expected_count, iteration):
         )
 
 
-def _execute_query(cursor, sql):
-    """Execute a single query and collect metrics.
-    
+def _execute_query(cursor, sql, fetch_fn):
+    """Execute a single query and collect metrics using the given fetch strategy.
+
     Returns:
         dict: Dictionary with timestamp, query_time_s, fetch_time_s, row_count,
               cpu_time_s, and peak_rss_mb
@@ -129,12 +171,7 @@ def _execute_query(cursor, sql):
 
     cpu_start = time.process_time()
     fetch_start = time.time()
-    row_count = 0
-    while True:
-        rows = cursor.fetchmany(_FETCH_BATCH_SIZE)
-        if not rows:
-            break
-        row_count += len(rows)
+    row_count = fetch_fn(cursor)
     fetch_time = time.time() - fetch_start
 
     cpu_time_s = time.process_time() - cpu_start
