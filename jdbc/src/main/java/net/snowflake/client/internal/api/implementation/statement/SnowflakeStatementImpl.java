@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
+import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.log.SFLogger;
@@ -120,8 +122,16 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement, De
       String sql, PreparedStatementBindingSerializer.NativeBindings nativeBindings)
       throws SQLException {
     QueryBindings bindings = nativeBindings != null ? nativeBindings.bindings() : null;
+
     boolean hasBindings = bindings != null;
-    logger.debug("Statement executeWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
+    logger.debug("Statement executeWithBindings start: hasBindings={}", hasBindings);
+    ParametersRegistry parameters = connection.getParameters();
+    if (logger.isInfoEnabled()
+        && parameters != null
+        && parameters.getBool(Parameter.LOG_QUERY_TEXT)) {
+      logger.info("query: [{}]", sql);
+    }
+
     prepareForExecution();
     coreDriverApi.statementSetSqlQuery(statementHandle, sql);
     // PreparedStatement callers must wrap this in try-with-resources on the NativeBindings so
