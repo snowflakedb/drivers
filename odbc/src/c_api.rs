@@ -2531,6 +2531,46 @@ pub unsafe extern "system" fn SQLSetStmtOptionW(
     }
 }
 
+/// ODBC 2.x deprecated entry point that maps four scroll-related parameters to
+/// the equivalent `SQL_ATTR_*` statement attribute writes. Advertising this
+/// function ensures `SQLGetFunctions(SQL_API_SQLSETSCROLLOPTIONS)` returns
+/// `SQL_TRUE`, which is required by the comprehensive `SQLGetFunctions` test
+/// suite.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetScrollOptions(
+    statement_handle: sql::Handle,
+    f_concurrency: sql::USmallInt,
+    crow_keyset: sql::Len,
+    crow_rowset: sql::USmallInt,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(
+        sql::HandleType::Stmt,
+        statement_handle,
+        "SQLSetScrollOptions"
+    );
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::set_scroll_options(
+        statement_handle,
+        f_concurrency,
+        crow_keyset,
+        crow_rowset,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]

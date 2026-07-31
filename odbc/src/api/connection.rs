@@ -2286,7 +2286,6 @@ impl OdbcFunction {
                 | Self::Drivers
                 | Self::ParamOptions
                 | Self::SetPos
-                | Self::SetScrollOptions
         )
     }
 

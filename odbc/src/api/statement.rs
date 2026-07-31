@@ -2512,6 +2512,84 @@ pub fn set_stmt_attr(
     }
 }
 
+/// ODBC 2.x thin wrapper. Maps the `crowKeyset`/`fConcurrency`/`crowRowset`
+/// triple to the equivalent `SQL_ATTR_*` statement-attribute writes:
+///
+/// - `SQL_ATTR_CURSOR_TYPE` (6) — derived from `crowKeyset`
+/// - `SQL_ATTR_CONCURRENCY` (7) — = `fConcurrency`
+/// - `SQL_ATTR_KEYSET_SIZE` (8) — = `crowKeyset` when it is a positive keyset
+///   size (i.e. not one of the `SQL_SCROLL_*` sentinel values)
+/// - `SQL_ATTR_ROW_ARRAY_SIZE` (27) — = `crowRowset`
+pub fn set_scroll_options(
+    statement_handle: sql::Handle,
+    f_concurrency: sql::USmallInt,
+    crow_keyset: sql::Len,
+    crow_rowset: sql::USmallInt,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    use crate::api::StmtAttr;
+
+    // Map crowKeyset to SQL_ATTR_CURSOR_TYPE.
+    // SQL_SCROLL_FORWARD_ONLY  (0)  → SQL_CURSOR_FORWARD_ONLY  (0)
+    // SQL_SCROLL_KEYSET_DRIVEN (-1) → SQL_CURSOR_KEYSET_DRIVEN (1)
+    // SQL_SCROLL_DYNAMIC       (-2) → SQL_CURSOR_DYNAMIC       (2)
+    // SQL_SCROLL_STATIC        (-3) → SQL_CURSOR_STATIC        (3)
+    // positive value                → SQL_CURSOR_KEYSET_DRIVEN (1),
+    //                                 keyset_size = crowKeyset
+    let cursor_type: sql::ULen = match crow_keyset {
+        0 => 0,
+        -1 => 1,
+        -2 => 2,
+        -3 => 3,
+        k if k > 0 => 1,
+        _ => {
+            return InvalidAttributeValueSnafu {
+                attribute: StmtAttr::CursorType as i32,
+                value: crow_keyset as i64,
+            }
+            .fail();
+        }
+    };
+
+    // SQL_ATTR_CURSOR_TYPE
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::CursorType as sql::Integer,
+        cursor_type as sql::Pointer,
+        sql::NTS as sql::Integer,
+        warnings,
+    )?;
+
+    // SQL_ATTR_CONCURRENCY
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::Concurrency as sql::Integer,
+        sql::ULen::from(f_concurrency) as sql::Pointer,
+        sql::NTS as sql::Integer,
+        warnings,
+    )?;
+
+    // SQL_ATTR_KEYSET_SIZE — only when a positive keyset size was given
+    if crow_keyset > 0 {
+        set_stmt_attr(
+            statement_handle,
+            StmtAttr::KeysetSize as sql::Integer,
+            crow_keyset as sql::ULen as sql::Pointer,
+            sql::NTS as sql::Integer,
+            warnings,
+        )?;
+    }
+
+    // SQL_ATTR_ROW_ARRAY_SIZE
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::RowArraySize as sql::Integer,
+        sql::ULen::from(crow_rowset) as sql::Pointer,
+        sql::NTS as sql::Integer,
+        warnings,
+    )
+}
+
 /// Get a statement attribute value
 pub fn get_stmt_attr<E: OdbcEncoding>(
     statement_handle: sql::Handle,
