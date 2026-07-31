@@ -14,12 +14,14 @@ TEST_EXECUTORS = {
 }
 
 
-def execute_test(test_type: TestType, cursor, sql_command: str, warmup_iterations: int, iterations: int):
+def execute_test(test_type: TestType, cursor, sql_command: str, warmup_iterations: int, iterations: int, fetch_mode: str = "fetchmany"):
     """Execute test using registered executor for the given test type."""
     executor = TEST_EXECUTORS.get(test_type)
     if not executor:
         raise ValueError(f"Unknown test type: {test_type}. Supported: {list(TEST_EXECUTORS.keys())}")
-    
+
+    if test_type == TestType.SELECT:
+        return executor(cursor, sql_command, warmup_iterations, iterations, fetch_mode)
     return executor(cursor, sql_command, warmup_iterations, iterations)
 
 
@@ -46,11 +48,12 @@ def main():
     
     try:
         results, memory_timeline = execute_test(
-            config.test_type, 
-            cursor, 
-            config.sql_command, 
-            config.warmup_iterations, 
-            config.iterations
+            config.test_type,
+            cursor,
+            config.sql_command,
+            config.warmup_iterations,
+            config.iterations,
+            config.fetch_mode,
         )
     except Exception as e:
         print(f"❌ Test execution failed: {e}")

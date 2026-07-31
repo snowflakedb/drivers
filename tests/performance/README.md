@@ -243,6 +243,11 @@ def test_put_files_12mx100(perf_test):
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
 - PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
+- **SELECT tests (Python, e2e only)**: pass `fetch_mode="fetchone"`, `"fetchall"`, or `"pandas"` to exercise a
+  different cursor fetch API instead of the default `fetchmany()` chunked loop (see
+  `tests/test_select_1M_fetchone.py`, `test_select_1M_fetchall.py`, `test_select_1M_pandas.py`). `"pandas"` uses
+  `cursor.fetch_pandas_all()` and requires the `pandas` extra, already installed in the Python driver image.
+  Not wired to the WireMock recorded-HTTP path.
 
 ### Test Configuration Priority
 
@@ -369,6 +374,7 @@ All drivers receive their configuration through **environment variables**. The r
 | `DRIVER_TYPE` | String | `"universal"` or `"old"` | `"universal"` |
 | `TEST_TYPE` | String | `"select"` or `"put_get"` | `"select"` |
 | `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended. | `[]` |
+| `FETCH_MODE` | String | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, or `"pandas"` (Python driver only) | `"fetchmany"` |
 
 ### PARAMETERS_JSON Format
 
