@@ -296,6 +296,54 @@ def test_api_usage_telemetry_records_passed_arguments(int_test_connection_factor
     assert "DictCursor" not in json.dumps(message), f"argument value leaked into telemetry payload: {message}"
 
 
+@pytest.mark.skip_reference(reason="wrapper_error telemetry is universal-driver only")
+def test_wrapper_error_telemetry_sent_on_execute_failure(int_test_connection_factory, wiremock):
+    """Verify that a wrapper_error telemetry event is recorded when a decorated public
+    method raises.
+
+    ``SnowflakeCursor.execute`` is wrapped by ``ErrorHandlerMixin`` (see errorhandler.py),
+    which on failure calls ``TelemetryClient.send_wrapper_error(type(exc).__name__,
+    'SnowflakeCursor.execute')``. sf_core records this as an ``exception`` span event with
+    ``exception.type`` / ``exception.source`` attributes, which the Snowflake exporter then
+    serializes into a log entry on ``/telemetry/send`` with ``message.type == 'exception'``.
+    """
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+    wiremock.add_mapping("session/query_500_always.json")
+
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    try:
+        with pytest.raises(Exception) as excinfo:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+    finally:
+        # Closing the connection flushes pending telemetry spans via
+        # SimpleSpanProcessor, so it must happen before we poll wiremock.
+        connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after the failed execute"
+
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    exception_entries = [
+        entry
+        for entry in log_entries
+        if entry["message"].get("type") == "exception"
+        and entry["message"].get("exception.source") == "SnowflakeCursor.execute"
+    ]
+    assert len(exception_entries) == 1, (
+        "Expected exactly one exception telemetry log entry with "
+        f"exception.source='SnowflakeCursor.execute'. Got entries: {log_entries}"
+    )
+
+    message = exception_entries[0]["message"]
+    expected_type = type(excinfo.value).__name__
+    assert message.get("exception.type") == expected_type, (
+        f"exception.type expected {expected_type!r}, got {message.get('exception.type')!r}. Full message: {message}"
+    )
+
+
 def _jwt_private_key_params() -> dict:
     """Return connection overrides needed for JWT auth against Wiremock.
 

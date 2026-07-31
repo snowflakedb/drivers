@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from snowflake.connector._internal.decorators import _TRACKING
+from snowflake.connector._internal.decorators import _TRACKING, api_telemetry
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     ConnectionIsClosedResponse,
@@ -21,6 +21,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
     TelemetrySendResponse,
 )
+from snowflake.connector.errors import ProgrammingError
 
 
 def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
@@ -79,10 +80,10 @@ def cursor(connection, mock_db_api):
 
 @pytest.fixture(autouse=True)
 def reset_tracking():
-    """Ensure _TRACKING ContextVar is reset before each test."""
-    token = _TRACKING.set(True)
+    """Ensure the _TRACKING ContextVar is reset before each test."""
+    tracking_token = _TRACKING.set(True)
     yield
-    _TRACKING.reset(token)
+    _TRACKING.reset(tracking_token)
 
 
 def _get_api_methods(mock_db_api):
@@ -141,6 +142,7 @@ def mock_async_db_api():
         return_value=MagicMock(result_descriptor=ResultSetDescriptor(query_id="fake-qid")),
     )
     db_api.telemetry_send_api_usage = AsyncMock(return_value=TelemetrySendResponse())
+    db_api.telemetry_send_wrapper_error = AsyncMock(return_value=TelemetrySendResponse())
 
     old_client = async_core_driver._client
     async_core_driver.client = db_api
@@ -370,6 +372,130 @@ class TestApiTelemetryResetBehavior:
         assert "Connection.cursor" in methods
         assert "SnowflakeCursor.close" in methods
         assert "Connection.close" in methods
+
+
+class TestWrapperErrorTelemetry:
+    """Tests that ErrorHandlerMixin sends wrapper_error telemetry when a wrapped call raises."""
+
+    @staticmethod
+    def _get_wrapper_errors(mock_db_api):
+        """Extract (exception_type, error_source) from all send_wrapper_error calls."""
+        return [
+            (call[0][0].exception_type, call[0][0].error_source)
+            for call in mock_db_api.telemetry_send_wrapper_error.call_args_list
+        ]
+
+    def test_cursor_execute_error_sends_wrapper_error(self, cursor, mock_db_api):
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("syntax error")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("BAD SQL")
+
+        assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_db_api)
+
+    def test_connection_commit_error_reports_inner_source(self, connection, mock_db_api):
+        """When commit() -> execute() raises, both the inner execute() frame and the
+        outer commit() frame report — each wrapped frame that catches the exception
+        reports it under its own method name, innermost first."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            connection.commit()
+
+        assert self._get_wrapper_errors(mock_db_api) == [
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+            ("ProgrammingError", "Connection.commit"),
+        ]
+
+    def test_sibling_error_after_swallowed_exception_still_reports(self, connection, cursor, mock_db_api):
+        """An exception raised by a nested decorated call and caught by ordinary
+        (non-decorator) code inside an outer decorated call must not suppress
+        reporting for a later, unrelated exception raised by a sibling decorated
+        call within that same outer call."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        @api_telemetry
+        def outer(self):
+            try:
+                cursor.execute("first")
+            except ProgrammingError:
+                pass
+            cursor.execute("second")
+
+        with pytest.raises(ProgrammingError):
+            outer(connection)
+
+        assert self._get_wrapper_errors(mock_db_api) == [
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+        ]
+
+    def test_non_connector_exception_reported(self, cursor, mock_db_api):
+        """Non-Error exceptions (e.g. RuntimeError) are also reported."""
+        mock_db_api.statement_execute_query.side_effect = RuntimeError("unexpected")
+
+        with pytest.raises(RuntimeError):
+            cursor.execute("SELECT 1")
+
+        assert ("RuntimeError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_db_api)
+
+    def test_successful_call_does_not_send_wrapper_error(self, cursor, mock_db_api):
+        cursor.execute("SELECT 1")
+        assert self._get_wrapper_errors(mock_db_api) == []
+
+    def test_wrapper_error_telemetry_failure_does_not_suppress_exception(self, cursor, mock_db_api):
+        """If send_wrapper_error itself fails, the original exception still propagates."""
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("original")
+        mock_db_api.telemetry_send_wrapper_error.side_effect = RuntimeError("telemetry down")
+
+        with pytest.raises(ProgrammingError, match="original"):
+            cursor.execute("SELECT 1")
+
+    def test_generator_error_reports_innermost_method(self, connection, mock_db_api):
+        """execute_stream() is a generator method, so it is never itself wrapped by
+        ErrorHandlerMixin — but the inner cursor.execute() call it drives while being
+        iterated is a regular wrapped method, and reports the error from that inner
+        frame."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            list(connection.execute_stream(StringIO("SELECT 1")))
+
+        assert self._get_wrapper_errors(mock_db_api) == [("ProgrammingError", "SnowflakeCursor.execute")]
+
+
+class TestAsyncWrapperErrorTelemetry:
+    """Async counterpart of TestWrapperErrorTelemetry."""
+
+    @staticmethod
+    def _get_wrapper_errors(mock_async_db_api):
+        return [
+            (call[0][0].exception_type, call[0][0].error_source)
+            for call in mock_async_db_api.telemetry_send_wrapper_error.call_args_list
+        ]
+
+    def test_async_cursor_execute_error_sends_wrapper_error(self, async_cursor, mock_async_db_api):
+        mock_async_db_api.statement_execute_query.side_effect = ProgrammingError("syntax error")
+
+        with pytest.raises(ProgrammingError):
+            _run_async(async_cursor.execute("BAD SQL"))
+
+        assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_async_db_api)
+
+    def test_async_connection_commit_error_reports_inner_source(self, async_connection, mock_async_db_api):
+        mock_async_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_async_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            _run_async(async_connection.commit())
+
+        assert self._get_wrapper_errors(mock_async_db_api) == [
+            ("ProgrammingError", "SnowflakeCursor.execute"),
+            ("ProgrammingError", "Connection.commit"),
+        ]
 
 
 class TestApiTelemetryFailureIsolation:
