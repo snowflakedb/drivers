@@ -335,18 +335,18 @@ class PoolDataSourceConfigurationTests {
   }
 
   @Test
-  void shouldNotAutoPromoteTheAuthenticatorWhenTheBrowserResponseTimeoutIsSet() {
-    // TODO SNOW-3595091: reference driver auto-promotes authenticator=EXTERNALBROWSER here
+  void shouldAutoPromoteTheAuthenticatorWhenTheBrowserResponseTimeoutIsSet() {
     // Given a new Snowflake connection pool data source
     SnowflakePooledConnectionDataSource ds = new SnowflakePooledConnectionDataSource();
 
     // When setBrowserResponseTimeout is called
     ds.setBrowserResponseTimeout(60);
 
-    // Then the browser response timeout is stored and the authenticator is left unset
+    // Then the browser response timeout is stored and the authenticator is promoted to
+    // EXTERNALBROWSER
     Properties props = ds.getProperties();
     assertEquals("60", props.getProperty("browser_response_timeout"));
-    assertNull(props.getProperty("authenticator"));
+    assertEquals("EXTERNALBROWSER", props.getProperty("authenticator"));
   }
 
   static Stream<Arguments> diagnosticsProperties() {
