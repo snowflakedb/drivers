@@ -43,15 +43,6 @@ public class SnowflakeBasicDataSource
 
   private static final long serialVersionUID = 1L;
 
-  // TODO: [SNOW-3595091] align authenticator-promotion behavior across drivers.
-  //  The legacy JDBC driver auto-set the authenticator to USERNAME_PASSWORD_MFA
-  //  from setPasscode / setPasscodeInPassword (and analogous setters for other auth methods),
-  //  and analogous behavior exists in the Python and ODBC connectors.
-  //  The new universal driver intentionally drops this side-effect for now so
-  //  that each setter does only what its name says.
-  //  Once the cross-driver decision is finalized: either reinstate the auto-promotion uniformly,
-  //  or document a hard "callers must set the authenticator explicitly" contract everywhere.
-
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeBasicDataSource.class);
 
   static {
@@ -232,25 +223,38 @@ public class SnowflakeBasicDataSource
     setProperty(SessionProperty.AUTHENTICATOR, authenticator);
   }
 
+  private void setAuthenticator(DataSourceAuthenticator authenticator) {
+    setProperty(SessionProperty.AUTHENTICATOR, authenticator.getWireValue());
+  }
+
   @Override
   public void setToken(String token) {
+    // can be used with PROGRAMMATIC_ACCESS_TOKEN, OAUTH
     setProperty(SessionProperty.TOKEN, token);
   }
 
   @Override
   public void setOauthToken(String oauthToken) {
-    setProperty(SessionProperty.AUTHENTICATOR, "OAUTH");
+    setAuthenticator(DataSourceAuthenticator.OAUTH_ACCESS_TOKEN);
     setProperty(SessionProperty.TOKEN, oauthToken);
   }
 
   @Override
+  public void setPat(String pat) {
+    setAuthenticator(DataSourceAuthenticator.PAT);
+    setProperty(SessionProperty.TOKEN, pat);
+  }
+
+  @Override
   public void setPrivateKey(PrivateKey privateKey) {
+    setAuthenticator(DataSourceAuthenticator.JWT);
     setProperty(
         SessionProperty.PRIVATE_KEY, Base64.getEncoder().encodeToString(privateKey.getEncoded()));
   }
 
   @Override
   public void setPrivateKeyFile(String location, String password) {
+    setAuthenticator(DataSourceAuthenticator.JWT);
     setProperty(SessionProperty.PRIVATE_KEY_FILE, location);
     if (isNullOrEmpty(password)) {
       clearProperty(SessionProperty.PRIVATE_KEY_PASSWORD);
@@ -261,6 +265,7 @@ public class SnowflakeBasicDataSource
 
   @Override
   public void setPrivateKeyBase64(String privateKeyBase64, String password) {
+    setAuthenticator(DataSourceAuthenticator.JWT);
     setProperty(SessionProperty.PRIVATE_KEY, privateKeyBase64);
     if (isNullOrEmpty(password)) {
       clearProperty(SessionProperty.PRIVATE_KEY_PASSWORD);
@@ -271,16 +276,21 @@ public class SnowflakeBasicDataSource
 
   @Override
   public void setPasscode(String passcode) {
+    setAuthenticator(DataSourceAuthenticator.MFA);
     setProperty(SessionProperty.PASSCODE, passcode);
   }
 
   @Override
   public void setPasscodeInPassword(boolean isPasscodeInPassword) {
     setProperty(SessionProperty.PASSCODE_IN_PASSWORD, isPasscodeInPassword);
+    if (isPasscodeInPassword) {
+      setAuthenticator(DataSourceAuthenticator.MFA);
+    }
   }
 
   @Override
   public void setOktaUsername(String oktaUsername) {
+    // companion to native Okta (authenticator=<vanity URL>)
     setProperty(SessionProperty.OKTA_USERNAME, oktaUsername);
   }
 
@@ -291,41 +301,49 @@ public class SnowflakeBasicDataSource
 
   @Override
   public void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential) {
+    setAuthenticator(DataSourceAuthenticator.EXTERNAL_BROWSER);
     setProperty(SessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL, clientStoreTemporaryCredential);
   }
 
   @Override
   public void setOauthClientId(String oauthClientId) {
+    // can be used with OAUTH_AUTHORIZATION_CODE and OAUTH_CLIENT_CREDENTIALS
     setProperty(SessionProperty.OAUTH_CLIENT_ID, oauthClientId);
   }
 
   @Override
   public void setOauthClientSecret(String oauthClientSecret) {
+    // can be used with OAUTH_CLIENT_CREDENTIALS and OAUTH_AUTHORIZATION_CODE
     setProperty(SessionProperty.OAUTH_CLIENT_SECRET, oauthClientSecret);
   }
 
   @Override
   public void setOauthAuthorizationUrl(String oauthAuthorizationUrl) {
+    setAuthenticator(DataSourceAuthenticator.OAUTH_AUTHORIZATION_CODE);
     setProperty(SessionProperty.OAUTH_AUTHORIZATION_URL, oauthAuthorizationUrl);
   }
 
   @Override
   public void setOauthTokenRequestUrl(String oauthTokenRequestUrl) {
+    // can be used with OAUTH_CLIENT_CREDENTIALS and OAUTH_AUTHORIZATION_CODE
     setProperty(SessionProperty.OAUTH_TOKEN_REQUEST_URL, oauthTokenRequestUrl);
   }
 
   @Override
   public void setOauthRedirectUri(String oauthRedirectUri) {
+    setAuthenticator(DataSourceAuthenticator.OAUTH_AUTHORIZATION_CODE);
     setProperty(SessionProperty.OAUTH_REDIRECT_URI, oauthRedirectUri);
   }
 
   @Override
   public void setOauthScope(String oauthScope) {
+    // can be optional for OAUTH_AUTHORIZATION_CODE and OAUTH_CLIENT_CREDENTIALS
     setProperty(SessionProperty.OAUTH_SCOPE, oauthScope);
   }
 
   @Override
   public void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens) {
+    setAuthenticator(DataSourceAuthenticator.OAUTH_AUTHORIZATION_CODE);
     setProperty(
         SessionProperty.OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS, oauthEnableSingleUseRefreshTokens);
   }
@@ -392,7 +410,7 @@ public class SnowflakeBasicDataSource
 
   @Override
   public void setBrowserResponseTimeout(int browserResponseTimeoutSeconds) {
-    // Does not auto-set authenticator; see TODO SNOW-3595091 above.
+    setAuthenticator(DataSourceAuthenticator.EXTERNAL_BROWSER);
     setProperty(SessionProperty.BROWSER_RESPONSE_TIMEOUT, browserResponseTimeoutSeconds);
   }
 

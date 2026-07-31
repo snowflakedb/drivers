@@ -46,6 +46,8 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setOauthToken(String oauthToken);
 
+  void setPat(String pat);
+
   void setPrivateKey(PrivateKey privateKey);
 
   void setPrivateKeyFile(String location, String password);
