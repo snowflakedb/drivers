@@ -52,6 +52,7 @@ EXPORTS
     SQLSetDescFieldW
     SQLSetDescRec
     SQLSetEnvAttr
+    SQLSetScrollOptions
     SQLSetStmtAttrW
     SQLTablesW
     SQLTransact
