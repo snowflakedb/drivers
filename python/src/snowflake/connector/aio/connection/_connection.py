@@ -23,7 +23,7 @@ from ..._internal.connection import (
     clamp_client_prefetch_threads,
     requires_open,
 )
-from ..._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249, snowpark_compat
+from ..._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ..._internal.errorcode import ER_INVALID_VALUE
 from ..._internal.logging import get_logger
 from ..._internal.logout_config_mapping import (
@@ -41,7 +41,7 @@ from ..._internal.telemetry import AsyncTelemetryClient
 from ..._internal.text_utils import split_statements
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
-from ...errors import Error, NotSupportedError, ProgrammingError
+from ...errors import Error, ProgrammingError
 from ...telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ...version import __version__
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
@@ -465,19 +465,6 @@ class Connection(ConnectionMixin):
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
-
-    # ------------------------------------------------------------------
-    # File-transfer stub (Snowpark compatibility only)
-    # ------------------------------------------------------------------
-
-    @snowpark_compat
-    @api_telemetry
-    async def upload_stream(self, *args: Any, **kwargs: Any) -> None:
-        """Noop stub — Snowpark calls this on the connection for streaming PUT.
-
-        File transfer is not yet supported by the Universal Driver.
-        """
-        raise NotSupportedError("upload_stream is not yet supported by the Universal Driver.")
 
 
 SnowflakeConnection = Connection
