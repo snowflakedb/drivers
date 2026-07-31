@@ -63,13 +63,14 @@ EXCLUDED_PATHS = NOMIRROR_PATHS + [
     # CODEOWNERS. Re-include + scrub to a public team if external-review routing
     # is ever wanted.
     ".github/CODEOWNERS",
-    # Pre-disclosure sign-off gate: the workflow `uses:` an org-internal action
-    # the public org cannot resolve, and the roster names who can authorize a
-    # disclosure. Listed explicitly rather than moved below a NOMIRROR/
-    # directory because GitHub only reads workflows from .github/workflows/ and
-    # the action expects its default roster path.
+    # Pre-disclosure sign-off gate: the workflows `uses:` an org-internal
+    # action the public org cannot resolve, and the roster names who can
+    # authorize a disclosure. Listed explicitly rather than moved below a
+    # NOMIRROR/ directory because GitHub only reads workflows from
+    # .github/workflows/ and the action expects its default roster path.
     # See NOMIRROR/security-signoff.md.
     ".github/workflows/security-signoff.yml",
+    ".github/workflows/security-label.yml",
     ".github/security-partners.yml",
     # Internal bug-regression tracking: Jira ticket catalogs, analysis status
     # annotations, and the generated HTML report.

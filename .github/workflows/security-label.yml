@@ -1,0 +1,61 @@
+# Keyword net for the pre-disclosure sign-off gate.
+#
+# Scans each PR's title and body against the action's built-in keyword net
+# (its keywords.yml — a reviewable list of case-insensitive RE2 patterns owned
+# by the security partners) and adds `security-signoff-required` on a match.
+#
+# This is the complement to .github/workflows/security-signoff.yml, not a
+# replacement for it: the gate is authoritative once the label is present, and
+# this raises recall so that clearing a change for public disclosure depends
+# less on someone remembering to label it.
+#
+# Two properties worth knowing:
+#   - Add-only. It never removes the label, so a human escalation is never
+#     stripped out from under a reviewer. This is also why the label is NOT in
+#     .github/labeler.yml: .github/workflows/labeler.yml runs actions/labeler
+#     with `sync-labels: true`, which would remove the label again as soon as
+#     the configured paths stopped matching.
+#   - Fail-open. A false positive costs one extra partner review; a miss risks
+#     premature disclosure. The net therefore favours recall over precision,
+#     and an unnecessary label is cheap to drop by hand.
+#
+# See NOMIRROR/security-signoff.md for the process and the rollout state.
+name: Security label
+
+on:
+  # pull_request_target, not pull_request, so the token can write labels on
+  # PRs from forks — same reason .github/workflows/labeler.yml uses it. This is
+  # safe because the action only reads the PR title, body, and diff as text
+  # through the API; it never checks out or executes PR head code.
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+  pull-requests: write # to add the label
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  keyword-net:
+    name: Keyword net
+    # Belt-and-braces; this file is excluded from the mirror in
+    # ci/mirroring/copy.bara.sky. See security-signoff.yml for the rationale.
+    if: github.repository_owner != 'snowflakedb'
+    # ubuntu-latest, not ubuntu-slim: Docker container action, built at run
+    # time, so it needs a Docker-capable runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: snowflake-eng/security-signoff-action@v0
+        with:
+          mode: label
+          # scan-diff is left off (default false): title and body only. Turning
+          # it on raises recall further at the cost of more false positives —
+          # revisit once we have seen how the built-in net behaves here.
+          #
+          # keyword-patterns can extend the built-in net with repo-specific
+          # RE2 patterns. Extension is add-only: a repo can strengthen the
+          # shared net but cannot remove an entry from it.
