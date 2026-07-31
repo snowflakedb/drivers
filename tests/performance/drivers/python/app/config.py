@@ -18,7 +18,7 @@ class TestConfig:
         try:
             self.test_type = TestType(test_type_str)
         except ValueError:
-            print(f"ERROR: Invalid test type '{test_type_str}'. Supported types: select, put_get")
+            print(f"ERROR: Invalid test type '{test_type_str}'. Supported types: select, put_get, cold_start")
             sys.exit(1)
         
         self.sql_command = os.getenv("SQL_COMMAND")

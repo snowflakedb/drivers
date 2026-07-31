@@ -34,6 +34,7 @@ def run_wiremock_performance_test(
     preserve_mappings: bool = False,
     reuse_mappings_dir: str = None,
     expected_row_count_override: int = None,
+    test_type: PerfTestType = PerfTestType.SELECT,
 ) -> list[Path]:
     """
     Run a performance test with WireMock HTTP traffic recording.
@@ -128,6 +129,7 @@ def run_wiremock_performance_test(
                     wiremock_container_name=wiremock.get_container_name(),
                     network_mode=network,
                     wiremock_manager=wiremock,
+                    test_type=test_type,
                 )
                 
                 # Step 4: Create snapshot and transform
@@ -146,14 +148,25 @@ def run_wiremock_performance_test(
                 logger.info("Step 5: Stopping WireMock (record mode)...")
                 wiremock.stop()
             
-            expected_row_count = _extract_row_count_from_recording(results_dir, test_name, driver, driver_type)
-            if expected_row_count is None or expected_row_count == 0:
-                raise RuntimeError(
-                    f"Recording phase failed for '{test_name}': no valid result CSV was produced. "
-                    f"The driver container likely crashed during query execution through "
-                    f"the WireMock proxy. Check the container logs above for details."
-                )
-            logger.info(f"Extracted row count from recording: {expected_row_count} rows")
+            if test_type == PerfTestType.COLD_START:
+                # Cold-start CSVs have no row_count; just verify a CSV was produced
+                expected_row_count = None
+                recording_dir = results_dir / (driver_type if driver != "core" else "universal") / "_record"
+                pattern = f"{test_name}_record_{driver}_{driver_type}_*.csv" if driver != "core" else f"{test_name}_record_{driver}_*.csv"
+                if not list(recording_dir.glob(pattern)):
+                    raise RuntimeError(
+                        f"Recording phase failed for '{test_name}': no result CSV was produced."
+                    )
+                logger.info("Cold-start recording phase completed (no row_count validation)")
+            else:
+                expected_row_count = _extract_row_count_from_recording(results_dir, test_name, driver, driver_type)
+                if expected_row_count is None or expected_row_count == 0:
+                    raise RuntimeError(
+                        f"Recording phase failed for '{test_name}': no valid result CSV was produced. "
+                        f"The driver container likely crashed during query execution through "
+                        f"the WireMock proxy. Check the container logs above for details."
+                    )
+                logger.info(f"Extracted row count from recording: {expected_row_count} rows")
         else:
             logger.info("")
             logger.info("Skipping recording phase - reusing existing mappings")
@@ -202,6 +215,7 @@ def run_wiremock_performance_test(
                 is_replay=True,  # Flag to indicate replay mode
                 expected_row_count=expected_row_count,  # Pass expected row count for validation
                 wiremock_manager=wiremock,
+                test_type=test_type,
             )
             
             # Collect metrics while WireMock is still running (triggers flush to disk)
@@ -264,6 +278,7 @@ def run_wiremock_comparison_test(
     run_id: str = None,
     preserve_mappings: bool = False,
     reuse_mappings_dir: str = None,
+    test_type: PerfTestType = PerfTestType.SELECT,
 ) -> dict[str, list[Path]]:
     """
     Run WireMock test on both universal and old driver implementations.
@@ -313,6 +328,7 @@ def run_wiremock_comparison_test(
         run_id=run_id,
         preserve_mappings=True,  # Must preserve for old driver to reuse
         reuse_mappings_dir=reuse_mappings_dir,
+        test_type=test_type,
     )
     
     # Determine the mappings directory created by universal driver
@@ -349,6 +365,7 @@ def run_wiremock_comparison_test(
         preserve_mappings=preserve_mappings,  # Use user's preference for final cleanup
         reuse_mappings_dir=old_driver_mappings,  # Reuse universal's mappings
         expected_row_count_override=expected_row_count_for_old,  # Pass universal's row count for validation
+        test_type=test_type,
     )
     
     return results
@@ -551,6 +568,7 @@ def _run_test_with_proxy(
     is_replay: bool = False,
     expected_row_count: int = None,
     wiremock_manager: "WiremockManager" = None,
+    test_type: PerfTestType = PerfTestType.SELECT,
 ):
     """
     Run test with WireMock proxy configuration.
@@ -604,7 +622,7 @@ def _run_test_with_proxy(
         driver=driver,
         driver_type=driver_type,
         setup_queries=setup_queries,
-        test_type=PerfTestType.SELECT,  # WireMock tests are SELECT-based
+        test_type=test_type,
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
         env_vars=env_vars,

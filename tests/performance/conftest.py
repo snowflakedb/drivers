@@ -358,6 +358,10 @@ def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_
             use_db_query = f"USE DATABASE {database}"
             return [use_db_query] + (setup_queries or [])
 
+        case PerfTestType.COLD_START | PerfTestType.COLD_START_RECORDED_HTTP:
+            # Cold-start: bare connect + SELECT 1, no setup queries
+            return []
+
 
 @pytest.fixture
 def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iterations, driver, driver_type, use_local_binary, preserve_mappings, reuse_mappings_dir, request):
@@ -404,7 +408,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
         is_comparison = _should_run_comparison(driver, driver_type)
 
-        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
+        if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
             _regression_test_params[test_name] = {
                 "sql_command": sql_command,
                 "parameters_json": parameters_json,
@@ -412,13 +416,14 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
             }
 
         # Route to appropriate runner based on test type
-        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
+        if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
             result = _run_wiremock_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
+                test_type=test_type,
             )
         else:
             result = _run_e2e_test(
@@ -442,9 +447,17 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         setup_queries: list[str],
         s3_files_dir,
         is_comparison: bool,
+        test_type: PerfTestType = PerfTestType.SELECT_RECORDED_HTTP,
     ):
         """Run WireMock test (recorded HTTP traffic)."""
         _validate_wiremock_old_driver(driver, driver_type)
+
+        # Map recorded-HTTP types to the underlying container test type
+        container_type_map = {
+            PerfTestType.SELECT_RECORDED_HTTP: PerfTestType.SELECT,
+            PerfTestType.COLD_START_RECORDED_HTTP: PerfTestType.COLD_START,
+        }
+        container_test_type = container_type_map.get(test_type, PerfTestType.SELECT)
         
         if is_comparison:
             from runner.modes.wiremock_runner import run_wiremock_comparison_test
@@ -462,6 +475,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 run_id=run_id,
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
+                test_type=container_test_type,
             )
         else:
             from runner.modes.wiremock_runner import run_wiremock_performance_test
@@ -480,6 +494,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 run_id=run_id,
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
+                test_type=container_test_type,
             )
     
     def _run_e2e_test(

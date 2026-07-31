@@ -25,8 +25,66 @@ def execute_test(test_type: TestType, cursor, sql_command: str, warmup_iteration
     return executor(cursor, sql_command, warmup_iterations, iterations)
 
 
+def _run_cold_start(config):
+    """Run cold-start test: each iteration is a fresh subprocess that imports, connects, and runs SELECT 1."""
+    import json
+    import subprocess
+    import time
+    from pathlib import Path
+
+    conn_params = config.parse_connection_params()
+    child_env = os.environ.copy()
+    child_env["CONNECTION_PARAMS_JSON"] = json.dumps(conn_params)
+    child_env["DRIVER_TYPE"] = config.driver_type
+
+    child_script = str(Path(__file__).with_name("cold_start_execution.py"))
+    subdir = "_record" if config.test_name.endswith("_record") else config.test_name
+    results_dir = Path("/results") / config.driver_type / subdir
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = int(time.time())
+    filename = results_dir / f"{config.test_name}_python_{config.driver_type}_{timestamp}.csv"
+
+    rows = []
+
+    print(f"\n=== Cold-Start Test ({config.iterations} iterations) ===")
+    for i in range(config.iterations):
+        label = f"iter {i + 1}/{config.iterations}"
+        proc = subprocess.run(
+            [sys.executable, child_script],
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            print(f"  [{label}] FAILED (exit {proc.returncode})")
+            print(proc.stderr)
+            sys.exit(1)
+        line = proc.stdout.strip()
+        print(f"  [{label}] {line}")
+        rows.append(line)
+
+    with open(filename, "w", newline="") as f:
+        f.write("timestamp_ms,e2e_s,load_s,connect_s,select1_s,cpu_time_s,peak_rss_mb\n")
+        for row in rows:
+            f.write(row + "\n")
+
+    # Write run metadata (driver version requires a quick import)
+    from connection import _get_driver_version
+    driver_version = _get_driver_version(config.driver_type)
+    write_run_metadata(config.driver_type, driver_version, "N/A")
+
+    print(f"\n✓ Complete → {filename}")
+
+
 def main():
     config = TestConfig()
+
+    if config.test_type == TestType.COLD_START:
+        _run_cold_start(config)
+        return
+
     conn_params = config.parse_connection_params()
     setup_queries = config.get_setup_queries()
     
