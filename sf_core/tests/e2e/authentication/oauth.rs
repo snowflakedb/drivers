@@ -219,6 +219,38 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
 // =============================================================================
 
 #[test]
+#[ignore = "OAuth E2E: AC token caching needs a real browser leg for the first connection (run with --features auth_oauth_e2e)"]
+fn oauth_should_reuse_cached_access_token_without_browser_interaction() {
+    // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with
+    //       client_store_temporary_credential=true and a token has been
+    //       cached from a previous browser authentication
+    let client = SnowflakeTestClient::with_default_params();
+    let client_id =
+        client.parameters.oauth_client_id.clone().expect(
+            "SNOWFLAKE_TEST_OAUTH_CLIENT_ID must be set for OAuth AC token caching E2E test",
+        );
+    let client_secret = client.parameters.oauth_client_secret.clone().expect(
+        "SNOWFLAKE_TEST_OAUTH_CLIENT_SECRET must be set for OAuth AC token caching E2E test",
+    );
+
+    set_authorization_code(&client);
+    client.set_connection_option("oauth_client_id", &client_id);
+    client.set_connection_option("oauth_client_secret", &client_secret);
+    set_optional_oauth_endpoints(&client);
+    client.set_connection_option_bool("client_store_temporary_credential", true);
+
+    // First connection: full browser leg that populates the token cache.
+    let result = client.connect();
+    client.verify_simple_query(result);
+
+    // When Trying to Connect without browser interaction
+    let result = client.connect();
+
+    // Then Login is successful and a simple query can be executed
+    client.verify_simple_query(result);
+}
+
+#[test]
 #[ignore = "OAuth E2E: CC flow requires an external IdP and a configured oauth_token_request_url (run with --features auth_oauth_e2e)"]
 fn oauth_should_authenticate_using_client_credentials_flow() {
     // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a
