@@ -27,7 +27,12 @@ class TestConfig:
         self.warmup_iterations = int(os.getenv("PERF_WARMUP_ITERATIONS", "0"))
         self.params_json = os.getenv("PARAMETERS_JSON")
         self.setup_queries_json = os.getenv("SETUP_QUERIES")
-        
+
+        self.fetch_mode = os.getenv("FETCH_MODE", "fetchmany")
+        if self.fetch_mode not in ("fetchmany", "fetchone", "fetchall", "pandas"):
+            print(f"ERROR: Invalid fetch mode '{self.fetch_mode}'. Supported: fetchmany, fetchone, fetchall, pandas")
+            sys.exit(1)
+
         if not all([self.sql_command, self.test_name, self.params_json]):
             print("ERROR: Missing required environment variables")
             sys.exit(1)
