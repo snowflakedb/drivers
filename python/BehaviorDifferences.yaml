@@ -138,16 +138,21 @@ behavior_differences:
       `to_arrow()`, `to_pandas()`, and `create_iter(iter_unit=TABLE_UNIT)` all work on every batch regardless of its class.
 
   19:
-    name: "write_pandas create_temp_table parameter removed"
+    name: "write_pandas create_temp_table: DeprecationWarning alias restored for Snowpark compat"
     status: allowed
     type: api_incompatibility
     reviewed: true
-    is_breaking_change: true
-    impact: high
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
       `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
     new_driver_behavior: |
-      The `create_temp_table` parameter is removed from `write_pandas`. Use `table_type='temp'` instead.
+      The universal driver accepts `create_temp_table=True` and translates it to `table_type='temp'`, emitting a `DeprecationWarning`
+      directing callers to use `table_type='temp'` directly. Runtime behaviour is unchanged; code using
+      `warnings.filterwarnings("error")` will see the warning raised as an exception.
+    description: |
+      Retained for Snowpark backward-compatibility. The parameter is still deprecated;
+      callers should migrate to `table_type='temp'`.
 
   20:
     name: "ResultBatch does not expose session_manager or http_config"
