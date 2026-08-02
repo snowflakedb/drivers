@@ -79,8 +79,10 @@ pub mod internal {
     ///
     /// `Arc`-backed, so a `clone()` shares the cache and counter across
     /// concurrent tasks — mirroring production's `Arc<RwLock<StageInfoCache>>`.
-    /// This is the single shared refresher fake for the file-transfer tests;
-    /// prefer it over hand-rolling a per-cloud copy.
+    /// Shared by the Azure file-transfer + file_manager unit tests. S3
+    /// (`s3_transfer.rs`) and GCS (`gcs_retry.rs`) still keep their own richer
+    /// fakes (GCS needs a multi-rotation queue + `refresh_url` history); these
+    /// should be merged into a common base fake in the future.
     ///
     /// It does NOT model the production coalescing window in
     /// `SnowflakeStageInfoRefresher` (a real `Instant` gate) — unit-test that
@@ -122,7 +124,7 @@ pub mod internal {
     }
 
     impl StageInfoRefresher for FakeStageInfoRefresher {
-        fn refresh(&mut self) -> RefreshFuture<'_> {
+        fn refresh(&self, _observed: std::time::Instant) -> RefreshFuture<'_> {
             let calls = self.refresh_calls.clone();
             let next = self.next_creds.clone();
             let fail = self.fail_msg.clone();
@@ -137,15 +139,20 @@ pub mod internal {
                 }
                 if let Some(c) = next.lock_recover().take() {
                     cache.store(StageInfoSnapshot::creds_only(c));
+                    // Real coordinator's contract: return the post-store generation.
+                    return Ok(cache.cached_at());
                 }
-                Ok(())
+                // Unarmed: return the CURRENT generation, not `observed` — mirrors
+                // the coordinator's coalesce fast-path so a concurrent caller sees a
+                // peer's rotation (`cached_at() > observed`) instead of stalling.
+                Ok(cache.cached_at())
             })
         }
 
-        fn refresh_url(&mut self) -> RefreshFuture<'_> {
+        fn refresh_url(&self, _current_upload_file: Option<&str>) -> RefreshFuture<'_> {
             // Creds live in the cache, not per-file presigned URLs, on the paths
             // these fakes cover; refresh_url is never exercised.
-            Box::pin(async { Ok(()) })
+            Box::pin(async { Ok(std::time::Instant::now()) })
         }
 
         fn cache(&self) -> &StageInfoCache {
@@ -324,7 +331,7 @@ const COMPRESSION_DETECT_PREFIX_LEN: usize = 512;
 pub async fn upload_files(
     data: &UploadData,
     policy: &RetryPolicy,
-    mut refresher: Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
         expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
@@ -347,7 +354,7 @@ pub async fn upload_files(
     // refresh is intentionally not coalesced (each file may carry its own
     // presigned URL).
     for file_location in file_locations {
-        let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
+        let stage_info = current_stage_info(&data.stage_info, refresher);
         let path = PathBuf::from(&file_location.path);
         // Retained for the aggregate-failure report: `filename` moves into
         // `SingleUploadData` below, but a failed transfer still needs a name
@@ -367,7 +374,7 @@ pub async fn upload_files(
             multipart: data.multipart,
         };
 
-        match upload_single_file(single_upload_data, policy, &mut refresher).await {
+        match upload_single_file(single_upload_data, policy, refresher).await {
             Ok(result) => results.push(result),
             // Fail-fast aborts at the first error; collect-all (the default)
             // attempts every file and reports all failures together (ODBC parity,
@@ -420,7 +427,7 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageInfoRefreshe
 pub async fn upload_single_file(
     data: SingleUploadData,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads a `ByteSource::Path` itself
     // (streaming), so `upload_single_file` no longer pre-reads the file.
@@ -441,7 +448,7 @@ pub async fn upload_in_memory_file(
     buffer: Vec<u8>,
     data: SingleUploadData,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, refresher).await
 }
@@ -456,7 +463,7 @@ pub(crate) async fn upload_prepared_source(
     source: ByteSource,
     data: SingleUploadData,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     // `preprocess_file_before_upload` reads the source file from disk and
     // AES-encrypts it (blocking I/O + CPU-bound); run it off the async executor
@@ -763,7 +770,7 @@ fn auto_detect_source_compression(
 pub async fn download_files(
     mut data: DownloadData,
     policy: &RetryPolicy,
-    mut refresher: Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
@@ -783,7 +790,7 @@ pub async fn download_files(
         .zip(data.presigned_urls.drain(..))
         .enumerate();
     for (index, ((file_location, encryption_material), presigned_url)) in download_iter {
-        let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
+        let stage_info = current_stage_info(&data.stage_info, refresher);
         // Retained for the collect-all ERROR row: `file_location` moves into
         // `SingleDownloadData` below, but a failed transfer still needs a
         // `file` column to report.
@@ -799,7 +806,7 @@ pub async fn download_files(
             unsafe_file_write: data.unsafe_file_write,
         };
 
-        match download_single_file(single_download_data, policy, index, &mut refresher).await {
+        match download_single_file(single_download_data, policy, index, refresher).await {
             Ok(result) => results.push(result),
             // Fail-fast (`get_fastfail`) aborts the batch on the first error;
             // collect-all records an ERROR row and continues (ODBC parity,
@@ -925,7 +932,7 @@ pub async fn download_single_file(
     mut data: SingleDownloadData,
     policy: &RetryPolicy,
     per_file_index: usize,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
     // Blocking FS syscalls (create_dir_all/canonicalize); keep off the async executor.
     let (output_path, partial_path) = {
@@ -1351,7 +1358,7 @@ pub async fn open_s3_download_stream(
     stage_info: &StageInfo,
     src_location: &str,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
@@ -1388,7 +1395,7 @@ pub async fn open_gcs_download_stream(
     src_location: &str,
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
@@ -1419,7 +1426,7 @@ pub async fn open_azure_download_stream(
     stage_info: &StageInfo,
     src_location: &str,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
@@ -1482,7 +1489,7 @@ pub async fn open_download_stream_for_stage(
     src_location: &str,
     presigned_url: Option<&str>,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
@@ -3350,9 +3357,9 @@ mod tests {
             multipart: MultipartParams::default(),
         };
 
-        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
-        upload_single_file(data, &policy, &mut refresher)
+        upload_single_file(data, &policy, refresher)
             .await
             .expect("upload_single_file should succeed against the mock")
     }
@@ -3489,11 +3496,11 @@ mod tests {
         // the companion `..._without_opt_in` test.
         data.skip_upload_on_content_match = true;
 
-        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, &mut refresher)
+        let result = upload_single_file(data, &policy, refresher)
             .await
             .expect("S3 upload should succeed against the mock");
         assert_eq!(result.status, "SKIPPED");
@@ -3523,9 +3530,9 @@ mod tests {
             single_upload_data_for(LocationType::S3, &mock.uri(), tmp.path().to_str().unwrap());
         data.skip_upload_on_content_match = false;
 
-        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = RetryPolicy::put_get(&crate::config::param_store::ParamStore::new());
-        let result = upload_single_file(data, &policy, &mut refresher)
+        let result = upload_single_file(data, &policy, refresher)
             .await
             .expect("S3 upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");
@@ -3564,11 +3571,11 @@ mod tests {
         let data =
             single_upload_data_for(LocationType::Gcs, &mock.uri(), tmp.path().to_str().unwrap());
 
-        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, &mut refresher)
+        let result = upload_single_file(data, &policy, refresher)
             .await
             .expect("GCS upload should succeed against the mock");
         assert_eq!(result.status, "SKIPPED");
@@ -3601,11 +3608,11 @@ mod tests {
             single_upload_data_for(LocationType::Gcs, &mock.uri(), tmp.path().to_str().unwrap());
         data.skip_upload_on_content_match = false;
 
-        let mut refresher: Option<&mut dyn StageInfoRefresher> = None;
+        let refresher: Option<&dyn StageInfoRefresher> = None;
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let result = upload_single_file(data, &policy, &mut refresher)
+        let result = upload_single_file(data, &policy, refresher)
             .await
             .expect("GCS upload should succeed against the mock");
         assert_eq!(result.status, "UPLOADED");

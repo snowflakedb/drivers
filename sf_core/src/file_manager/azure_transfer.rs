@@ -122,12 +122,12 @@ fn map_http_to_attempt<E>(
     }
 }
 
-/// Azure SAS implementation of [`Refresher`]. Detects whether a refresh
-/// actually landed a new snapshot via the cache's monotonic `cached_at` marker.
+/// Azure SAS implementation of [`Refresher`]. Forwards to the shared
+/// `StageInfoRefresher` coordinator which handles coalescing and single-flight.
 struct AzureSasRefresher<'a, E, W> {
-    refresher: &'a mut dyn StageInfoRefresher,
-    last_cached_at: Instant,
+    refresher: &'a dyn StageInfoRefresher,
     map_refresh_err: W,
+    observed: Instant,
     _marker: PhantomData<fn() -> E>,
 }
 
@@ -135,14 +135,10 @@ impl<'a, E, W> AzureSasRefresher<'a, E, W>
 where
     W: Fn(StageInfoRefreshError) -> E + Send,
 {
-    fn new_with_marker(
-        refresher: &'a mut dyn StageInfoRefresher,
-        last_cached_at: Instant,
-        map_refresh_err: W,
-    ) -> Self {
+    fn new(refresher: &'a dyn StageInfoRefresher, map_refresh_err: W) -> Self {
         Self {
+            observed: refresher.cache().cached_at(),
             refresher,
-            last_cached_at,
             map_refresh_err,
             _marker: PhantomData,
         }
@@ -168,16 +164,14 @@ where
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, AzureAttemptError<E>>> {
         Box::pin(async move {
             tracing::info!("Azure hit expired-SAS 403; refreshing stage credentials");
-            self.refresher
-                .refresh()
+            let new_gen = self
+                .refresher
+                .refresh(self.observed)
                 .await
                 .map_err(|e| AzureAttemptError::Other((self.map_refresh_err)(e)))?;
-            let current = self.refresher.cache().cached_at();
-            if current == self.last_cached_at {
-                return Ok(false);
-            }
-            self.last_cached_at = current;
-            Ok(true)
+            let advanced = new_gen > self.observed;
+            self.observed = new_gen;
+            Ok(advanced)
         })
     }
 }
@@ -190,7 +184,7 @@ where
 /// call site → `error!`, a 403 that survives the refresh → `warn!` here with the
 /// status and a SAS-redacted URL.
 async fn run_azure_with_sas_refresh<F, Fut, T, E>(
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
     initial_creds: &CloudCredentials,
     op: &'static str,
     map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
@@ -213,9 +207,7 @@ where
 
     match refresher {
         Some(r) => {
-            let initial_marker = r.cache().cached_at();
-            let mut sas_refresher =
-                AzureSasRefresher::new_with_marker(*r, initial_marker, map_refresh_err);
+            let mut sas_refresher = AzureSasRefresher::new(r, map_refresh_err);
             execute_with_refresh(&mut sas_refresher, attempt)
                 .await
                 .map_err(|e| match e {
@@ -429,7 +421,7 @@ async fn azure_get_with_refresh(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<reqwest::Response, AzureDownloadError> {
     let client = create_azure_client(stage_info)?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -512,7 +504,7 @@ pub(super) async fn upload_to_azure_or_skip(
     skip_upload_on_content_match: bool,
     multipart: MultipartParams,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, AzureUploadError> {
     let key = format!("{}{filename}", stage_info.key_prefix);
     let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
@@ -641,7 +633,7 @@ pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, AzureDownloadError> {
     let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
 
@@ -1228,7 +1220,7 @@ pub async fn download_from_azure_streaming(
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     // Build the client once (TLS config is creds-independent); only the SAS in
     // `stage_info.creds` rotates on refresh.
@@ -1362,7 +1354,7 @@ pub(super) async fn azure_get_streaming(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
-    refresher: &mut Option<&mut dyn StageInfoRefresher>,
+    refresher: Option<&dyn StageInfoRefresher>,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     // Issue the single GET under the SAS-refresh-on-403 layer so an
     // already-expired SAS is rotated and retried, matching `gcs_get_streaming`
@@ -2048,25 +2040,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn azure_sas_refresher_refresh_returns_false_when_cache_marker_unchanged() {
-        // No arm_rotation: refresh() bumps the call counter but stores nothing,
-        // so the cache marker does not advance; AzureSasRefresher must report
-        // the coalesced no-op as Ok(false).
-        let mut fake = FakeStageInfoRefresher::new(azure_creds("SIG1"));
-        let initial_marker = fake.cache().cached_at();
-        let mut sas_refresher =
-            AzureSasRefresher::new_with_marker(&mut fake, initial_marker, identity_refresh_map);
+    async fn azure_sas_refresher_refresh_returns_false_when_cache_unchanged() {
+        // No arm_rotation: the fake returns the current (unchanged) cached_at
+        // generation, so AzureSasRefresher sees no advance and returns
+        // Ok(false), letting execute_with_refresh propagate the original error.
+        let fake = FakeStageInfoRefresher::new(azure_creds("SIG1"));
+        let mut sas_refresher = AzureSasRefresher::new(&fake, identity_refresh_map);
 
-        let result = crate::refresh::Refresher::refresh(&mut sas_refresher).await;
+        let rotated = crate::refresh::Refresher::refresh(&mut sas_refresher)
+            .await
+            .unwrap();
 
-        assert!(
-            result.is_ok(),
-            "unchanged marker must return Ok; got: {result:?}"
-        );
-        assert!(
-            !result.unwrap(),
-            "Ok(false): marker unchanged means no new snapshot"
-        );
+        assert!(!rotated, "unchanged cache → false (no rotation)");
         assert_eq!(
             fake.refresh_call_count(),
             1,
@@ -2075,23 +2060,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn azure_sas_refresher_refresh_returns_true_when_cache_marker_advances() {
-        let mut fake = FakeStageInfoRefresher::new(azure_creds("SIG1"));
+    async fn azure_sas_refresher_refresh_returns_true_when_cache_rotates() {
+        let fake = FakeStageInfoRefresher::new(azure_creds("SIG1"));
         fake.arm_rotation(azure_creds("SIG2"));
-        let initial_marker = fake.cache().cached_at();
-        let mut sas_refresher =
-            AzureSasRefresher::new_with_marker(&mut fake, initial_marker, identity_refresh_map);
+        let mut sas_refresher = AzureSasRefresher::new(&fake, identity_refresh_map);
 
-        let result = crate::refresh::Refresher::refresh(&mut sas_refresher).await;
+        let rotated = crate::refresh::Refresher::refresh(&mut sas_refresher)
+            .await
+            .unwrap();
 
-        assert!(
-            result.is_ok(),
-            "rotated marker must return Ok; got: {result:?}"
-        );
-        assert!(
-            result.unwrap(),
-            "Ok(true): marker advanced means new snapshot landed"
-        );
+        assert!(rotated, "rotation → true");
     }
 
     /// Regression for the HEAD-bypass bug: a default PUT (!overwrite) whose
@@ -2139,11 +2117,10 @@ mod tests {
             ..Default::default()
         });
 
-        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
         fake.arm_rotation(CloudCredentials::Azure {
             sas_token: SensitiveString::from(refreshed_sas.clone()),
         });
-        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let status = upload_to_azure_or_skip(
             prepared_upload_with_digest("local-digest"),
@@ -2153,7 +2130,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut refresher_opt,
+            Some(&fake as &dyn StageInfoRefresher),
         )
         .await
         .expect("default PUT must refresh the expired SAS on the HEAD 403 and upload");
@@ -2173,8 +2150,8 @@ mod tests {
         );
     }
 
-    /// §13 M1/M2 (Gherkin S7): a refresh-MECHANISM failure logs once at `error!`,
-    /// naming the failure reason. S4 (GET) shares this contract on the download path.
+    /// A refresh-mechanism failure logs once at `error!`, naming the failure
+    /// reason. The GET download path shares this contract.
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn put_refresh_mechanism_failure_logs_at_error_naming_reason() {
@@ -2188,9 +2165,8 @@ mod tests {
             endpoint: Some(server.uri()),
             ..Default::default()
         });
-        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
         fake.arm_failure("GS re-issue rejected in test");
-        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let result = upload_to_azure_or_skip(
             prepared_upload_with_digest("d"),
@@ -2200,7 +2176,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut refresher_opt,
+            Some(&fake as &dyn StageInfoRefresher),
         )
         .await;
 
@@ -2218,9 +2194,8 @@ mod tests {
         );
     }
 
-    /// §13 M1/M2 (Gherkin S5/S8): a 403 that survives the refresh (the fresh SAS
-    /// is still rejected) logs once at `warn!` carrying the status and a
-    /// SAS-redacted URL (no sig value leaks).
+    /// A 403 that survives the refresh (the fresh SAS is still rejected) logs once
+    /// at `warn!`, carrying the status and a SAS-redacted URL (no signature leaks).
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn put_terminal_403_after_refresh_logs_at_warn_with_redacted_url() {
@@ -2238,11 +2213,10 @@ mod tests {
             creds: Some(azure_creds("ORIGINAL-EXPIRED")),
             ..Default::default()
         });
-        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
         fake.arm_rotation(CloudCredentials::Azure {
             sas_token: SensitiveString::from(refreshed_sas.clone()),
         });
-        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let result = upload_to_azure_or_skip(
             prepared_upload_with_digest("d"),
@@ -2252,7 +2226,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut refresher_opt,
+            Some(&fake as &dyn StageInfoRefresher),
         )
         .await;
 
@@ -2322,11 +2296,10 @@ mod tests {
             }),
             ..Default::default()
         });
-        let mut fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
         fake.arm_rotation(CloudCredentials::Azure {
             sas_token: SensitiveString::from(refreshed_sas.clone()),
         });
-        let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
 
         let dl = download_from_azure_streaming(
             &stage,
@@ -2335,7 +2308,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
-            &mut refresher_opt,
+            Some(&fake as &dyn StageInfoRefresher),
         )
         .await
         .expect("streaming GET must refresh on the routing-HEAD 403 and succeed");
@@ -2395,7 +2368,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp(std::env::temp_dir().as_path()),
-            &mut None,
+            None,
         )
         .await;
         // `CloudStreamingDownload` is not Debug; assert on the extracted error.
@@ -2438,7 +2411,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2473,7 +2446,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2520,7 +2493,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2555,7 +2528,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2587,7 +2560,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2621,7 +2594,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2674,7 +2647,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2732,7 +2705,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await;
         assert!(
@@ -2782,7 +2755,7 @@ mod tests {
             false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2867,7 +2840,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("retry should recover and existence skip should fire");
@@ -2901,7 +2874,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await;
         assert!(
@@ -2945,7 +2918,7 @@ mod tests {
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("skip_match 403 HEAD should fail-OPEN to PUT");
@@ -2978,7 +2951,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await;
         assert!(
@@ -3016,7 +2989,7 @@ mod tests {
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await;
         assert!(
@@ -3091,7 +3064,7 @@ mod tests {
             false,
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
-            &mut None,
+            None,
         )
         .await
         .expect("block-blob upload should succeed against the mock");
@@ -3150,7 +3123,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp(spill.path()),
-            &mut None,
+            None,
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3197,7 +3170,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
-            &mut None,
+            None,
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3251,7 +3224,7 @@ mod tests {
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
-            &mut None,
+            None,
         )
         .await;
 

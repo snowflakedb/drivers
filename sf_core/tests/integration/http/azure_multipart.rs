@@ -183,10 +183,9 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         skip_upload_on_content_match: false,
         multipart,
     };
-    let upload_result =
-        upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), &mut None)
-            .await
-            .expect("upload should succeed");
+    let upload_result = upload_single_file(upload, &RetryPolicy::put_get(&ParamStore::new()), None)
+        .await
+        .expect("upload should succeed");
     assert_eq!(upload_result.status, "UPLOADED");
 
     assert_eq!(
@@ -270,14 +269,9 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         multipart,
         unsafe_file_write: false,
     };
-    download_single_file(
-        download,
-        &RetryPolicy::put_get(&ParamStore::new()),
-        0,
-        &mut None,
-    )
-    .await
-    .expect("download should succeed");
+    download_single_file(download, &RetryPolicy::put_get(&ParamStore::new()), 0, None)
+        .await
+        .expect("download should succeed");
 
     assert!(
         state.head_calls.load(Ordering::Relaxed) >= 1,

@@ -9,7 +9,7 @@ use snafu::{Location, Snafu};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tempfile::TempPath;
 
 use super::encryption::Encryptor;
@@ -613,7 +613,12 @@ impl StageInfoCache {
     /// lock) so a refresher can detect that a new snapshot landed. Called by
     /// `StageInfoRefresher::refresh` and `refresh_url` after a PUT/GET re-issue.
     pub fn store(&self, new: StageInfoSnapshot) {
-        *self.inner.write_recover() = (new, Instant::now());
+        let mut guard = self.inner.write_recover();
+        // Guarantee strict advance even on coarse-resolution clocks: the new
+        // marker is always > the previous one, so `new_gen > observed` is
+        // unambiguous after a real store.
+        let next = Instant::now().max(guard.1 + Duration::from_nanos(1));
+        *guard = (new, next);
     }
 
     /// The monotonic store marker. Lets a refresher tell "a new snapshot was
@@ -630,7 +635,11 @@ impl StageInfoCache {
 }
 
 pub type RefreshFuture<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<(), StageInfoRefreshError>> + Send + 'a>,
+    Box<
+        dyn std::future::Future<Output = Result<std::time::Instant, StageInfoRefreshError>>
+            + Send
+            + 'a,
+    >,
 >;
 
 /// Refreshes the stage info shared via `StageInfoCache` in response to a
@@ -641,19 +650,20 @@ pub type RefreshFuture<'a> = std::pin::Pin<
 /// full `StageInfoSnapshot` (creds + presigned URLs) back into the cache:
 ///
 /// - [`refresh`](Self::refresh) — used for `ExpiredToken`-class errors
-///   (S3 STS, GCS 401 bearer). May be called many times per PUT/GET command
-///   (long batch upload where the refreshed token also expires).
-///   Implementations are expected to coalesce rapid-fire calls themselves:
-///   the production implementation in this driver caches a successful
-///   refresh for 10 minutes, matching ODBC's `m_lastRefreshTokenSec` gate
-///   and Python's `StorageCredential.update` thread-lock.
+///   (S3 STS, GCS 401 bearer). Takes `observed: Instant` (the `cached_at`
+///   the caller saw before the error) and returns the new generation
+///   (`cache().cached_at()` after the refresh). Implementations coalesce
+///   rapid-fire calls: if the cache already holds a generation newer than
+///   `observed`, that generation is returned immediately without hitting GS
+///   (matches ODBC's `m_lastRefreshTokenSec` gate and Python's
+///   `StorageCredential.update` thread-lock).
 /// - [`refresh_url`](Self::refresh_url) — used for the GCS 400
-///   presigned-URL-expiry path. Each file in a multi-file GET may have its
-///   own per-object URL, so this entry point intentionally bypasses the
-///   coalescing window — refreshing for file N must produce a fresh
-///   `presignedUrls[]` even if file N-1 refreshed seconds ago. The
-///   call site enforces a two-strike guard (`GcsRequestError::PresignedUrlExpired`)
-///   to prevent looping when the refreshed URL also fails.
+///   presigned-URL-expiry path. Takes the destination file name for PUT
+///   (rewrites the SQL) or `None` for GET. Each invocation re-issues the
+///   SQL bypassing the coalescing window — refreshing for file N must
+///   produce a fresh `presignedUrls[]` even if file N-1 refreshed seconds
+///   ago. The call site enforces a two-strike guard
+///   (`GcsRequestError::PresignedUrlExpired`) to prevent looping.
 ///
 /// On success either method writes the new snapshot into its `cache()`;
 /// the file-transfer layer reads it back via `StageInfoCache::snapshot()`
@@ -671,28 +681,25 @@ pub type RefreshFuture<'a> = std::pin::Pin<
 /// would corrupt in-flight encrypts. The cache only holds the three fields
 /// of `StageInfoSnapshot` — there is no encryption-material slot here.
 pub trait StageInfoRefresher: Send + Sync {
-    /// Coalesced refresh — used for `ExpiredToken`-class errors.
-    fn refresh(&mut self) -> RefreshFuture<'_>;
+    /// Coalesced refresh — used for `ExpiredToken`-class errors. Returns the
+    /// new cache generation (a monotonically advancing `Instant`); if the
+    /// cache already holds a generation newer than `observed`, that
+    /// generation is returned without hitting GS.
+    fn refresh(&self, observed: Instant) -> RefreshFuture<'_>;
 
-    /// Non-coalesced refresh — used for GCS 400 per-file presigned-URL
-    /// expiry. Each invocation re-issues the SQL even if a previous refresh
-    /// landed within the coalescing window.
-    fn refresh_url(&mut self) -> RefreshFuture<'_>;
+    /// Non-coalesced URL refresh — used for GCS 400 per-file presigned-URL
+    /// expiry. `current_upload_file` is the destination object name for PUT
+    /// (used to rewrite the SQL for that file's URL); pass `None` for GET.
+    /// Returns the new cache generation after the SQL re-issue.
+    fn refresh_url(&self, current_upload_file: Option<&str>) -> RefreshFuture<'_>;
 
     /// The snapshot cache shared between the refresher and the file-transfer
     /// layer. After either refresh method succeeds, callers read the new
     /// value from here.
     fn cache(&self) -> &StageInfoCache;
-
-    /// Informs the refresher of the destination object name of the file
-    /// currently being uploaded, so `refresh_url` can rewrite the PUT SQL to
-    /// fetch that file's presigned URL (multi-file glob PUT). Called per file
-    /// by the GCS upload path before a refresh. Default: no-op (GET callers
-    /// and non-refreshing paths).
-    fn notify_current_upload_file(&mut self, _dst_file_name: String) {}
 }
 
-#[derive(Debug, Snafu, error_trace::ErrorTrace)]
+#[derive(Debug, Clone, Snafu, error_trace::ErrorTrace)]
 #[snafu(module, visibility(pub(crate)))]
 pub enum StageInfoRefreshError {
     /// The Snowflake query that re-issues PUT/GET to obtain new stage
@@ -701,8 +708,11 @@ pub enum StageInfoRefreshError {
     /// precedes it) so error_trace keeps the full chain.
     #[snafu(display("Failed to re-execute PUT/GET SQL during stage info refresh"))]
     QueryFailed {
-        #[snafu(source(from(crate::apis::database_driver_v1::ApiError, Box::new)))]
-        source: Box<crate::apis::database_driver_v1::ApiError>,
+        // Arc (not Box): ApiError/QueryResponseError aren't Clone, but
+        // StageInfoRefreshError must be Clone for the coordinator's Shared
+        // single-flight future — Box would not compile.
+        #[snafu(source(from(crate::apis::database_driver_v1::ApiError, Arc::new)))]
+        source: Arc<crate::apis::database_driver_v1::ApiError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -719,11 +729,14 @@ pub enum StageInfoRefreshError {
     /// unknown location_type, etc.).
     #[snafu(display("Stage info refresh response has malformed stageInfo"))]
     InvalidStageInfo {
+        // Arc (not Box): ApiError/QueryResponseError aren't Clone, but
+        // StageInfoRefreshError must be Clone for the coordinator's Shared
+        // single-flight future — Box would not compile.
         #[snafu(source(from(
             crate::rest::snowflake::query_response::QueryResponseError,
-            Box::new
+            Arc::new
         )))]
-        source: Box<crate::rest::snowflake::query_response::QueryResponseError>,
+        source: Arc<crate::rest::snowflake::query_response::QueryResponseError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -746,4 +759,33 @@ pub enum StageInfoRefreshError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_snapshot() -> StageInfoSnapshot {
+        StageInfoSnapshot::creds_only(CloudCredentials::Azure {
+            sas_token: "tok".into(),
+        })
+    }
+
+    #[test]
+    fn store_advances_generation_strictly() {
+        let cache = StageInfoCache::new(dummy_snapshot());
+        let gen0 = cache.cached_at();
+        cache.store(dummy_snapshot());
+        let gen1 = cache.cached_at();
+        cache.store(dummy_snapshot());
+        let gen2 = cache.cached_at();
+        assert!(
+            gen1 > gen0,
+            "first store must strictly advance the generation"
+        );
+        assert!(
+            gen2 > gen1,
+            "second store must strictly advance the generation"
+        );
+    }
 }

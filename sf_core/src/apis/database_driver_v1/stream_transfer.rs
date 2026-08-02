@@ -413,7 +413,7 @@ impl DatabaseDriverV1 {
                 query_parameters,
                 conn: conn_ptr.clone(),
             };
-            let mut refresher = stream_stage_info_refresher(refresh_ctx, resolved.initial_snapshot);
+            let refresher = stream_stage_info_refresher(refresh_ctx, resolved.initial_snapshot);
 
             let put_get_policy = {
                 let conn = conn_ptr.lock().await;
@@ -423,14 +423,12 @@ impl DatabaseDriverV1 {
             // `refresher` only needs to cover opening the stream — it's
             // dropped when this block returns, before the background
             // producer (which has no refresher of its own) is spawned.
-            let mut refresher_dyn: Option<&mut dyn file_manager::StageInfoRefresher> =
-                Some(&mut refresher);
             let opened = file_manager::open_download_stream_for_stage(
                 &resolved.stage_info,
                 &resolved.src_location,
                 resolved.presigned_url.as_deref(),
                 &put_get_policy,
-                &mut refresher_dyn,
+                Some(&refresher as &dyn file_manager::StageInfoRefresher),
                 resolved.encryption_material,
                 decompress,
             )
