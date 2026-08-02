@@ -111,7 +111,7 @@ async fn gcs_download_401_returns_token_expired() {
         None,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -153,7 +153,7 @@ async fn gcs_download_403_is_retried_then_succeeds() {
         None,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -196,7 +196,7 @@ async fn gcs_download_400_with_presigned_url_is_retried() {
         None,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -229,7 +229,7 @@ async fn gcs_download_400_without_presigned_url_is_not_retried() {
         None,
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -270,7 +270,7 @@ async fn gcs_download_404_is_not_retried() {
         None,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -309,7 +309,7 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         None,
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -373,7 +373,7 @@ async fn gcs_download_content_encoding_gzip_with_non_gzip_body_is_returned_verba
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -427,7 +427,7 @@ async fn gcs_download_content_encoding_gzip_with_gzip_body_is_not_decoded() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await
     .expect("download must succeed");
@@ -467,7 +467,7 @@ async fn gcs_download_without_content_encoding_header_is_unchanged() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await
     .expect("happy-path download must still succeed");
@@ -506,7 +506,7 @@ async fn gcs_download_content_length_match_succeeds() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await
     .expect("matching Content-Length must succeed");
@@ -547,7 +547,7 @@ async fn gcs_download_content_length_mismatch_truncated_body_is_http_error() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -580,7 +580,7 @@ async fn gcs_download_no_content_length_header_succeeds() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -619,7 +619,7 @@ async fn gcs_download_content_encoding_present_skips_length_check() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -653,7 +653,7 @@ async fn gcs_download_zero_byte_file_succeeds() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await
     .expect("zero-byte file must succeed");
@@ -691,7 +691,7 @@ async fn gcs_download_malformed_content_length_rejected_by_http_layer() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await;
 
@@ -731,7 +731,7 @@ async fn gcs_download_does_not_advertise_gzip_accept_encoding() {
         None,
         &test_policy(true, 0),
         0,
-        &mut None,
+        None,
     )
     .await
     .expect("download must succeed");
@@ -897,9 +897,9 @@ struct FakeRefresher {
     refresh_url_queue: Mutex<Vec<StageInfoSnapshot>>,
     refresh_calls: AtomicUsize,
     refresh_url_calls: AtomicUsize,
-    /// Destination file names passed to `notify_current_upload_file`, in call
-    /// order — lets tests assert the per-file PUT plumbing.
-    notified_files: Mutex<Vec<String>>,
+    /// Destination file names passed to `refresh_url`, in call order —
+    /// lets tests assert the per-file PUT plumbing.
+    refresh_url_files: Mutex<Vec<Option<String>>>,
 }
 
 impl FakeRefresher {
@@ -910,7 +910,7 @@ impl FakeRefresher {
             refresh_url_queue: Mutex::new(Vec::new()),
             refresh_calls: AtomicUsize::new(0),
             refresh_url_calls: AtomicUsize::new(0),
-            notified_files: Mutex::new(Vec::new()),
+            refresh_url_files: Mutex::new(Vec::new()),
         }
     }
 
@@ -924,7 +924,7 @@ impl FakeRefresher {
 }
 
 impl StageInfoRefresher for FakeRefresher {
-    fn refresh(&mut self) -> RefreshFuture<'_> {
+    fn refresh(&self, _observed: std::time::Instant) -> RefreshFuture<'_> {
         self.refresh_calls.fetch_add(1, Ordering::SeqCst);
         let next = {
             let mut q = self.refresh_queue.lock().unwrap();
@@ -937,11 +937,16 @@ impl StageInfoRefresher for FakeRefresher {
         if let Some(snap) = next {
             self.cache.store(snap);
         }
-        Box::pin(async { Ok(()) })
+        let new_gen = self.cache.cached_at();
+        Box::pin(async move { Ok(new_gen) })
     }
 
-    fn refresh_url(&mut self) -> RefreshFuture<'_> {
+    fn refresh_url(&self, current_upload_file: Option<&str>) -> RefreshFuture<'_> {
         self.refresh_url_calls.fetch_add(1, Ordering::SeqCst);
+        self.refresh_url_files
+            .lock()
+            .unwrap()
+            .push(current_upload_file.map(str::to_string));
         let next = {
             let mut q = self.refresh_url_queue.lock().unwrap();
             if q.is_empty() {
@@ -953,15 +958,12 @@ impl StageInfoRefresher for FakeRefresher {
         if let Some(snap) = next {
             self.cache.store(snap);
         }
-        Box::pin(async { Ok(()) })
+        let new_gen = self.cache.cached_at();
+        Box::pin(async move { Ok(new_gen) })
     }
 
     fn cache(&self) -> &StageInfoCache {
         &self.cache
-    }
-
-    fn notify_current_upload_file(&mut self, dst_file_name: String) {
-        self.notified_files.lock().unwrap().push(dst_file_name);
     }
 }
 
@@ -997,7 +999,7 @@ async fn gcs_download_400_triggers_url_refresh_and_succeeds() {
     let fresh_url = format!("{}/fresh-url", server.uri());
     let stage = gcs_stage_with_presigned_url(&stale_url);
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1012,14 +1014,14 @@ async fn gcs_download_400_triggers_url_refresh_and_succeeds() {
         presigned_urls: None,
     });
 
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let result = sf_core::file_manager::download_from_gcs(
         &stage,
         "file.csv",
         None,
         &test_policy(true, 0),
         0,
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
 
@@ -1078,7 +1080,7 @@ async fn gcs_download_400_after_url_refresh_returns_presigned_url_expired() {
     let also_stale_url = format!("{}/also-stale-url", server.uri());
     let stage = gcs_stage_with_presigned_url(&stale_url);
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1093,14 +1095,14 @@ async fn gcs_download_400_after_url_refresh_returns_presigned_url_expired() {
         presigned_urls: None,
     });
 
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let err = sf_core::file_manager::download_from_gcs(
         &stage,
         "file.csv",
         None,
         &test_policy(true, 0),
         0,
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await
     .expect_err("two consecutive 400s must fail fast");
@@ -1161,7 +1163,7 @@ async fn gcs_download_401_triggers_token_refresh_and_succeeds() {
         gcs_access_token: Some(SensitiveString::from("stale-token")),
     };
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: Some(SensitiveString::from("stale-token")),
         },
@@ -1176,14 +1178,14 @@ async fn gcs_download_401_triggers_token_refresh_and_succeeds() {
         presigned_urls: None,
     });
 
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let result = sf_core::file_manager::download_from_gcs(
         &stage,
         "file.csv",
         None,
         &test_policy(false, 0),
         0,
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
 
@@ -1231,7 +1233,7 @@ async fn gcs_download_401_with_unchanged_token_returns_token_expired() {
 
     // No arming → refresh() leaves the cache holding the same "stale-token";
     // the GcsTokenRefresher must detect "no rotation" and not retry.
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: Some(SensitiveString::from("stale-token")),
         },
@@ -1239,14 +1241,14 @@ async fn gcs_download_401_with_unchanged_token_returns_token_expired() {
         presigned_urls: None,
     });
 
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let err = sf_core::file_manager::download_from_gcs(
         &stage,
         "file.csv",
         None,
         &test_policy(false, 0),
         0,
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await
     .expect_err("unchanged token must surface TokenExpired");
@@ -1313,7 +1315,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         gcs_access_token: Some(SensitiveString::from("stale-token")),
     };
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: Some(SensitiveString::from("stale-token")),
         },
@@ -1332,7 +1334,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         "test-digest".to_string(),
     );
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
         &stage,
@@ -1341,7 +1343,7 @@ async fn gcs_upload_401_then_refresh_then_200() {
         false,
         MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
 
@@ -1403,7 +1405,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
     let fresh_url = format!("{}/fresh-upload", server.uri());
     let stage = gcs_stage_with_presigned_url(&stale_url);
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1422,7 +1424,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         "test-digest".to_string(),
     );
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
         &stage,
@@ -1431,7 +1433,7 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         false,
         MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
 
@@ -1461,10 +1463,10 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
     );
 }
 
-/// The upload path must tell the refresher which destination file is being
-/// uploaded (via `notify_current_upload_file`) so a per-file URL refresh can
-/// rewrite the PUT SQL for that file. Asserts the dst name (incl. any
-/// compression suffix) reaches the refresher before the 400-triggered refresh.
+/// The upload path must pass the destination filename to `refresh_url` so a
+/// per-file URL refresh can rewrite the PUT SQL for that file. Asserts the
+/// dst name (incl. any compression suffix) reaches the refresher via the
+/// `current_upload_file` parameter before the 400-triggered refresh.
 #[tokio::test]
 async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
     let server = MockServer::start().await;
@@ -1484,7 +1486,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
     let fresh_url = format!("{}/fresh-upload", server.uri());
     let stage = gcs_stage_with_presigned_url(&stale_url);
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1503,7 +1505,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         "test-digest".to_string(),
     );
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
         &stage,
@@ -1512,7 +1514,7 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         false,
         MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
 
@@ -1521,9 +1523,9 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         "upload should succeed after refresh; got {result:?}"
     );
     assert_eq!(
-        *fake.notified_files.lock().unwrap(),
-        vec!["part-01.csv.gz".to_string()],
-        "refresher must be told the destination object name for per-file URL rewrite"
+        *fake.refresh_url_files.lock().unwrap(),
+        vec![Some("part-01.csv.gz".to_string())],
+        "refresh_url must receive the destination object name for per-file URL rewrite"
     );
 }
 
@@ -1559,7 +1561,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
     let also_stale_url = format!("{}/also-stale-upload", server.uri());
     let stage = gcs_stage_with_presigned_url(&stale_url);
 
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1578,7 +1580,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         ByteSource::Bytes(Bytes::from_static(b"test-bytes")),
         "test-digest".to_string(),
     );
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let err = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
         &stage,
@@ -1587,7 +1589,7 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         false,
         MultipartParams::default(),
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await
     .expect_err("two consecutive 400s on PUT must fail fast");
@@ -1659,7 +1661,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
     let stage = gcs_stage_presigned_only_no_stage_url();
 
     // Arm two refresh_url slots — one for each file's expiry event.
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1683,14 +1685,14 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
 
     // Call download_from_gcs twice in sequence, simulating two files in a
     // batch. Each has its own stale per-file URL and its own per_file_index.
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let r1 = sf_core::file_manager::download_from_gcs(
         &stage,
         "file1.csv",
         Some(&stale_1),
         &test_policy(true, 0),
         0,
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
     assert!(
@@ -1704,7 +1706,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         Some(&stale_2),
         &test_policy(true, 0),
         0,
-        &mut refresher_opt,
+        refresher_opt,
     )
     .await;
     assert!(
@@ -1770,7 +1772,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
 
     // Arm two URL-rotation slots — one per file expiry event, each carrying
     // the refreshed `presigned_urls[0]` for that file's index.
-    let mut fake = FakeRefresher::new(StageInfoSnapshot {
+    let fake = FakeRefresher::new(StageInfoSnapshot {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
@@ -1804,7 +1806,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         get_fastfail: true,
     };
 
-    let refresher_opt: Option<&mut dyn StageInfoRefresher> = Some(&mut fake);
+    let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
     let results = download_files(
         data,
         &RetryPolicy::put_get(&ParamStore::new()),
@@ -1894,7 +1896,6 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         enc_meta,
         encryptor,
     );
-    let mut refresher_opt: Option<&mut dyn StageInfoRefresher> = None;
     let result = sf_core::file_manager::upload_to_gcs_or_skip(
         prepared,
         &gcs_stage_with_token(&server.uri()),
@@ -1903,7 +1904,7 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         false,
         MultipartParams::default(),
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
-        &mut refresher_opt,
+        None,
     )
     .await;
 
