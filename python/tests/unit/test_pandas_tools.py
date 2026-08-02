@@ -6,6 +6,7 @@ Uses MagicMock for DataFrames — no pandas dependency required.
 from __future__ import annotations
 
 import inspect
+import warnings
 
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +26,8 @@ from snowflake.connector._internal.write_pandas_operation import (
     quote_identifier,
 )
 from snowflake.connector.errors import ProgrammingError
-from snowflake.connector.pandas_tools import make_pd_writer, pd_writer
+from snowflake.connector.pandas_tools import make_pd_writer, pd_writer, write_pandas
+from tests.compatibility import NEW_DRIVER_ONLY
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +729,35 @@ class TestMakePdWriter:
         for name in positional:
             with pytest.raises(ProgrammingError, match="cannot be passed to make_pd_writer"):
                 make_pd_writer(**{name: "sentinel"})
+
+
+# ---------------------------------------------------------------------------
+# BD#42: create_temp_table deprecation warning
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTempTableDeprecation:
+    @pytest.fixture(autouse=True)
+    def _deps(self, _bypass_deps):
+        pass
+
+    def test_should_warn_when_create_temp_table_true(self):
+        with patch("snowflake.connector.pandas_tools.WritePandasOperation") as mock_op:
+            mock_op.return_value.execute.return_value = WritePandasResult(True, 1, 5, [])
+            if NEW_DRIVER_ONLY("BD#42"):
+                with pytest.warns(DeprecationWarning, match="create_temp_table"):
+                    write_pandas(_mock_conn(), _mock_df(), "MY_TABLE", create_temp_table=True)
+            else:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", DeprecationWarning)
+                    write_pandas(_mock_conn(), _mock_df(), "MY_TABLE", create_temp_table=True)
+
+    def test_should_not_warn_when_table_type_also_set(self):
+        with patch("snowflake.connector.pandas_tools.WritePandasOperation") as mock_op:
+            mock_op.return_value.execute.return_value = WritePandasResult(True, 1, 5, [])
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DeprecationWarning)
+                write_pandas(_mock_conn(), _mock_df(), "MY_TABLE", create_temp_table=True, table_type="temp")
 
 
 # ---------------------------------------------------------------------------
