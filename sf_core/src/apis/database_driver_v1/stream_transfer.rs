@@ -66,7 +66,7 @@ use crate::config::rest_parameters::QueryParameters;
 use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, RestError, query_response, snowflake_query_with_client,
+    QueryInput, QueryOptions, RestError, query_response, snowflake_query_with_client,
 };
 
 /// Rejection message shared by `run_put_stream_via_gs` and
@@ -602,9 +602,10 @@ async fn run_sql_against_gs(
             query_parameters.clone(),
             session_token.reveal(),
             query_input.clone(),
-            retry_policy,
-            QueryExecutionMode::Blocking,
-            None,
+            QueryOptions {
+                retry_policy: retry_policy.clone(),
+                ..Default::default()
+            },
         )
         .await
         {

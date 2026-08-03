@@ -9,9 +9,7 @@ use crate::config::retry::RetryPolicy;
 use crate::file_manager;
 use crate::file_manager::upload_in_memory_file;
 use crate::rest::snowflake::query_response::{Data, QueryResponseError, Response};
-use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, RestError, snowflake_query_with_client,
-};
+use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
 use crate::sensitive::SensitiveString;
 
 pub const BIND_STAGE_NAME: &str = "SYSTEM$BIND";
@@ -165,9 +163,10 @@ async fn ensure_stage(
         ctx.query_parameters.clone(),
         ctx.session_token.reveal(),
         query_input,
-        ctx.retry_policy,
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions {
+            retry_policy: ctx.retry_policy.clone(),
+            ..Default::default()
+        },
     )
     .await;
 
@@ -208,9 +207,10 @@ async fn issue_put_query(
         ctx.query_parameters.clone(),
         ctx.session_token.reveal(),
         query_input,
-        ctx.retry_policy,
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions {
+            retry_policy: ctx.retry_policy.clone(),
+            ..Default::default()
+        },
     )
     .await
     .context(PutQuerySnafu)

@@ -8,7 +8,7 @@ use sf_core::config::rest_parameters::{
 use sf_core::crl::CrlWorker;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::query_response::Data;
-use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_login, snowflake_query};
+use sf_core::rest::snowflake::{QueryInput, QueryOptions, snowflake_login, snowflake_query};
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
 use sf_core::tls::create_tls_client_with_config;
@@ -384,7 +384,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         query_params.clone(),
         &session_token,
         QueryInput::new(alter_sql),
-        QueryExecutionMode::Blocking,
+        QueryOptions::default(),
         crl_worker.clone(),
     )
     .await?;
@@ -399,7 +399,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         query_params,
         &session_token,
         QueryInput::new(cli.sql.clone()),
-        QueryExecutionMode::Blocking,
+        QueryOptions::default(),
         crl_worker.clone(),
     )
     .await?;

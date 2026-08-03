@@ -12,11 +12,12 @@ use serde_json::json;
 use sf_core::apis::database_driver_v1::{DatabaseDriverV1, DriverProviders};
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::rest_parameters::{DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
-use sf_core::config::retry::RetryPolicy;
 use sf_core::config::settings::Setting;
 use sf_core::fs_adapter::RealFs;
 use sf_core::logging::LogManager;
-use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
+use sf_core::rest::snowflake::{
+    QueryExecutionMode, QueryInput, QueryOptions, snowflake_query_with_client,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -79,9 +80,7 @@ async fn sync_query_emits_info_log_without_sql_when_flag_off() {
         query_params(&server.uri(), false, false),
         "test-token",
         QueryInput::new(SQL_LONG),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -121,9 +120,7 @@ async fn sync_query_emits_info_log_with_sql_when_text_flag_on() {
         query_params(&server.uri(), true, false),
         "test-token",
         QueryInput::new(SQL_LONG),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -167,9 +164,7 @@ async fn sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on() {
         query_params(&server.uri(), true, true),
         "test-token",
         input,
-        &RetryPolicy::default(),
-        QueryExecutionMode::Blocking,
-        None,
+        QueryOptions::default(),
     )
     .await;
 
@@ -311,9 +306,10 @@ async fn async_submit_emits_info_log_with_sql_when_text_flag_on() {
         query_params(&server.uri(), true, false),
         "test-token",
         QueryInput::new(SQL_LONG),
-        &RetryPolicy::default(),
-        QueryExecutionMode::Async,
-        None,
+        QueryOptions {
+            execution_mode: QueryExecutionMode::Async,
+            ..Default::default()
+        },
     )
     .await;
 
