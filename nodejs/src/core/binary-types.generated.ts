@@ -11,6 +11,6 @@ export declare class Connection {
 }
 
 export declare class Statement {
-  getNextRow(): Promise<Record<string, number> | null>
+  getNextRow(): Promise<Array<unknown> | null>
   close(): void
 }
