@@ -48,4 +48,9 @@ function getCore(): typeof CoreBinary {
   throw new Error(`Unsupported platform for snowflake-sdk-core: ${platform}-${arch}.`);
 }
 
-export default getCore();
+const core = getCore();
+export const CoreConnection = core.Connection;
+export const CoreStatement = core.Statement;
+
+export type CoreConnectionInstance = InstanceType<typeof CoreConnection>;
+export type CoreStatementInstance = InstanceType<typeof CoreStatement>;

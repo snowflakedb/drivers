@@ -82,8 +82,8 @@ impl Connection {
             .await
             .map_err(to_napi_err)?;
 
-        let result_set_handle = match result {
-            ExecuteQueryResult::Single(rs) => rs.handle,
+        let (result_set_handle, descriptor) = match result {
+            ExecuteQueryResult::Single(rs) => (rs.handle, rs.descriptor),
             ExecuteQueryResult::Multi { .. } => {
                 let _ = DRIVER.statement_release(stmt_handle);
                 return Err(to_napi_err("multi-statement results are not supported yet"));
@@ -95,6 +95,11 @@ impl Connection {
             .await
             .map_err(to_napi_err)?;
 
-        Ok(Statement::new(stmt_handle, result_set_handle, batch_reader))
+        Ok(Statement::new(
+            stmt_handle,
+            result_set_handle,
+            descriptor,
+            batch_reader,
+        ))
     }
 }

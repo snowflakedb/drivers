@@ -12,5 +12,6 @@ export declare class Connection {
 
 export declare class Statement {
   getNextRow(): Promise<Array<unknown> | null>
+  getNumRows(): number | null
   close(): void
 }
