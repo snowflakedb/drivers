@@ -21,6 +21,10 @@ export class RowStatement {
   getNumRows(): number | undefined {
     return this.#core?.getNumRows() ?? undefined;
   }
+
+  getQueryId(): string | undefined {
+    return this.#core?.getQueryId() ?? undefined;
+  }
 }
 
 export class FileAndStageBindStatement extends RowStatement {
