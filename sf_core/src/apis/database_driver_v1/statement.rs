@@ -24,8 +24,8 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    AbortOutcome, QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
-    snowflake_cancel_query, snowflake_query_with_client,
+    AbortOutcome, QueryExecutionMode, QueryInput, QueryOptions, query_response,
+    snowflake_abort_query, snowflake_cancel_query, snowflake_query_with_client,
 };
 
 use crate::config::rest_parameters::QueryParameters;
@@ -407,9 +407,11 @@ impl DatabaseDriverV1 {
                     query_parameters.clone(),
                     session_token.reveal(),
                     query_input.clone(),
-                    &retry_policy,
-                    execution_mode,
-                    Some(request_id),
+                    QueryOptions {
+                        retry_policy: retry_policy.clone(),
+                        execution_mode,
+                        request_id: Some(request_id),
+                    },
                 );
                 let result = if let Some((budget, deadline)) = query_deadline {
                     match tokio::time::timeout_at(deadline, query_call).await {

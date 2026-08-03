@@ -36,8 +36,8 @@ use crate::config::settings::Settings;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    self, QueryExecutionMode, QueryInput, RestError, SessionTokens, SnowflakeResponseError,
-    heartbeat, snowflake_query_with_client,
+    self, QueryInput, QueryOptions, RestError, SessionTokens, SnowflakeResponseError, heartbeat,
+    snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::ProxyConfig;
@@ -247,9 +247,10 @@ impl DatabaseDriverV1 {
                 query_parameters.clone(),
                 session_token.reveal(),
                 query_input.clone(),
-                &retry_policy,
-                QueryExecutionMode::Blocking,
-                None,
+                QueryOptions {
+                    retry_policy: retry_policy.clone(),
+                    ..Default::default()
+                },
             )
             .await
             {
