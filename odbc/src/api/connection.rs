@@ -1155,9 +1155,17 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         None if ConnectionAttribute::is_snowflake_custom(attribute) => {
             return UnknownAttributeSnafu { attribute }.fail();
         }
+        // Mirror get_connect_attr: setting a valid-but-unsupported ODBC connection
+        // attribute returns HYC00 (optional feature not implemented), while an
+        // identifier outside the ODBC-defined connection range — e.g. the ODBC 2.x
+        // statement attributes SQL_ATTR_QUERY_TIMEOUT (0) / SQL_ATTR_MAX_ROWS (1)
+        // set on a connection handle — returns HY092. Keeps set and get consistent.
+        None if ConnectionAttribute::is_known_odbc(attribute) => {
+            tracing::warn!("set_connect_attr: unsupported ODBC attribute {attribute}");
+            return UnsupportedAttributeSnafu { attribute }.fail();
+        }
         None => {
-            tracing::debug!("set_connect_attr: ignoring standard attribute {attribute}");
-            return Ok(());
+            return UnknownAttributeSnafu { attribute }.fail();
         }
     };
 

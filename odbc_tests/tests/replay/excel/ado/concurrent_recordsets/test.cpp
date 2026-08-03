@@ -296,44 +296,53 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     CHECK(numericValue == 0x3u);
   }
 
-  // SQLSetConnectAttr - SQL_ATTR_MAX_ROWS
-  // Class A divergence: the Windows DM accepts this ODBC 2.x statement attribute
-  // set on a connection handle; unixODBC forwards it and the Snowflake driver
-  // rejects it (S1092). Assert the platform-correct outcome on each side.
+  // SQLSetConnectAttr - SQL_ATTR_MAX_ROWS (BD#107)
+  // Windows DM and iODBC both forward this call to the driver (do not intercept).
+  // unixODBC also forwards and remaps HY092→S1092 (ODBC 2.x mode).
+  // Old driver swallowed silently (SQL_SUCCESS); new driver rejects with HY092.
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_MAX_ROWS, nullptr, -6);
-    WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+    WINDOWS_ONLY {
+      OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      NEW_DRIVER_ONLY("BD#107") {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+      }
+    }
     UNIX_ONLY {
-      // iODBC's DM absorbs these ODBC 2.x attributes before they reach the driver.
-      // Under unixODBC the call is forwarded; the driver must reject them (S1092)
-      // because they are statement-level attributes set on a connection handle.
-      // The new driver currently silently ignores them (returns SQL_SUCCESS) —
-      // remove this skip once SNOW-3779643 makes set_connect_attr return S1092 for IDs 0/1.
-      IODBC_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      IODBC_ONLY {
+        OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+        NEW_DRIVER_ONLY("BD#107") {
+          CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                     OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+        }
+      }
       NON_IODBC {
-        SKIP_NEW_DRIVER("SNOW-3779643",
-                        "new driver silently ignores SQL_ATTR_MAX_ROWS/SQL_ATTR_QUERY_TIMEOUT "
-                        "on a connection handle; should return S1092");
         CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
                    OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
       }
     }
   }
 
-  // SQLSetConnectAttr - SQL_ATTR_QUERY_TIMEOUT
-  // Class A divergence: same as SQL_ATTR_MAX_ROWS above — accepted by the Windows
-  // DM, forwarded to the driver under unixODBC where S1092 is required.
+  // SQLSetConnectAttr - SQL_ATTR_QUERY_TIMEOUT (BD#107; same as SQL_ATTR_MAX_ROWS above)
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_QUERY_TIMEOUT, nullptr, -6);
-    WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+    WINDOWS_ONLY {
+      OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      NEW_DRIVER_ONLY("BD#107") {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+      }
+    }
     UNIX_ONLY {
-      // iODBC absorbs the call; unixODBC forwards it. New driver silently ignores
-      // it instead of returning S1092 — remove skip once SNOW-3779643 is fixed.
-      IODBC_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      IODBC_ONLY {
+        OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+        NEW_DRIVER_ONLY("BD#107") {
+          CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                     OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+        }
+      }
       NON_IODBC {
-        SKIP_NEW_DRIVER("SNOW-3779643",
-                        "new driver silently ignores SQL_ATTR_MAX_ROWS/SQL_ATTR_QUERY_TIMEOUT "
-                        "on a connection handle; should return S1092");
         CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
                    OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
       }

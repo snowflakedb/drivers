@@ -1926,3 +1926,26 @@ behavior_differences:
       The odbc-api test connecting/driver_connect_tests.cpp ("SQLDriverConnect: Unrecognized
       connection string keyword (old driver: 01S00, new driver: no warning)") asserts both drivers
       via OLD_DRIVER_ONLY("BD#106") and NEW_DRIVER_ONLY("BD#106").
+
+  107:
+    name: "SQLSetConnectAttr with ODBC 2.x statement-level attribute IDs returns HY092 instead of SQL_SUCCESS"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLSetConnectAttr(SQL_ATTR_MAX_ROWS) and SQLSetConnectAttr(SQL_ATTR_QUERY_TIMEOUT) on a
+      connection handle return SQL_SUCCESS silently. Both IDs (0 and 1) are ODBC 2.x statement
+      attributes; setting them on a connection handle is invalid but the old driver swallows the
+      call without error.
+    new_driver_behavior: |
+      The new driver returns SQL_ERROR / HY092 because these are statement-level attributes
+      whose use on a connection handle is invalid per the ODBC spec. All three DMs forward
+      the call to the driver (none intercepts it). The SQLSTATE seen by the application
+      depends on the DM: Windows DM (ODBC 3.x app) passes HY092 unchanged; iODBC also passes
+      HY092 unchanged; unixODBC remaps HY092→S1092 for ODBC 2.x-registered apps.
+    description: |
+      Applications that call SQLSetConnectAttr(SQL_ATTR_MAX_ROWS/QUERY_TIMEOUT) and ignore the
+      return code will now get a diagnostic record; applications that check the return code will
+      see SQL_ERROR instead of SQL_SUCCESS. The old behavior masked a spec violation.
