@@ -7,7 +7,10 @@ export type ConnectionOptions = Record<string, string>;
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
 // TODO: proper row typing once the bridge returns real column types.
-export type Row = Record<string, unknown>;
+// Rows are positional arrays (column order matches the result schema); column
+// names will be surfaced separately once the bridge returns a
+// `{ column_names, rows }` shape.
+export type Row = unknown[];
 
 // TODO:
 // - think whether we should have connection class only in bridge that exposes same api as old driver

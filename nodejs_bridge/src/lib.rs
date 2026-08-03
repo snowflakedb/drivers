@@ -1,5 +1,6 @@
 mod connection;
 mod error;
+mod sql_value;
 mod statement;
 
 pub use connection::Connection;
