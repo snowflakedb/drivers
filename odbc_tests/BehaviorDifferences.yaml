@@ -1896,3 +1896,33 @@ behavior_differences:
     description: |
       Applications that match on the exact diagnostic text (rather than the SQLSTATE) will see a
       different message on the new driver.
+  106:
+    name: "Unrecognized connection-string keywords are forwarded to the server instead of being rejected with 01S00"
+    status: todo
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLDriverConnect with an unrecognized connection-string keyword (e.g.
+      "DSN=<dsn>;INVALIDKEY=abc") returns SQL_SUCCESS_WITH_INFO and posts a diagnostic record with
+      SQLSTATE 01S00, native error 17, message "N invalid keys are found in the connection string:
+      <KEY>", derived from a local check for keywords the driver does not recognize. The connection
+      still opens. (Under iODBC the old driver reports SQL_SUCCESS_WITH_INFO but does not post the
+      01S00 record on the DBC handle - see BD#61.)
+    new_driver_behavior: |
+      The universal driver forwards unrecognized connection-string keywords to the server as
+      session parameters rather than rejecting them locally, so it does not (yet) emit the 01S00
+      warning: SQLDriverConnect opens the connection and posts no 01S00 record. (The return code is
+      SQL_SUCCESS_WITH_INFO in practice, but only because of the driver's unrelated 01004
+      "string data truncated" OutConnectionString handling - never 01S00 for the unknown keyword.)
+    description: |
+      Enhancement tracked by SNOW-3831223: once unrecognized session parameters are rejected from
+      a server-side "parameter not applied" signal (rather than the old driver's purely local
+      unknown-keyword check), the universal driver will surface 01S00, bringing it to parity with -
+      and improving on - the legacy driver's local heuristic. Aligns with the customer feature
+      request SNOW-3765949. Not a breaking change today: 01S00 is SQL_SUCCESS_WITH_INFO, so the
+      connection opens on both drivers; the new driver merely omits the diagnostic warning for now.
+      The odbc-api test connecting/driver_connect_tests.cpp ("SQLDriverConnect: Unrecognized
+      connection string keyword (old driver: 01S00, new driver: no warning)") asserts both drivers
+      via OLD_DRIVER_ONLY("BD#106") and NEW_DRIVER_ONLY("BD#106").
