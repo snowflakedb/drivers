@@ -1,4 +1,5 @@
 import { CoreConnection, type CoreConnectionInstance } from './core';
+import { collectRows } from './query-result/rows.js';
 import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
 
 // TODO: implement SnowflakeError like in old driver
@@ -11,6 +12,11 @@ export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connect
 // for backwards compatibility
 export interface StatementOption {
   sqlText: string;
+  complete?: StatementCallback;
+}
+
+export interface FetchResultOptions {
+  queryId: string;
   complete?: StatementCallback;
 }
 
@@ -44,9 +50,12 @@ class Connection {
     return this.#core.connect();
   }
 
-  // TODO:
-  // Consider a BCR where execute will not return unusable RowStatement and will be only
-  // available inside a callback
+  // TODO: BCR for execute and fetchResult returning an unusable RowStatement
+  // - Applies to both execute and fetchResult
+  // - Option A: do not return RowStatement synchronously — only available in complete callback
+  // - Option B: throw on RowStatement method calls if used before the statement is ready
+  // - Related: old driver returns undefined from getNumRows()/getQueryId() when called
+  //   before query completion or when the query errors / returns no rows (see BCR_LOG.md)
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
     const executePromise = this.#core.execute(options.sqlText);
     const rowStatement = new RowStatement(executePromise);
@@ -56,19 +65,24 @@ class Connection {
     // from the old driver's StatementOption interface
     executePromise
       .then(async (coreStatement) => {
-        try {
-          const rows: unknown[] = [];
-          while (true) {
-            const row = await coreStatement.getNextRow();
-            if (row === null) {
-              break;
-            }
-            rows.push(row);
-          }
-          options.complete?.(undefined, rowStatement, rows);
-        } finally {
-          coreStatement.close();
-        }
+        const rows = await collectRows(coreStatement);
+        options.complete?.(undefined, rowStatement, rows);
+      })
+      .catch((err: Error) => {
+        options.complete?.(err as SnowflakeError, rowStatement, undefined);
+      });
+
+    return rowStatement;
+  }
+
+  fetchResult(options: FetchResultOptions): RowStatement | FileAndStageBindStatement {
+    const queryResultPromise = this.#core.getQueryResult(options.queryId);
+    const rowStatement = new RowStatement(queryResultPromise);
+
+    queryResultPromise
+      .then(async (coreStatement) => {
+        const rows = await collectRows(coreStatement);
+        options.complete?.(undefined, rowStatement, rows);
       })
       .catch((err: Error) => {
         options.complete?.(err as SnowflakeError, rowStatement, undefined);

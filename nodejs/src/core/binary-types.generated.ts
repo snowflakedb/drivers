@@ -8,10 +8,12 @@ export declare class Connection {
   constructor(options: Record<string, string>)
   connect(): Promise<void>
   execute(query: string): Promise<Statement>
+  getQueryResult(queryId: string): Promise<Statement>
 }
 
 export declare class Statement {
   getNextRow(): Promise<Array<unknown> | null>
+  getQueryId(): string
   getNumRows(): number | null
   close(): void
 }

@@ -65,6 +65,20 @@ impl Connection {
             .map_err(to_napi_err)
     }
 
+    async fn statement_from_result(&self, result: ExecuteQueryResult) -> Result<Statement> {
+        let (result_set_handle, descriptor) = match result {
+            ExecuteQueryResult::Single(rs) => (rs.handle, rs.descriptor),
+            ExecuteQueryResult::Multi { .. } => {
+                return Err(to_napi_err("multi-statement results are not supported yet"));
+            }
+        };
+        let batch_reader = DRIVER
+            .result_set_get_stream(result_set_handle)
+            .await
+            .map_err(to_napi_err)?;
+        Ok(Statement::new(result_set_handle, descriptor, batch_reader))
+    }
+
     #[napi]
     pub async fn execute(&self, query: String) -> Result<Statement> {
         // TODO:
@@ -82,24 +96,17 @@ impl Connection {
             .await
             .map_err(to_napi_err)?;
 
-        let (result_set_handle, descriptor) = match result {
-            ExecuteQueryResult::Single(rs) => (rs.handle, rs.descriptor),
-            ExecuteQueryResult::Multi { .. } => {
-                let _ = DRIVER.statement_release(stmt_handle);
-                return Err(to_napi_err("multi-statement results are not supported yet"));
-            }
-        };
+        let _ = DRIVER.statement_release(stmt_handle);
 
-        let batch_reader = DRIVER
-            .result_set_get_stream(result_set_handle)
+        self.statement_from_result(result).await
+    }
+
+    #[napi]
+    pub async fn get_query_result(&self, query_id: String) -> Result<Statement> {
+        let result = DRIVER
+            .connection_get_query_result(self.handle, query_id)
             .await
             .map_err(to_napi_err)?;
-
-        Ok(Statement::new(
-            stmt_handle,
-            result_set_handle,
-            descriptor,
-            batch_reader,
-        ))
+        self.statement_from_result(result).await
     }
 }

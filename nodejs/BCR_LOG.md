@@ -6,7 +6,10 @@ In the new driver, we will remove most runtime argument validation and instead r
 
 ### RowStatement
 
-- `getNumRows(): number;` is wrong, old driver actually returns `undefined` if called before query completion or when query returns error/no rows
+The following methods are wrong because the old driver actually returns `undefined` if called before query completion or when query returns error/no rows:
+
+- `getNumRows(): number;`
+- `getQueryId(): string;`
 
 ### connection.fetchResult and connection.getResultsFromQueryId has wrong TypeScript typing
 

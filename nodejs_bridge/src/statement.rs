@@ -14,7 +14,6 @@ use stream_state::StreamState;
 
 #[napi]
 pub struct Statement {
-    handle: Handle,
     result_set_handle: Handle,
     descriptor: ResultSetDescriptor,
     stream_state: Arc<Mutex<StreamState>>,
@@ -23,13 +22,11 @@ pub struct Statement {
 #[napi]
 impl Statement {
     pub(crate) fn new(
-        handle: Handle,
         result_set_handle: Handle,
         descriptor: ResultSetDescriptor,
         batch_reader: Box<dyn RecordBatchReader + Send>,
     ) -> Self {
         Self {
-            handle,
             result_set_handle,
             descriptor,
             stream_state: Arc::new(Mutex::new(StreamState::new(batch_reader))),
@@ -55,6 +52,11 @@ impl Statement {
     }
 
     #[napi]
+    pub fn get_query_id(&self) -> String {
+        self.descriptor.query_id.clone()
+    }
+
+    #[napi]
     pub fn get_num_rows(&self) -> Option<i64> {
         self.descriptor.row_count
     }
@@ -62,7 +64,6 @@ impl Statement {
     #[napi]
     pub fn close(&mut self) -> Result<()> {
         let _ = DRIVER.result_set_release(self.result_set_handle);
-        let _ = DRIVER.statement_release(self.handle);
         Ok(())
     }
 }
