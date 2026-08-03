@@ -271,6 +271,18 @@ def provisionUsut() {
         export SF_DEPLOYMENTS_ROOT="${HOME}/sf/deployments"
         mkdir -p "${SF_DEPLOYMENTS_ROOT}"
 
+        # SnowIdentity env vars required for µSUT to authenticate with FUSE and
+        # decrypt secrets (e.g. Azure/GCS cloud-storage credentials).
+        # Without SID_AUTH_TYPE=jenkins the auto-discovery returns fuseEnv=unknown
+        # and fails with "unable to determine snowidentity credentials provider".
+        # Docs: https://snowflakecomputing.atlassian.net/wiki/spaces/SF/pages/2814771342
+        export SID_AUTH_TYPE=jenkins
+        export SID_HOST_PORT=cara.ci1.us-west-2.aws-dev.app.snowflake.com:443
+        export SID_KEY_BUNDLE_ID=sfc-or-dev-ci-k8s-ci1
+        export SID_VAULT_CERT=
+        export SID_AUTHORITY_OVERRIDE=identity-provisioner-operator-sa.identity-provisioner.sfc-or-dev-ci-k8s-ci1.z
+        # SID_TOKEN_PATH is already exported by the withCredentials binding above.
+
         # Pin uSUT to the version recorded on the sut-stable branch (same as other drivers).
         export USUT_VERSION=$(cat snowflake-monorepo/.sut-version | xargs)
 
