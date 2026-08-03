@@ -940,6 +940,81 @@ pub enum ReadBatchesError {
     },
 }
 
+/// Test-only building block for the coordinator tests (in this module) and for
+/// other modules' tests that drive the REAL single-flight coordinator. Only the
+/// injected `fetch_fn` runs, so `sql`/`query_parameters` are never consumed —
+/// stub them with minimal valid values.
+#[cfg(test)]
+fn stub_ctx() -> StageInfoRefreshContext {
+    use crate::config::rest_parameters::{ClientInfo, QueryParameters};
+    use crate::crl::config::CrlConfig;
+    use crate::tls::config::TlsConfig;
+    StageInfoRefreshContext {
+        sql: "PUT file://x @s".into(),
+        query_parameters: QueryParameters {
+            server_url: "https://stub.example.com".into(),
+            client_info: ClientInfo {
+                client_app_id: "stub".into(),
+                application: "stub".into(),
+                version: "0.0.0".into(),
+                os: "linux".into(),
+                os_version: "0".into(),
+                ocsp_mode: None,
+                runtime_name: None,
+                runtime_version: None,
+                compiler: None,
+                crl_config: CrlConfig::default(),
+                tls_config: TlsConfig::default(),
+                proxy_config: Default::default(),
+                platforms: Vec::new(),
+                os_details: None,
+            },
+            log_max_query_length: 100,
+            log_query_text: false,
+            log_query_parameters: false,
+        },
+        conn: Arc::new(Mutex::new(Connection::new())),
+    }
+}
+
+/// A real [`SnowflakeStageInfoRefresher`] whose GS fetch is stubbed to store
+/// `on_fetch` and count invocations. Returns `(refresher, fetch_call_counter)`.
+///
+/// Exposed `pub(crate)` (test-only) so `file_manager::azure_transfer` tests can
+/// drive the REAL single-flight coordinator — proving N concurrent block 403s
+/// collapse into exactly one GS fetch — without rebuilding a
+/// `StageInfoRefreshContext` or reaching the private coordinator type directly.
+#[cfg(test)]
+pub(crate) fn test_counting_coordinator(
+    initial: file_manager::StageInfoSnapshot,
+    on_fetch: file_manager::StageInfoSnapshot,
+) -> (
+    impl file_manager::StageInfoRefresher,
+    std::sync::Arc<std::sync::atomic::AtomicU32>,
+) {
+    use std::sync::atomic::Ordering;
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter_in = counter.clone();
+    let refresher =
+        SnowflakeStageInfoRefresher::new_with_fetch_fn(stub_ctx(), initial, move |_ctx, cache| {
+            let counter = counter_in.clone();
+            let on_fetch = on_fetch.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                // Brief simulated GS round-trip: hold the cache on the stale
+                // snapshot long enough that all concurrent callers observe it,
+                // fail, and coalesce onto this single fetch before it stores the
+                // fresh snapshot (otherwise a fast leader could rotate the cache
+                // before a peer even reads it).
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                cache.store(on_fetch);
+                Ok(cache.cached_at())
+            }
+            .boxed()
+        });
+    (refresher, counter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1258,41 +1333,6 @@ mod tests {
     // These use `new_with_fetch_fn` to inject a fake fetch so no real
     // GS connection is needed.
     // -------------------------------------------------------------------
-
-    fn stub_ctx() -> StageInfoRefreshContext {
-        use crate::config::rest_parameters::{ClientInfo, QueryParameters};
-        use crate::crl::config::CrlConfig;
-        use crate::tls::config::TlsConfig;
-        // Only the `conn` field is used by the real fetch path. The coordinator
-        // tests inject a fake `fetch_fn` so `query_parameters` and `sql` are
-        // never consumed — stub them with minimal valid values.
-        StageInfoRefreshContext {
-            sql: "PUT file://x @s".into(),
-            query_parameters: QueryParameters {
-                server_url: "https://stub.example.com".into(),
-                client_info: ClientInfo {
-                    client_app_id: "stub".into(),
-                    application: "stub".into(),
-                    version: "0.0.0".into(),
-                    os: "linux".into(),
-                    os_version: "0".into(),
-                    ocsp_mode: None,
-                    runtime_name: None,
-                    runtime_version: None,
-                    compiler: None,
-                    crl_config: CrlConfig::default(),
-                    tls_config: TlsConfig::default(),
-                    proxy_config: Default::default(),
-                    platforms: Vec::new(),
-                    os_details: None,
-                },
-                log_max_query_length: 100,
-                log_query_text: false,
-                log_query_parameters: false,
-            },
-            conn: Arc::new(Mutex::new(Connection::new())),
-        }
-    }
 
     fn stub_snapshot() -> file_manager::StageInfoSnapshot {
         file_manager::StageInfoSnapshot {
