@@ -491,8 +491,10 @@ fn sas_expired_or_other(
     }
 }
 
-/// Whole-file restart on SAS-403 (legacy JDBC/Go/.NET/ODBC parity).
-/// Per-block resume is the PR-C follow-up (SNOW-3406384).
+/// SAS-403 recovery: the pre-upload HEAD and the single-file PUT rotate the SAS
+/// and restart the attempt, while multipart self-heals per-block and per-commit
+/// (Python-parity per-block resume, SNOW-3406384) — a block 403 retries just
+/// that block, keeping already-staged blocks rather than restarting the file.
 // One arg over S3/GCS (Azure adds `skip_upload_on_content_match`); a follow-up
 // may bundle {multipart, policy, refresher} into an opts struct.
 #[allow(clippy::too_many_arguments)]
@@ -525,16 +527,12 @@ pub(super) async fn upload_to_azure_or_skip(
         let base = policy.clone();
         let client = client.clone();
         async move {
-            let sas_token = match &stage_info.creds {
-                CloudCredentials::Azure { sas_token } => sas_token.clone(),
-                _ => {
-                    return Err(AzureAttemptError::Other(
-                        AzureUploadError::MissingAzureCredentials {
-                            location: Location::default(),
-                        },
-                    ));
-                }
-            };
+            // One derivation of the SAS from creds — the same helper the block
+            // and commit refresh wrappers use — so a creds-variant change lands
+            // in a single place.
+            let sas_token = azure_sas_from_creds(&stage_info.creds)
+                .map_err(AzureAttemptError::Other)?
+                .clone();
             let (url, _) = resolve_url_and_token(&stage_info, &key)
                 .map_err(|e| AzureAttemptError::Other(AzureUploadError::from(e)))?;
             // 403 fast-fails to the refresh layer for every SAS-bearing request
@@ -586,17 +584,19 @@ pub(super) async fn upload_to_azure_or_skip(
             }
 
             if body_len >= multipart.threshold.bytes() {
-                azure_multipart_upload(
-                    &client,
-                    &url,
-                    sas_token.reveal(),
-                    prepared,
-                    body_len,
-                    multipart.concurrency,
-                    &attempt_policy,
-                )
-                .await
-                .map_err(|e| sas_expired_or_other(e, &url, sas_token.reveal()))?;
+                // Multipart self-heals an expired SAS per-block and per-commit,
+                // so its 403s never bubble up as `SasExpired` — a block 403 no
+                // longer restarts the whole file. Errors are terminal (`Other`).
+                let block_ctx = AzureMultipartCtx {
+                    client: &client,
+                    url: &url,
+                    policy: &attempt_policy,
+                    refresher,
+                    initial_creds: &stage_info.creds,
+                };
+                azure_multipart_upload(block_ctx, prepared, body_len, multipart.concurrency)
+                    .await
+                    .map_err(AzureAttemptError::Other)?;
             } else {
                 azure_put_attempt(&client, &url, sas_token.reveal(), prepared, &base).await?;
             }
@@ -696,18 +696,31 @@ async fn send_head_to_azure_blob(
     }
 }
 
+/// Shared context for every block + commit request in one multipart upload
+/// (client, base unsigned `url`, `policy`, and the SAS source: `refresher`, or
+/// `initial_creds` when there's none). All borrows → `Copy`, so concurrent block
+/// futures share one coordinator; bundled to avoid three `too_many_arguments`.
+#[derive(Clone, Copy)]
+struct AzureMultipartCtx<'a> {
+    client: &'a reqwest::Client,
+    url: &'a str,
+    policy: &'a RetryPolicy,
+    refresher: Option<&'a dyn StageInfoRefresher>,
+    initial_creds: &'a CloudCredentials,
+}
+
 /// Uploads `prepared` as an Azure block blob: `Put Block` ×N then `Put Block List`.
+/// Per-block SAS-refresh resume: a 403 on one block/commit rotates the SAS
+/// (coalesced) and retries just that request; `ctx.url` is unsigned and signed
+/// per attempt from the current creds.
 ///
 /// No abort step: Azure garbage-collects uncommitted blocks (~7 days) and never
 /// charges for or exposes them, so a failed upload just leaves the blob uncommitted.
 async fn azure_multipart_upload(
-    client: &reqwest::Client,
-    url: &str,
-    sas_token: &str,
+    ctx: AzureMultipartCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
     concurrency: usize,
-    policy: &RetryPolicy,
 ) -> Result<(), AzureUploadError> {
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
         .context(azure_upload_error::FileTooLargeSnafu)?;
@@ -722,11 +735,11 @@ async fn azure_multipart_upload(
     };
     let (encryption_data_str, mat_desc_str) =
         azure_encryption_header_strs(encryption_metadata.as_ref())?;
-    let full_url = build_sas_url(url, sas_token);
-    let full_url = full_url.as_str();
 
     // Blocks read sequentially from the (optionally encrypting) source, staged
-    // concurrently.
+    // concurrently. Each block signs `url` with the current SAS per attempt and
+    // self-heals an expired-SAS 403 (per-block resume) rather than restarting
+    // the whole upload.
     let parts_rx =
         multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
 
@@ -734,7 +747,7 @@ async fn azure_multipart_upload(
         .map(|part| async move {
             let part = part.context(azure_upload_error::SourceIoSnafu)?;
             let number = part.number;
-            azure_put_block(client, full_url, part, policy).await?;
+            azure_put_block_with_refresh(ctx, part).await?;
             Ok::<i32, AzureUploadError>(number)
         })
         .buffer_unordered(concurrency)
@@ -758,14 +771,12 @@ async fn azure_multipart_upload(
     // of order, so sort by the original part number.
     block_numbers.sort_unstable();
 
-    azure_put_block_list(
-        client,
-        full_url,
+    azure_put_block_list_with_refresh(
+        ctx,
         &block_numbers,
         &digest,
         encryption_data_str.as_deref(),
         mat_desc_str.as_deref(),
-        policy,
     )
     .await?;
 
@@ -806,6 +817,115 @@ async fn azure_put_block(
         &Method::PUT,
         full_url,
         policy,
+    )
+    .await
+}
+
+/// Extracts the Azure SAS token from `creds`, or `MissingAzureCredentials` if
+/// they aren't Azure. The single home for the "which credential variant carries
+/// the SAS" check, shared by the single-PUT/HEAD attempt and the per-block and
+/// commit refresh wrappers.
+fn azure_sas_from_creds(creds: &CloudCredentials) -> Result<&SensitiveString, AzureUploadError> {
+    match creds {
+        CloudCredentials::Azure { sas_token } => Ok(sas_token),
+        _ => Err(AzureUploadError::MissingAzureCredentials {
+            location: Location::default(),
+        }),
+    }
+}
+
+/// Stages one block under the SAS-refresh layer: signs `ctx.url` per attempt and
+/// on a 403 rotates the SAS (coalesced) and retries *this block only*. No
+/// refresher → the block runs once and a 403 is terminal.
+async fn azure_put_block_with_refresh(
+    ctx: AzureMultipartCtx<'_>,
+    part: multipart::UploadPart,
+) -> Result<(), AzureUploadError> {
+    let number = part.number;
+    let body = part.body;
+    run_azure_with_sas_refresh(
+        ctx.refresher,
+        ctx.initial_creds,
+        "PUT block",
+        |e| azure_upload_error::StageInfoRefreshSnafu.into_error(e),
+        |status_code, body| AzureUploadError::AzureHttp {
+            status_code,
+            body,
+            location: Location::default(),
+        },
+        |creds| {
+            let client = ctx.client.clone();
+            let policy = ctx.policy.clone();
+            let url = ctx.url.to_string();
+            let body = body.clone();
+            async move {
+                let sas = azure_sas_from_creds(&creds).map_err(AzureAttemptError::Other)?;
+                let full_url = build_sas_url(&url, sas.reveal());
+                azure_put_block(
+                    &client,
+                    &full_url,
+                    multipart::UploadPart { number, body },
+                    &policy,
+                )
+                .await
+                .map_err(|e| sas_expired_or_other(e, &url, sas.reveal()))
+            }
+        },
+    )
+    .await
+}
+
+/// Commits via `Put Block List` under the SAS-refresh layer: a 403 rotates the
+/// SAS and retries the commit (staged blocks untouched — Azure keeps them). No
+/// refresher → terminal 403.
+///
+/// Commit-403 recovery holds only when no earlier block refreshed the SAS. Once
+/// a block refresh arms the coordinator's 10-min coalesce window, a commit 403
+/// coalesces to that just-fetched generation and terminates without a re-fetch —
+/// the window is intentionally not bypassed, since re-stamping `cached_at` for
+/// the same rejected SAS would spin a GS-refresh loop. This matches the old
+/// whole-file restart, which would also re-stage under the same coalesced creds.
+async fn azure_put_block_list_with_refresh(
+    ctx: AzureMultipartCtx<'_>,
+    block_numbers: &[i32],
+    digest: &str,
+    encryption_data_str: Option<&str>,
+    mat_desc_str: Option<&str>,
+) -> Result<(), AzureUploadError> {
+    run_azure_with_sas_refresh(
+        ctx.refresher,
+        ctx.initial_creds,
+        "PUT block list",
+        |e| azure_upload_error::StageInfoRefreshSnafu.into_error(e),
+        |status_code, body| AzureUploadError::AzureHttp {
+            status_code,
+            body,
+            location: Location::default(),
+        },
+        |creds| {
+            let client = ctx.client.clone();
+            let policy = ctx.policy.clone();
+            let url = ctx.url.to_string();
+            let block_numbers = block_numbers.to_vec();
+            let digest = digest.to_string();
+            let encryption_data_str = encryption_data_str.map(str::to_string);
+            let mat_desc_str = mat_desc_str.map(str::to_string);
+            async move {
+                let sas = azure_sas_from_creds(&creds).map_err(AzureAttemptError::Other)?;
+                let full_url = build_sas_url(&url, sas.reveal());
+                azure_put_block_list(
+                    &client,
+                    &full_url,
+                    &block_numbers,
+                    &digest,
+                    encryption_data_str.as_deref(),
+                    mat_desc_str.as_deref(),
+                    &policy,
+                )
+                .await
+                .map_err(|e| sas_expired_or_other(e, &url, sas.reveal()))
+            }
+        },
     )
     .await
 }
@@ -3024,13 +3144,21 @@ mod tests {
     /// 4 MiB default block size: `Put Block` ×3 then one `Put Block List`.
     #[tokio::test(flavor = "multi_thread")]
     async fn azure_block_blob_upload_stages_blocks_then_commits() {
+        // Derive the block count from the SAME part-size logic production uses,
+        // so a block-size change adjusts the expectation instead of turning a
+        // magic `.expect(N)` into a silent bug detector (review §S-C).
+        const BODY_LEN: usize = 9 << 20;
+        let chunk = multipart::compute_part_size(BODY_LEN as u64, &MultipartConfig::AZURE)
+            .expect("compute Azure part size");
+        let expected_blocks = (BODY_LEN as u64).div_ceil(chunk);
+
         let mock = MockServer::start().await;
 
         // Put Block: PUT ?comp=block&blockid=...
         Mock::given(method("PUT"))
             .and(query_param("comp", "block"))
             .respond_with(ResponseTemplate::new(201))
-            .expect(3)
+            .expect(expected_blocks)
             .mount(&mock)
             .await;
 
@@ -3050,7 +3178,7 @@ mod tests {
         let prepared = PreparedUpload {
             source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
                 3u8;
-                9 << 20
+                BODY_LEN
             ])),
             digest: "0".repeat(64),
             cse: None,
@@ -3081,6 +3209,537 @@ mod tests {
         assert!(
             commit.headers.get(AZURE_META_SFC_DIGEST).is_some(),
             "digest metadata must ride on the block-list commit"
+        );
+    }
+
+    /// Block-level coalescing (R4 / Gherkin S6 / S10) proven against the REAL
+    /// single-flight coordinator: N concurrent blocks all start with an expired
+    /// SAS, all 403, and must collapse into exactly ONE GS re-issue — not N.
+    ///
+    /// `FakeStageInfoRefresher` cannot show this (it does not model
+    /// single-flight — concurrent callers past its armed rotation get a no-op),
+    /// so this drives the production `SnowflakeStageInfoRefresher` via
+    /// `test_counting_coordinator`. Deterministic: the mock 403s any PUT
+    /// carrying the stale sig and 201s the fresh sig, so every block 403s on its
+    /// first attempt regardless of scheduling, and the coordinator's `inflight`
+    /// slot + 10-min window guarantee the fetch fires once.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_concurrent_block_403s_coalesce_into_one_refresh() {
+        use crate::apis::database_driver_v1::test_counting_coordinator;
+        use crate::file_manager::types::StageInfoSnapshot;
+        use std::sync::atomic::Ordering;
+        const FRESH_SIG: &str = "sig=fresh-rotated";
+
+        let server = MockServer::start().await;
+        // Put Block: 403 while the SAS is stale, 201 once refreshed.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(FRESH_SIG) {
+                    ResponseTemplate::new(201)
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+        // Put Block List commit (carries the fresh SAS after the refresh).
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+
+        // Real coordinator seeded with the stale SAS; the single stubbed GS
+        // fetch rotates the cache to the fresh SAS and bumps the counter.
+        let (coordinator, fetch_calls) = test_counting_coordinator(
+            StageInfoSnapshot::creds_only(azure_creds("stale-expired")),
+            StageInfoSnapshot::creds_only(azure_creds("fresh-rotated")),
+        );
+
+        // 9 MiB → 3 blocks (4+4+1) at the 4 MiB default; concurrency 4 ≥ 3, so
+        // all three fire their first (stale) PUT concurrently.
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                7u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "big.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            Some(&coordinator as &dyn StageInfoRefresher),
+        )
+        .await
+        .expect("concurrent block 403s must refresh once and upload");
+
+        assert_eq!(
+            fetch_calls.load(Ordering::SeqCst),
+            1,
+            "N concurrent block 403s must coalesce into exactly one GS re-issue"
+        );
+
+        // Prove the coalescing was genuinely exercised: ≥2 blocks 403'd on the
+        // stale SAS (not a single block trivially refreshing).
+        let reqs = server.received_requests().await.unwrap_or_default();
+        let stale_block_403s = reqs
+            .iter()
+            .filter(|r| {
+                r.method.as_str() == "PUT"
+                    && r.url.as_str().contains("comp=block")
+                    && !r.url.as_str().contains("blocklist")
+                    && !r.url.as_str().contains(FRESH_SIG)
+            })
+            .count();
+        assert!(
+            stale_block_403s >= 2,
+            "≥2 blocks must have 403'd concurrently for coalescing to be exercised; got {stale_block_403s}"
+        );
+    }
+
+    /// The `Put Block List` commit's own 403 must refresh + retry the commit,
+    /// not fail the upload. Backs the commit wrapper: flipping multipart to a
+    /// terminal `Other` without wrapping the commit would have regressed the
+    /// pre-existing commit-403 recovery that the old whole-file restart gave.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_commit_403_refreshes_and_retries_commit() {
+        const REFRESHED_SIG: &str = "sig=REFRESHED-FRESH";
+        let refreshed_sas = format!("sv=2021-08-06&{REFRESHED_SIG}&se=2099-01-01");
+
+        let server = MockServer::start().await;
+        // Blocks always succeed; only the commit is made to 403 while stale.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(201)
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(azure_creds("ORIGINAL-EXPIRED")),
+            ..Default::default()
+        });
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Azure {
+            sas_token: SensitiveString::from(refreshed_sas.clone()),
+        });
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                5u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "commit.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            Some(&fake as &dyn StageInfoRefresher),
+        )
+        .await
+        .expect("a commit 403 must refresh and retry the commit");
+
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "exactly one refresh for the single commit 403"
+        );
+        let reqs = server.received_requests().await.unwrap_or_default();
+        assert!(
+            reqs.iter().any(|r| r.method.as_str() == "PUT"
+                && r.url.as_str().contains("blocklist")
+                && r.url.as_str().contains(REFRESHED_SIG)),
+            "the commit retry must carry the refreshed SAS"
+        );
+    }
+
+    /// Without a refresher, a block 403 is terminal — no retry, no whole-file
+    /// restart — symmetric with the single-PUT no-refresher path.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_block_403_without_refresher_is_terminal() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("expired"))
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                9u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let result = upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "noref.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 403,
+                    ..
+                })
+            ),
+            "block 403 with no refresher must be a terminal AzureHttp 403; got {result:?}"
+        );
+    }
+
+    /// Commit-403 while the coalesce window is armed — the realistic
+    /// SAS-expires-mid-upload state the commit wrapper's doc calls out. Blocks
+    /// 403 on the stale SAS, refresh once (arming the 10-min window) and succeed;
+    /// the commit then 403s and `refresh` finds the window armed, so it coalesces
+    /// to the just-fetched generation and the upload terminates as a terminal
+    /// Azure 403 WITHOUT a second GS fetch. Drives the REAL coordinator (a fake
+    /// cannot model the window), asserting the ACTUAL outcome rather than the
+    /// trivial no-block-refreshed-first recovery
+    /// `multipart_commit_403_refreshes_and_retries_commit` covers.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_commit_403_in_armed_window_terminates_without_extra_fetch() {
+        use crate::apis::database_driver_v1::test_counting_coordinator;
+        use crate::file_manager::types::StageInfoSnapshot;
+        use std::sync::atomic::Ordering;
+        // `azure_creds("fresh-rotated")` signs the fresh SAS with this signature.
+        const FRESH_SIG: &str = "sig=fresh-rotated";
+
+        let server = MockServer::start().await;
+        // Blocks: 403 while stale, 201 once the SAS is refreshed.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(FRESH_SIG) {
+                    ResponseTemplate::new(201)
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+        // Commit: 403 even with the refreshed SAS — still rejected at commit time.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("still denied"))
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        // Real coordinator: the one stubbed GS fetch rotates stale → fresh and
+        // arms the coalesce window.
+        let (coordinator, fetch_calls) = test_counting_coordinator(
+            StageInfoSnapshot::creds_only(azure_creds("stale-expired")),
+            StageInfoSnapshot::creds_only(azure_creds("fresh-rotated")),
+        );
+
+        // 9 MiB → 3 blocks; all 403 on the stale SAS and coalesce into ONE fetch.
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                6u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let result = upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "commit-window.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            Some(&coordinator as &dyn StageInfoRefresher),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 403,
+                    ..
+                })
+            ),
+            "a commit 403 in the armed coalesce window must be a terminal Azure 403; got {result:?}"
+        );
+        assert_eq!(
+            fetch_calls.load(Ordering::SeqCst),
+            1,
+            "the commit 403 must coalesce to the block refresh's generation — no second GS fetch"
+        );
+        // The commit was attempted with the REFRESHED SAS and still 403'd, so the
+        // terminal outcome is the coalesce window, not a stale-SAS commit.
+        let reqs = server.received_requests().await.unwrap_or_default();
+        assert!(
+            reqs.iter().any(|r| r.method.as_str() == "PUT"
+                && r.url.as_str().contains("blocklist")
+                && r.url.as_str().contains(FRESH_SIG)),
+            "the commit must have been attempted with the refreshed SAS"
+        );
+    }
+
+    /// Refresh-mechanism failure raised inside a block: the block 403s, the
+    /// refresh itself fails, and the error surfaces as `StageInfoRefresh`
+    /// with the `error!` "upload aborted" log — proving the block error survives
+    /// the terminal-`Other` flip + outer fold (the multipart analogue of
+    /// `put_refresh_mechanism_failure_logs_at_error_naming_reason`). A single
+    /// block (2 MiB < the 4 MiB block size) keeps the outcome deterministic:
+    /// exactly one 403 → one refresh.
+    #[tokio::test(flavor = "multi_thread")]
+    #[tracing_test::traced_test]
+    async fn multipart_block_refresh_mechanism_failure_is_terminal_and_logs_error() {
+        let server = MockServer::start().await;
+        // Every block PUT 403s → triggers a refresh; the refresh is armed to fail.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("expired"))
+            .mount(&server)
+            .await;
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_failure("GS re-issue rejected during block upload");
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                8u8;
+                2 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let result = upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "block-refresh-fail.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            Some(&fake as &dyn StageInfoRefresher),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AzureUploadError::StageInfoRefresh { .. })),
+            "a refresh-mechanism failure inside a block must surface as StageInfoRefresh; got {result:?}"
+        );
+        assert!(
+            logs_contain("Azure SAS refresh failed; upload aborted"),
+            "a block refresh-mechanism failure must log at error! (upload aborted)"
+        );
+        assert!(
+            logs_contain("GS re-issue rejected during block upload"),
+            "the error! log must name the refresh-failure reason"
+        );
+    }
+
+    /// A block 403 that persists after the SAS is rotated: the fresh SAS is still
+    /// rejected, so the block terminates as a terminal Azure 403 (the multipart
+    /// analogue of `put_terminal_403_after_refresh_logs_at_warn_with_redacted_url`).
+    /// A single block makes the rotate-then-still-403 sequence deterministic.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_block_403_surviving_refresh_is_terminal() {
+        const REFRESHED_SIG: &str = "sig=REFRESHED-STILL-BAD";
+        let server = MockServer::start().await;
+        // Every block PUT 403s, even after the SAS is rotated.
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("still denied"))
+            .mount(&server)
+            .await;
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(azure_creds("ORIGINAL-EXPIRED")),
+            ..Default::default()
+        });
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(azure_creds("REFRESHED-STILL-BAD"));
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                8u8;
+                2 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let result = upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "block-persist-403.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            Some(&fake as &dyn StageInfoRefresher),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 403,
+                    ..
+                })
+            ),
+            "a block 403 surviving the refresh must be a terminal Azure 403; got {result:?}"
+        );
+        // The block was retried with the refreshed SAS, which still 403'd — the
+        // rotation happened but did not recover.
+        let reqs = server.received_requests().await.unwrap_or_default();
+        assert!(
+            reqs.iter().any(|r| r.method.as_str() == "PUT"
+                && r.url.as_str().contains("comp=block")
+                && r.url.as_str().contains(REFRESHED_SIG)),
+            "the block must have been retried with the refreshed SAS (which still 403'd)"
+        );
+    }
+
+    /// Per-block resume (Gherkin S9): a 403 on ONE block re-sends ONLY that
+    /// block; the others are staged exactly once. The pre-PR-C whole-file
+    /// restart would re-PUT every block, so `block_puts == chunks + 1` is the
+    /// discriminator between per-block resume and whole-file restart.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_403_on_one_block_resends_only_that_block() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        const BODY_LEN: usize = 9 << 20;
+        let chunk = multipart::compute_part_size(BODY_LEN as u64, &MultipartConfig::AZURE)
+            .expect("compute Azure part size");
+        let expected_chunks = (BODY_LEN as u64).div_ceil(chunk);
+
+        let server = MockServer::start().await;
+        // 403 the FIRST block PUT exactly once (whichever block wins the race);
+        // 201 all others, incl. that block's retry. Counter-gated (not sig-gated)
+        // so exactly ONE block 403s — isolating the single-block resume path.
+        let fired = std::sync::Arc::new(AtomicBool::new(false));
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(move |_req: &Request| {
+                if fired.swap(true, Ordering::SeqCst) {
+                    ResponseTemplate::new(201)
+                } else {
+                    ResponseTemplate::new(403).set_body_string("expired")
+                }
+            })
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(azure_creds("ORIGINAL")),
+            ..Default::default()
+        });
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(azure_creds("REFRESHED"));
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                4u8;
+                BODY_LEN
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "one.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            Some(&fake as &dyn StageInfoRefresher),
+        )
+        .await
+        .expect("a single block 403 must resume just that block");
+
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "exactly one refresh for the single block 403"
+        );
+        let block_puts = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| {
+                r.method.as_str() == "PUT"
+                    && r.url.as_str().contains("comp=block")
+                    && !r.url.as_str().contains("blocklist")
+            })
+            .count() as u64;
+        assert_eq!(
+            block_puts,
+            expected_chunks + 1,
+            "per-block resume: only the failed block is re-sent ({expected_chunks} blocks + 1 retry); \
+             a whole-file restart would re-PUT all {expected_chunks}"
         );
     }
 
@@ -3136,6 +3795,76 @@ mod tests {
             .read_to_end(&mut got)
             .unwrap();
         assert_eq!(got, payload, "reassembled blob must match the object");
+    }
+
+    /// Ranged-GET 403 wire test (review §S-D): the streaming download's ranged
+    /// GET hits an expired-SAS 403, refreshes, and re-drives the whole download
+    /// to success. PR-A moved the routing HEAD + ranged GET inside the refresh
+    /// closure; this is the previously-missing regression proof for the ranged
+    /// branch (the routing-HEAD branch is covered by
+    /// `streaming_get_routing_head_403_with_refresher_recovers`).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn streaming_ranged_get_403_with_refresher_recovers() {
+        use std::io::Read as _;
+        const REFRESHED_SIG: &str = "sig=REFRESHED-FRESH";
+        let refreshed_sas = format!("sv=2021-08-06&{REFRESHED_SIG}&se=2099-01-01");
+        let payload = b"hello ranged azure blob world".to_vec();
+
+        let server = MockServer::start().await;
+        // HEAD (routing/size probe) always succeeds; only the ranged GET 403s.
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; payload.len()]))
+            .mount(&server)
+            .await;
+        // Ranged GET: 403 while stale, 206 (whole range) once refreshed.
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(206).set_body_bytes(body.clone())
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(azure_creds("ORIGINAL-EXPIRED")),
+            ..Default::default()
+        });
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Azure {
+            sas_token: SensitiveString::from(refreshed_sas.clone()),
+        });
+
+        let spill = tempfile::tempdir().unwrap();
+        let dl = download_from_azure_streaming(
+            &stage,
+            "file.dat",
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            false,
+            cloud_http::CloudSpillTarget::Temp(spill.path()),
+            Some(&fake as &dyn StageInfoRefresher),
+        )
+        .await
+        .expect("a ranged-GET 403 must refresh and re-drive the download");
+
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "exactly one refresh for the single ranged-GET 403"
+        );
+        let mut got = Vec::new();
+        dl.body
+            .into_reader()
+            .unwrap()
+            .read_to_end(&mut got)
+            .unwrap();
+        assert_eq!(got, payload, "reassembled blob must match after refresh");
     }
 
     /// A non-encrypted ranged Azure download assembles straight into the caller's

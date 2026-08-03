@@ -18,6 +18,11 @@ pub(crate) mod like_pattern;
 mod logout;
 pub(crate) mod multistatement;
 mod query;
+// `query` stays private; test builds re-export just the one factory
+// `file_manager::azure_transfer` tests need to drive the REAL single-flight
+// coordinator (block-level coalescing proof), rather than widening the module.
+#[cfg(test)]
+pub(crate) use self::query::test_counting_coordinator;
 pub(crate) mod result_set;
 pub mod spcs_token;
 pub(crate) mod statement;
