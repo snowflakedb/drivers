@@ -889,6 +889,21 @@ pub unsafe extern "system" fn SQLFreeStmt(
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
+
+    // SQL_DROP (1) frees the statement handle — it is equivalent to
+    // SQLFreeHandle(SQL_HANDLE_STMT), not one of free_stmt's live-statement options
+    // (SQL_CLOSE / SQL_UNBIND / SQL_RESET_PARAMS). It is deprecated in ODBC 3.x: a 3.x
+    // driver manager (e.g. unixODBC) remaps it to SQLFreeHandle so the driver never
+    // sees it, but ODBC 2.x applications and iODBC pass it straight through to the
+    // driver. Route it to the handle-lifecycle path and, like SQLFreeHandle above,
+    // skip the clear/set diagnostic calls: the handle's diagnostic storage is gone
+    // once it is freed, so touching it afterwards would operate on a stale handle.
+    const SQL_DROP: sql::USmallInt = 1;
+    if option == SQL_DROP {
+        return api::handle_allocation::sql_free_handle(sql::HandleType::Stmt, statement_handle)
+            .to_sql_code();
+    }
+
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::FreeStmtOption::try_from(option)
         .and_then(|opt| api::statement::free_stmt(statement_handle, opt));
