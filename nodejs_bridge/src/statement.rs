@@ -7,6 +7,7 @@ use crate::sql_value::SqlValue;
 use arrow::array::RecordBatchReader;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use sf_core::apis::database_driver_v1::ResultSetDescriptor;
 use sf_core::handle_manager::Handle;
 use std::sync::{Arc, Mutex};
 use stream_state::StreamState;
@@ -15,6 +16,7 @@ use stream_state::StreamState;
 pub struct Statement {
     handle: Handle,
     result_set_handle: Handle,
+    descriptor: ResultSetDescriptor,
     stream_state: Arc<Mutex<StreamState>>,
 }
 
@@ -23,11 +25,13 @@ impl Statement {
     pub(crate) fn new(
         handle: Handle,
         result_set_handle: Handle,
+        descriptor: ResultSetDescriptor,
         batch_reader: Box<dyn RecordBatchReader + Send>,
     ) -> Self {
         Self {
             handle,
             result_set_handle,
+            descriptor,
             stream_state: Arc::new(Mutex::new(StreamState::new(batch_reader))),
         }
     }
@@ -48,6 +52,11 @@ impl Statement {
             .await
             .unwrap()
             .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub fn get_num_rows(&self) -> Option<i64> {
+        self.descriptor.row_count
     }
 
     #[napi]

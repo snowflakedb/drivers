@@ -4,6 +4,16 @@ This document outlines API behavior changes that should be reviewed or addressed
 
 In the new driver, we will remove most runtime argument validation and instead rely on TypeScript's static type checking. Previously, we had multiple layers of validation, which sometimes led to inconsistent error handling between methods. Omitting redundant runtime validation is standard practice in TypeScript codebases, as static type checks catch most usage errors during development.
 
+### RowStatement
+
+- `getNumRows(): number;` is wrong, old driver actually returns `undefined` if called before query completion or when query returns error/no rows
+
+### connection.fetchResult and connection.getResultsFromQueryId has wrong TypeScript typing
+
+- they both require `queryId` which is optional in StatementOption
+- most of `StatementOption` does not apply to fetch/get results. They work only for `.execute()`
+- `getResultsFromQueryId` has inconsistent async patterns: it's an async method but also accepts a callback for error/result handling. This mixed pattern should be reviewed when designing the new async-first API for the entire driver
+
 ### snowflake .connectAsync(callback)
 
 - In the old driver, this method, in some cases, returns errors via `callback(err)` and in other cases throws errors directly. This inconsistent behavior is a bug. In the new driver, async methods should not accept a callback, and all errors should be handled via rejected promises.
