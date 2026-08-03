@@ -1,4 +1,4 @@
-@core
+@core @python
 Feature: Workload Identity Federation Authentication
 
   @core_e2e
@@ -33,25 +33,25 @@ Feature: Workload Identity Federation Authentication
     When Trying to Connect
     Then Login is successful and a simple query can be executed
 
-  @core_e2e
+  @core_e2e @python_int
   Scenario: should fail WORKLOAD_IDENTITY when provider is missing
     Given Authentication is set to WORKLOAD_IDENTITY but WORKLOAD_IDENTITY_PROVIDER is absent
     When Trying to Connect
     Then Connection fails with a missing-parameter error citing workload_identity_provider
 
-  @core_e2e
+  @core_e2e @python_int
   Scenario: should fail WORKLOAD_IDENTITY when provider is an invalid value
     Given Authentication is set to WORKLOAD_IDENTITY and WORKLOAD_IDENTITY_PROVIDER is an invalid value
     When Trying to Connect
     Then Connection fails with an invalid-parameter error citing workload_identity_provider
 
-  @core_e2e
+  @core_e2e @python_int
   Scenario: should fail OIDC WIF when token is missing
     Given Authentication is set to WORKLOAD_IDENTITY and WORKLOAD_IDENTITY_PROVIDER is OIDC but token is absent
     When Trying to Connect
     Then Connection fails with a missing-parameter error citing token
 
-  @core_e2e
+  @core_e2e @python_int
   Scenario: should fail OIDC WIF when token is malformed
     Given Authentication is set to WORKLOAD_IDENTITY and WORKLOAD_IDENTITY_PROVIDER is OIDC
     And Token is set to a malformed value that is not a valid JWT
