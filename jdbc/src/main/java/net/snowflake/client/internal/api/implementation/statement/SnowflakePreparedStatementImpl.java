@@ -511,7 +511,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     PrepareResult result = getPrepareResult();
     return new DecoratedSnowflakeResultSetMetaDataImpl(
         SnowflakeResultSetMetaDataImpl.from(
-            result.getQueryId(), result.getColumnsList(), conversionContext()));
+            result.getQueryId(), result.getColumnsList(), conversionContext()),
+        connection.getTelemetry());
   }
 
   @Override

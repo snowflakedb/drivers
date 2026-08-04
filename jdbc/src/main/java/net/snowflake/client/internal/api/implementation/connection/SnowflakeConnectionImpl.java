@@ -44,6 +44,7 @@ import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.QueryStatus;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
@@ -56,6 +57,7 @@ import net.snowflake.client.internal.api.implementation.resultset.ResultSetFacto
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.api.implementation.telemetry.CoreTelemetry;
 import net.snowflake.client.internal.log.Jdk14LoggerBootstrap;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -94,6 +96,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private final DatabaseHandle databaseHandle;
   private final ConnectionHandle connectionHandle;
   private final ParametersRegistry parametersRegistry;
+  private final Telemetry telemetry;
 
   private boolean autoCommit;
   private String catalog;
@@ -133,6 +136,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
+      this.telemetry = new CoreTelemetry(coreDriverApi, connHandle);
       this.sqlWarnings = sqlWarnings;
       this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
@@ -201,6 +205,11 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public ConnectionHandle getHandle() {
     return connectionHandle;
+  }
+
+  @Override
+  public Telemetry getTelemetry() {
+    return telemetry;
   }
 
   @Override

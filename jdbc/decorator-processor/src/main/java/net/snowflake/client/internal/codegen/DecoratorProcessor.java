@@ -167,8 +167,13 @@ public class DecoratorProcessor extends AbstractProcessor {
       w.println(" {");
       w.println();
 
-      w.println("  public " + decoratorName + "(" + implSimpleName + " delegate) {");
-      w.println("    super(delegate, Telemetry.NOOP);");
+      w.println(
+          "  public "
+              + decoratorName
+              + "("
+              + implSimpleName
+              + " delegate, Telemetry telemetry) {");
+      w.println("    super(delegate, telemetry);");
       w.println("  }");
 
       boolean needsSneakyThrow = false;
@@ -295,7 +300,10 @@ public class DecoratorProcessor extends AbstractProcessor {
     }
 
     String delegateCall = "delegate." + methodName + "(" + args + ")";
-    String callPrefix = noTelemetry ? "" : "\"" + methodName + "\", ";
+    // Op-name uses the *declaring* JDBC interface, so inherited methods read as e.g.
+    // "Statement.execute" even on the PreparedStatement decorator (Decision 2).
+    String opName = declaringInterfaceName(method) + "." + methodName;
+    String callPrefix = noTelemetry ? "" : "\"" + opName + "\", ";
 
     if (needsTryCatch) {
       writeTryCatchLambda(w, delegateCall, callPrefix, isVoid);
@@ -326,6 +334,15 @@ public class DecoratorProcessor extends AbstractProcessor {
     }
     w.println("      catch (SQLException e) { throw sneakyThrow(e); }");
     w.println("    });");
+  }
+
+  /**
+   * Simple name of the interface that declares {@code method} — the collected interface method's
+   * enclosing element is always the interface it was declared on, so inherited methods keep the
+   * declaring interface (e.g. {@code Statement}) rather than the implementing one.
+   */
+  private String declaringInterfaceName(ExecutableElement method) {
+    return method.getEnclosingElement().getSimpleName().toString();
   }
 
   private boolean delegateThrowsChecked(MethodInfo mi) {
