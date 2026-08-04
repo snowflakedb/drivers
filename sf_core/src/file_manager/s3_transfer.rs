@@ -1862,6 +1862,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
 
@@ -2207,6 +2208,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
 
@@ -2295,6 +2297,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         };
 
         tokio::time::timeout(
@@ -2398,6 +2401,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
 
@@ -2840,6 +2844,7 @@ mod tests {
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
 

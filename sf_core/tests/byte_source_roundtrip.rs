@@ -239,6 +239,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: None,
         },
         encryption_material: Some(material),
@@ -447,6 +448,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
                 crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+                proxy_config: sf_core::tls::config::ProxyConfig::default(),
                 storage_account: None,
             };
             sf_core::file_manager::internal::download_from_gcs_streaming(
@@ -488,6 +490,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                 use_s3_regional_url: false,
                 tls_config: sf_core::tls::config::TlsConfig::default(),
                 crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+                proxy_config: sf_core::tls::config::ProxyConfig::default(),
                 storage_account: Some("mystorageaccount".to_string()),
             };
             sf_core::file_manager::internal::download_from_azure_streaming(
@@ -638,6 +641,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: None,
     };
 
@@ -771,6 +775,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: None,
         },
         Cloud::Gcs => StageInfo {
@@ -788,6 +793,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: None,
         },
         Cloud::Azure => StageInfo {
@@ -805,6 +811,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
             use_s3_regional_url: false,
             tls_config: sf_core::tls::config::TlsConfig::default(),
             crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
             storage_account: Some("mystorageaccount".to_string()),
         },
     }

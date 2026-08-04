@@ -301,6 +301,10 @@ pub struct StageInfo {
     /// Driver-owned lazy CRL worker for storage TLS clients. Set alongside
     /// `tls_config` in `perform_put_get_transfer`.
     pub crl_worker: crate::crl::worker::SharedCrlWorker,
+    /// Explicit proxy config for the storage HTTP clients (S3/GCS/Azure); set
+    /// alongside `tls_config` on the PUT/GET path, `ProxyConfig::default()`
+    /// otherwise.
+    pub proxy_config: crate::tls::config::ProxyConfig,
 }
 
 impl StageInfo {

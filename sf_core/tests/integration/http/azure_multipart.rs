@@ -142,6 +142,7 @@ fn azure_stage(endpoint: &str) -> StageInfo {
         storage_account: Some("test".to_string()),
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
     }
 }
 

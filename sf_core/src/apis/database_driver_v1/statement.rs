@@ -509,6 +509,7 @@ impl DatabaseDriverV1 {
                     use_s3_regional_url_session_param,
                     unsafe_file_write,
                     tls_config,
+                    proxy_config,
                     put_fastfail,
                     get_fastfail,
                 ) = {
@@ -518,6 +519,7 @@ impl DatabaseDriverV1 {
                         conn.use_s3_regional_url_session_param().await,
                         conn.unsafe_file_write(),
                         conn.tls_config(),
+                        conn.proxy_config(),
                         // precedence: statement setting > session override > connection seed > wrapper preset
                         put_fastfail_override
                             .or_else(|| conn.put_fastfail())
@@ -539,6 +541,7 @@ impl DatabaseDriverV1 {
                     get_fastfail,
                     unsafe_file_write,
                     tls_config,
+                    proxy_config,
                     self.crl_worker.clone(),
                 )
                 .await
