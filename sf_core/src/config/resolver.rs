@@ -977,4 +977,81 @@ account = "other_acct"
             Some("myaccount".to_owned())
         );
     }
+
+    // --- Connection diagnostic params via connections.toml (SNOW-3864169) ---
+
+    #[test]
+    fn connections_toml_profile_enables_diagnostic() {
+        use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[production]
+account = "myaccount"
+user = "myuser"
+password = "mypassword"
+enable_connection_diag = true
+connection_diag_log_path = "/var/log/sfdiag"
+connection_diag_allowlist_path = "/var/snowflake/allowlist.json"
+"#,
+        );
+
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            param_names::CONNECTION_NAME.into(),
+            Setting::String("production".to_owned()),
+        );
+
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+        let config = ConnectionConfig::build(&resolved).unwrap();
+
+        match config.diagnostic {
+            DiagnosticConfig::Enabled {
+                log_path,
+                allowlist_path,
+            } => {
+                assert_eq!(log_path, Some("/var/log/sfdiag".into()));
+                assert_eq!(allowlist_path, Some("/var/snowflake/allowlist.json".into()));
+            }
+            DiagnosticConfig::Disabled => {
+                panic!(
+                    "enable_connection_diag = true in a connections.toml profile \
+                     must produce DiagnosticConfig::Enabled"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connections_toml_profile_leaves_diagnostic_disabled_by_default() {
+        use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
+[production]
+account = "myaccount"
+user = "myuser"
+password = "mypassword"
+"#,
+        );
+
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            param_names::CONNECTION_NAME.into(),
+            Setting::String("production".to_owned()),
+        );
+
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+        let config = ConnectionConfig::build(&resolved).unwrap();
+
+        assert!(matches!(config.diagnostic, DiagnosticConfig::Disabled));
+    }
 }

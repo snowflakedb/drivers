@@ -3079,6 +3079,62 @@ mod tests {
         assert_eq!(config_string(&options, "QUERY_TAG"), Some("from-odbc"));
     }
 
+    /// Connection diagnostic params (SNOW-3864169) have no explicit mapping in
+    /// `normalize_connection_string_option`, so they fall through to the
+    /// generic uppercase passthrough — same path as `QUERY_TAG` above. This
+    /// pins that they survive normalization unmodified rather than being
+    /// dropped.
+    #[test]
+    fn normalize_connection_string_options_forwards_connection_diag_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("ENABLE_CONNECTION_DIAG".to_owned(), "true".to_owned()),
+            (
+                "CONNECTION_DIAG_LOG_PATH".to_owned(),
+                "/var/log/sfdiag".to_owned(),
+            ),
+            (
+                "CONNECTION_DIAG_ALLOWLIST_PATH".to_owned(),
+                "/var/snowflake/allowlist.json".to_owned(),
+            ),
+        ]));
+
+        assert_eq!(
+            config_string(&options, "ENABLE_CONNECTION_DIAG"),
+            Some("true")
+        );
+        assert_eq!(
+            config_string(&options, "CONNECTION_DIAG_LOG_PATH"),
+            Some("/var/log/sfdiag")
+        );
+        assert_eq!(
+            config_string(&options, "CONNECTION_DIAG_ALLOWLIST_PATH"),
+            Some("/var/snowflake/allowlist.json")
+        );
+    }
+
+    /// Wiring guard: the uppercase keys forwarded above must actually be
+    /// resolvable by `sf_core::config::param_registry` to their canonical
+    /// lowercase names, or the connection-string surface would silently drop
+    /// connection diagnostics on connect (the params would never reach
+    /// `ConnectionConfig::build`).
+    #[test]
+    fn connection_diag_keys_resolve_via_sf_core_param_registry() {
+        let registry = sf_core::config::param_registry::registry();
+        for (key, expected_canonical) in [
+            ("ENABLE_CONNECTION_DIAG", "enable_connection_diag"),
+            ("CONNECTION_DIAG_LOG_PATH", "connection_diag_log_path"),
+            (
+                "CONNECTION_DIAG_ALLOWLIST_PATH",
+                "connection_diag_allowlist_path",
+            ),
+        ] {
+            let resolved = registry
+                .resolve(key)
+                .unwrap_or_else(|| panic!("sf_core param_registry does not know {key}"));
+            assert_eq!(resolved.canonical_name, expected_canonical);
+        }
+    }
+
     #[test]
     fn normalize_connection_string_options_forwards_session_keep_alive_params() {
         let options = normalize_connection_string_options(HashMap::from([
