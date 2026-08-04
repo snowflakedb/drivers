@@ -413,7 +413,7 @@ behavior_differences:
       `proxy_host`/`proxy_port`/`proxy_user`/`proxy_password`/`no_proxy`
       kwargs, and the legacy ODBC `PROXY=[scheme://][user:pass@]host[:port]`
       URL form. When both are set, individual fields override URL components
-      per-field. See (snowflakedb/universal-driver#29).
+      per-field. See (snowflake-eng/universal-driver#29).
 
   32:
     name: "Azure Blob PUT does not set Content-Encoding header"

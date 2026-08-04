@@ -1099,10 +1099,13 @@ pub unsafe extern "system" fn SQLCancel(statement_handle: sql::Handle) -> sql::R
 /// aliasing caveat described there. Diagnostics are not touched
 /// (same reasoning as `SQLCancel`).
 ///
-/// For **SQL_HANDLE_DBC** this is currently a no-op returning SUCCESS.
-/// Connection-level cancel (async connect, cross-thread
-/// `SQLDriverConnect`) will be implemented after the connection state
-/// machine is hardened (SNOW-3307201).
+/// For **SQL_HANDLE_DBC**: returns HY010 when any associated statement is
+/// asynchronously executing or mid data-at-execution (ODBC 3.8 Diagnostics).
+/// Otherwise a no-op returning SUCCESS: neither this driver nor the reference
+/// driver supports async DBC functions, so there is no cancelable
+/// connection-level operation when no child statement is busy. (Idle cancel
+/// "has no effect"; whether prior DM-owned diagnostics remain is a Driver
+/// Manager difference — Windows keeps them, unixODBC clears in function_entry.)
 ///
 /// **SQL_HANDLE_ENV** and **SQL_HANDLE_DESC** return `SQL_ERROR` with
 /// SQLSTATE HY092 per the ODBC 3.8 spec. Any truly unknown handle
@@ -1123,11 +1126,12 @@ pub unsafe extern "system" fn SQLCancelHandle(
             record_err!(sql::HandleType::Stmt, handle, result);
             result.to_sql_code()
         }
-        // TODO(SNOW-3307201): implement connection-level cancel after
-        // the connection state machine is hardened.
         sql::HandleType::Dbc => {
             api::diagnostic::clear_diag_info(handle_type, handle);
-            sql::SqlReturn::SUCCESS.0
+            let result = api::connection::cancel_handle(handle);
+            api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+            record_err!(handle_type, handle, result);
+            result.to_sql_code()
         }
         sql::HandleType::Env | sql::HandleType::Desc => {
             api::diagnostic::clear_diag_info(handle_type, handle);

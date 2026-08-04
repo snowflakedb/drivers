@@ -1853,7 +1853,6 @@ behavior_differences:
     description: |
       GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
       matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
-
   104:
     name: "GET writes to a temporary .part file before renaming to the final destination (old driver writes the destination directly)"
     status: allowed
@@ -1897,7 +1896,6 @@ behavior_differences:
     description: |
       Applications that match on the exact diagnostic text (rather than the SQLSTATE) will see a
       different message on the new driver.
-
   106:
     name: "Unrecognized connection-string keywords are forwarded to the server instead of being rejected with 01S00"
     status: todo
@@ -1928,7 +1926,6 @@ behavior_differences:
       The odbc-api test connecting/driver_connect_tests.cpp ("SQLDriverConnect: Unrecognized
       connection string keyword (old driver: 01S00, new driver: no warning)") asserts both drivers
       via OLD_DRIVER_ONLY("BD#106") and NEW_DRIVER_ONLY("BD#106").
-
   107:
     name: "SQLSetConnectAttr with ODBC 2.x statement-level attribute IDs returns HY092 instead of SQL_SUCCESS"
     status: allowed
@@ -1951,7 +1948,6 @@ behavior_differences:
       Applications that call SQLSetConnectAttr(SQL_ATTR_MAX_ROWS/QUERY_TIMEOUT) and ignore the
       return code will now get a diagnostic record; applications that check the return code will
       see SQL_ERROR instead of SQL_SUCCESS. The old behavior masked a spec violation.
-
   108:
     name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
     status: allowed
@@ -1970,7 +1966,6 @@ behavior_differences:
       Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's long-standing
       rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers; no ODBC
       caller relies on the attributes being silently ignored.
-
   109:
     name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
     status: allowed
@@ -1986,7 +1981,6 @@ behavior_differences:
       (ConflictingParameters, Error). Unlike entry 108, this is a genuine new rejection for ODBC, not a
       relocated one — allowed as a bugfix since silently accepting a no-op param combination is itself a
       latent bug.
-
   110:
     name: "SQLGetDiagRec/SQLGetDiagField MessageText vendor prefix changed from [Snowflake][Support] to [Snowflake][Snowflake ODBC Driver]"
     status: allowed
@@ -2008,3 +2002,27 @@ behavior_differences:
     description: |
       Applications that pattern-match diagnostic message text against the literal "[Snowflake][Support]"
       prefix must update their pattern to "[Snowflake][Snowflake ODBC Driver]".
+  111:
+    name: "SQLCancelHandle(DBC) returns HY010 when an associated statement is mid-async or in data-at-execution"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SQLCancelHandle(SQL_HANDLE_DBC) is a no-op that returns SQL_SUCCESS even when an associated
+      statement is asynchronously executing (SQL_STILL_EXECUTING) or mid data-at-execution
+      (SQL_NEED_DATA). The ODBC 3.8 Diagnostics table requires HY010 (Function sequence error) in
+      those cases.
+    new_driver_behavior: |
+      SQLCancelHandle(SQL_HANDLE_DBC) returns SQL_ERROR with SQLSTATE HY010 when any associated
+      statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8
+      Diagnostics table. When no child statement is busy, DBC cancel remains a no-op returning
+      SQL_SUCCESS (neither driver supports cancelable connection-level async operations).
+    description: |
+      Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancelhandle-function
+      — HY010 when "An asynchronously executing, statement-related function was called for one of
+      the statement handles associated with the Handle, and HandleType was set to SQL_HANDLE_DBC"
+      or when SQLBrowseConnect / streamed parameters leave the connection mid NEED_DATA / param
+      data available. Applications that called SQLCancelHandle(DBC) during statement async/DAE and
+      expected SQL_SUCCESS will now see HY010; they should cancel the statement handle instead.
