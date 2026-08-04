@@ -337,7 +337,9 @@ extra-dependencies = ["build"]
 python = ["3.13"]
 
 [tool.hatch.envs.packaging.scripts]
-test = "pytest tests/packaging {args}"
+# no parallelism - each packaging test does a full Rust compile; runing them concurrently can thrash the runner
+# {args:...}: default to the whole packaging suite; CI passes a single file
+test = "pytest -n 0 {args:tests/packaging}"
 
 # Reference connector environments install only the reference connector.
 # UD driver is uninstalled; only the old driver is present.
