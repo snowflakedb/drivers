@@ -72,7 +72,7 @@ rules:
       3. **Internal process documentation** — runbooks, on-call guides, incident
          postmortems, deployment procedures, or any content describing
          Snowflake-internal workflows rather than the driver's public API or
-         usage. (Public-style ADRs and design docs in `adr/` and `doc/` are
+         usage. (Public-style ADRs and design docs in `adr/` and `docs/` are
          fine — flag only when the content names internal systems or
          processes.)
 

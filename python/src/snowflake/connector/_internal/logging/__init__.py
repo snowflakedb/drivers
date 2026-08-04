@@ -8,7 +8,7 @@ logger, plus the public :func:`get_logger` entry point that wrapper code uses.
 Round-trip logging (:class:`.core_logger.CoreLogger`, which sends wrapper logs
 to sf_core over a direct FFI call and receives them back through the FFI
 callback) lives in :mod:`.core_logger` so its FFI import stays off this
-module's load path. See ``doc/logging/logging-architecture.md``.
+module's load path. See ``docs/logging/logging-architecture.md``.
 """
 
 from __future__ import annotations

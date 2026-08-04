@@ -20,7 +20,7 @@ allowed_file_extensions:
 rules:
   - id: ud-log-never-log-secrets
     rule: |
-      **OBJECTIVE**: Secrets must never leave the process via logs — on any log level, in any code path, in the core or any wrapper. See `doc/logging/logging-guidelines.md` § "What to never log".
+      **OBJECTIVE**: Secrets must never leave the process via logs — on any log level, in any code path, in the core or any wrapper. See `docs/logging/logging-guidelines.md` § "What to never log".
 
       **REQUIREMENT**: No logging call (any level) may emit the value of a sensitive parameter. Sensitive parameters that must NEVER be logged:
       - tokens (`id_token`, `id_token_password`, `master_token`, `mfa_token`, `session_token`, `token`, ...),
@@ -64,7 +64,7 @@ rules:
 
   - id: ud-log-every-http-call-at-info
     rule: |
-      **OBJECTIVE**: Every HTTP call made by the driver MUST be logged at the INFO level so that the traffic the driver generates is always visible — and only the URL **host and path** are logged, with the query string and fragment stripped (they can carry sensitive identifiers). Every HTTP response code must also be logged at the appropriate level. See `doc/logging/logging-guidelines.md` § "HTTP traffic".
+      **OBJECTIVE**: Every HTTP call made by the driver MUST be logged at the INFO level so that the traffic the driver generates is always visible — and only the URL **host and path** are logged, with the query string and fragment stripped (they can carry sensitive identifiers). Every HTTP response code must also be logged at the appropriate level. See `docs/logging/logging-guidelines.md` § "HTTP traffic".
 
       **REQUIREMENT**:
       1. **Request presence** — wherever the driver issues an outbound HTTP request (e.g. `client.get/post/put/send/execute`, `request(...)`, `HttpClient.send`, `requests.request`, `fetch`), there MUST be an accompanying log at the **INFO** level recording that the call happened. A request issued with no INFO log is a violation.
@@ -89,7 +89,7 @@ rules:
 
   - id: ud-log-query-text-and-params-gated
     rule: |
-      **OBJECTIVE**: Query text and query parameters are confidential and OFF by default; they may only be logged when explicitly opted in. See `doc/logging/logging-guidelines.md` § "Query logging".
+      **OBJECTIVE**: Query text and query parameters are confidential and OFF by default; they may only be logged when explicitly opted in. See `docs/logging/logging-guidelines.md` § "Query logging".
 
       **REQUIREMENT**: Logging of query text must be gated behind `log_query_text` (default `false`) and logging of query parameters/bindings behind `log_query_parameters` (default `false`). When gated logging fires:
       - it MUST be at the **INFO** level,
@@ -115,7 +115,7 @@ rules:
 
   - id: ud-log-never-log-client-data
     rule: |
-      **OBJECTIVE**: Query result data is customer data and must never appear in logs — on any log level, in any code path, with no opt-in flag. See `doc/logging/logging-guidelines.md` § "Query result data". Query text and bindings are **not** result data; they are opt-in separately (see `ud-log-query-text-and-params-gated` and the guidelines § "Query logging").
+      **OBJECTIVE**: Query result data is customer data and must never appear in logs — on any log level, in any code path, with no opt-in flag. See `docs/logging/logging-guidelines.md` § "Query result data". Query text and bindings are **not** result data; they are opt-in separately (see `ud-log-query-text-and-params-gated` and the guidelines § "Query logging").
 
       **REQUIREMENT**: No logging call (any level) may emit query **result** payloads: row/cell values, Arrow/JSON rowsets, record batches, base64 chunk bodies, file-transfer result bodies, or result-set schema metadata (column names, types, rowtype/field descriptors returned with a result). Metadata about a result (row/column counts, `queryId`, chunk count, rowset variant/type) is safe.
 
@@ -153,7 +153,7 @@ rules:
 
   - id: ud-log-public-api-entry-and-exit
     rule: |
-      **OBJECTIVE**: Public API entry points are logged on both entry and exit so a single call can be traced end to end. See `doc/logging/logging-guidelines.md` § "Public API".
+      **OBJECTIVE**: Public API entry points are logged on both entry and exit so a single call can be traced end to end. See `docs/logging/logging-guidelines.md` § "Public API".
 
       **REQUIREMENT**:
       - In a **wrapper**, a public API entry point (the methods the host application calls — `connect`, `execute`, `fetch`, `close`, etc.) MUST log on entry AND on exit at the **INFO** level.
@@ -180,7 +180,7 @@ rules:
 
   - id: ud-log-underlying-error-cause-type-only
     rule: |
-      **OBJECTIVE**: Errors we did NOT author (e.g. `reqwest`, OS/TLS libraries, JDK exceptions, third-party SDKs) may embed secrets in their message, so only their type / class name is logged by default. Errors we author are safe to log in full. See `doc/logging/logging-guidelines.md` § "Exceptions".
+      **OBJECTIVE**: Errors we did NOT author (e.g. `reqwest`, OS/TLS libraries, JDK exceptions, third-party SDKs) may embed secrets in their message, so only their type / class name is logged by default. Errors we author are safe to log in full. See `docs/logging/logging-guidelines.md` § "Exceptions".
 
       **REQUIREMENT**:
       - The exception **type / class name** must always be logged.
@@ -209,7 +209,7 @@ rules:
 
   - id: ud-log-stack-trace-unhandled-only
     rule: |
-      **OBJECTIVE**: Stack traces are logged only for exceptions that propagate out unhandled, and never include captured argument / local-variable values (which may hold secrets). See `doc/logging/logging-guidelines.md` § "Stack traces".
+      **OBJECTIVE**: Stack traces are logged only for exceptions that propagate out unhandled, and never include captured argument / local-variable values (which may hold secrets). See `docs/logging/logging-guidelines.md` § "Stack traces".
 
       **REQUIREMENT**:
       1. Log a stack trace / backtrace only for an error that is NOT reacted to — one that propagates out of a flow or terminates it. Exceptions caught and handled as normal control flow (recover, fall back, retry, return Ok) must NOT log a stack trace.
@@ -244,7 +244,7 @@ rules:
 
   - id: ud-log-url-in-error-host-and-path
     rule: |
-      **OBJECTIVE**: When a URL appears in an error message, only the host and path may be included. URL query strings and fragments can carry tokens, passcodes, and other sensitive identifiers and must not appear in error messages. See `doc/logging/logging-guidelines.md` § "Error messages".
+      **OBJECTIVE**: When a URL appears in an error message, only the host and path may be included. URL query strings and fragments can carry tokens, passcodes, and other sensitive identifiers and must not appear in error messages. See `docs/logging/logging-guidelines.md` § "Error messages".
 
       **REQUIREMENT**: Whenever a URL is included in a core error message (e.g. a `snafu` display string, a wrapper exception message, or any log line that carries a URL), only the **host and path** portions may be included. The query string and fragment must be stripped before including in the message.
 

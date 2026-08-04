@@ -58,7 +58,7 @@ pub enum OAuthError {
 
     /// End-to-end `authentication_timeout` budget expired during the
     /// OAuth flow — covers the loopback wait, the IdP token exchange
-    /// (or refresh), and any retry attempt (drift B.3; `doc/oauth.md`
+    /// (or refresh), and any retry attempt (drift B.3; `features/auth/NOMIRROR/oauth.md`
     /// §2). Distinct from [`Self::BrowserTimeout`] so callers can
     /// distinguish "browser leg ran too long" from "the whole flow
     /// budget was exhausted".

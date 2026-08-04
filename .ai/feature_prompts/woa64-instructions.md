@@ -51,7 +51,7 @@ Assign one lens per reviewer. Do not change the assignment between phases:
 ### Step 1 — Write structured ADR entry
 
 Before running reviewers, the ci-fixing-agent reads the latest CI log and writes
-a new iteration entry to `doc/woa64/ADR-woa64.md` with this structure:
+a new iteration entry to `docs/woa64/ADR-woa64.md` with this structure:
 
 ```markdown
 ### Iteration N — [title]
@@ -79,7 +79,7 @@ Launch 3 × `adr-reviewer-agent` simultaneously
 
 Provide each reviewer with:
 - The new ADR entry from Step 1 + full ADR history
-  (`doc/woa64/ADR-windows-arm64-ci.md` or `ADR-woa64.md`)
+  (`docs/woa64/ADR-windows-arm64-ci.md` or `ADR-woa64.md`)
 - The latest CI failure log (if available)
 - The current state of the relevant workflow file
 
