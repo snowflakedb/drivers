@@ -2590,6 +2590,39 @@ pub fn set_scroll_options(
     )
 }
 
+/// ODBC 2.x thin wrapper: sets `SQL_ATTR_PARAMSET_SIZE` and
+/// `SQL_ATTR_PARAMS_PROCESSED_PTR` on behalf of `SQLParamOptions`.
+///
+/// Per the ODBC 3.x spec, `SQLParamOptions` is deprecated and superseded by
+/// `SQLSetStmtAttr`; this function preserves the attribute semantics by
+/// delegating to [`set_stmt_attr`] for each of the two attributes.
+pub fn set_param_options(
+    statement_handle: sql::Handle,
+    crow: sql::ULen,
+    pi_row: *mut sql::ULen,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("set_param_options: statement_handle={statement_handle:?}");
+    let _exit = ApiExitLogDebug("SQLParamOptions");
+
+    use crate::api::StmtAttr;
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::ParamsetSize as sql::Integer,
+        crow as sql::Pointer,
+        0,
+        warnings,
+    )?;
+    set_stmt_attr(
+        statement_handle,
+        StmtAttr::ParamsProcessedPtr as sql::Integer,
+        pi_row as sql::Pointer,
+        0,
+        warnings,
+    )?;
+    Ok(())
+}
+
 /// Get a statement attribute value
 pub fn get_stmt_attr<E: OdbcEncoding>(
     statement_handle: sql::Handle,

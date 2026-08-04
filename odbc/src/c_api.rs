@@ -2586,6 +2586,49 @@ pub unsafe extern "system" fn SQLSetScrollOptions(
     result.to_sql_code_with_warnings(&warnings)
 }
 
+/// ODBC 2.x deprecated entry point, superseded by `SQLSetStmtAttr` in ODBC
+/// 3.x. Sets `SQL_ATTR_PARAMSET_SIZE` (`crow`) and
+/// `SQL_ATTR_PARAMS_PROCESSED_PTR` (`pi_row`) as a single convenience call.
+/// Many ODBC 2.x applications still invoke it directly, so the driver
+/// exports it for compatibility.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLParamOptions(
+    statement_handle: sql::Handle,
+    crow: sql::ULen,
+    pi_row: *mut sql::ULen,
+) -> sql::RetCode {
+    set_dispatch!();
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLParamOptions");
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    let ret = std::panic::catch_unwind(|| {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result =
+            api::statement::set_param_options(statement_handle, crow, pi_row, &mut warnings);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        record_err!(sql::HandleType::Stmt, statement_handle, result);
+        result.to_sql_code_with_warnings(&warnings)
+    });
+    match ret {
+        Ok(r) => r,
+        Err(_) => sql::SqlReturn::ERROR.0,
+    }
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
