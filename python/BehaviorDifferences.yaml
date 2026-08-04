@@ -700,3 +700,51 @@ behavior_differences:
       GCS honors the opt-in `_skip_upload_on_content_match` cursor kwarg like S3 and Azure.
       With the flag off (the default), a content-matching `PUT ... OVERWRITE=TRUE` re-uploads,
       matching legacy Python; the content-match skip fires only when the caller opts in.
+
+  45:
+    name: "login_timeout, network_timeout, and socket_timeout connection getters are now implemented"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `login_timeout` defaulted to 120 s but `conn.login_timeout` returned `None`
+      when no value was explicitly set (the 120 s budget was applied internally by
+      AuthByPlugin, never written back to the connection object).
+      `network_timeout` was a single wall-clock budget covering all non-login,
+      non-query HTTP operations (retries, metadata calls, etc.); it defaulted to
+      `None` (no cap) and `conn.network_timeout` returned `None` when unset.
+      `socket_timeout` was a per-attempt read-inactivity timeout passed as the scalar
+      `timeout=` to `requests.Session.request`; it resets on every received byte, so
+      a slow-but-active response (e.g. a large result download) never trips it.
+      All three getters raised `NotImplementedError` in earlier universal-driver
+      builds; `network_timeout` and `socket_timeout` as kwargs were silently
+      forwarded to Rust as unrecognised parameters with no effect.
+    new_driver_behavior: |
+      `login_timeout` reads back `config.login_timeout`, which defaults to 120.
+      `conn.login_timeout` now returns `120` instead of `None` when no explicit
+      value is set. Code guarding on `if conn.login_timeout is None` will evaluate
+      differently (lower impact since the effective budget was already 120 s).
+
+      `network_timeout` and `socket_timeout` are accepted as deprecated kwargs and
+      emit a `DeprecationWarning` pointing callers at the split params.
+      `network_timeout` fans out to both `query_timeout` and `request_timeout`
+      (unless the caller sets one of those explicitly, which wins).
+      `socket_timeout` fans out to both `connect_timeout` and `retry_timeout`
+      (same explicit-wins rule).
+
+      `conn.network_timeout` returns `request_timeout`, which defaults to 120.
+      `conn.network_timeout` now returns `120` instead of `None` when unset.
+      Code guarding on `if conn.network_timeout is None` will evaluate differently.
+
+      `conn.socket_timeout` returns `retry_timeout`, which defaults to `None`.
+
+      Semantic shift for `socket_timeout`: the legacy value was a per-attempt
+      read-inactivity timeout that reset on received bytes; `retry_timeout` becomes
+      reqwest's hard wall-clock cap on the entire HTTP attempt including body
+      download. A caller who set `socket_timeout=30` to guard against stalled
+      sockets will now see active chunk downloads aborted at 30 s. This is the best
+      available mapping — the universal driver has no per-inactivity parameter.
+
+      Previously all three getters raised `NotImplementedError`.

@@ -230,19 +230,19 @@ class ConnectionMixin(ErrorHandlerMixin):
     @api_telemetry
     def login_timeout(self) -> int | None:
         """The login timeout in seconds."""
-        raise NotImplementedError("login_timeout is not yet implemented")
+        return self.config.login_timeout
 
     @property
     @api_telemetry
     def network_timeout(self) -> int | None:
         """The network timeout in seconds for all other operations."""
-        raise NotImplementedError("network_timeout is not yet implemented")
+        return self.config.request_timeout
 
     @property
     @api_telemetry
     def socket_timeout(self) -> int | None:
         """The socket timeout in seconds."""
-        raise NotImplementedError("socket_timeout is not yet implemented")
+        return self.config.retry_timeout
 
     @property
     @api_telemetry
