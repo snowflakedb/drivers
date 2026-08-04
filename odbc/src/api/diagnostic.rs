@@ -59,43 +59,6 @@ pub enum DiagIdentifier {
     ColumnNumber = 15,
 }
 
-impl DiagIdentifier {
-    /// Convert DiagIdentifier to sql::SmallInt
-    #[allow(dead_code)]
-    pub fn to_small_int(self) -> sql::SmallInt {
-        self as sql::SmallInt
-    }
-
-    /// Get all diagnostic identifiers applicable to header fields
-    #[allow(dead_code)]
-    pub fn header_fields() -> Vec<DiagIdentifier> {
-        vec![
-            DiagIdentifier::ReturnCode,
-            DiagIdentifier::Number,
-            DiagIdentifier::RowCount,
-            DiagIdentifier::DynamicFunction,
-            DiagIdentifier::DynamicFunctionCode,
-            DiagIdentifier::CursorRowCount,
-        ]
-    }
-
-    /// Get all diagnostic identifiers applicable to record fields
-    #[allow(dead_code)]
-    pub fn record_fields() -> Vec<DiagIdentifier> {
-        vec![
-            DiagIdentifier::SqlState,
-            DiagIdentifier::Native,
-            DiagIdentifier::MessageText,
-            DiagIdentifier::ClassOrigin,
-            DiagIdentifier::SubclassOrigin,
-            DiagIdentifier::ConnectionName,
-            DiagIdentifier::ServerName,
-            DiagIdentifier::RowNumber,
-            DiagIdentifier::ColumnNumber,
-        ]
-    }
-}
-
 impl TryFrom<sql::SmallInt> for DiagIdentifier {
     type Error = OdbcError;
 
@@ -165,7 +128,6 @@ pub fn subclass_origin_for_sqlstate(sqlstate: &str) -> ClassOrigin {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub enum ClassOrigin {
     #[default]
     Odbc3_0,
