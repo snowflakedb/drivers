@@ -500,7 +500,10 @@ pub(super) struct WrappedContentKey {
 }
 
 /// Builds the Snowflake encryption metadata JSON envelope (shared across all cloud providers).
-/// Matches the format used by JDBC/Python/ODBC drivers.
+/// Matches the format used by JDBC/Python/ODBC drivers, except `KeyWrappingMetadata
+/// .EncryptionLibrary`: UD self-identifies as `"Rust(OpenSSL)"` rather than copying the
+/// majority-but-not-universal `"Java 5.3.0"` literal (see each wrapper's
+/// BehaviorDifferences.yaml for the rationale -- no reader anywhere parses this value).
 pub(super) fn build_encryption_metadata_json(
     metadata: &EncryptedFileMetadata,
 ) -> serde_json::Value {
@@ -520,6 +523,41 @@ pub(super) fn build_encryption_metadata_json(
             "EncryptionLibrary": "Rust(OpenSSL)"
         }
     })
+}
+
+#[cfg(test)]
+mod build_encryption_metadata_json_tests {
+    use super::*;
+
+    #[test]
+    fn build_encryption_metadata_json_matches_legacy_wire_shape() {
+        let metadata = EncryptedFileMetadata {
+            encrypted_key: "dGVzdC1rZXk=".to_string(),
+            iv: "dGVzdC1pdg==".to_string(),
+            material_desc: MaterialDescription {
+                query_id: "test-query-id".to_string(),
+                smk_id: "0".to_string(),
+                key_size: "256".to_string(),
+            },
+        };
+
+        let json = build_encryption_metadata_json(&metadata);
+
+        assert_eq!(
+            json["KeyWrappingMetadata"]["EncryptionLibrary"], "Rust(OpenSSL)",
+            "deliberate divergence from legacy's \"Java 5.3.0\" -- see each wrapper's \
+             BehaviorDifferences.yaml; UD self-identifies rather than impersonating a different \
+             implementation, and no reader anywhere (four legacy drivers, UD, or GS's own \
+             validating parser) consumes this value"
+        );
+        assert_eq!(json["WrappedContentKey"]["Algorithm"], "AES_CBC_256");
+        assert_eq!(
+            json["EncryptionAgent"]["EncryptionAlgorithm"],
+            "AES_CBC_256"
+        );
+        assert_eq!(json["WrappedContentKey"]["EncryptedKey"], "dGVzdC1rZXk=");
+        assert_eq!(json["ContentEncryptionIV"], "dGVzdC1pdg==");
+    }
 }
 
 /// Percent-encode a URL path, preserving `/` separators.

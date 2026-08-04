@@ -748,3 +748,26 @@ behavior_differences:
       available mapping — the universal driver has no per-inactivity parameter.
 
       Previously all three getters raised `NotImplementedError`.
+
+  47:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"`,
+      hardcoded on every cloud, including Python itself.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
+      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
+      parser, which validates several sibling fields (throws on a bad `EncryptionMode` or
+      `EncryptionAlgorithm`) but never reads `EncryptionLibrary`. GS's own internal C++
+      encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather than `"Java 5.3.0"`
+      on its GCS path -- the same
+      self-identify-honestly pattern UD follows, not a UD-only quirk. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, which has real
+      diagnostic value during the mixed-fleet rollout period when legacy and universal drivers
+      both write objects into the same stages.
