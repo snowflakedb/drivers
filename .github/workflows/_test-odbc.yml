@@ -487,6 +487,11 @@ jobs:
           ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running|requires_no_mfa" $REPEAT_ARGS \
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
+      # Bypasses run_tests_unix.sh, so iODBC env must be re-exported here.
+      # Without SF_RUNNING_IODBC_TEST_SUITE, UnixConfigInstallation skips
+      # ODBCINSTINI and iODBC dlopens the SnowflakeDriver_* alias literally
+      # (IM003) — see reference workflow flaky/cleanup steps for the same fix.
+      # SF_ODBC_INI reuses the UTF-32 ini materialised by the gating run above.
       - name: Run flaky ODBC tests (Unix)
         if: runner.os != 'Windows'
         continue-on-error: true
@@ -497,6 +502,8 @@ jobs:
           DRIVER_TYPE: NEW
           DRIVER_MANAGER: ${{ matrix.driver_manager || 'unixodbc' }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+          SF_RUNNING_IODBC_TEST_SUITE: ${{ matrix.driver_manager == 'iodbc' && '1' || '' }}
+          SF_ODBC_INI: ${{ matrix.driver_manager == 'iodbc' && format('{0}/odbc_tests/cmake-build/sf.odbc.ini', github.workspace) || '' }}
 
       - name: Run ODBC tests (Windows)
         if: runner.os == 'Windows'
