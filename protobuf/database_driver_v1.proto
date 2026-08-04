@@ -90,6 +90,12 @@ message InvalidParameterValue {
   string parameter = 1;
   string value = 2;
   optional string explanation = 3;
+  // Discriminant for which sf_core validation rule produced this error, when
+  // known (e.g. VALIDATION_CODE_CONFLICTING_PARAMETERS for cross-parameter
+  // guards). Unset (VALIDATION_CODE_UNSPECIFIED) for call sites that do not
+  // originate from `validate_settings`. Additive field: existing readers that
+  // don't check it are unaffected.
+  optional ValidationCode code = 4;
 }
 
 // Driver error union (using oneof)
@@ -902,6 +908,10 @@ enum ValidationCode {
   VALIDATION_CODE_UNKNOWN_PARAMETER = 4;
   VALIDATION_CODE_DEPRECATED_PARAMETER = 5;
   VALIDATION_CODE_CONFLICTING_PARAMETERS = 6;
+  // Specialization of CONFLICTING_PARAMETERS for the WIF cross-parameter
+  // guards, carried across FFI so wrappers can remap to a native WIF error
+  // identity (Python errno=251017) without matching on parameter name.
+  VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS = 7;
 }
 
 // Config setting value (union type)

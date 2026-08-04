@@ -619,12 +619,8 @@ pub(super) fn proto_options_to_hashmap(
 // Validation issue conversion
 // ---------------------------------------------------------------------------
 
-pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> ValidationIssue {
-    let severity = match issue.severity {
-        CoreValidationSeverity::Error => ValidationSeverity::Error as i32,
-        CoreValidationSeverity::Warning => ValidationSeverity::Warning as i32,
-    };
-    let code = match issue.code {
+pub(super) fn core_validation_code_to_proto(code: CoreValidationCode) -> i32 {
+    match code {
         CoreValidationCode::Unspecified => ValidationCode::Unspecified as i32,
         CoreValidationCode::MissingRequired => ValidationCode::MissingRequired as i32,
         CoreValidationCode::InvalidType => ValidationCode::InvalidType as i32,
@@ -632,12 +628,22 @@ pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> Vali
         CoreValidationCode::UnknownParameter => ValidationCode::UnknownParameter as i32,
         CoreValidationCode::DeprecatedParameter => ValidationCode::DeprecatedParameter as i32,
         CoreValidationCode::ConflictingParameters => ValidationCode::ConflictingParameters as i32,
+        CoreValidationCode::ConflictingWifParameters => {
+            ValidationCode::ConflictingWifParameters as i32
+        }
+    }
+}
+
+pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> ValidationIssue {
+    let severity = match issue.severity {
+        CoreValidationSeverity::Error => ValidationSeverity::Error as i32,
+        CoreValidationSeverity::Warning => ValidationSeverity::Warning as i32,
     };
     ValidationIssue {
         severity,
         parameter: issue.parameter,
         message: issue.message,
-        code,
+        code: core_validation_code_to_proto(issue.code),
     }
 }
 
@@ -668,6 +674,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     parameter: parameter.clone(),
                     value: value.clone(),
                     explanation: Some(explanation.clone()),
+                    code: None,
                 },
             )),
         },
@@ -690,6 +697,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     parameter: "private_key/private_key_file".to_string(),
                     value: "(both set)".to_string(),
                     explanation: Some(explanation.clone()),
+                    // Not produced by validate_settings (this is a separate, older
+                    // check in read_private_key), so no ValidationCode to report.
+                    code: None,
                 },
             )),
         },
@@ -723,12 +733,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     )),
                 }
             } else {
+                // Mirrors the MissingRequired handling above: a WIF-conflict
+                // issue must win over blind `.first()` selection, or
+                // `_is_wif_conflict` on the Python side silently misses it
+                // whenever validate_settings also pushes an unrelated
+                // Error-severity issue earlier in the same call.
+                let wif_issue = issues
+                    .iter()
+                    .find(|issue| issue.code == CoreValidationCode::ConflictingWifParameters);
+                let (chosen_param, chosen_code) = match wif_issue {
+                    Some(issue) => (issue.parameter.clone(), Some(issue.code)),
+                    None => (first_param, issues.first().map(|issue| issue.code)),
+                };
                 DriverError {
                     error_type: Some(driver_error::ErrorType::InvalidParameterValue(
                         InvalidParameterValue {
-                            parameter: first_param,
+                            parameter: chosen_param,
                             value: String::new(),
                             explanation: Some(summary),
+                            code: chosen_code.map(core_validation_code_to_proto),
                         },
                     )),
                 }
@@ -810,6 +833,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     parameter: format!("column: {column}"),
                     value: String::new(),
                     explanation: Some("Failed to parse column metadata".to_string()),
+                    code: None,
                 },
             )),
         },
@@ -1317,6 +1341,184 @@ mod tests {
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.message, "SQL compilation error: syntax error line 1");
+    }
+
+    fn validation_error(issues: Vec<CoreValidationIssue>) -> ApiError {
+        ApiError::Configuration {
+            location: loc(),
+            source: ConfigError::Validation {
+                issues,
+                location: loc(),
+            },
+        }
+    }
+
+    fn conflicting_parameters_issue(parameter: &str, message: &str) -> CoreValidationIssue {
+        CoreValidationIssue {
+            severity: CoreValidationSeverity::Error,
+            parameter: parameter.to_owned(),
+            message: message.to_owned(),
+            code: CoreValidationCode::ConflictingParameters,
+        }
+    }
+
+    fn conflicting_wif_parameters_issue(parameter: &str, message: &str) -> CoreValidationIssue {
+        CoreValidationIssue {
+            severity: CoreValidationSeverity::Error,
+            parameter: parameter.to_owned(),
+            message: message.to_owned(),
+            code: CoreValidationCode::ConflictingWifParameters,
+        }
+    }
+
+    #[test]
+    fn validation_error_carries_first_issue_validation_code_on_the_wire() {
+        // The WIF cross-param guards must surface their dedicated ValidationCode
+        // so wrappers can discriminate without substring-matching the message.
+        let err = validation_error(vec![conflicting_wif_parameters_issue(
+            "workload_identity_provider",
+            "workload_identity_provider was set but authenticator was not set to WORKLOAD_IDENTITY",
+        )]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "workload_identity_provider");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingWifParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_error_with_multiple_issues_prefers_wif_conflict_issue() {
+        // A WIF-conflict issue always wins the `parameter`/`code` slot over any
+        // other Error-severity issue in the same batch, regardless of position
+        // in `issues` — see `wif_conflict_wins_even_when_pushed_after_an_unrelated_issue`
+        // for the ordering-sensitive case this guards against.
+        let err = validation_error(vec![
+            conflicting_wif_parameters_issue(
+                "workload_identity_impersonation_path",
+                "unsupported for OIDC",
+            ),
+            CoreValidationIssue {
+                severity: CoreValidationSeverity::Error,
+                parameter: "token".to_owned(),
+                message: "Missing required parameter 'token'".to_owned(),
+                code: CoreValidationCode::InvalidValue,
+            },
+        ]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "workload_identity_impersonation_path");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingWifParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wif_conflict_wins_even_when_pushed_after_an_unrelated_issue() {
+        // Regression test: before the fix, `first_param`/`first_code` took
+        // `issues.first()` unconditionally, so a non-WIF issue pushed before
+        // the WIF-conflict issue would shadow it on the wire, silently
+        // defeating `_is_wif_conflict` on the Python side.
+        let err = validation_error(vec![
+            CoreValidationIssue {
+                severity: CoreValidationSeverity::Error,
+                parameter: "some_unrelated_param".to_owned(),
+                message: "unrelated invalid value".to_owned(),
+                code: CoreValidationCode::InvalidValue,
+            },
+            conflicting_wif_parameters_issue(
+                "workload_identity_provider",
+                "workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
+            ),
+        ]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "workload_identity_provider");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingWifParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_error_for_private_key_conflict_does_not_get_wif_code() {
+        // private_key + private_key_file is a ConflictingParameters issue that
+        // shares the abstract bucket with the WIF guards but must NOT be
+        // remapped to the WIF-specific code (no false positive).
+        let err = validation_error(vec![conflicting_parameters_issue(
+            "private_key",
+            "Both 'private_key' and 'private_key_file' are set. Please provide only one.",
+        )]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "private_key");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_error_missing_required_takes_priority_over_code_field() {
+        // Existing behavior: any MissingRequired issue routes to MissingParameter
+        // instead of InvalidParameterValue, regardless of ValidationCode on other
+        // issues. MissingParameter has no `code` field — nothing new to carry.
+        let err = validation_error(vec![
+            conflicting_parameters_issue("workload_identity_provider", "conflict"),
+            CoreValidationIssue {
+                severity: CoreValidationSeverity::Error,
+                parameter: "account".to_owned(),
+                message: "Missing required parameter 'account'".to_owned(),
+                code: CoreValidationCode::MissingRequired,
+            },
+        ]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::MissingParameter(inner)) => {
+                assert_eq!(inner.parameter, "account");
+            }
+            other => panic!("expected MissingParameter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn direct_invalid_parameter_value_error_has_no_validation_code() {
+        // ConfigError::InvalidParameterValue does not originate from
+        // validate_settings, so it carries no ValidationCode.
+        let err = ApiError::Configuration {
+            location: loc(),
+            source: ConfigError::InvalidParameterValue {
+                parameter: "authenticator".to_owned(),
+                value: "BAD".to_owned(),
+                explanation: "not supported".to_owned(),
+                location: loc(),
+            },
+        };
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.code, None);
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
     }
 
     #[test]

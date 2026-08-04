@@ -425,4 +425,5 @@ def pytest_runtest_setup(item):
 
 
 from tests.helpers.fixtures import core_proxy as core_proxy  # noqa: E402
+from tests.helpers.fixtures import mock_async_db_api as mock_async_db_api  # noqa: E402
 from tests.helpers.fixtures import mock_db_api as mock_db_api  # noqa: E402
