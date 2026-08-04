@@ -699,11 +699,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "Descriptor swap: Data-at-execution para
 TEST_CASE_METHOD(StmtDefaultDSNFixture,
                  "Descriptor swap: Bind param via SQLSetDescField on explicit APD (no SQLBindParameter)",
                  "[odbc-api][descriptor][swap]") {
-  // The active APD reads manually-set descriptor fields (step 2b), but this
-  // flow also requires describing the parameter on the IPD via SQLSetDescField
-  // (SQL_DESC_LENGTH), which the new driver does not yet support. Reference-
-  // validated here; unskip when IPD SQLSetDescField gains type/length support.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // The active APD reads manually-set descriptor fields (step 2b).  The IPD
+  // is described via SQLSetDescField (SQL_DESC_LENGTH / SQL_DESC_CONCISE_TYPE /
+  // SQL_DESC_PARAMETER_TYPE), which is now supported.
 
   SQLHDESC explicit_apd = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_apd);
