@@ -1,0 +1,1204 @@
+header:
+  format: winodbc
+  started: null
+  driver_manager_version: null
+  source_file: ''
+roots:
+- handle_type: env
+  address: '0x00000256690777B0'
+  logical_name: env0
+  alloc:
+    seq: 0
+    call:
+      function: SQLAllocHandle
+      return_code: SQL_SUCCESS
+      handle_type: env
+      parent_handle: null
+      child_handle: env0
+    entry_line: 2
+    exit_line: 5
+  free:
+    seq: 119
+    call:
+      function: SQLFreeHandle
+      return_code: SQL_SUCCESS
+      handle_type: env
+      handle: env0
+    entry_line: 1470
+    exit_line: 1473
+  operations:
+  - seq: 1
+    call:
+      function: SQLGetEnvAttr
+      return_code: SQL_SUCCESS
+      handle: env0
+      attribute: SQL_ATTR_CONNECTION_POOLING
+    entry_line: 8
+    exit_line: 15
+  children: []
+- handle_type: env
+  address: '0x0000025669077270'
+  logical_name: env1
+  alloc:
+    seq: 2
+    call:
+      function: SQLAllocHandle
+      return_code: SQL_SUCCESS
+      handle_type: env
+      parent_handle: null
+      child_handle: env1
+    entry_line: 22
+    exit_line: 25
+  free:
+    seq: 120
+    call:
+      function: SQLFreeHandle
+      return_code: SQL_SUCCESS
+      handle_type: env
+      handle: env1
+    entry_line: 1476
+    exit_line: 1479
+  operations:
+  - seq: 3
+    call:
+      function: SQLSetEnvAttr
+      return_code: SQL_SUCCESS
+      handle: env1
+      attribute: SQL_ATTR_CONNECTION_POOLING
+      value: 0
+      str_len: -6
+    entry_line: 28
+    exit_line: 34
+  children:
+  - handle_type: dbc
+    address: '0x0000025670DA70D0'
+    logical_name: dbc0
+    alloc:
+      seq: 4
+      call:
+        function: SQLAllocHandle
+        return_code: SQL_SUCCESS
+        handle_type: dbc
+        parent_handle: env1
+        child_handle: dbc0
+      entry_line: 40
+      exit_line: 44
+    free:
+      seq: 118
+      call:
+        function: SQLFreeHandle
+        return_code: SQL_SUCCESS
+        handle_type: dbc
+        handle: dbc0
+      entry_line: 1464
+      exit_line: 1467
+    operations:
+    - seq: 5
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_ODBC_VER
+        info_type_value: 10
+        info_value: 03.80.0000
+        info_value_numeric: null
+      entry_line: 48
+      exit_line: 55
+    - seq: 6
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_LOGIN_TIMEOUT
+        value: 15
+        str_len: -6
+      entry_line: 62
+      exit_line: 68
+    - seq: 7
+      call:
+        function: SQLDriverConnect
+        return_code: SQL_SUCCESS
+        handle: dbc0
+      entry_line: 74
+      exit_line: 84
+    - seq: 8
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DRIVER_NAME
+        info_type_value: 6
+        info_value: Snowflake
+        info_value_numeric: null
+      entry_line: 94
+      exit_line: 101
+    - seq: 9
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DRIVER_ODBC_VER
+        info_type_value: 77
+        info_value: '03.80'
+        info_value_numeric: null
+      entry_line: 108
+      exit_line: 115
+    - seq: 10
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_POS_OPERATIONS
+        info_type_value: 79
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 122
+      exit_line: 129
+    - seq: 11
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_STATIC_SENSITIVITY
+        info_type_value: 83
+        info_value: null
+        info_value_numeric: 3
+      entry_line: 136
+      exit_line: 143
+    - seq: 12
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_LOCK_TYPES
+        info_type_value: 78
+        info_value: null
+        info_value_numeric: 2
+      entry_line: 150
+      exit_line: 157
+    - seq: 13
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_GETDATA_EXTENSIONS
+        info_type_value: 81
+        info_value: null
+        info_value_numeric: 11
+      entry_line: 164
+      exit_line: 171
+    - seq: 14
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_TXN_ISOLATION_OPTION
+        info_type_value: 72
+        info_value: null
+        info_value_numeric: 2
+      entry_line: 178
+      exit_line: 185
+    - seq: 15
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_BOOKMARK_PERSISTENCE
+        info_type_value: 82
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 192
+      exit_line: 199
+    - seq: 16
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_SCROLL_OPTIONS
+        info_type_value: 44
+        info_value: null
+        info_value_numeric: 1
+      entry_line: 206
+      exit_line: 213
+    - seq: 17
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_SCROLL_CONCURRENCY
+        info_type_value: 43
+        info_value: null
+        info_value_numeric: 1
+      entry_line: 220
+      exit_line: 227
+    - seq: 18
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DYNAMIC_CURSOR_ATTRIBUTES1
+        info_type_value: 144
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 234
+      exit_line: 241
+    - seq: 19
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_KEYSET_CURSOR_ATTRIBUTES1
+        info_type_value: 150
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 248
+      exit_line: 255
+    - seq: 20
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_STATIC_CURSOR_ATTRIBUTES1
+        info_type_value: 167
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 262
+      exit_line: 269
+    - seq: 21
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1
+        info_type_value: 146
+        info_value: null
+        info_value_numeric: 1
+      entry_line: 276
+      exit_line: 283
+    - seq: 22
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_KEYSET_CURSOR_ATTRIBUTES2
+        info_type_value: 151
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 290
+      exit_line: 297
+    - seq: 23
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_STATIC_CURSOR_ATTRIBUTES2
+        info_type_value: 168
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 304
+      exit_line: 311
+    - seq: 24
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_NEED_LONG_DATA_LEN
+        info_type_value: 111
+        info_value: N
+        info_value_numeric: null
+      entry_line: 318
+      exit_line: 325
+    - seq: 25
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DATABASE_NAME
+        info_type_value: 16
+        info_value: null
+        info_value_numeric: null
+      entry_line: 332
+      exit_line: 339
+    - seq: 26
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_CURSOR_COMMIT_BEHAVIOR
+        info_type_value: 23
+        info_value: null
+        info_value_numeric: 1
+      entry_line: 346
+      exit_line: 353
+    - seq: 27
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_CURSOR_ROLLBACK_BEHAVIOR
+        info_type_value: 24
+        info_value: null
+        info_value_numeric: 1
+      entry_line: 360
+      exit_line: 367
+    - seq: 28
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_TXN_CAPABLE
+        info_type_value: 46
+        info_value: null
+        info_value_numeric: 3
+      entry_line: 374
+      exit_line: 381
+    - seq: 29
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_MAX_ROWS
+        value: 0
+        str_len: -6
+      entry_line: 388
+      exit_line: 394
+    - seq: 30
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_QUERY_TIMEOUT
+        value: 0
+        str_len: -6
+      entry_line: 400
+      exit_line: 406
+    - seq: 31
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DBMS_NAME
+        info_type_value: 17
+        info_value: Snowflake
+        info_value_numeric: null
+      entry_line: 412
+      exit_line: 419
+    - seq: 32
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DRIVER_NAME
+        info_type_value: 6
+        info_value: Snowflake
+        info_value_numeric: null
+      entry_line: 426
+      exit_line: 433
+    - seq: 33
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DRIVER_NAME
+        info_type_value: 6
+        info_value: Snowflake
+        info_value_numeric: null
+      entry_line: 440
+      exit_line: 447
+    - seq: 34
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DRIVER_NAME
+        info_type_value: 6
+        info_value: Snowflake
+        info_value_numeric: null
+      entry_line: 454
+      exit_line: 461
+    - seq: 35
+      call:
+        function: SQLGetFunctions
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        function_id: 999
+      entry_line: 468
+      exit_line: 473
+    - seq: 36
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_ACTIVE_STATEMENTS
+        info_type_value: 1
+        info_value: null
+        info_value_numeric: 0
+      entry_line: 478
+      exit_line: 485
+    - seq: 37
+      call:
+        function: SQLGetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_CURRENT_CATALOG
+      entry_line: 492
+      exit_line: 499
+    - seq: 38
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_DEFAULT_TXN_ISOLATION
+        info_type_value: 26
+        info_value: null
+        info_value_numeric: 2
+      entry_line: 506
+      exit_line: 513
+    - seq: 39
+      call:
+        function: SQLGetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_TXN_ISOLATION
+      entry_line: 520
+      exit_line: 527
+    - seq: 40
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_TXN_ISOLATION
+        value: 2
+        str_len: -6
+      entry_line: 534
+      exit_line: 540
+    - seq: 41
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_AUTOCOMMIT
+        value: 0
+        str_len: -6
+      entry_line: 546
+      exit_line: 552
+    - seq: 76
+      call:
+        function: SQLTransact
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        completion_type: 0
+        completion_type_name: SQL_COMMIT
+      entry_line: 936
+      exit_line: 941
+    - seq: 77
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_AUTOCOMMIT
+        value: 1
+        str_len: -6
+      entry_line: 946
+      exit_line: 952
+    - seq: 78
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_CURSOR_COMMIT_BEHAVIOR
+        info_type_value: 23
+        info_value: null
+        info_value_numeric: 1
+      entry_line: 958
+      exit_line: 965
+    - seq: 80
+      call:
+        function: SQLGetInfo
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        info_type: SQL_MULT_RESULT_SETS
+        info_type_value: 36
+        info_value: N
+        info_value_numeric: null
+      entry_line: 980
+      exit_line: 987
+    - seq: 83
+      call:
+        function: SQLGetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_TXN_ISOLATION
+      entry_line: 1022
+      exit_line: 1029
+    - seq: 117
+      call:
+        function: SQLDisconnect
+        return_code: SQL_SUCCESS
+        handle: dbc0
+      entry_line: 1458
+      exit_line: 1461
+    children:
+    - handle_type: stmt
+      address: '0x0000025670E12100'
+      logical_name: stmt0
+      alloc:
+        seq: 42
+        call:
+          function: SQLAllocHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          parent_handle: dbc0
+          child_handle: stmt3
+        entry_line: 558
+        exit_line: 562
+      free: null
+      operations:
+      - seq: 43
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAM_BIND_TYPE
+          value: 10
+          str_len: 0
+        entry_line: 566
+        exit_line: 572
+      - seq: 44
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAM_BIND_TYPE
+          value: 0
+          str_len: 0
+        entry_line: 578
+        exit_line: 584
+      - seq: 45
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAM_BIND_OFFSET_PTR
+          value: 1041371156640
+          str_len: 0
+        entry_line: 590
+        exit_line: 596
+      - seq: 46
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAM_BIND_OFFSET_PTR
+          value: 0
+          str_len: 0
+        entry_line: 602
+        exit_line: 608
+      - seq: 47
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_IMP_PARAM_DESC
+        entry_line: 614
+        exit_line: 621
+      - seq: 48
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_APP_PARAM_DESC
+        entry_line: 628
+        exit_line: 635
+      - seq: 53
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_QUERY_TIMEOUT
+          value: 30
+          str_len: -6
+        entry_line: 698
+        exit_line: 704
+      - seq: 54
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAMSET_SIZE
+          value: 1
+          str_len: 0
+        entry_line: 710
+        exit_line: 715
+      - seq: 55
+        call:
+          function: SQLExecDirect
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          sql: |-
+            INSERT INTO ODBCSCRATCHTESTDB.SCRATCHTESTS.SCRATCHINSERT (LABEL, NUMVAL)
+            VALUES ('ado-6 marker', 42);
+          sql_truncated: false
+        entry_line: 720
+        exit_line: 725
+      - seq: 56
+        call:
+          function: SQLGetDiagField
+          return_code: SQL_SUCCESS
+          handle: stmt3
+        entry_line: 730
+        exit_line: 739
+      - seq: 57
+        call:
+          function: SQLRowCount
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          count: 1
+        entry_line: 748
+        exit_line: 752
+      - seq: 58
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 0
+          option_name: SQL_CLOSE
+        entry_line: 756
+        exit_line: 760
+      - seq: 59
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 1
+          option_name: SQL_DROP
+        entry_line: 764
+        exit_line: 768
+      children: []
+    - handle_type: stmt
+      address: '0x0000025670E12100'
+      logical_name: stmt1
+      alloc:
+        seq: 60
+        call:
+          function: SQLAllocHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          parent_handle: dbc0
+          child_handle: stmt3
+        entry_line: 772
+        exit_line: 776
+      free: null
+      operations:
+      - seq: 61
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_QUERY_TIMEOUT
+          value: 30
+          str_len: -6
+        entry_line: 780
+        exit_line: 786
+      - seq: 62
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAMSET_SIZE
+          value: 1
+          str_len: 0
+        entry_line: 792
+        exit_line: 797
+      - seq: 63
+        call:
+          function: SQLExecDirect
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          sql: CREATE TABLE ODBCSCRATCHTESTDB.SCRATCHTESTS.ADO6_TMP (ID INTEGER, NAME VARCHAR(64))
+          sql_truncated: false
+        entry_line: 802
+        exit_line: 807
+      - seq: 64
+        call:
+          function: SQLGetDiagField
+          return_code: SQL_SUCCESS
+          handle: stmt3
+        entry_line: 812
+        exit_line: 821
+      - seq: 65
+        call:
+          function: SQLRowCount
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          count: -1
+        entry_line: 830
+        exit_line: 834
+      - seq: 66
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 0
+          option_name: SQL_CLOSE
+        entry_line: 838
+        exit_line: 842
+      - seq: 67
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 1
+          option_name: SQL_DROP
+        entry_line: 846
+        exit_line: 850
+      children: []
+    - handle_type: stmt
+      address: '0x0000025670E12100'
+      logical_name: stmt2
+      alloc:
+        seq: 68
+        call:
+          function: SQLAllocHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          parent_handle: dbc0
+          child_handle: stmt3
+        entry_line: 854
+        exit_line: 858
+      free: null
+      operations:
+      - seq: 69
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_QUERY_TIMEOUT
+          value: 30
+          str_len: -6
+        entry_line: 862
+        exit_line: 868
+      - seq: 70
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAMSET_SIZE
+          value: 1
+          str_len: 0
+        entry_line: 874
+        exit_line: 879
+      - seq: 71
+        call:
+          function: SQLExecDirect
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          sql: DROP TABLE ODBCSCRATCHTESTDB.SCRATCHTESTS.ADO6_TMP
+          sql_truncated: false
+        entry_line: 884
+        exit_line: 889
+      - seq: 72
+        call:
+          function: SQLGetDiagField
+          return_code: SQL_SUCCESS
+          handle: stmt3
+        entry_line: 894
+        exit_line: 903
+      - seq: 73
+        call:
+          function: SQLRowCount
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          count: -1
+        entry_line: 912
+        exit_line: 916
+      - seq: 74
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 0
+          option_name: SQL_CLOSE
+        entry_line: 920
+        exit_line: 924
+      - seq: 75
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 1
+          option_name: SQL_DROP
+        entry_line: 928
+        exit_line: 932
+      children: []
+    - handle_type: stmt
+      address: '0x0000025670E12100'
+      logical_name: stmt3
+      alloc:
+        seq: 79
+        call:
+          function: SQLAllocHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          parent_handle: dbc0
+          child_handle: stmt3
+        entry_line: 972
+        exit_line: 976
+      free: null
+      operations:
+      - seq: 81
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_CURSOR_TYPE
+        entry_line: 994
+        exit_line: 1001
+      - seq: 82
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_CONCURRENCY
+        entry_line: 1008
+        exit_line: 1015
+      - seq: 84
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_QUERY_TIMEOUT
+          value: 30
+          str_len: -6
+        entry_line: 1036
+        exit_line: 1042
+      - seq: 85
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_PARAMSET_SIZE
+          value: 1
+          str_len: 0
+        entry_line: 1048
+        exit_line: 1053
+      - seq: 86
+        call:
+          function: SQLExecDirect
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          sql: SELECT COUNT(*) FROM ODBCSCRATCHTESTDB.SCRATCHTESTS.SCRATCHINSERT
+          sql_truncated: false
+        entry_line: 1058
+        exit_line: 1063
+      - seq: 87
+        call:
+          function: SQLGetDiagField
+          return_code: SQL_SUCCESS
+          handle: stmt3
+        entry_line: 1068
+        exit_line: 1077
+      - seq: 88
+        call:
+          function: SQLRowCount
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          count: 1
+        entry_line: 1086
+        exit_line: 1090
+      - seq: 89
+        call:
+          function: SQLNumResultCols
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          count: 1
+        entry_line: 1094
+        exit_line: 1098
+      - seq: 90
+        call:
+          function: SQLNumResultCols
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          count: 1
+        entry_line: 1102
+        exit_line: 1106
+      - seq: 91
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          column_number: 1
+          column_name: null
+          buffer_length: 0
+          data_type: '3'
+          column_size: 18
+          decimal_digits: 0
+          nullable: '0'
+        entry_line: 1110
+        exit_line: 1121
+      - seq: 92
+        call:
+          function: SQLColAttribute
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          column_number: 1
+          field_identifier: SQL_DESC_LABEL
+          field_identifier_value: 18
+          buffer_length: 1024
+          string_length: 16
+          numeric_attribute: null
+          numeric_attribute_name: null
+          character_value: null
+        entry_line: 1132
+        exit_line: 1141
+      - seq: 93
+        call:
+          function: SQLColAttribute
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          column_number: 1
+          field_identifier: SQL_DESC_UPDATABLE
+          field_identifier_value: 10
+          buffer_length: 0
+          string_length: 8
+          numeric_attribute: 2
+          numeric_attribute_name: null
+          character_value: null
+        entry_line: 1150
+        exit_line: 1159
+      - seq: 94
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_CURSOR_TYPE
+        entry_line: 1168
+        exit_line: 1175
+      - seq: 95
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_CURSOR_TYPE
+        entry_line: 1182
+        exit_line: 1189
+      - seq: 96
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ROWSET_SIZE
+          value: 2
+          str_len: -6
+        entry_line: 1196
+        exit_line: 1202
+      - seq: 97
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ROWSET_SIZE
+        entry_line: 1208
+        exit_line: 1215
+      - seq: 98
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_ROW_BIND_TYPE
+          value: 176
+          str_len: -6
+        entry_line: 1222
+        exit_line: 1228
+      - seq: 99
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_ROW_BIND_OFFSET_PTR
+          value: 1041371157064
+          str_len: -4
+        entry_line: 1234
+        exit_line: 1240
+      - seq: 100
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_ROW_BIND_OFFSET_PTR
+          value: 0
+          str_len: -6
+        entry_line: 1246
+        exit_line: 1252
+      - seq: 101
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_RETRIEVE_DATA
+          value: 0
+          str_len: -6
+        entry_line: 1258
+        exit_line: 1264
+      - seq: 102
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_RETRIEVE_DATA
+          value: 1
+          str_len: -6
+        entry_line: 1270
+        exit_line: 1276
+      - seq: 103
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_ROW_BIND_OFFSET_PTR
+          value: 2570298838944
+          str_len: -4
+        entry_line: 1282
+        exit_line: 1288
+      - seq: 104
+        call:
+          function: SQLBindCol
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          column_number: 1
+          target_type: 2
+          target_type_name: SQL_C_NUMERIC
+          buffer_length: 19
+          target_value_ptr: '0x0000000000000098'
+          indicator_ptr: 0x0000000000000090 (BADMEM)
+        entry_line: 1294
+        exit_line: 1302
+      - seq: 105
+        call:
+          function: SQLGetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ATTR_APP_ROW_DESC
+        entry_line: 1310
+        exit_line: 1317
+      - seq: 112
+        call:
+          function: SQLSetStmtAttr
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          attribute: SQL_ROWSET_SIZE
+          value: 1
+          str_len: -6
+        entry_line: 1408
+        exit_line: 1414
+      - seq: 113
+        call:
+          function: SQLExtendedFetch
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          orientation: 1
+          orientation_name: SQL_FETCH_NEXT
+          offset: 0
+          row_count: 1
+        entry_line: 1420
+        exit_line: 1427
+      - seq: 114
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 2
+          option_name: SQL_UNBIND
+        entry_line: 1434
+        exit_line: 1438
+      - seq: 115
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 0
+          option_name: SQL_CLOSE
+        entry_line: 1442
+        exit_line: 1446
+      - seq: 116
+        call:
+          function: SQLFreeStmt
+          return_code: SQL_SUCCESS
+          handle: stmt3
+          option: 1
+          option_name: SQL_DROP
+        entry_line: 1450
+        exit_line: 1454
+      children: []
+unscoped_operations:
+- seq: 49
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12430'
+  entry_line: 649
+  exit_line: 656
+- seq: 50
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12430'
+  entry_line: 642
+  exit_line: 663
+- seq: 51
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12430'
+  entry_line: 677
+  exit_line: 684
+- seq: 52
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12430'
+  entry_line: 670
+  exit_line: 691
+- seq: 106
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12328'
+  entry_line: 1331
+  exit_line: 1338
+- seq: 107
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12328'
+  entry_line: 1324
+  exit_line: 1345
+- seq: 108
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12328'
+  entry_line: 1359
+  exit_line: 1366
+- seq: 109
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12328'
+  entry_line: 1352
+  exit_line: 1373
+- seq: 110
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12328'
+  entry_line: 1387
+  exit_line: 1394
+- seq: 111
+  call:
+    function: SQLSetDescField
+    return_code: SQL_SUCCESS
+    handle: '0x0000025670E12328'
+  entry_line: 1380
+  exit_line: 1401
+total_operations: 121
