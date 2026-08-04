@@ -68,8 +68,8 @@ class TestSfCoreCallbackPropagation:
     def test_ffi_callback_record_captured_by_caplog(self, caplog):
         """Simulate the FFI callback path and verify caplog receives the record.
 
-        This exercises the same code path as ``logger_callback`` in
-        ``c_api.py``: ``makeRecord`` + ``handle`` on the sf_core logger.
+        This exercises the same code path as ``_logger_callback`` in
+        ``api_client``: ``makeRecord`` + ``handle`` on the sf_core logger.
         """
         sf_core_logger = logging.getLogger("snowflake.connector._core")
 

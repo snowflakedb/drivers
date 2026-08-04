@@ -36,8 +36,8 @@ The core does not write logs to stdout/stderr.
 Instead, an "app sink" layer hands each record to the wrapper's own logging system,
 so core and wrapper logs share one pipeline that the host application controls.
 
-- **Python** - at init (`sf_core_init`), the wrapper registers a C callback (`CLogCallback`.
-  Each event crosses FFI with its level, message, file, line, and function, and the Python side rebuilds a native
+- **Python** - at init (`sf_core_python.init`), the wrapper registers a log callback.
+  Each event crosses the PyO3 boundary with its level, message, file, line, and function, and the Python side rebuilds a native
   `logging` record on the `snowflake.connector._core` logger.
   *This is the reference pattern for wrapper integration.*
 - **JDBC** - a JNI `SFLoggerLayer` forwards events to SLF4J. Core-originated events land on
@@ -69,7 +69,7 @@ The flow for one wrapper log call:
 
 1. `CoreLogger` gates on the stdlib logger's level (`isEnabledFor`) - a filtered
    message never crosses FFI.
-2. It sends the record to core via the `sf_core_log_event` FFI call, carrying
+2. It sends the record to core via `sf_core_python.log_event`, carrying
    `level`, `message`, `file`, `line`, `function`, and `logger_name` (the
    originating module logger name, e.g. `snowflake.connector.cursor._base`).
 3. Core re-emits it as a `tracing` event on the `sf_wrapper` target. With
@@ -77,14 +77,14 @@ The flow for one wrapper log call:
    unset) and the **OTLP layer is disabled** (`open_telemetry: false`), so the
    only layer that handles the event is the `CallbackLayer`. Wrapper log events
    are not sent to in-band telemetry (see below).
-4. The `CallbackLayer` hands it back across FFI. For wrapper round-trip events
+4. The `CallbackLayer` hands it back to Python. For wrapper round-trip events
    `logger_name` is set, so the Python callback rebuilds the record on that
    module logger; core-originated events leave `logger_name` empty and land on
    `snowflake.connector._core`.
 
-**Initialization / fallback.** `sf_core_log_event` returns `0` when the event
+**Initialization / fallback.** `sf_core_python.log_event` returns `0` when the event
 was accepted and non-zero when the pipeline is not live yet (before
-`sf_core_init`) or unusable (interpreter shutdown). The FFI return code - not a
+`sf_core_python.init`) or unusable (interpreter shutdown). The return code - not a
 Python-side flag - is the single source of truth: on any non-zero result
 `CoreLogger` emits the record straight onto the stdlib logger, so early-import
 records are never lost.
@@ -159,7 +159,7 @@ Snowflake's `/telemetry/send` endpoint over the authenticated session - not
 driver debug/info log text.
 
 The `LogManager` installs an OpenTelemetry span exporter when a session registry
-is present (always for Python, created at `sf_core_init`). That layer:
+is present (always for Python, created at `sf_core_python.init`). That layer:
 
 - exports **completed spans** tagged with `snowflake.session.id`, not `tracing`
   log events;

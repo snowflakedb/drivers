@@ -403,6 +403,7 @@ python:
 
   # Python fallback: changes here run ALL Python tests (but not other wrappers)
   fallback_paths:
+    - "python_bridge/**"
     - "python/src/snowflake/connector/__init__.py"
     - "python/src/snowflake/connector/_core/**"
     - "python/src/snowflake/connector/_internal/__init__.py"

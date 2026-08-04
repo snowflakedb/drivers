@@ -5,7 +5,7 @@ set -x
 # Build and run ODBC tests using CMake
 # Requires odbc_config to be available in PATH
 
-cargo build
+cargo build --package odbc
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     DYLIB_EXT="dylib"

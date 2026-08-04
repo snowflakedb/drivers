@@ -238,7 +238,7 @@ steps:
               export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
               echo "--- :hammer: Building ODBC Driver"
-              cargo build
+              cargo build --package odbc
 
               echo "--- :hammer: Building C++ Test Suite"
               source /opt/rh/gcc-toolset-11/enable

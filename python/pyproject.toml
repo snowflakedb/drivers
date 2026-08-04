@@ -83,6 +83,7 @@ include = [
     "README.md",
     # Rust sources (directory symlinks dereferenced during sdist build)
     "sf_core/",
+    "python_bridge/",
     "proto_utils/",
     "proto_generator/",
     "protobuf/",
@@ -94,6 +95,7 @@ exclude = [
     "src/snowflake/connector/_internal/nanoarrow_cpp/scripts",
     # Exclude Rust build artifacts
     "sf_core/target/",
+    "python_bridge/target/",
     "proto_utils/target/",
     # Exclude sf_core tests (except arrow_deserialize_macro which is a dev-dependency)
     "sf_core/tests/e2e/",
@@ -110,9 +112,7 @@ exclude = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
 artifacts = [
-    "src/snowflake/connector/_core/*.so",
-    "src/snowflake/connector/_core/*.dylib",
-    "src/snowflake/connector/_core/*.dll",
+    "src/snowflake/connector/_core/sf_core_python.*",
     "src/snowflake/connector/_internal/*.so",
     "src/snowflake/connector/_internal/*.pyd",
 ]

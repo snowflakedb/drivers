@@ -8,13 +8,11 @@ from resource_monitor import ResourceMonitor
 _FETCH_BATCH_SIZE = 1024
 
 try:
-    from snowflake.connector._internal.api_client.c_api import (
-        sf_core_perf_enabled,
-        sf_core_get_perf_data,
-        sf_core_reset_perf_metrics,
-    )
-    _PERF_ENABLED = sf_core_perf_enabled()
+    from snowflake.connector._core import sf_core_python
+
+    _PERF_ENABLED = sf_core_python.perf_enabled()
 except (ImportError, AttributeError):
+    sf_core_python = None  # type: ignore[assignment]
     _PERF_ENABLED = False
 
 
@@ -167,7 +165,7 @@ def _execute_query(cursor, sql, fetch_fn):
     query_time = time.time() - query_start
 
     if _PERF_ENABLED:
-        sf_core_reset_perf_metrics()
+        sf_core_python.reset_perf_metrics()
 
     cpu_start = time.process_time()
     fetch_start = time.time()
@@ -189,10 +187,10 @@ def _execute_query(cursor, sql, fetch_fn):
     }
 
     if _PERF_ENABLED:
-        core_metrics = sf_core_get_perf_data()
-        result["core_batch_wait_s"] = core_metrics.get("core_batch_wait_s", 0.0)
-        result["core_chunk_download_s"] = core_metrics.get("core_chunk_download_s", 0.0)
-        result["core_arrow_decode_s"] = core_metrics.get("core_arrow_decode_s", 0.0)
+        batch_ns, chunk_ns, arrow_ns = sf_core_python.get_perf_data()
+        result["core_batch_wait_s"] = batch_ns / 1e9
+        result["core_chunk_download_s"] = chunk_ns / 1e9
+        result["core_arrow_decode_s"] = arrow_ns / 1e9
         result["wrapper_time_s"] = max(0.0, fetch_time - result["core_batch_wait_s"])
 
     return result

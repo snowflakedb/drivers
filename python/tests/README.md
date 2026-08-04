@@ -159,7 +159,7 @@ def test_custom_db(connection_factory):
 ## Environment Variables
 
 ### Auto-detected (Local Development)
-- `CORE_PATH`: Auto-detects `../target/debug/libsf_core.{so,dylib}` based on platform
+- `CORE_PATH`: Auto-detects the built `sf_core_python` extension under `_core/` based on platform
 - `PARAMETER_PATH`: Auto-detects `../parameters.json`
 
 ### Configurable

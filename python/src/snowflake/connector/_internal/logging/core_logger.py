@@ -1,16 +1,17 @@
 """Round-trip logging: Python -> core -> Python.
 
 :class:`CoreLogger` is a drop-in replacement for a module ``logging.Logger``.
-Wrapper logs are sent to sf_core over a direct FFI call so every tracing layer
+Wrapper logs are sent to sf_core over a direct PyO3 call so every tracing layer
 (file, OTLP, Snowflake in-band telemetry) sees them, then come back through the
-FFI callback onto the originating module logger. See
+log callback onto the originating module logger. See
 ``docs/logging/logging-architecture.md``.
 
-This lives in its own module (rather than in :mod:`config`) so the FFI binding
-``sf_core_log_event`` can be imported at module top level. ``logging.config`` is
-imported at package load, before the c_api layer — which itself imports
-``logging`` — is ready; keeping ``CoreLogger`` here avoids that import cycle.
-:func:`logging.get_logger` imports this module lazily, once the package is up.
+This lives in its own module (rather than in :mod:`config`) so the extension
+binding ``sf_core_python.log_event`` can be imported at module top level.
+``logging.config`` is imported at package load, before ``api_client`` — which
+itself imports ``logging`` — is ready; keeping ``CoreLogger`` here avoids that
+import cycle. :func:`logging.get_logger` imports this module lazily, once the
+package is up.
 """
 
 from __future__ import annotations
@@ -21,19 +22,21 @@ import traceback
 
 from typing import TYPE_CHECKING
 
-from ..api_client.c_api._init import sf_core_log_event
+# PyO3 extension; typed stubs (sf_core_python.pyi) will land with stub_gen later.
+from snowflake.connector._core import sf_core_python  # type: ignore[attr-defined]
+
 from .config import LoggingConfiguration
 
 
 if TYPE_CHECKING:
     from typing import Any
 
-# sf_core_log_event return codes (see ``sf_core::logging::c_api``).
+# sf_core_python.log_event return codes (see python_bridge ``log_event``).
 _CORE_DELIVERED = 0  # event accepted by the tracing pipeline
 
 
 def _py_level_to_callback(level: int) -> int:
-    """Map a stdlib logging level to the sf_core FFI callback level encoding."""
+    """Map a stdlib logging level to the sf_core callback level encoding."""
     if level >= logging.ERROR:
         return 0
     if level >= logging.WARNING:
@@ -48,7 +51,7 @@ class CoreLogger:
     through sf_core.
 
     The wrapped stdlib logger remains the single source of truth for levels:
-    :meth:`is_enabled_for` gates every FFI call, so a filtered message costs
+    :meth:`is_enabled_for` gates every core call, so a filtered message costs
     nothing.  When troubleshooting mode is active the pre-filter is bypassed
     and all events reach the core pipeline regardless of the stdlib level.
     """
@@ -145,7 +148,7 @@ class CoreLogger:
         logger when the pipeline is not live.
         """
         try:
-            status = sf_core_log_event(
+            status = sf_core_python.log_event(
                 level=_py_level_to_callback(py_level),
                 message=message,
                 file=source_file,
@@ -154,7 +157,7 @@ class CoreLogger:
                 logger_name=self._name,
             )
         except Exception:
-            # FFI unusable (e.g. torn down during interpreter shutdown). Logging
+            # Extension unusable (e.g. torn down during interpreter shutdown). Logging
             # must never raise into user code (same contract as
             # ``logging.Handler.handle`` and :func:`logging.safe_log`); treat as
             # not delivered and fall back below.
@@ -163,10 +166,11 @@ class CoreLogger:
         if status == _CORE_DELIVERED:
             return
 
-        # sf_core is not up yet (early-import events, before ``sf_core_init``
-        # marks the pipeline live) or the FFI is gone: emit straight onto the
-        # stdlib logger so the record is not lost. The FFI return code — not a
-        # Python-side flag — is the source of truth for whether it is live.
+        # sf_core is not up yet (early-import events, before ``sf_core_python.init``
+        # marks the pipeline live) or the extension is gone: emit straight onto
+        # the stdlib logger so the record is not lost. The extension return
+        # code — not a Python-side flag — is the source of truth for whether
+        # it is live.
         record = self._py_logger.makeRecord(
             self._name,
             py_level,
@@ -202,7 +206,7 @@ class CoreLogger:
 
         Use on cleanup paths that run during interpreter shutdown (``atexit``,
         ``__del__``) where the ``logging`` module itself may be partially torn
-        down and the sf_core FFI may already be gone. Bypasses the round-trip
+        down and the sf_core extension may already be gone. Bypasses the round-trip
         and logs straight onto the stdlib logger. ``stacklevel=2`` points the
         record at the caller, not at this method.
 

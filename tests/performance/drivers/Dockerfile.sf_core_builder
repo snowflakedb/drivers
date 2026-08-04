@@ -53,6 +53,7 @@ COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY proto_generator/ ./proto_generator/
 COPY odbc_trace_tool/ ./odbc_trace_tool/
+COPY python_bridge/ ./python_bridge/
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Build sf_core and ODBC
@@ -70,7 +71,7 @@ COPY odbc_trace_tool/ ./odbc_trace_tool/
 
 # Build dependencies - this is the caching layer
 # Compiles ALL external crates (AWS SDK, tokio, etc.)
-RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc --package jdbc_bridge
+RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc --package jdbc_bridge --package python_bridge
 
 # Re-copy Cargo.toml files that cargo-chef may have overwritten from the recipe,
 # which can strip the [lib] section (e.g. proc-macro = true).
@@ -93,10 +94,15 @@ COPY jdbc_bridge/src/ ./jdbc_bridge/src/
 COPY error_trace/src/ ./error_trace/src/
 COPY error_trace_derive/src/ ./error_trace_derive/src/
 COPY odbc_trace_tool/src/ ./odbc_trace_tool/src/
+COPY python_bridge/src/ ./python_bridge/src/
+COPY python_bridge/build.rs ./python_bridge/build.rs
 
-# Build sf_core (with perf_timing instrumentation for performance tests)
+# Build sf_core + python_bridge (with perf_timing instrumentation for performance tests).
+# python_bridge uses abi3, so the resulting .so works with any Python >= 3.11.
 RUN cargo build --release --package sf_core --features perf_timing && \
-    cp target/release/libsf_core.so /workdir/libsf_core.so
+    cp target/release/libsf_core.so /workdir/libsf_core.so && \
+    PYO3_BUILD_EXTENSION_MODULE=1 cargo build --release --package python_bridge --features sf_core/perf_timing && \
+    cp target/release/libsf_core_python.so /workdir/sf_core_python.abi3.so
 
 # Build ODBC wrapper (with perf_timing instrumentation for performance tests)
 RUN cargo build --release --package odbc --features perf_timing && \

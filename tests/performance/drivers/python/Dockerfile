@@ -55,26 +55,28 @@ COPY error_trace_derive/ ./error_trace_derive/
 COPY jdbc_bridge/ ./jdbc_bridge/
 COPY nodejs_bridge/ ./nodejs_bridge/
 COPY odbc_trace_tool/ ./odbc_trace_tool/
+COPY python_bridge/ ./python_bridge/
 
 # Copy Python package sources
 COPY python/ ./python/
 # Recreate symlinks (Docker COPY does not preserve symlinks to outside the context)
 RUN cd python && \
-    rm -f Cargo.toml sf_core proto_utils proto_generator protobuf error_trace error_trace_derive && \
+    rm -f Cargo.toml sf_core proto_utils proto_generator protobuf error_trace error_trace_derive python_bridge && \
     ln -s ../Cargo.toml Cargo.toml && \
     ln -s ../sf_core sf_core && \
     ln -s ../proto_utils proto_utils && \
     ln -s ../proto_generator proto_generator && \
     ln -s ../protobuf protobuf && \
     ln -s ../error_trace error_trace && \
-    ln -s ../error_trace_derive error_trace_derive
+    ln -s ../error_trace_derive error_trace_derive && \
+    ln -s ../python_bridge python_bridge
 
-# Use pre-built libsf_core.so from sf-core-builder.
-COPY tests/performance/.tmp/libsf_core.so /workdir/python/src/snowflake/connector/_core/libsf_core.so
+# Use pre-built sf_core_python.abi3.so from sf-core-builder (abi3 works with any Python >= 3.11).
+COPY tests/performance/.tmp/sf_core_python.abi3.so /workdir/python/src/snowflake/connector/_core/sf_core_python.abi3.so
 COPY tests/performance/.tmp/rust_version /etc/rust_version
 
 # Install the driver — builds Cython extensions via hatch_build.py.
-# SKIP_CORE_BUILD tells hatch to skip cargo build of sf_core (we use the pre-built one above).
+# SKIP_CORE_BUILD tells hatch to skip cargo build of python_bridge (we use the pre-built one above).
 ENV SKIP_CORE_BUILD=1
 RUN pip install --no-cache-dir "/workdir/python/[pandas]"
 
