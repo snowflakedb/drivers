@@ -11,7 +11,7 @@ use std::str::FromStr;
 /// SQLState is a five-character string that indicates the success or failure
 /// of an SQL operation. The first two characters indicate the class,
 /// and the last three characters indicate the subclass.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, strum_macros::EnumIter)]
 pub enum SqlState {
     // Success class (00)
     /// 00000 - Successful completion
@@ -646,6 +646,32 @@ impl FromStr for SqlState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A SQLSTATE is always exactly 5 characters (2-char class + 3-char subclass)
+    /// drawn from the SQL-standard alphanumeric set (0-9, A-Z). This locks that
+    /// invariant for every fixed code in the enum. `Unknown(String)` is a pass-through
+    /// for server SQLSTATEs this enum doesn't recognize; at runtime it is *also* a
+    /// 5-char code (error.rs only builds it after `is_well_formed_sql_state`). It is
+    /// skipped here only because `strum::EnumIter` yields the `String::default()`
+    /// placeholder `Unknown("")`, which is not a value that occurs at runtime.
+    #[test]
+    fn every_sql_state_is_a_well_formed_5_char_code() {
+        use strum::IntoEnumIterator;
+        for state in SqlState::iter() {
+            // Skip EnumIter's placeholder Unknown(""); real Unknown values are gated to
+            // 5-char codes by is_well_formed_sql_state in error.rs (see doc comment above).
+            if matches!(&state, SqlState::Unknown(_)) {
+                continue;
+            }
+            let s = state.as_str();
+            assert_eq!(s.len(), 5, "{state:?} -> {s:?} is not 5 characters");
+            assert!(
+                s.bytes()
+                    .all(|b| b.is_ascii_digit() || b.is_ascii_uppercase()),
+                "{state:?} -> {s:?} contains non-alphanumeric SQLSTATE characters"
+            );
+        }
+    }
 
     #[test]
     fn test_sql_state_to_string() {

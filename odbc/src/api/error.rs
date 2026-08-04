@@ -835,14 +835,17 @@ impl OdbcError {
                 .map(|entry| entry.message.clone())
                 .unwrap_or_default()
         });
-        if crate::api::error_trace_flag::error_trace_enabled() && !trace.is_empty() {
+        let body = if crate::api::error_trace_flag::error_trace_enabled() && !trace.is_empty() {
             format!(
                 "{base}\nerror trace:\n{}",
                 error_trace::format_error_trace(&trace)
             )
         } else {
             base
-        }
+        };
+        // Per the ODBC spec, driver message text must be prefixed with
+        // [vendor][ODBC-component] so callers can identify the source.
+        format!("[Snowflake][Snowflake ODBC Driver]{body}")
     }
 
     /// Extract a user-facing message from structured protobuf error fields
@@ -874,10 +877,16 @@ impl OdbcError {
     }
 
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
+        use crate::api::diagnostic::{class_origin_for_sqlstate, subclass_origin_for_sqlstate};
+        let sql_state = self.to_sql_state();
+        let class_origin = class_origin_for_sqlstate(sql_state.as_str());
+        let subclass_origin = subclass_origin_for_sqlstate(sql_state.as_str());
         DiagnosticRecord {
             message_text: self.message_text(),
-            sql_state: self.to_sql_state(),
+            sql_state,
             native_error: self.to_native_error(),
+            class_origin,
+            subclass_origin,
             ..Default::default()
         }
     }

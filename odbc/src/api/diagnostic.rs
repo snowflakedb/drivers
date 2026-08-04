@@ -129,6 +129,36 @@ pub struct DiagnosticHeader {
     row_count: Option<sql::Len>,
 }
 
+/// ODBC 3.0 spec: class_origin / subclass_origin is "ISO 9075" for SQL-standard
+/// SQLSTATE classes, "ODBC 3.0" for ODBC-defined ones.
+///
+/// Every SQLSTATE reaching these helpers is a well-formed 5-char code by
+/// construction: the fixed `SqlState` variants (locked by the sql_state tests)
+/// and `Unknown`, which `error.rs` only builds after `is_well_formed_sql_state`.
+/// So we classify directly by the class/subclass without length guards.
+///
+/// ODBC-defined class prefixes: HY (generic ODBC errors), IM (Driver Manager),
+/// 0Z (deprecated). Everything else is ISO-defined.
+pub fn class_origin_for_sqlstate(sqlstate: &str) -> ClassOrigin {
+    match sqlstate.get(..2) {
+        Some("HY") | Some("IM") | Some("0Z") => ClassOrigin::Odbc3_0,
+        _ => ClassOrigin::Iso9075,
+    }
+}
+
+/// A subclass is ODBC-defined when its first character is '5'-'9' or 'A'-'Z'
+/// (implementation-defined space); '0'-'4' (which includes the "000" no-subclass
+/// case) is SQL-standard. An ODBC-defined class always has an ODBC-defined subclass.
+pub fn subclass_origin_for_sqlstate(sqlstate: &str) -> ClassOrigin {
+    if matches!(class_origin_for_sqlstate(sqlstate), ClassOrigin::Odbc3_0) {
+        return ClassOrigin::Odbc3_0;
+    }
+    match sqlstate.as_bytes().get(2) {
+        Some(&b) if b.is_ascii_digit() && b <= b'4' => ClassOrigin::Iso9075,
+        _ => ClassOrigin::Odbc3_0,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
 pub enum ClassOrigin {
@@ -140,8 +170,11 @@ pub enum ClassOrigin {
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticRecord {
     pub class_origin: ClassOrigin,
+    pub subclass_origin: ClassOrigin,
     pub column_number: Option<sql::Integer>,
-    pub row_number: Option<sql::Integer>,
+    /// Row number where the error occurred. ODBC spec requires SQLLEN (pointer-sized).
+    pub row_number: Option<sql::Len>,
+    pub server_name: String,
     pub connection_name: String,
     pub message_text: String,
     pub sql_state: SqlState,
@@ -295,14 +328,14 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         Warning::RowError => SqlState::ErrorInRow,
         Warning::OptionValueChanged => SqlState::OptionValueChanged,
     };
+    let state_str = sql_state.as_str();
     DiagnosticRecord {
         native_error: 0,
+        class_origin: class_origin_for_sqlstate(state_str),
+        subclass_origin: subclass_origin_for_sqlstate(state_str),
         sql_state,
-        class_origin: ClassOrigin::Odbc3_0,
-        column_number: None,
-        row_number: None,
-        connection_name: "".to_string(),
         message_text: message_text.to_string(),
+        ..Default::default()
     }
 }
 
@@ -381,34 +414,41 @@ pub fn set_diag_info_from_result<T>(
     if handle.is_null() {
         return;
     }
-    let add_from_result = |diagnostic_info: &mut DiagnosticInfo| match result {
-        Ok(_) => {}
-        Err(OdbcError::DaeRequired { .. }) => {}
-        Err(OdbcError::StillExecuting { .. }) => {}
-        Err(error) => {
-            diagnostic_info.add_record(error.to_diagnostic_record());
-        }
-    };
+    let add_from_result =
+        |diagnostic_info: &mut DiagnosticInfo, server_name: Option<&str>| match result {
+            Ok(_) => {}
+            Err(OdbcError::DaeRequired { .. }) => {}
+            Err(OdbcError::StillExecuting { .. }) => {}
+            Err(error) => {
+                let mut record = error.to_diagnostic_record();
+                if let Some(name) = server_name {
+                    record.server_name = name.to_owned();
+                }
+                diagnostic_info.add_record(record);
+            }
+        };
     if handle_type == sql::HandleType::Env {
         let Ok(env) = env_from_handle(handle) else {
             return;
         };
         let mut guard = env.environment.lock();
-        add_from_result(guard.get_diag_info_mut());
+        add_from_result(guard.get_diag_info_mut(), None);
         return;
     }
     if handle_type == sql::HandleType::Dbc {
         let Ok(dbc) = conn_from_handle(handle) else {
             return;
         };
-        add_from_result(dbc.connection.lock().get_diag_info_mut());
+        let mut conn = dbc.connection.lock();
+        let dsn = conn.dsn_name.clone();
+        add_from_result(conn.get_diag_info_mut(), dsn.as_deref());
         return;
     }
     if handle_type == sql::HandleType::Stmt {
         let Ok(guard) = stmt_from_handle(handle) else {
             return;
         };
-        add_from_result(guard.inner.lock().get_diag_info_mut());
+        add_from_result(guard.inner.lock().get_diag_info_mut(), None);
         return;
     }
     if handle_type == sql::HandleType::Desc {
@@ -424,10 +464,10 @@ pub fn set_diag_info_from_result<T>(
                     DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
                     DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
                 };
-                add_from_result(diagnostic_info);
+                add_from_result(diagnostic_info, None);
             }
             DescriptorAccess::Explicit { desc } => {
-                add_from_result(desc.lock().get_diag_info_mut());
+                add_from_result(desc.lock().get_diag_info_mut(), None);
             }
         }
     }
@@ -488,6 +528,13 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
     text_length_ptr: *mut sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
+    use crate::api::error::InvalidBufferLengthSnafu;
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
     let diagnostic_info = get_diag_info(handle_type, handle)?;
     if rec_number <= 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
@@ -523,6 +570,8 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
 /// Get diagnostic field from handle (SQLGetDiagField / SQLGetDiagFieldW).
 ///
 /// Retrieves a specific diagnostic field from a diagnostic record.
+/// `warnings` is populated when a string field is truncated (SQL_SUCCESS_WITH_INFO / 01004).
+#[allow(clippy::too_many_arguments)]
 pub fn get_diag_field<E: OdbcEncoding>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
@@ -531,6 +580,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
     diag_info_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
     tracing::debug!(
@@ -580,7 +630,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
                         diag_info_ptr as *mut E::Char,
                         buffer_length,
                         string_length_ptr,
-                        None,
+                        Some(warnings),
                     );
                     Ok(())
                 } else {
@@ -612,7 +662,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
                     diag_info_ptr as *mut E::Char,
                     buffer_length,
                     string_length_ptr,
-                    None,
+                    Some(warnings),
                 );
                 Ok(())
             }
@@ -628,11 +678,11 @@ pub fn get_diag_field<E: OdbcEncoding>(
                     diag_info_ptr as *mut E::Char,
                     buffer_length,
                     string_length_ptr,
-                    None,
+                    Some(warnings),
                 );
                 Ok(())
             }
-            DiagIdentifier::ClassOrigin | DiagIdentifier::SubclassOrigin => {
+            DiagIdentifier::ClassOrigin => {
                 let origin_str = match record.class_origin {
                     ClassOrigin::Odbc3_0 => "ODBC 3.0",
                     ClassOrigin::Iso9075 => "ISO 9075",
@@ -642,7 +692,21 @@ pub fn get_diag_field<E: OdbcEncoding>(
                     diag_info_ptr as *mut E::Char,
                     buffer_length,
                     string_length_ptr,
-                    None,
+                    Some(warnings),
+                );
+                Ok(())
+            }
+            DiagIdentifier::SubclassOrigin => {
+                let origin_str = match record.subclass_origin {
+                    ClassOrigin::Odbc3_0 => "ODBC 3.0",
+                    ClassOrigin::Iso9075 => "ISO 9075",
+                };
+                write_string_bytes::<E>(
+                    origin_str,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    Some(warnings),
                 );
                 Ok(())
             }
@@ -652,17 +716,17 @@ pub fn get_diag_field<E: OdbcEncoding>(
                     diag_info_ptr as *mut E::Char,
                     buffer_length,
                     string_length_ptr,
-                    None,
+                    Some(warnings),
                 );
                 Ok(())
             }
             DiagIdentifier::ServerName => {
                 write_string_bytes::<E>(
-                    "",
+                    &record.server_name,
                     diag_info_ptr as *mut E::Char,
                     buffer_length,
                     string_length_ptr,
-                    None,
+                    Some(warnings),
                 );
                 Ok(())
             }
@@ -677,8 +741,9 @@ pub fn get_diag_field<E: OdbcEncoding>(
             }
             DiagIdentifier::RowNumber => {
                 unsafe {
+                    // ODBC spec requires SQLLEN (pointer-sized integer) for SQL_DIAG_ROW_NUMBER.
                     std::ptr::write(
-                        diag_info_ptr as *mut sql::Integer,
+                        diag_info_ptr as *mut sql::Len,
                         record.row_number.unwrap_or(0),
                     );
                 }
@@ -693,6 +758,42 @@ pub fn get_diag_field<E: OdbcEncoding>(
 mod tests {
     use super::*;
     use crate::api::types::ToSqlReturn;
+
+    /// The class-origin helpers take `&str`, but the only values that reach them
+    /// are `SqlState::as_str()` results — a closed enum that
+    /// `sql_state::tests::every_sql_state_is_a_well_formed_5_char_code` proves is
+    /// always a 5-char code. Exercise the helpers over every real SQLSTATE to
+    /// confirm they classify the whole known set without misbehaving, and
+    /// spot-check the ODBC-defined vs ISO-defined split.
+    #[test]
+    fn class_origin_helpers_cover_every_sql_state() {
+        use strum::IntoEnumIterator;
+        for state in SqlState::iter() {
+            let s = state.as_str();
+            let _ = class_origin_for_sqlstate(s);
+            let _ = subclass_origin_for_sqlstate(s);
+        }
+        assert!(matches!(
+            class_origin_for_sqlstate("HY000"),
+            ClassOrigin::Odbc3_0
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("IM001"),
+            ClassOrigin::Odbc3_0
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("0Z002"),
+            ClassOrigin::Odbc3_0
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("42S02"),
+            ClassOrigin::Iso9075
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("01004"),
+            ClassOrigin::Iso9075
+        ));
+    }
 
     #[test]
     fn invalid_handle_type_returns_sql_error_not_invalid_handle() {

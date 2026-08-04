@@ -1986,3 +1986,25 @@ behavior_differences:
       (ConflictingParameters, Error). Unlike entry 108, this is a genuine new rejection for ODBC, not a
       relocated one — allowed as a bugfix since silently accepting a no-op param combination is itself a
       latent bug.
+
+  110:
+    name: "SQLGetDiagRec/SQLGetDiagField MessageText vendor prefix changed from [Snowflake][Support] to [Snowflake][Snowflake ODBC Driver]"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The ODBC spec (§16.2.16) requires drivers to prepend [vendor][ODBC-component-identifier] to
+      diagnostic message text. The old driver (SimbaEngine-based) used [Snowflake][Support]; the new
+      driver uses [Snowflake][Snowflake ODBC Driver], which is a more accurate component identifier.
+      Both satisfy the spec; the new prefix is intentionally more descriptive.
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Diagnostic message text from SQLGetDiagRec / SQLGetDiagField(SQL_DIAG_MESSAGE_TEXT) is
+      prefixed with "[Snowflake][Support]" (a SimbaEngine artefact).
+    new_driver_behavior: |
+      Diagnostic message text is prefixed with "[Snowflake][Snowflake ODBC Driver]", matching the
+      ODBC spec requirement that the component identifier names the driver.
+    description: |
+      Applications that pattern-match diagnostic message text against the literal "[Snowflake][Support]"
+      prefix must update their pattern to "[Snowflake][Snowflake ODBC Driver]".
