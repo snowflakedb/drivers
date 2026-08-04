@@ -49,6 +49,7 @@ use crate::tls::client::create_tls_client_with_proxy;
 use crate::tls::error::TlsError;
 use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
 use reqwest::{self, Method, StatusCode, header};
+use serde::de::Deserialize as _;
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
@@ -2291,14 +2292,27 @@ pub async fn snowflake_cancel_query(
 /// single-flight `RefreshContext` refresh path — without each caller having
 /// to re-implement that check.
 #[derive(Debug, serde::Deserialize)]
+#[serde(bound(deserialize = "T: serde::de::Deserialize<'de> + Default"))]
 pub struct SnowflakeResponse<T> {
     pub success: bool,
     #[serde(default)]
     pub code: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
-    #[serde(default)]
+    /// GS sends an explicit `"data": null` for some responses (e.g.
+    /// ROLLBACK/COMMIT with no active transaction); absent and explicit-null
+    /// collapse to `T::default()`, matching how the Python and Node drivers
+    /// handle it.
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub data: T,
+}
+
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 pub(crate) async fn read_response_json<T>(
