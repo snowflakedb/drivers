@@ -265,8 +265,10 @@ class ConnectionConfigMixin:
 
         # Apply deprecated rewrites with a ``DeprecationWarning`` so callers
         # migrating from snowflake-connector-python see a pointer to the new
-        # name.  ``stacklevel=3`` surfaces the caller of ``Connection(...)`` /
+        # name.  ``stacklevel=4`` surfaces the caller of ``Connection(...)`` /
         # ``ConnectionConfig.from_kwargs(...)`` rather than this file.
+        # Call chain: user code → Connection.__init__ → from_connection_args
+        # → from_kwargs → warn(); 4 frames to reach user code.
         # Runs before the fan-out block below so that aliases that resolve
         # to ``unsafe_skip_file_permissions_check`` are renamed in time.
         for old_name, new_name in cls._DEPRECATED_REWRITES.items():
@@ -275,7 +277,7 @@ class ConnectionConfigMixin:
                 warnings.warn(
                     f"{old_name!r} is deprecated; use {new_name!r} instead.",
                     DeprecationWarning,
-                    stacklevel=3,
+                    stacklevel=4,
                 )
                 if new_name not in kwargs:
                     kwargs[new_name] = value
@@ -294,6 +296,34 @@ class ConnectionConfigMixin:
                 if target not in kwargs:
                     kwargs[target] = legacy_skip
 
+        # The old snowflake-connector-python exposes network_timeout (wall-clock,
+        # all non-login/query operations) and socket_timeout (per-attempt socket
+        # timeout) as single knobs. The universal driver splits each concept
+        # further, so fan the legacy value out onto both underlying params
+        # unless the caller set a specific one explicitly. Using the legacy
+        # names emits a DeprecationWarning pointing callers at the split params.
+        if "network_timeout" in kwargs:
+            legacy_network_timeout = kwargs.pop("network_timeout")
+            warnings.warn(
+                "'network_timeout' is deprecated; use 'query_timeout' and 'request_timeout' instead.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            for target in ("query_timeout", "request_timeout"):
+                if target not in kwargs:
+                    kwargs[target] = legacy_network_timeout
+
+        if "socket_timeout" in kwargs:
+            legacy_socket_timeout = kwargs.pop("socket_timeout")
+            warnings.warn(
+                "'socket_timeout' is deprecated; use 'connect_timeout' and 'retry_timeout' instead.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            for target in ("connect_timeout", "retry_timeout"):
+                if target not in kwargs:
+                    kwargs[target] = legacy_socket_timeout
+
         # Drop unsupported legacy kwargs with a warning so the caller knows
         # they had no effect instead of silently forwarding them to Rust.
         for key in list(kwargs):
@@ -302,7 +332,7 @@ class ConnectionConfigMixin:
                 warnings.warn(
                     f"{key!r} has no effect in the universal driver: {reason}.",
                     DeprecationWarning,
-                    stacklevel=3,
+                    stacklevel=4,
                 )
                 kwargs.pop(key)
 

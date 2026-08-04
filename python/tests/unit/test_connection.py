@@ -287,6 +287,64 @@ class TestClientSessionKeepAliveKwargUnit:
             connection.client_session_keep_alive_heartbeat_frequency = 600
 
 
+class TestTimeoutPropertiesUnit:
+    """Unit tests for login_timeout / network_timeout / socket_timeout properties."""
+
+    def test_login_timeout_read_from_config(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a", login_timeout=45)
+
+        assert conn.login_timeout == 45
+
+    def test_login_timeout_default(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a")
+
+        assert conn.login_timeout == 120
+
+    def test_network_timeout_fans_out_to_query_and_request_timeout(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            conn = Connection(user="u", account="a", network_timeout=45)
+
+        assert conn.network_timeout == 45
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["query_timeout"] == ConfigSetting(int_value=45)
+        assert request.options["request_timeout"] == ConfigSetting(int_value=45)
+
+    def test_socket_timeout_fans_out_to_connect_and_retry_timeout(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with pytest.warns(DeprecationWarning, match="socket_timeout"):
+            conn = Connection(user="u", account="a", socket_timeout=30)
+
+        assert conn.socket_timeout == 30
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["connect_timeout"] == ConfigSetting(int_value=30)
+        assert request.options["retry_timeout"] == ConfigSetting(int_value=30)
+
+    def test_network_and_socket_timeout_defaults(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a")
+
+        assert conn.network_timeout == 120
+        assert conn.socket_timeout is None
+
+    def test_network_timeout_getter_reflects_explicit_request_timeout(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with pytest.warns(DeprecationWarning, match="network_timeout"):
+            conn = Connection(user="u", account="a", network_timeout=45, request_timeout=60)
+
+        assert conn.network_timeout == 60
+
+
 class TestConnectionSetOptions:
     """Unit tests for the batched connection_set_options RPC during __init__."""
 
