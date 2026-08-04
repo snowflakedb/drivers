@@ -1332,6 +1332,27 @@ pub enum QueryResponseError {
 mod tests {
     use super::*;
 
+    /// Regression for SNOW-3762536: GS sends an explicit `"data": null` (not an
+    /// absent key) for some responses, e.g. ROLLBACK/COMMIT with no active
+    /// transaction. `SnowflakeResponse<T>::data` only had `#[serde(default)]`,
+    /// which only covers the absent-key case — an explicit `null` still hits
+    /// `Data`'s (non-`Option`) `Deserialize` impl and fails with "invalid type:
+    /// null, expected struct Data", surfacing to sqlalchemy users as a
+    /// `ProgrammingError` during connection rollback/cleanup and masking
+    /// whatever `code`/`message` the envelope actually carried.
+    #[test]
+    fn test_deserialize_response_with_explicit_null_data() {
+        let json = r#"{
+            "data": null,
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        assert!(response.data.rowset.is_none());
+        assert!(response.data.row_type.is_none());
+    }
+
     #[test]
     fn test_deserialize_rowset_with_null_values() {
         let json = r#"{
