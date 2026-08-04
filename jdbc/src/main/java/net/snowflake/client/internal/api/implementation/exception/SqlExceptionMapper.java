@@ -1,10 +1,11 @@
-package net.snowflake.client.internal.api.decorator;
+package net.snowflake.client.internal.api.implementation.exception;
 
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.util.function.Supplier;
 import net.snowflake.client.api.exception.SFException;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.decorator.AbstractDecorator;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 /**
@@ -47,8 +48,7 @@ public final class SqlExceptionMapper {
    * SnowflakeSQLException#fromSFException} (SQLState + vendor code, cause dropped for legacy
    * parity); anything else keeps its cause for diagnostics.
    */
-  static SQLException translate(Throwable t) {
-    // Already-typed SQLExceptions (control flow) pass through unchanged.
+  public static SQLException translate(Throwable t) {
     if (t instanceof SnowflakeSQLException) {
       return (SnowflakeSQLException) t;
     }

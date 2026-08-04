@@ -19,10 +19,11 @@ public interface Telemetry {
   void recordApiUsage(String apiMethod);
 
   /**
-   * Pre-classified so the raw error never crosses the wire: {@code exceptionType} is the original
-   * throwable's simple class name, {@code errorSource} the snake_case wire category.
+   * Records an error caught at a decorated boundary. The decorator hands over the raw throwable;
+   * the implementation classifies it (simple class name + snake_case error-source category) so the
+   * raw error never crosses the wire.
    */
-  void recordWrapperError(String exceptionType, String errorSource);
+  void recordWrapperError(Throwable error);
 
   /** No-op used where no connection is in scope, and everywhere until the real emitter is wired. */
   Telemetry NOOP =
@@ -31,6 +32,6 @@ public interface Telemetry {
         public void recordApiUsage(String apiMethod) {}
 
         @Override
-        public void recordWrapperError(String exceptionType, String errorSource) {}
+        public void recordWrapperError(Throwable error) {}
       };
 }

@@ -1,4 +1,4 @@
-package net.snowflake.client.internal.api.decorator;
+package net.snowflake.client.internal.api.implementation.exception;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
