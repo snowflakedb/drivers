@@ -863,3 +863,35 @@ behavior_differences:
     description: |
       GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
       matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+  48:
+    name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified in snowflakedb/snowflake-jdbc: SFSessionProperty declares workloadIdentityProvider /
+      workloadIdentityEntraResource / workloadIdentityImpersonationPath optional, and SFSession.open()
+      copies all three into SFLoginInput unconditionally, regardless of authenticator — so
+      authenticator=snowflake with workloadIdentityProvider=AWS connects and the WIF props are never
+      read. (The lone WIF guard, checkAwsExternalIdEnabled, gates a different property,
+      workloadIdentityAwsExternalId, and no-ops unless authenticator=WORKLOAD_IDENTITY.) The universal
+      driver's sf_core::validate_settings rejects any of the three params under a non-WIF authenticator
+      (ConflictingParameters, Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's
+      long-standing rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers;
+      no JDBC caller relies on the params being silently ignored.
+  49:
+    name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified in snowflakedb/snowflake-jdbc: OidcIdentityAttestationCreator.createAttestation() only
+      reads the token, never workloadIdentityImpersonationPath, so that param is silently discarded
+      today. Legacy snowflake-connector-python/nodejs/.NET all reject this combination client-side;
+      legacy JDBC never did. sf_core::validate_settings now rejects it uniformly (ConflictingParameters,
+      Error). Unlike entry 48, this is a genuine new rejection for JDBC, not a relocated one — allowed as
+      a bugfix since silently accepting a no-op param combination is itself a latent bug.
