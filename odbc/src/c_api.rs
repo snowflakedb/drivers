@@ -2373,6 +2373,7 @@ pub unsafe extern "system" fn SQLGetDiagField(
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
+    let mut warnings = vec![];
     let result = api::diagnostic::get_diag_field::<Narrow>(
         handle_type,
         handle,
@@ -2381,9 +2382,11 @@ pub unsafe extern "system" fn SQLGetDiagField(
         diag_info_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
+    api::diagnostic::set_diag_info_from_warnings(handle_type, handle, &warnings);
     record_err!(handle_type, handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.
@@ -2398,6 +2401,7 @@ pub unsafe extern "system" fn SQLGetDiagFieldW(
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
     set_dispatch!();
+    let mut warnings = vec![];
     let result = api::diagnostic::get_diag_field::<Wide>(
         handle_type,
         handle,
@@ -2406,9 +2410,11 @@ pub unsafe extern "system" fn SQLGetDiagFieldW(
         diag_info_ptr,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
+    api::diagnostic::set_diag_info_from_warnings(handle_type, handle, &warnings);
     record_err!(handle_type, handle, result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
