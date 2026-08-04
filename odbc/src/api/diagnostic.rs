@@ -12,6 +12,7 @@ use crate::{
             InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
             NoMoreDataSnafu,
         },
+        query_type::QueryType,
         stmt_from_handle,
         types::{DescriptorAccess, DescriptorKind},
     },
@@ -123,10 +124,14 @@ impl TryFrom<sql::SmallInt> for DiagIdentifier {
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticHeader {
     cursor_row_count: Option<sql::Len>,
-    dynamic_function_code: Option<String>,
+    /// SQL_DIAG_DYNAMIC_FUNCTION: string name of the executed SQL statement type
+    /// (e.g. "INSERT", "SELECT CURSOR"). Set after SQLExecute/SQLExecDirect.
+    pub dynamic_function: Option<String>,
+    /// SQL_DIAG_DYNAMIC_FUNCTION_CODE: integer code for the statement type.
+    pub dynamic_function_code: Option<sql::Integer>,
     number_of_records: Option<sql::Integer>,
-    return_code: sql::RetCode,
-    row_count: Option<sql::Len>,
+    pub return_code: sql::RetCode,
+    pub row_count: Option<sql::Len>,
 }
 
 /// ODBC 3.0 spec: class_origin / subclass_origin is "ISO 9075" for SQL-standard
@@ -195,6 +200,28 @@ impl DiagnosticInfo {
     pub fn clear(&mut self) {
         self.header = DiagnosticHeader::default();
         self.records.clear();
+    }
+
+    /// Set SQL_DIAG_RETURNCODE in the header. Called after the final return
+    /// code for a function is known (after both result and warnings are merged).
+    pub fn set_return_code(&mut self, code: sql::RetCode) {
+        self.header.return_code = code;
+    }
+
+    /// Set execution-derived header fields (SQL_DIAG_ROW_COUNT,
+    /// SQL_DIAG_DYNAMIC_FUNCTION, SQL_DIAG_DYNAMIC_FUNCTION_CODE) directly
+    /// from the execution response. Called from within statement.rs while
+    /// the statement lock is already held.
+    pub fn set_execution_info(
+        &mut self,
+        statement_type_id: Option<i64>,
+        rows_affected: Option<i64>,
+    ) {
+        let qt = QueryType::from_raw(statement_type_id);
+        let (fn_name, fn_code) = query_type_to_dynamic_function(qt);
+        self.header.row_count = rows_affected.map(|v| v as sql::Len);
+        self.header.dynamic_function = Some(fn_name.to_owned());
+        self.header.dynamic_function_code = Some(fn_code);
     }
 }
 
@@ -344,39 +371,37 @@ pub fn set_diag_info_from_warnings(
     handle: sql::Handle,
     warnings: &Warnings,
 ) {
-    if handle.is_null() {
+    if handle.is_null() || warnings.is_empty() {
         return;
     }
+    let add_warnings = |diagnostic_info: &mut DiagnosticInfo| {
+        for warning in warnings {
+            diagnostic_info.add_record(from_warning(warning));
+        }
+        // Upgrade SQL_SUCCESS → SQL_SUCCESS_WITH_INFO now that we have warnings.
+        if diagnostic_info.header.return_code == sql::SqlReturn::SUCCESS.0 {
+            diagnostic_info.header.return_code = sql::SqlReturn::SUCCESS_WITH_INFO.0;
+        }
+    };
     if handle_type == sql::HandleType::Env {
         let Ok(env) = env_from_handle(handle) else {
             return;
         };
-        let mut guard = env.environment.lock();
-        let diagnostic_info = guard.get_diag_info_mut();
-        for warning in warnings {
-            diagnostic_info.add_record(from_warning(warning));
-        }
+        add_warnings(env.environment.lock().get_diag_info_mut());
         return;
     }
     if handle_type == sql::HandleType::Dbc {
         let Ok(dbc) = conn_from_handle(handle) else {
             return;
         };
-        let mut conn = dbc.connection.lock();
-        let diagnostic_info = conn.get_diag_info_mut();
-        for warning in warnings {
-            diagnostic_info.add_record(from_warning(warning));
-        }
+        add_warnings(dbc.connection.lock().get_diag_info_mut());
         return;
     }
     if handle_type == sql::HandleType::Stmt {
         let Ok(guard) = stmt_from_handle(handle) else {
             return;
         };
-        let mut inner = guard.inner.lock();
-        for warning in warnings {
-            inner.get_diag_info_mut().add_record(from_warning(warning));
-        }
+        add_warnings(guard.inner.lock().get_diag_info_mut());
         return;
     }
     if handle_type == sql::HandleType::Desc {
@@ -392,16 +417,9 @@ pub fn set_diag_info_from_warnings(
                     DescriptorKind::Apd => inner.apd.get_diag_info_mut(),
                     DescriptorKind::Ipd => inner.ipd.get_diag_info_mut(),
                 };
-                for warning in warnings {
-                    diagnostic_info.add_record(from_warning(warning));
-                }
+                add_warnings(diagnostic_info);
             }
-            DescriptorAccess::Explicit { desc } => {
-                let mut desc = desc.lock();
-                for warning in warnings {
-                    desc.get_diag_info_mut().add_record(from_warning(warning));
-                }
-            }
+            DescriptorAccess::Explicit { desc } => add_warnings(desc.lock().get_diag_info_mut()),
         }
     }
 }
@@ -414,8 +432,19 @@ pub fn set_diag_info_from_result<T>(
     if handle.is_null() {
         return;
     }
-    let add_from_result =
-        |diagnostic_info: &mut DiagnosticInfo, server_name: Option<&str>| match result {
+    // Provisional return code from result alone (may be upgraded to
+    // SQL_SUCCESS_WITH_INFO later by set_diag_info_from_warnings).
+    let provisional_return_code: sql::RetCode = match result {
+        Ok(_) => sql::SqlReturn::SUCCESS.0,
+        Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA.0,
+        Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE.0,
+        Err(OdbcError::DaeRequired { .. }) => sql::SqlReturn::NEED_DATA.0,
+        Err(OdbcError::StillExecuting { .. }) => sql::SqlReturn::STILL_EXECUTING.0,
+        Err(_) => sql::SqlReturn::ERROR.0,
+    };
+    let add_from_result = |diagnostic_info: &mut DiagnosticInfo, server_name: Option<&str>| {
+        diagnostic_info.set_return_code(provisional_return_code);
+        match result {
             Ok(_) => {}
             Err(OdbcError::DaeRequired { .. }) => {}
             Err(OdbcError::StillExecuting { .. }) => {}
@@ -426,7 +455,8 @@ pub fn set_diag_info_from_result<T>(
                 }
                 diagnostic_info.add_record(record);
             }
-        };
+        }
+    };
     if handle_type == sql::HandleType::Env {
         let Ok(env) = env_from_handle(handle) else {
             return;
@@ -624,18 +654,28 @@ pub fn get_diag_field<E: OdbcEncoding>(
                 Ok(())
             }
             DiagIdentifier::DynamicFunction => {
-                if let Some(ref dynamic_function) = diagnostic_info.header.dynamic_function_code {
-                    write_string_bytes::<E>(
-                        dynamic_function,
-                        diag_info_ptr as *mut E::Char,
-                        buffer_length,
-                        string_length_ptr,
-                        Some(warnings),
+                let name = diagnostic_info
+                    .header
+                    .dynamic_function
+                    .as_deref()
+                    .unwrap_or("");
+                write_string_bytes::<E>(
+                    name,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    Some(warnings),
+                );
+                Ok(())
+            }
+            DiagIdentifier::DynamicFunctionCode => {
+                unsafe {
+                    std::ptr::write(
+                        diag_info_ptr as *mut sql::Integer,
+                        diagnostic_info.header.dynamic_function_code.unwrap_or(0),
                     );
-                    Ok(())
-                } else {
-                    NoMoreDataSnafu.fail()
                 }
+                Ok(())
             }
             DiagIdentifier::CursorRowCount => {
                 unsafe {
@@ -754,6 +794,37 @@ pub fn get_diag_field<E: OdbcEncoding>(
     }
 }
 
+/// Map a Snowflake QueryType to the ODBC SQL_DIAG_DYNAMIC_FUNCTION string and
+/// SQL_DIAG_DYNAMIC_FUNCTION_CODE integer per ODBC 3.x Appendix B.
+fn query_type_to_dynamic_function(qt: QueryType) -> (&'static str, sql::Integer) {
+    // ODBC 3.x function-code constants (from sqlext.h)
+    const SQL_DIAG_SELECT_CURSOR: sql::Integer = 85;
+    const SQL_DIAG_INSERT: sql::Integer = 20;
+    const SQL_DIAG_UPDATE_WHERE: sql::Integer = 82;
+    const SQL_DIAG_DELETE_WHERE: sql::Integer = 19;
+    const SQL_DIAG_CALL: sql::Integer = 7;
+    const SQL_DIAG_UNKNOWN_STATEMENT: sql::Integer = 0;
+
+    if qt.belongs_to(QueryType::SELECT)
+        || qt.belongs_to(QueryType::SHOW)
+        || qt.belongs_to(QueryType::DESCRIBE)
+        || qt.belongs_to(QueryType::EXPLAIN)
+        || qt.belongs_to(QueryType::LIST_FILES)
+    {
+        ("SELECT CURSOR", SQL_DIAG_SELECT_CURSOR)
+    } else if qt.belongs_to(QueryType::INSERT) {
+        ("INSERT", SQL_DIAG_INSERT)
+    } else if qt.belongs_to(QueryType::UPDATE) {
+        ("UPDATE WHERE", SQL_DIAG_UPDATE_WHERE)
+    } else if qt.belongs_to(QueryType::DELETE) {
+        ("DELETE WHERE", SQL_DIAG_DELETE_WHERE)
+    } else if qt.belongs_to(QueryType::CALL) {
+        ("CALL", SQL_DIAG_CALL)
+    } else {
+        ("", SQL_DIAG_UNKNOWN_STATEMENT)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,5 +873,65 @@ mod tests {
         }
         .fail();
         assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
+    }
+
+    #[test]
+    fn class_origin_iso_for_standard_classes() {
+        assert!(matches!(
+            class_origin_for_sqlstate("01000"),
+            ClassOrigin::Iso9075
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("22001"),
+            ClassOrigin::Iso9075
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("42000"),
+            ClassOrigin::Iso9075
+        ));
+    }
+
+    #[test]
+    fn class_origin_odbc_for_hy_im_0z() {
+        assert!(matches!(
+            class_origin_for_sqlstate("HY000"),
+            ClassOrigin::Odbc3_0
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("IM002"),
+            ClassOrigin::Odbc3_0
+        ));
+        assert!(matches!(
+            class_origin_for_sqlstate("0Z000"),
+            ClassOrigin::Odbc3_0
+        ));
+    }
+
+    #[test]
+    fn subclass_origin_iso_for_standard_subclass() {
+        // 01000 — no subclass (000) → ISO
+        assert!(matches!(
+            subclass_origin_for_sqlstate("01000"),
+            ClassOrigin::Iso9075
+        ));
+        // 22001 — subclass "001" (first char '0' ≤ '4') → ISO
+        assert!(matches!(
+            subclass_origin_for_sqlstate("22001"),
+            ClassOrigin::Iso9075
+        ));
+    }
+
+    #[test]
+    fn subclass_origin_odbc_for_odbc_subclass() {
+        // HY000 → ODBC class → subclass also ODBC
+        assert!(matches!(
+            subclass_origin_for_sqlstate("HY000"),
+            ClassOrigin::Odbc3_0
+        ));
+        // 01S00 — subclass "S00" (first char 'S' > '4') → ODBC
+        assert!(matches!(
+            subclass_origin_for_sqlstate("01S00"),
+            ClassOrigin::Odbc3_0
+        ));
     }
 }
