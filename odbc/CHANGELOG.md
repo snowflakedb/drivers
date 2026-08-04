@@ -6,6 +6,8 @@ New features:
 
 Bug fixes:
 
+- Fixed `SQLCancelHandle(SQL_HANDLE_DBC)` to return SQLSTATE HY010 when an associated statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8 Diagnostics table (previously a no-op like the reference driver). (snowflakedb/universal-driver#871)
+
 ## v0.0.8
 
 New features:

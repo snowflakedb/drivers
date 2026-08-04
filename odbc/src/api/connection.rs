@@ -6,7 +6,7 @@ use crate::api::encoding::{
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
+    AsyncInProgressSnafu, AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidPortSnafu,
     InvalidTransactionOperationCodeSnafu, InvalidTransactionStateSnafu, NullPointerSnafu,
@@ -1010,6 +1010,38 @@ pub fn end_tran(connection_handle: sql::Handle, completion_type: sql::SmallInt) 
     let op = parse_completion_type(completion_type)?;
     let dbc = conn_from_handle(connection_handle)?;
     commit_or_rollback(&dbc, op)
+}
+
+/// `SQLCancelHandle` on a connection handle.
+///
+/// Per the ODBC 3.8 Diagnostics table, returns HY010 when any associated
+/// statement is asynchronously executing or mid data-at-execution. Otherwise
+/// this is a no-op: neither driver supports cancelable connection-level async
+/// operations, so with no child statement busy there is nothing to cancel.
+pub fn cancel_handle(connection_handle: sql::Handle) -> OdbcResult<()> {
+    let dbc = conn_from_handle(connection_handle)?;
+    // Hold `connection` across the child-statement scan (same pattern as
+    // `commit_or_rollback`). `statement::execute` / `exec_direct` take
+    // `connection` before `stmt.inner` when transitioning into async or
+    // data-at-execution, so keeping it locked here closes the race where a
+    // statement goes busy between cloning `child_statements` and the per-stmt
+    // check — which would otherwise let us return Ok(()) instead of HY010.
+    // Lock order remains `connection` -> `stmt.inner`.
+    let connection = dbc.connection.lock();
+    let child_ids: Vec<HandleId> = connection.child_statements.clone();
+    let g = global().context(OdbcRuntimeSnafu)?;
+    for &child_id in &child_ids {
+        if let Ok(stmt_guard) = g.stmt_registry.get(child_id) {
+            let inner = stmt_guard.inner.lock();
+            if inner.state.as_ref().is_async_executing() {
+                return AsyncInProgressSnafu.fail();
+            }
+            if inner.state.as_ref().is_need_data() {
+                return InvalidDuringDaeSnafu.fail();
+            }
+        }
+    }
+    Ok(())
 }
 
 /// End the current transaction on every connection owned by an environment
