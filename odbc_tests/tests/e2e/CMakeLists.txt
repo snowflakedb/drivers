@@ -8,6 +8,7 @@ add_odbc_test(e2e_authentication_private_key_auth authentication/private_key_aut
 add_odbc_test(e2e_authentication_mfa_auth authentication/user_password_mfa.cpp)
 add_odbc_test(e2e_authentication_user_password authentication/user_password.cpp)
 add_odbc_test(e2e_authentication_external_browser authentication/external_browser.cpp)
+add_odbc_test(e2e_authentication_workload_identity_cross_param authentication/workload_identity_cross_param.cpp)
 
 # Aggregate build target for the auth E2E suites that require the headless
 # browser container. Mirrors the `requires_browser` Catch2 tag used to select

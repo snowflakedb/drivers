@@ -100,6 +100,9 @@ class TestWorkloadIdentityDependentParamGuards:
     def test_should_fail_when_wif_param_set_without_wif_authenticator(
         self, extra_kwarg, value, int_test_connection_factory
     ):
+        # Local import: pytestmark's skipif shields this from the reference driver, which lacks `_internal`.
+        from snowflake.connector._internal.errorcode import ER_INVALID_WIF_SETTINGS
+
         # Given a WIF-specific param is set but authenticator is snowflake (not WORKLOAD_IDENTITY)
         kwargs = {
             "authenticator": "snowflake",
@@ -121,6 +124,17 @@ class TestWorkloadIdentityDependentParamGuards:
             f"authenticator, but got: {text}"
         )
 
+        # The wrapper re-maps sf_core's generic InvalidParameterValue (raised by
+        # connection_init, not connection_set_options) to the legacy WIF errno, matching
+        # snowflake-connector-python's ProgrammingError (errno 251017).
+        assert isinstance(exception, ProgrammingError), f"Expected ProgrammingError, got {exception!r}"
+        assert exception.errno == ER_INVALID_WIF_SETTINGS, (
+            f"Expected errno ER_INVALID_WIF_SETTINGS ({ER_INVALID_WIF_SETTINGS}), got {exception.errno}: {text}"
+        )
+        # The re-raise preserves the original core error via `from e` (not `from None`),
+        # so callers can still inspect the underlying cause.
+        assert exception.__cause__ is not None, "WIF errno re-map should chain the original core error"
+
 
 # ---------------------------------------------------------------------------
 # Provider-specific restrictions
@@ -131,6 +145,9 @@ class TestWorkloadIdentityProviderRestrictions:
     """Cross-field validation: impersonation_path is unsupported for OIDC."""
 
     def test_should_fail_oidc_wif_when_impersonation_path_is_set(self, int_test_connection_factory):
+        # Local import: pytestmark's skipif shields this from the reference driver, which lacks `_internal`.
+        from snowflake.connector._internal.errorcode import ER_INVALID_WIF_SETTINGS
+
         # Given Authentication is set to WORKLOAD_IDENTITY and WORKLOAD_IDENTITY_PROVIDER is OIDC
         kwargs = {
             "authenticator": "WORKLOAD_IDENTITY",
@@ -148,6 +165,15 @@ class TestWorkloadIdentityProviderRestrictions:
         assert "workload_identity_impersonation_path" in text.lower(), (
             f"Expected error citing 'workload_identity_impersonation_path', got: {text}"
         )
+
+        # This check now lives in sf_core alongside the other WIF cross-param guards
+        # (see TestWorkloadIdentityDependentParamGuards), so it gets the same legacy
+        # errno and cause-chaining treatment.
+        assert isinstance(exception, ProgrammingError), f"Expected ProgrammingError, got {exception!r}"
+        assert exception.errno == ER_INVALID_WIF_SETTINGS, (
+            f"Expected errno ER_INVALID_WIF_SETTINGS ({ER_INVALID_WIF_SETTINGS}), got {exception.errno}: {text}"
+        )
+        assert exception.__cause__ is not None, "WIF errno re-map should chain the original core error"
 
 
 # ---------------------------------------------------------------------------

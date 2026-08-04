@@ -27,7 +27,7 @@ from .._internal.connection import (
     requires_open,
 )
 from .._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
-from .._internal.errorcode import ER_INVALID_VALUE
+from .._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from .._internal.logging import get_logger
 from .._internal.logout_config_mapping import (
     LogoutOptionKeys,
@@ -55,6 +55,16 @@ from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 
 
 logger = get_logger(__name__)
+
+# Message-substring matching because sf_core's ValidationCode is discarded at the FFI
+# boundary today (ConfigError::Validation collapses to issues.first() in converter.rs,
+# and DriverError's proto has no field carrying ValidationCode or the full issue list
+# for the hard-fail path). Replace with a structured check once ValidationCode is
+# propagated across the FFI boundary (SNOW-3406390).
+_WIF_CONFLICT_MARKERS = (
+    "was not set to WORKLOAD_IDENTITY",
+    "impersonation_path is currently only supported for GCP, AWS, and AZURE",
+)
 
 
 class Connection(ConnectionMixin):
@@ -126,7 +136,9 @@ class Connection(ConnectionMixin):
 
         if options:
             response = core_driver.connection_set_options(
-                conn_handle=self.conn_handle, options=options, no_connection_details=self.config._no_connection_details
+                conn_handle=self.conn_handle,
+                options=options,
+                no_connection_details=self.config._no_connection_details,
             )
             for warning in response.warnings:
                 warnings.warn(warning.message, stacklevel=2)
@@ -155,17 +167,25 @@ class Connection(ConnectionMixin):
 
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
-        core_driver.connection_init(
-            conn_handle=self.conn_handle,  # type: ignore[arg-type]
-            db_handle=self.db_handle,  # type: ignore[arg-type]
-            wrapper_identity=WrapperIdentity(
-                driver_name=APPLICATION_NAME,
-                driver_version=__version__,
-                language_runtime=platform.python_implementation(),
-                language_version=platform.python_version(),
-                language_compiler=platform.python_compiler(),
-            ),
-        )
+        try:
+            core_driver.connection_init(
+                conn_handle=self.conn_handle,  # type: ignore[arg-type]
+                db_handle=self.db_handle,  # type: ignore[arg-type]
+                wrapper_identity=WrapperIdentity(
+                    driver_name=APPLICATION_NAME,
+                    driver_version=__version__,
+                    language_runtime=platform.python_implementation(),
+                    language_version=platform.python_version(),
+                    language_compiler=platform.python_compiler(),
+                ),
+            )
+        except ProgrammingError as e:
+            # The WIF cross-param guards fire in sf_core only via connection_init
+            # (ConnectionConfig::build -> validate_settings), surfaced as errno
+            # ER_INVALID_VALUE. Re-map to ER_INVALID_WIF_SETTINGS for legacy parity.
+            if any(marker in str(e) for marker in _WIF_CONFLICT_MARKERS):
+                raise ProgrammingError(msg=str(e), errno=ER_INVALID_WIF_SETTINGS) from e
+            raise
         self._telemetry_client = _InternalTelemetryClient(
             conn_handle=cast(ConnectionHandle, self.conn_handle),
         )

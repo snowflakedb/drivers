@@ -1853,6 +1853,7 @@ behavior_differences:
     description: |
       GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
       matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+
   104:
     name: "GET writes to a temporary .part file before renaming to the final destination (old driver writes the destination directly)"
     status: allowed
@@ -1896,6 +1897,7 @@ behavior_differences:
     description: |
       Applications that match on the exact diagnostic text (rather than the SQLSTATE) will see a
       different message on the new driver.
+
   106:
     name: "Unrecognized connection-string keywords are forwarded to the server instead of being rejected with 01S00"
     status: todo
@@ -1949,3 +1951,38 @@ behavior_differences:
       Applications that call SQLSetConnectAttr(SQL_ATTR_MAX_ROWS/QUERY_TIMEOUT) and ignore the
       return code will now get a diagnostic record; applications that check the return code will
       see SQL_ERROR instead of SQL_SUCCESS. The old behavior masked a spec violation.
+
+  108:
+    name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified against the real legacy driver source (snowflakedb/snowflake-odbc, v3.19.0):
+      SFConnection.cpp registers WORKLOAD_IDENTITY_PROVIDER / WORKLOAD_IDENTITY_ENTRA_RESOURCE /
+      WORKLOAD_IDENTITY_IMPERSONATION_PATH as optional accepted keys but reads them only inside the
+      authenticator==workload_identity branch of SFConnection::Connect, so a non-WIF authenticator
+      accepts the attributes and never reads them (no cross-param guard). The driver links
+      libsnowflakeclient (the Snowflake C/C++ core) but owns this connection-param dispatch itself.
+      The universal driver's sf_core::validate_settings rejects the combination (ConflictingParameters,
+      Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's long-standing
+      rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers; no ODBC
+      caller relies on the attributes being silently ignored.
+
+  109:
+    name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      ODBC links libsnowflakeclient for attestation creation; its createOIDCAttestation
+      (cpp/OIDCAttestation.cpp) never reads the impersonation-path setting for provider=OIDC, so it's
+      silently discarded today. Legacy snowflake-connector-python/nodejs/.NET all reject this
+      combination client-side; legacy ODBC never did. sf_core::validate_settings now rejects it uniformly
+      (ConflictingParameters, Error). Unlike entry 108, this is a genuine new rejection for ODBC, not a
+      relocated one — allowed as a bugfix since silently accepting a no-op param combination is itself a
+      latent bug.

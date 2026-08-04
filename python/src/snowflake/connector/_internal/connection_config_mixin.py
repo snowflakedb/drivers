@@ -22,7 +22,6 @@ from dataclasses import dataclass, field, fields
 from typing import Any, ClassVar, TypeVar
 
 from snowflake.connector._internal._private_key_helper import normalize_private_key
-from snowflake.connector._internal.errorcode import ER_INVALID_WIF_SETTINGS
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ConfigSetting
 from snowflake.connector.errors import ProgrammingError
 from snowflake.connector.version import __version__ as _DRIVER_VERSION
@@ -139,15 +138,6 @@ class ConnectionConfigMixin:
     the caller. Setting them via user-facing kwargs raises ``ProgrammingError``;
     the wrapper itself assigns them through ``ConnectionConfig`` attribute
     access in ``from_connection_args``."""
-
-    _WIF_ONLY_PARAMS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "workload_identity_provider",
-            "workload_identity_entra_resource",
-            "workload_identity_impersonation_path",
-        }
-    )
-    """WIF-specific params only valid when ``authenticator='WORKLOAD_IDENTITY'``."""
 
     _LEGACY_REWRITES: ClassVar[dict[str, str | tuple[str, Callable[[Any], Any]]]] = {
         # Old snowflake-connector-python CRL kwargs -> universal-driver core
@@ -331,32 +321,6 @@ class ConnectionConfigMixin:
             path = kwargs[impersonation_path_key]
             if isinstance(path, list):
                 kwargs[impersonation_path_key] = ",".join(str(p) for p in path) if path else None
-
-        def get_kwarg_ignore_case(name: str) -> Any:
-            """Look up a kwarg by ``name`` (lowercase), matching keys case-insensitively."""
-            return next((v for k, v in kwargs.items() if k.lower() == name), None)
-
-        # WIF-specific params are only meaningful with authenticator=WORKLOAD_IDENTITY.
-        # str(None) == "None" != "WORKLOAD_IDENTITY", so absent authenticator fires the guard too.
-        authenticator = get_kwarg_ignore_case("authenticator")
-        if str(authenticator).upper() != "WORKLOAD_IDENTITY":
-            for k in list(kwargs):
-                if k.lower() in cls._WIF_ONLY_PARAMS and kwargs[k] is not None:
-                    raise ProgrammingError(
-                        f"{k} was set but authenticator was not set to WORKLOAD_IDENTITY",
-                        errno=ER_INVALID_WIF_SETTINGS,
-                    )
-
-        # impersonation_path requires a provider that supports it (GCP, AWS, AZURE).
-        provider = get_kwarg_ignore_case("workload_identity_provider")
-        impersonation_path = get_kwarg_ignore_case("workload_identity_impersonation_path")
-        if impersonation_path is not None and (
-            provider is None or str(provider).upper() not in ("GCP", "AWS", "AZURE")
-        ):
-            raise ProgrammingError(
-                "workload_identity_impersonation_path is currently only supported for GCP, AWS, and AZURE.",
-                errno=ER_INVALID_WIF_SETTINGS,
-            )
 
         known_fields = cls._all_field_names()
         resolved: dict[str, Any] = {}

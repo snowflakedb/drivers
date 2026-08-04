@@ -1009,6 +1009,25 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     code: ValidationCode::MissingRequired,
                 });
             }
+            // impersonation_path is unsupported for OIDC: OIDC has no notion of
+            // impersonation the way cloud-metadata-based attestation does. Matches
+            // legacy snowflake-connector-python/Node.js/.NET, which all reject this
+            // client-side; JDBC/Go/C/PHP previously ignored it silently.
+            if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
+                && WifProvider::parse_str(&provider_str) == Some(WifProvider::Oidc)
+                && settings
+                    .get_string(WORKLOAD_IDENTITY_IMPERSONATION_PATH)
+                    .is_some_and(|s| !s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: WORKLOAD_IDENTITY_IMPERSONATION_PATH.into(),
+                    message: "workload_identity_impersonation_path is currently only supported \
+                              for GCP, AWS, and AZURE"
+                        .into(),
+                    code: ValidationCode::ConflictingParameters,
+                });
+            }
             // Azure impersonation is single-hop: exactly one SP client_id allowed
             if let Some(provider_str) = settings.get_string(WORKLOAD_IDENTITY_PROVIDER)
                 && WifProvider::parse_str(&provider_str) == Some(WifProvider::Azure)
@@ -1165,6 +1184,26 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 .into(),
             code: ValidationCode::ConflictingParameters,
         });
+    }
+
+    // --- ConflictingParameters: WIF-only params require WORKLOAD_IDENTITY ---
+    if !matches!(auth_upper.as_str(), "WORKLOAD_IDENTITY") {
+        for param in [
+            WORKLOAD_IDENTITY_PROVIDER,
+            WORKLOAD_IDENTITY_ENTRA_RESOURCE,
+            WORKLOAD_IDENTITY_IMPERSONATION_PATH,
+        ] {
+            if non_empty_string(settings, param).is_some() {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: param.into(),
+                    message: format!(
+                        "{param} was set but authenticator was not set to WORKLOAD_IDENTITY"
+                    ),
+                    code: ValidationCode::ConflictingParameters,
+                });
+            }
+        }
     }
 
     // --- UnknownParameter: keys not in ParamRegistry ---
@@ -2759,6 +2798,43 @@ mod tests {
     }
 
     #[test]
+    fn validate_wif_oidc_with_impersonation_path_emits_error() {
+        let mut pairs = wif_base_settings("OIDC");
+        pairs.push(("token", Setting::String("my-oidc-jwt".into())));
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("sa@project.iam.gserviceaccount.com".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_impersonation_path"
+                    && i.severity == ValidationSeverity::Error
+                    && i.code == ValidationCode::ConflictingParameters
+            }),
+            "Expected ConflictingParameters error for impersonation_path with OIDC, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_aws_with_impersonation_path_no_conflict() {
+        let mut pairs = wif_base_settings("AWS");
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("arn:aws:iam::123:role/A".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .all(|i| i.parameter != "workload_identity_impersonation_path"),
+            "AWS + impersonation_path should not conflict, got: {issues:?}"
+        );
+    }
+
+    #[test]
     fn validate_wif_user_not_required() {
         let settings = settings_from(&wif_base_settings("AWS"));
         let issues = validate_settings(&settings);
@@ -2999,6 +3075,116 @@ mod tests {
                 .iter()
                 .any(|i| i.parameter == "workload_identity_impersonation_path"),
             "Azure without impersonation should pass, got: {issues:?}"
+        );
+    }
+
+    // ── WIF cross-param guard: WIF-only params require WORKLOAD_IDENTITY ──
+
+    #[test]
+    fn validate_wif_provider_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("authenticator", Setting::String("snowflake".into())),
+            ("workload_identity_provider", Setting::String("aws".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_provider"
+                    && i.code == ValidationCode::ConflictingParameters
+                    && i.severity == ValidationSeverity::Error
+            }),
+            "Expected ConflictingParameters warning for workload_identity_provider, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_entra_resource_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "workload_identity_entra_resource",
+                Setting::String("https://resource.example.com".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_entra_resource"
+                    && i.code == ValidationCode::ConflictingParameters
+            }),
+            "Expected ConflictingParameters for workload_identity_entra_resource, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_impersonation_path_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "workload_identity_impersonation_path",
+                Setting::String("arn:aws:iam::123:role/A".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_impersonation_path"
+                    && i.code == ValidationCode::ConflictingParameters
+            }),
+            "Expected ConflictingParameters for workload_identity_impersonation_path, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_params_absent_authenticator_emits_error() {
+        // absent authenticator defaults to non-WIF → guard must fire
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("workload_identity_provider", Setting::String("gcp".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_provider"
+                    && i.code == ValidationCode::ConflictingParameters
+            }),
+            "Expected ConflictingParameters when authenticator absent, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_params_with_wif_auth_no_conflict_error() {
+        // WIF params + WORKLOAD_IDENTITY auth → no ConflictingParameters
+        let mut pairs = wif_base_settings("AWS");
+        pairs.push((
+            "workload_identity_entra_resource",
+            Setting::String("https://resource.example.com".into()),
+        ));
+        pairs.push((
+            "workload_identity_impersonation_path",
+            Setting::String("arn:aws:iam::123:role/A".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.code == ValidationCode::ConflictingParameters
+                    && [
+                        "workload_identity_provider",
+                        "workload_identity_entra_resource",
+                        "workload_identity_impersonation_path"
+                    ]
+                    .contains(&i.parameter.as_str())),
+            "WIF params with WORKLOAD_IDENTITY auth should not emit ConflictingParameters, got: {issues:?}"
         );
     }
 }
