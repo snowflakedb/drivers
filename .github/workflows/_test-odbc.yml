@@ -210,7 +210,45 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+          function Invoke-CmakeBuildWithRetry {
+            param(
+              [bool]$UseNinja,
+              [int]$Parallelism,
+              [int]$MaxAttempts = 3
+            )
+            $buildLog = Join-Path $env:RUNNER_TEMP "odbc-cpp-build.log"
+            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+              Write-Host "build_odbc_tests_cpp: cmake --build attempt $attempt/$MaxAttempts (parallel=$Parallelism)"
+              if ($UseNinja) {
+                cmake --build cmake-build --parallel $Parallelism 2>&1 | Tee-Object -FilePath $buildLog
+              } else {
+                cmake --build cmake-build --config Debug --parallel $Parallelism 2>&1 | Tee-Object -FilePath $buildLog
+              }
+              if ($LASTEXITCODE -eq 0) { return }
+
+              $logText = Get-Content $buildLog -Raw
+              $retryable = $logText -match 'being used by another process' `
+                -or $logText -match 'ninja: build stopped'
+              if (-not $retryable -or $attempt -eq $MaxAttempts) {
+                throw "cmake --build failed with exit code $LASTEXITCODE (attempt $attempt/$MaxAttempts). See $buildLog"
+              }
+              Write-Host "Retryable Windows build failure detected; waiting before retry..."
+              Start-Sleep -Seconds (15 * $attempt)
+            }
+          }
+
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+          # Catch2 POST_BUILD discovery writes *_tests.cmake during link; high
+          # parallelism on Windows ARM64 intermittently hits file-lock races.
+          $parallelism = if ("${{ matrix.msvc_arch }}" -eq "arm64") {
+            [Math]::Min(8, $NPROC)
+          } else {
+            $NPROC
+          }
           Push-Location odbc_tests
           try {
             $useNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) `
@@ -233,7 +271,7 @@ jobs:
             if (Get-Command lld-link.exe -ErrorAction SilentlyContinue) {
                 $cmakeArgs += "-DCMAKE_LINKER_TYPE=LLD"
             }
-            cmake @cmakeArgs .
+            Invoke-Checked "cmake configure" { cmake @cmakeArgs . }
 
             if (Get-Command ccache -ErrorAction SilentlyContinue) {
                 $ccacheConf = Join-Path $env:CCACHE_DIR "ccache.conf"
@@ -242,11 +280,7 @@ jobs:
                 ccache --show-stats
             }
 
-            if ($useNinja) {
-                cmake --build cmake-build --parallel ($NPROC)
-            } else {
-                cmake --build cmake-build --config Debug --parallel ($NPROC)
-            }
+            Invoke-CmakeBuildWithRetry -UseNinja $useNinja -Parallelism $parallelism
 
             if (Get-Command ccache -ErrorAction SilentlyContinue) {
                 Write-Host "=== ccache stats AFTER build ==="
