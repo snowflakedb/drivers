@@ -2289,11 +2289,7 @@ impl OdbcFunction {
     fn is_supported(self) -> bool {
         !matches!(
             self,
-            Self::BulkOperations
-                | Self::DataSources
-                | Self::Drivers
-                | Self::ParamOptions
-                | Self::SetPos
+            Self::BulkOperations | Self::DataSources | Self::Drivers | Self::SetPos
         )
     }
 
