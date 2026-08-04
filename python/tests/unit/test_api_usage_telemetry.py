@@ -4,7 +4,7 @@ import asyncio
 import inspect
 
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,24 +14,11 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionIsClosedResponse,
     ConnectionIsExpiredResponse,
     DatabaseHandle,
-    ExecuteQueryResponse,
     ResultSetDescriptor,
-    ResultSetHandle,
-    ResultSetResponse,
     StatementHandle,
-    TelemetrySendResponse,
 )
 from snowflake.connector.errors import ProgrammingError
-
-
-def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
-    """Return an ExecuteQueryResponse with a single-statement ResultSetResponse."""
-    return ExecuteQueryResponse(
-        single=ResultSetResponse(
-            result_set_handle=ResultSetHandle(id=1),
-            result_descriptor=ResultSetDescriptor(query_id=query_id),
-        )
-    )
+from tests.helpers.fixtures import _make_execute_response
 
 
 @pytest.fixture
@@ -108,46 +95,6 @@ def _passed_arguments_for(mock_db_api, api_method):
 def _run_async(coro):
     """Run a coroutine in a fresh event loop (no pytest-asyncio dependency)."""
     return asyncio.run(coro)
-
-
-@pytest.fixture
-def mock_async_db_api():
-    """Create a mock AsyncDatabaseDriverClient patched into async_core_driver."""
-    from snowflake.connector._internal.api_client.client_api import async_core_driver
-
-    db_api = MagicMock()
-    db_api.database_new = AsyncMock(return_value=MagicMock(db_handle=DatabaseHandle(id=1)))
-    db_api.database_init = AsyncMock()
-    db_api.connection_new = AsyncMock(return_value=MagicMock(conn_handle=ConnectionHandle(id=42)))
-    db_api.connection_set_options = AsyncMock(return_value=MagicMock(warnings=[]))
-    db_api.connection_set_session_parameters = AsyncMock()
-    db_api.connection_init = AsyncMock()
-    db_api.connection_get_parameter = AsyncMock(return_value=MagicMock(value=""))
-
-    def _connection_is_closed(request):
-        return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
-
-    db_api.connection_is_closed = AsyncMock(side_effect=_connection_is_closed)
-    db_api.connection_is_expired = AsyncMock(return_value=ConnectionIsExpiredResponse(is_expired=False))
-    db_api.connection_close = AsyncMock()
-    db_api.connection_release = AsyncMock()
-    db_api.database_release = AsyncMock()
-    db_api.connection_get_all_parameters = AsyncMock(return_value=MagicMock(parameters={}))
-    db_api.connection_get_info = AsyncMock(return_value=MagicMock(ListFields=lambda: []))
-    db_api.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
-    db_api.statement_set_sql_query = AsyncMock()
-    db_api.statement_execute_query = AsyncMock(return_value=_make_execute_response())
-    db_api.statement_release = AsyncMock()
-    db_api.connection_get_result_set = AsyncMock(
-        return_value=MagicMock(result_descriptor=ResultSetDescriptor(query_id="fake-qid")),
-    )
-    db_api.telemetry_send_api_usage = AsyncMock(return_value=TelemetrySendResponse())
-    db_api.telemetry_send_wrapper_error = AsyncMock(return_value=TelemetrySendResponse())
-
-    old_client = async_core_driver._client
-    async_core_driver.client = db_api
-    yield db_api
-    async_core_driver.client = old_client
 
 
 @pytest.fixture

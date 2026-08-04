@@ -139,6 +139,7 @@ pub enum ValidationCode {
     UnknownParameter,
     DeprecatedParameter,
     ConflictingParameters,
+    ConflictingWifParameters,
 }
 
 #[derive(Debug, Clone)]
@@ -1025,7 +1026,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     message: "workload_identity_impersonation_path is currently only supported \
                               for GCP, AWS, and AZURE"
                         .into(),
-                    code: ValidationCode::ConflictingParameters,
+                    code: ValidationCode::ConflictingWifParameters,
                 });
             }
             // Azure impersonation is single-hop: exactly one SP client_id allowed
@@ -1200,7 +1201,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     message: format!(
                         "{param} was set but authenticator was not set to WORKLOAD_IDENTITY"
                     ),
-                    code: ValidationCode::ConflictingParameters,
+                    code: ValidationCode::ConflictingWifParameters,
                 });
             }
         }
@@ -2811,9 +2812,9 @@ mod tests {
             issues.iter().any(|i| {
                 i.parameter == "workload_identity_impersonation_path"
                     && i.severity == ValidationSeverity::Error
-                    && i.code == ValidationCode::ConflictingParameters
+                    && i.code == ValidationCode::ConflictingWifParameters
             }),
-            "Expected ConflictingParameters error for impersonation_path with OIDC, got: {issues:?}"
+            "Expected ConflictingWifParameters error for impersonation_path with OIDC, got: {issues:?}"
         );
     }
 
@@ -3093,10 +3094,10 @@ mod tests {
         assert!(
             issues.iter().any(|i| {
                 i.parameter == "workload_identity_provider"
-                    && i.code == ValidationCode::ConflictingParameters
+                    && i.code == ValidationCode::ConflictingWifParameters
                     && i.severity == ValidationSeverity::Error
             }),
-            "Expected ConflictingParameters warning for workload_identity_provider, got: {issues:?}"
+            "Expected ConflictingWifParameters warning for workload_identity_provider, got: {issues:?}"
         );
     }
 
@@ -3115,9 +3116,9 @@ mod tests {
         assert!(
             issues.iter().any(|i| {
                 i.parameter == "workload_identity_entra_resource"
-                    && i.code == ValidationCode::ConflictingParameters
+                    && i.code == ValidationCode::ConflictingWifParameters
             }),
-            "Expected ConflictingParameters for workload_identity_entra_resource, got: {issues:?}"
+            "Expected ConflictingWifParameters for workload_identity_entra_resource, got: {issues:?}"
         );
     }
 
@@ -3136,9 +3137,9 @@ mod tests {
         assert!(
             issues.iter().any(|i| {
                 i.parameter == "workload_identity_impersonation_path"
-                    && i.code == ValidationCode::ConflictingParameters
+                    && i.code == ValidationCode::ConflictingWifParameters
             }),
-            "Expected ConflictingParameters for workload_identity_impersonation_path, got: {issues:?}"
+            "Expected ConflictingWifParameters for workload_identity_impersonation_path, got: {issues:?}"
         );
     }
 
@@ -3154,15 +3155,15 @@ mod tests {
         assert!(
             issues.iter().any(|i| {
                 i.parameter == "workload_identity_provider"
-                    && i.code == ValidationCode::ConflictingParameters
+                    && i.code == ValidationCode::ConflictingWifParameters
             }),
-            "Expected ConflictingParameters when authenticator absent, got: {issues:?}"
+            "Expected ConflictingWifParameters when authenticator absent, got: {issues:?}"
         );
     }
 
     #[test]
     fn validate_wif_params_with_wif_auth_no_conflict_error() {
-        // WIF params + WORKLOAD_IDENTITY auth → no ConflictingParameters
+        // WIF params + WORKLOAD_IDENTITY auth → no ConflictingWifParameters
         let mut pairs = wif_base_settings("AWS");
         pairs.push((
             "workload_identity_entra_resource",
@@ -3177,14 +3178,14 @@ mod tests {
         assert!(
             !issues
                 .iter()
-                .any(|i| i.code == ValidationCode::ConflictingParameters
+                .any(|i| i.code == ValidationCode::ConflictingWifParameters
                     && [
                         "workload_identity_provider",
                         "workload_identity_entra_resource",
                         "workload_identity_impersonation_path"
                     ]
                     .contains(&i.parameter.as_str())),
-            "WIF params with WORKLOAD_IDENTITY auth should not emit ConflictingParameters, got: {issues:?}"
+            "WIF params with WORKLOAD_IDENTITY auth should not emit ConflictingWifParameters, got: {issues:?}"
         );
     }
 }

@@ -34,6 +34,7 @@ from .._internal.logout_config_mapping import (
     logout_config_options_modifier,
 )
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
+    VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
     ConnectionHandle,
     DatabaseHandle,
     WrapperIdentity,
@@ -56,15 +57,12 @@ from ._freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 
 logger = get_logger(__name__)
 
-# Message-substring matching because sf_core's ValidationCode is discarded at the FFI
-# boundary today (ConfigError::Validation collapses to issues.first() in converter.rs,
-# and DriverError's proto has no field carrying ValidationCode or the full issue list
-# for the hard-fail path). Replace with a structured check once ValidationCode is
-# propagated across the FFI boundary (SNOW-3406390).
-_WIF_CONFLICT_MARKERS = (
-    "was not set to WORKLOAD_IDENTITY",
-    "impersonation_path is currently only supported for GCP, AWS, and AZURE",
-)
+
+# Both WIF cross-param guards in sf_core's validate_settings emit a dedicated
+# ValidationCode, so the wrapper can key on the code alone without matching
+# parameter names or message text.
+def _is_wif_conflict(exc: ProgrammingError) -> bool:
+    return exc.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
 
 
 class Connection(ConnectionMixin):
@@ -183,8 +181,13 @@ class Connection(ConnectionMixin):
             # The WIF cross-param guards fire in sf_core only via connection_init
             # (ConnectionConfig::build -> validate_settings), surfaced as errno
             # ER_INVALID_VALUE. Re-map to ER_INVALID_WIF_SETTINGS for legacy parity.
-            if any(marker in str(e) for marker in _WIF_CONFLICT_MARKERS):
-                raise ProgrammingError(msg=str(e), errno=ER_INVALID_WIF_SETTINGS) from e
+            if _is_wif_conflict(e):
+                raise ProgrammingError(
+                    msg=str(e),
+                    errno=ER_INVALID_WIF_SETTINGS,
+                    parameter=e.parameter,
+                    validation_code=e.validation_code,
+                ) from e
             raise
         self._telemetry_client = _InternalTelemetryClient(
             conn_handle=cast(ConnectionHandle, self.conn_handle),

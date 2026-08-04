@@ -10,7 +10,10 @@ import pytest
 
 from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.connection import CURRENT_VERSION_SQL
+from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    VALIDATION_CODE_CONFLICTING_PARAMETERS,
+    VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
     ConfigSetting,
     ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
@@ -469,6 +472,99 @@ class TestDriverIdentity:
         assert identity.language_runtime == platform.python_implementation()
         assert identity.language_version == platform.python_version()
         assert identity.language_compiler == platform.python_compiler()
+
+
+class TestWifConflictErrnoRemap:
+    """Unit tests for the WIF cross-param errno remap in Connection._connect().
+
+    ``connection_init`` surfaces sf_core's WIF cross-param validation failures as a
+    ``ProgrammingError`` with ``errno=ER_INVALID_VALUE`` and structured ``parameter``/
+    ``validation_code`` attributes set by the lower conversion layer. ``_connect()``
+    re-raises with ``errno=ER_INVALID_WIF_SETTINGS`` for legacy parity, and must forward
+    the same ``parameter``/``validation_code`` onto the re-raised exception rather than
+    dropping them.
+    """
+
+    def test_remapped_exception_carries_parameter_and_validation_code(self, mock_db_api):
+        """The remapped ProgrammingError should carry the original parameter/validation_code."""
+        mock_db_api.connection_init.side_effect = ProgrammingError(
+            msg="workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
+            errno=ER_INVALID_VALUE,
+            parameter="workload_identity_provider",
+            validation_code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
+        )
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            Connection(user="test_user", account="test_account")
+
+        assert excinfo.value.errno == ER_INVALID_WIF_SETTINGS
+        assert excinfo.value.parameter == "workload_identity_provider"
+        assert excinfo.value.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
+
+    def test_non_wif_programming_error_is_reraised_unchanged(self, mock_db_api):
+        """A generic CONFLICTING_PARAMETERS error (not WIF) should pass through as-is."""
+        mock_db_api.connection_init.side_effect = ProgrammingError(
+            msg="Both 'private_key' and 'private_key_file' are set. Please provide only one.",
+            errno=ER_INVALID_VALUE,
+            parameter="private_key",
+            validation_code=VALIDATION_CODE_CONFLICTING_PARAMETERS,
+        )
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            Connection(user="test_user", account="test_account")
+
+        assert excinfo.value.errno == ER_INVALID_VALUE
+        assert excinfo.value.parameter == "private_key"
+
+
+class TestAsyncWifConflictErrnoRemap:
+    """Unit tests for the WIF cross-param errno remap in the async Connection.connect()."""
+
+    def test_remapped_exception_carries_parameter_and_validation_code(self, mock_async_db_api):
+        # reference-driver: local import avoids collection-time ImportError — the
+        # reference driver has no `snowflake.connector.aio`, and pytest.mark.skipif
+        # only skips execution, not module import/collection.
+        import asyncio
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        mock_async_db_api.connection_init.side_effect = ProgrammingError(
+            msg="workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
+            errno=ER_INVALID_VALUE,
+            parameter="workload_identity_provider",
+            validation_code=VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
+        )
+
+        conn = AsyncConnection(user="test_user", account="test_account")
+        with pytest.raises(ProgrammingError) as excinfo:
+            asyncio.run(conn.connect())
+
+        assert excinfo.value.errno == ER_INVALID_WIF_SETTINGS
+        assert excinfo.value.parameter == "workload_identity_provider"
+        assert excinfo.value.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
+
+    def test_non_wif_programming_error_is_reraised_unchanged(self, mock_async_db_api):
+        """A generic CONFLICTING_PARAMETERS error (not WIF) should pass through as-is."""
+        # reference-driver: local import avoids collection-time ImportError — the
+        # reference driver has no `snowflake.connector.aio`, and pytest.mark.skipif
+        # only skips execution, not module import/collection.
+        import asyncio
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        mock_async_db_api.connection_init.side_effect = ProgrammingError(
+            msg="Both 'private_key' and 'private_key_file' are set. Please provide only one.",
+            errno=ER_INVALID_VALUE,
+            parameter="private_key",
+            validation_code=VALIDATION_CODE_CONFLICTING_PARAMETERS,
+        )
+
+        conn = AsyncConnection(user="test_user", account="test_account")
+        with pytest.raises(ProgrammingError) as excinfo:
+            asyncio.run(conn.connect())
+
+        assert excinfo.value.errno == ER_INVALID_VALUE
+        assert excinfo.value.parameter == "private_key"
 
 
 class TestClose:
