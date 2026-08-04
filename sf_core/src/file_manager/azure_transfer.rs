@@ -1107,9 +1107,10 @@ fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureR
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
-        // Proxy wiring for the Azure client lands in a follow-up PR; None here
-        // preserves the historical env-var-only behaviour (no behaviour change).
-        None,
+        // Honour the connection's explicit proxy (proxy_host/proxy_port/no_proxy)
+        // and its use_proxy_env env-detection policy for Azure Blob transfers —
+        // the same logic the GS/REST client uses.
+        Some(&stage_info.proxy_config),
         stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
