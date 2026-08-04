@@ -86,10 +86,15 @@ class TestWheelPackaging:
         with zipfile.ZipFile(wheel_path, "r") as whl:
             names = whl.namelist()
 
-            core_lib_suffixes = (".so", ".dll", ".dylib")
-            core_files = [n for n in names if "_core/" in n and any(n.endswith(s) for s in core_lib_suffixes)]
+            # Unix: sf_core_python.abi3.so; Windows: sf_core_python.pyd (abi3 stable ABI).
+            core_files = [
+                n
+                for n in names
+                if "_core/" in n and "sf_core_python" in n and n.endswith((".so", ".pyd", ".dll", ".dylib"))
+            ]
             assert core_files, (
-                f"sf_core native library not found in wheel. Wheel _core contents: {[n for n in names if '_core' in n]}"
+                f"sf_core_python extension not found in wheel. "
+                f"Wheel _core contents: {[n for n in names if '_core' in n]}"
             )
 
             pb2_files = [n for n in names if n.endswith("_pb2.py")]

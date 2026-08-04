@@ -21,7 +21,7 @@ trap cleanup EXIT INT TERM
 # Create temp directory
 mkdir -p tests/performance/.tmp
 
-# Step 1: Build sf-core-builder (shared with ODBC — builds libsf_core.so)
+# Step 1: Build sf-core-builder (shared with ODBC — builds libsf_core.so + sf_core_python.abi3.so)
 echo "→ Building sf-core-builder..."
 docker build -f tests/performance/drivers/Dockerfile.sf_core_builder \
   --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \
@@ -31,26 +31,26 @@ echo ""
 echo "✓ sf-core-builder ready"
 echo ""
 
-# Step 2: Extract libsf_core.so from the builder image
-echo "→ Extracting libsf_core.so from sf-core-builder..."
+# Step 2: Extract sf_core_python.abi3.so from the builder image
+echo "→ Extracting sf_core_python.abi3.so from sf-core-builder..."
 docker rm -f sf-core-extract >/dev/null 2>&1 || true
 docker create --name sf-core-extract sf-core-builder:latest >/dev/null 2>&1
-if docker cp sf-core-extract:/workdir/libsf_core.so tests/performance/.tmp/libsf_core.so 2>/dev/null; then
-    echo "✓ Extracted libsf_core.so"
+if docker cp sf-core-extract:/workdir/sf_core_python.abi3.so tests/performance/.tmp/sf_core_python.abi3.so 2>/dev/null; then
+    echo "✓ Extracted sf_core_python.abi3.so"
 else
-    echo "Error: Could not extract libsf_core.so"
+    echo "Error: Could not extract sf_core_python.abi3.so"
     docker rm -f sf-core-extract >/dev/null 2>&1
     exit 1
 fi
 docker rm -f sf-core-extract >/dev/null 2>&1
 
-# Get Rust version from sf-core-builder (the version that actually built libsf_core.so)
+# Get Rust version from sf-core-builder (the version that actually built sf_core_python)
 RUST_VERSION=$(docker run --rm sf-core-builder:latest rustc --version 2>/dev/null | awk '{print $2}' | cut -d. -f1,2 || echo "NA")
 echo "${RUST_VERSION}" > tests/performance/.tmp/rust_version
 echo "✓ Rust version: ${RUST_VERSION}"
 echo ""
 
-# Step 3: Build universal driver image (uses pre-built libsf_core.so, skips cargo build)
+# Step 3: Build universal driver image (uses pre-built sf_core_python.abi3.so, skips cargo build)
 echo "→ Building universal driver image..."
 docker build -f tests/performance/drivers/python/Dockerfile \
   --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \

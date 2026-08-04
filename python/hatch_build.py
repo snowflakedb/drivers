@@ -326,7 +326,11 @@ class BuildHook(BuildHookInterface):
         cmd.run()
 
     def _build_core(self) -> None:
-        """Build the Rust core library in release mode for distribution."""
+        """Build the PyO3 python_bridge crate in release mode for distribution.
+
+        Produces sf_core_python.<ext> (a native Python extension module) that
+        replaces the old ctypes-loaded libsf_core cdylib.
+        """
 
         if os.environ.get("SKIP_CORE_BUILD", "").lower() in self.POSITIVE_VALUES:
             return
@@ -339,7 +343,7 @@ class BuildHook(BuildHookInterface):
 
         if not cargo_manifest.exists():
             warnings.warn(
-                "Cargo.toml not found. Cannot build sf_core native extension. "
+                "Cargo.toml not found. Cannot build sf_core_python native extension. "
                 "Ensure symlinks are set up (ln -s ../Cargo.toml Cargo.toml) or "
                 "install from a pre-built wheel.",
                 stacklevel=1,
@@ -352,7 +356,7 @@ class BuildHook(BuildHookInterface):
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build the Rust core library in release mode with optimizations.
+        # Build the python_bridge PyO3 extension in release mode with optimizations.
         # On Windows ARM64, disable strip — strip=true on a cdylib removes
         # the .pdata exception-unwind tables, causing WinError 127 at load time.
         extra_cargo_args: list[str] = []
@@ -361,7 +365,7 @@ class BuildHook(BuildHookInterface):
 
         # Enable compile-time perf instrumentation for local builds.
         if os.environ.get("SF_PERF_METRICS", "").lower() in ("1", "true"):
-            extra_cargo_args.extend(["--features", "perf_timing"])
+            extra_cargo_args.extend(["--features", "sf_core/perf_timing"])
 
         # Use a stable target dir when CORE_CARGO_TARGET_DIR is set (enables
         # incremental Rust compilation and CI caching). Otherwise fall back to a
@@ -379,7 +383,7 @@ class BuildHook(BuildHookInterface):
                 "build",
                 "--release",
                 "--package",
-                "sf_core",
+                "python_bridge",
                 "--manifest-path",
                 str(cargo_manifest),
                 "--target-dir",
@@ -387,12 +391,21 @@ class BuildHook(BuildHookInterface):
                 *extra_cargo_args,
             ]
 
+            # PYO3_BUILD_EXTENSION_MODULE=1 tells PyO3 to not link libpython
+            # (required for abi3 extensions and manylinux compliance).
+            cargo_env = {
+                **os.environ,
+                "PYO3_PYTHON": sys.executable,
+                "PYO3_BUILD_EXTENSION_MODULE": "1",
+            }
+
             try:
                 result = subprocess.run(
                     cargo_args,
                     check=True,
                     capture_output=True,
                     text=True,
+                    env=cargo_env,
                 )
                 print(result.stdout)
             except subprocess.CalledProcessError as e:
@@ -410,21 +423,27 @@ class BuildHook(BuildHookInterface):
             # Bundling them into the wheel causes spurious load errors.
             found_core = False
             for file in release_dir.iterdir():
-                if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
-                    dest = target_dir / file.name
-                    tmp = target_dir / (file.name + ".tmp")
-                    shutil.copy2(file, tmp)
-                    os.replace(tmp, dest)
-                    found_core = True
+                if not file.is_file() or "sf_core_python" not in file.name:
+                    continue
+                if file.suffix not in (".dylib", ".so", ".dll"):
+                    continue
+                # PyO3 abi3 cdylib: sf_core_python.abi3.so (Unix) / sf_core_python.pyd (Windows).
+                dest_name = "sf_core_python.pyd" if sys.platform == "win32" else "sf_core_python.abi3.so"
+                dest = target_dir / dest_name
+                tmp = target_dir / (dest_name + ".tmp")
+                shutil.copy2(file, tmp)
+                os.replace(tmp, dest)
+                found_core = True
+                break
             if not found_core:
                 raise Exception(
-                    f"No shared library (.dll/.so/.dylib) found in {release_dir}"
+                    f"No sf_core_python shared library (.dll/.so/.dylib) found in {release_dir}"
                 )
 
-            # sf_core.dll is built with OPENSSL_STATIC=1 (arm64-windows-static-md triplet),
-            # which embeds OpenSSL at link time — sf_core.dll has no runtime OpenSSL DLL dep.
+            # sf_core_python.pyd is built with OPENSSL_STATIC=1 (arm64-windows-static-md triplet),
+            # which embeds OpenSSL at link time — sf_core_python.pyd has no runtime OpenSSL DLL dep.
             # Dynamic OpenSSL (arm64-windows triplet) would require these DLLs to be
-            # co-located with sf_core.dll, because Python 3.8+ ctypes uses restricted DLL
+            # co-located with sf_core_python.pyd, because Python 3.8+ uses restricted DLL
             # search (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) that does NOT include PATH.
             # The bundling code below is a safety net for non-static builds.
             if sys.platform == "win32":
