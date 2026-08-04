@@ -33,6 +33,8 @@ class ResultMetadata(NamedTuple):
         """Create a ``ResultMetadata`` from a protobuf ``ColumnMetadata``."""
         type_code = get_type_code(col.type)
 
+        # display_size (char count) only applies to string types. For numeric types,
+        # proto `length` carries precision — not a character count — so we leave it None.
         display_size = (
             col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
         )
@@ -70,9 +72,10 @@ class ResultMetadataV2:
     that gap; ``vector_dimension`` is fully populated from the ``dimension``
     proto field.
 
-    Note: ``_is_nullable`` is stored as a private attribute (not just a
-    property) because Snowpark accesses it directly on nested ARRAY/MAP element
-    metadata objects.
+    Note: ``_is_nullable`` is exposed both as the ``is_nullable`` public property
+    and as the ``_is_nullable`` private attribute, because Snowpark accesses the
+    private attribute directly on nested ARRAY/MAP element metadata objects
+    (``obj._is_nullable``). Both must exist by their exact names.
     """
 
     __slots__ = (
@@ -183,6 +186,8 @@ class ResultMetadataV2:
     def from_column(cls, col: Any) -> ResultMetadataV2:
         """Build from a proto ``ColumnMetadata`` message."""
         type_code = get_type_code(col.type)
+        # display_size (char count) only applies to string types. For numeric types,
+        # proto `length` carries precision — not a character count — so we leave it None.
         display_size = (
             col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
         )
