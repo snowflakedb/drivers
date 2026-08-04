@@ -863,6 +863,7 @@ behavior_differences:
     description: |
       GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
       matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+
   48:
     name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
     status: allowed
@@ -895,3 +896,24 @@ behavior_differences:
       legacy JDBC never did. sf_core::validate_settings now rejects it uniformly (ConflictingParameters,
       Error). Unlike entry 48, this is a genuine new rejection for JDBC, not a relocated one — allowed as
       a bugfix since silently accepting a no-op param combination is itself a latent bug.
+
+  50:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: legacy snowflake-jdbc hardcodes
+      `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on both clouds.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
+      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
+      parser, which validates several sibling fields but never reads `EncryptionLibrary`. GS's
+      own internal C++ encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather
+      than `"Java 5.3.0"` on its GCS path --
+      the same self-identify-honestly pattern UD follows. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
+      diagnostics during the mixed-fleet rollout period.

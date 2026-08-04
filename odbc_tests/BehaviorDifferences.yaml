@@ -2002,6 +2002,7 @@ behavior_differences:
     description: |
       Applications that pattern-match diagnostic message text against the literal "[Snowflake][Support]"
       prefix must update their pattern to "[Snowflake][Snowflake ODBC Driver]".
+
   111:
     name: "SQLCancelHandle(DBC) returns HY010 when an associated statement is mid-async or in data-at-execution"
     status: unknown
@@ -2026,3 +2027,27 @@ behavior_differences:
       or when SQLBrowseConnect / streamed parameters leave the connection mid NEED_DATA / param
       data available. Applications that called SQLCancelHandle(DBC) during statement async/DAE and
       expected SQL_SUCCESS will now see HY010; they should cancel the statement handle instead.
+
+  112:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: the legacy driver (libsnowflakeclient) hardcodes
+      `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on its Azure builder, but its own
+      GCS builder emits a different literal, `"openssl 1.1.1i"` -- proof this field is a
+      majority convention, not an enforced constant, even within one driver.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, matching the same self-identify-honestly instinct ODBC's own GCS
+      builder already follows. Confirmed no reader anywhere consumes this value: not the four
+      legacy drivers' decrypt paths, not UD's own, and not GS's own server-side parser, which
+      validates several sibling fields but never reads `EncryptionLibrary`. GS's own internal
+      C++ encryption library independently emits `"OpenSSL 1.0.1e-fips"` on its GCS path, not
+      `"Java 5.3.0"` --
+      corroborating the pattern at the server side too. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
+      diagnostics during the mixed-fleet rollout period.
