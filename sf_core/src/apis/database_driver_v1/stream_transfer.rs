@@ -313,9 +313,12 @@ impl DatabaseDriverV1 {
 
             // The file transfer itself uses the put/get retry policy (distinct
             // from the query policy that drove the GS PUT above).
-            let put_get_policy = {
+            let (put_get_policy, proxy_config) = {
                 let conn = conn_ptr.lock().await;
-                crate::config::retry::RetryPolicy::put_get(&conn.connection_seed)
+                (
+                    crate::config::retry::RetryPolicy::put_get(&conn.connection_seed),
+                    conn.proxy_config(),
+                )
             };
 
             let rowset_data = build_and_upload_stream(
@@ -324,6 +327,7 @@ impl DatabaseDriverV1 {
                 Some(refresh_ctx),
                 use_s3_regional_url,
                 &put_get_policy,
+                proxy_config,
                 source,
             )
             .await
@@ -393,20 +397,25 @@ impl DatabaseDriverV1 {
             )
             .await?;
 
-            let (use_s3_regional_url, unsafe_file_write) = {
+            let (use_s3_regional_url, unsafe_file_write, proxy_config) = {
                 let conn = conn_ptr.lock().await;
                 let unsafe_file_write = conn.unsafe_file_write();
                 let use_s3_regional_url = conn.use_s3_regional_url_session_param().await;
-                (use_s3_regional_url, unsafe_file_write)
+                (use_s3_regional_url, unsafe_file_write, conn.proxy_config())
             };
 
-            let resolved = resolve_download_target(
+            let mut resolved = resolve_download_target(
                 response,
                 self.wrapper_presets.put_get_resultset_flavor.clone(),
                 use_s3_regional_url,
                 unsafe_file_write,
                 &source_filename,
             )?;
+
+            // Zero-disk streaming GET builds `StageInfo` outside
+            // `perform_put_get_transfer`, so copy the connection's proxy
+            // settings onto it explicitly.
+            resolved.stage_info.proxy_config = proxy_config;
 
             let refresh_ctx = StageInfoRefreshContext {
                 sql: get_sql,

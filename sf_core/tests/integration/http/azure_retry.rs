@@ -39,6 +39,7 @@ fn azure_stage(mock_uri: &str) -> StageInfo {
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: Some("test".to_string()),
     }
 }
@@ -289,6 +290,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: Some("test".to_string()),
     };
 

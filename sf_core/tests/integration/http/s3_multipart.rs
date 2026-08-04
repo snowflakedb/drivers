@@ -139,6 +139,7 @@ fn s3_stage(endpoint: &str) -> StageInfo {
         storage_account: None,
         tls_config: sf_core::tls::config::TlsConfig::default(),
         crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
     }
 }
 

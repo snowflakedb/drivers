@@ -1174,6 +1174,18 @@ impl Connection {
             .unwrap_or_default()
     }
 
+    /// The resolved proxy config for this connection, read from the established
+    /// [`ClientInfo`]. Falls back to the default `ProxyConfig` before login
+    /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP
+    /// clients on the PUT/GET path to honour `proxy_host`/`proxy_port`/
+    /// `no_proxy`/`use_proxy_env` — mirroring the GS/REST connection client.
+    pub(crate) fn proxy_config(&self) -> crate::tls::config::ProxyConfig {
+        self.client_info
+            .as_ref()
+            .map(|ci| ci.proxy_config.clone())
+            .unwrap_or_default()
+    }
+
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
     pub(crate) fn query_transport_parameters(&self) -> Result<QueryParameters, ApiError> {
         let empty = ParamStore::new();

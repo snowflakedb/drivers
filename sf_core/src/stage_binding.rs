@@ -221,9 +221,13 @@ async fn upload_blob(
     csv_bytes: &[u8],
     data: &Data,
 ) -> Result<(), StageBindingError> {
-    let single = data
+    let mut single = data
         .to_bind_stage_upload_data(ctx.use_s3_regional_url_session_param)
         .context(MalformedPutResponseSnafu)?;
+
+    // This path builds `StageInfo` outside `perform_put_get_transfer`, so copy
+    // the connection's proxy settings onto it explicitly.
+    single.stage_info.proxy_config = ctx.query_parameters.client_info.proxy_config.clone();
 
     // No `StageInfoRefresher` is needed here: CSV binding payloads are small
     // (a few KB at most) and upload in well under the storage-credential
@@ -231,10 +235,10 @@ async fn upload_blob(
     // is therefore not a realistic concern, unlike the large-file PUT/GET path
     // where files can run for minutes.
     //
-    // Note: this internal path builds `StageInfo` outside
-    // `perform_put_get_transfer`, so the storage client uses the default TLS
-    // version window rather than the connection's narrowed one (see
-    // adr/tls_version_enforcement_implementation_notes.md, "Known gaps").
+    // Note: this path still uses the default TLS version window rather than the
+    // connection's narrowed one (see
+    // adr/tls_version_enforcement_implementation_notes.md, "Known gaps"); only
+    // the proxy settings are threaded here.
     upload_in_memory_file(csv_bytes.to_vec(), single, ctx.put_get_policy, None)
         .await
         .context(UploadSnafu)?;

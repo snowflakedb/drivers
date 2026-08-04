@@ -76,6 +76,7 @@ pub(super) async fn perform_put_get_transfer(
     get_fastfail: bool,
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
+    proxy_config: crate::tls::config::ProxyConfig,
     crl_worker: crate::crl::worker::SharedCrlWorker,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
@@ -101,6 +102,7 @@ pub(super) async fn perform_put_get_transfer(
                 )
                 .context(FileTransferPreparationSnafu)?;
             file_upload_data.stage_info.tls_config = tls_config.clone();
+            file_upload_data.stage_info.proxy_config = proxy_config.clone();
             file_upload_data.stage_info.crl_worker = crl_worker.clone();
             let upload_results = upload_files(
                 &file_upload_data,
@@ -127,6 +129,7 @@ pub(super) async fn perform_put_get_transfer(
                     }
                 })?;
             file_download_data.stage_info.tls_config = tls_config;
+            file_download_data.stage_info.proxy_config = proxy_config;
             file_download_data.stage_info.crl_worker = crl_worker;
             let download_results = download_files(
                 file_download_data,
@@ -162,9 +165,10 @@ pub(super) async fn build_and_upload_stream(
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
     put_get_policy: &RetryPolicy,
+    proxy_config: crate::tls::config::ProxyConfig,
     payload: ByteSource,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
-    let upload_data = data
+    let mut upload_data = data
         .to_file_upload_data(
             wrapper_presets.put_get_resultset_flavor.clone(),
             wrapper_presets.legacy_odbc_compression_autodetect,
@@ -196,6 +200,10 @@ pub(super) async fn build_and_upload_stream(
     let refresher_handle = refresher
         .as_ref()
         .map(|r| r as &dyn file_manager::StageInfoRefresher);
+
+    // Streaming PUT builds `StageInfo` outside `perform_put_get_transfer`, so
+    // copy the connection's proxy settings onto it explicitly.
+    upload_data.stage_info.proxy_config = proxy_config;
 
     let single = SingleUploadData {
         // `upload_prepared_source` reads from `source` (below), not this

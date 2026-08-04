@@ -1107,6 +1107,9 @@ fn create_azure_client(stage_info: &StageInfo) -> Result<reqwest::Client, AzureR
     let builder = crate::tls::client::configure_tls_builder(
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
+        // Proxy wiring for the Azure client lands in a follow-up PR; None here
+        // preserves the historical env-var-only behaviour (no behaviour change).
+        None,
         stage_info.crl_worker.clone(),
     )
     .map_err(|e| {
@@ -1804,6 +1807,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: overrides
                 .storage_account
                 .or(Some("mystorageaccount".to_string())),
@@ -2123,6 +2127,7 @@ mod tests {
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
             crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: Some("test".to_string()),
         }
     }
