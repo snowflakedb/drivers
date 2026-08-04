@@ -1,5 +1,6 @@
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
+use crate::api::diagnostic::WithDiagnosticInfo;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBatchConcatSnafu, ArrowBatchReadSnafu,
@@ -1179,12 +1180,10 @@ fn apply_execute_response(
                 .required("ResultSet handle is required")?;
             let query_id = descriptor.query_id.clone();
             let stream = fetch_stream_and_release(rs_handle)?;
-            let execute_state = create_execute_state_from_stream(
-                stream,
-                descriptor.statement_type_id,
-                descriptor.rows_affected,
-                origin,
-            )?;
+            let statement_type_id = descriptor.statement_type_id;
+            let rows_affected = descriptor.rows_affected;
+            let execute_state =
+                create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -1192,6 +1191,9 @@ fn apply_execute_response(
                     ..
                 }
             );
+            // Populate SQL_DIAG_ROW_COUNT / SQL_DIAG_DYNAMIC_FUNCTION(CODE).
+            stmt.get_diag_info_mut()
+                .set_execution_info(statement_type_id, rows_affected);
             set_state(stmt, execute_state);
             stmt.last_query_id = Some(query_id).filter(|s| !s.is_empty());
             if is_zero_dml {
