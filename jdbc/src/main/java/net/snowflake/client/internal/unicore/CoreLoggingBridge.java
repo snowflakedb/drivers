@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
  * net.snowflake.client.internal.log.CoreLogger} calls {@link #logEvent} so a Java log is re-emitted
  * through core's single tracing pipeline (file, OTLP, in-band telemetry) and then handed back to
  * the originating Java logger by the bridge's {@code SFLoggerLayer}. See {@code
- * doc/logging/logging-architecture.md}.
+ * docs/logging/logging-architecture.md}.
  *
  * <p>{@link #logEvent} calls {@link NativeLibraryLoader#init()} before the first native call; a
  * genuine load failure surfaces as a {@code Throwable} the caller treats as "core unavailable" and

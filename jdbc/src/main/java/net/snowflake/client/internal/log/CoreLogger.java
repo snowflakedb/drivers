@@ -7,7 +7,7 @@ import net.snowflake.client.internal.unicore.CoreLoggingBridge;
 
 /**
  * Routes wrapper logs through {@code sf_core} and back onto the configured delivery logger. See
- * {@code doc/logging/logging-architecture.md}.
+ * {@code docs/logging/logging-architecture.md}.
  */
 @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
 public class CoreLogger extends AbstractSFLogger {

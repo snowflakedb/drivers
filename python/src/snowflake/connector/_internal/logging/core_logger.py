@@ -4,7 +4,7 @@
 Wrapper logs are sent to sf_core over a direct FFI call so every tracing layer
 (file, OTLP, Snowflake in-band telemetry) sees them, then come back through the
 FFI callback onto the originating module logger. See
-``doc/logging/logging-architecture.md``.
+``docs/logging/logging-architecture.md``.
 
 This lives in its own module (rather than in :mod:`config`) so the FFI binding
 ``sf_core_log_event`` can be imported at module top level. ``logging.config`` is

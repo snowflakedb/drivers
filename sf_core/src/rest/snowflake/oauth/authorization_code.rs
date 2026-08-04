@@ -120,7 +120,7 @@ pub(crate) struct AcquiredOAuthToken {
 /// Closure-shaped browser launcher. Production callers go through
 /// [`crate::rest::snowflake::browser::open_url`] (WSL-safe; see
 /// SNOW-3649282) with a stdout paste fallback (drift C.6 — the fallback
-/// URL is stdout per `doc/oauth.md` §3), and only after the URL passes
+/// URL is stdout per `features/auth/NOMIRROR/oauth.md` §3), and only after the URL passes
 /// [`crate::rest::snowflake::browser::validate_browser_url`]; tests can
 /// substitute a deterministic driver that pokes the loopback directly.
 ///
