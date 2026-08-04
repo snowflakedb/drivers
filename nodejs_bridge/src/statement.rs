@@ -43,9 +43,9 @@ impl Statement {
     pub async fn get_next_row(&self) -> Result<Option<Vec<SqlValue>>> {
         let state = Arc::clone(&self.stream_state);
 
-        // `next_row` may block; run on the blocking pool so the Node event
+        // `next_row` may block; run on napi's blocking pool so the Node event
         // loop stays responsive.
-        tokio::task::spawn_blocking(move || state.lock().unwrap().next_row())
+        spawn_blocking(move || state.lock().unwrap().next_row())
             .await
             .unwrap()
             .map_err(to_napi_err)

@@ -9,6 +9,7 @@ export declare class Connection {
   connect(): Promise<void>
   execute(query: string): Promise<Statement>
   getQueryResult(queryId: string): Promise<Statement>
+  destroy(): Promise<void>
 }
 
 export declare class Statement {
