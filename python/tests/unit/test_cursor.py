@@ -13,7 +13,11 @@ import pytest
 from snowflake.connector._internal.api_client.client_api import CHUNK_SIZE, async_core_driver, core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle, parse_stage_binding_threshold
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
-from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_NO_PYARROW
+from snowflake.connector._internal.errorcode import (
+    ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT,
+    ER_INVALID_VALUE,
+    ER_NO_PYARROW,
+)
 from snowflake.connector._internal.extras import (
     MissingOptionalDependency,
 )
@@ -1664,7 +1668,11 @@ class TestResetIntegration:
         assert cursor._binding_data is None
 
     def test_executemany_calls_reset_once_before_loop(self, cursor, mock_connection):
-        """executemany() calls reset() once before the loop, not for each execute."""
+        """executemany() calls reset() once before the loop, not for each execute.
+
+        Uses UPDATE (not INSERT) so this exercises the per-row client-side
+        binding fallback path rather than the multi-row INSERT rewrite.
+        """
         mock_connection.paramstyle = ParamStyle.PYFORMAT
         cursor._query_result.rowcount = 100
 
@@ -1672,7 +1680,7 @@ class TestResetIntegration:
             with patch.object(cursor, "_execute") as mock_execute:
                 mock_execute.return_value = cursor
                 cursor._query_result.rowcount = 1
-                cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
+                cursor.executemany("UPDATE t SET x = %s", [(1,), (2,), (3,)])
 
         # reset should be called once, not 3 times
         mock_reset.assert_called_once()
@@ -2712,6 +2720,92 @@ class TestParamsAliasAndForceQmark:
         assert request.bindings is not None  # flag survived to inner execute()
         sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
         assert sql_request.query == "INSERT INTO t VALUES (%s)"  # not interpolated
+
+
+class TestExecutemanyMultirowInsertRewrite:
+    """Unit tests for the pyformat/format multi-row INSERT rewrite in executemany().
+
+    For client-side binding (pyformat/format paramstyle), executemany() on an
+    INSERT rewrites the per-row VALUES clause into a single multi-row INSERT
+    and issues one execute_query call instead of one per row.
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        cur = SnowflakeCursor(mock_connection)
+        yield cur
+        cur.close()
+
+    def test_should_rewrite_simple_multirow_insert_for_pyformat(self, cursor, mock_core_client):
+        """A pyformat INSERT with positional params is sent as one multi-row INSERT."""
+        cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (1),(2),(3)"
+
+    def test_should_rewrite_with_named_pyformat_dict_params(self, cursor, mock_core_client):
+        """A pyformat INSERT with named (dict) params is rewritten the same way."""
+        cursor.executemany(
+            "INSERT INTO t VALUES (%(id)s, %(name)s)",
+            [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (1, 'Alice'),(2, 'Bob')"
+
+    def test_should_rewrite_insert_with_parse_json_nested_parens(self, cursor, mock_core_client):
+        """A VALUES clause containing nested function-call parens (e.g. PARSE_JSON)
+        is extracted correctly by the balanced-parens parser."""
+        cursor.executemany(
+            "INSERT INTO t (col) VALUES (PARSE_JSON(%(col)s))",
+            [{"col": '{"a": 1}'}],
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t (col) VALUES (PARSE_JSON('{\"a\": 1}'))"
+
+    def test_should_strip_block_comments_before_extracting_values(self, cursor, mock_core_client):
+        """A comment containing text that looks like a VALUES clause must not
+        confuse the search for the real VALUES clause."""
+        cursor.executemany(
+            "INSERT INTO t /* legacy: VALUES (0) */ VALUES (%s)",
+            [(1,), (2,)],
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t /* legacy: VALUES (0) */ VALUES (1),(2)"
+
+    def test_should_not_rewrite_update_statements(self, cursor, mock_core_client):
+        """UPDATE is not an INSERT, so executemany() falls back to per-row execution."""
+        cursor.executemany("UPDATE t SET x = %s WHERE id = %s", [(1, 10), (2, 20)])
+
+        assert mock_core_client.statement_execute_query.call_count == 2
+
+    def test_should_raise_when_values_clause_missing(self, cursor, mock_core_client):
+        """An INSERT with no VALUES clause cannot be rewritten and raises ProgrammingError."""
+        with pytest.raises(ProgrammingError, match="no VALUES clause found") as exc_info:
+            cursor.executemany("INSERT INTO t", [(1,), (2,)])
+
+        assert exc_info.value.errno == ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT
+        mock_core_client.statement_execute_query.assert_not_called()
 
 
 class TestFileStreamUpload:
