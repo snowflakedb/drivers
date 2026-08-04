@@ -10,20 +10,7 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concurrent_recordsets]") {
-  // Blocked on the new driver. Required to unblock:
-  //   - SQLGetInfo info types (S1C00 - unknown): SQL_ACTIVE_STATEMENTS,
-  //     SQL_DATABASE_NAME, SQL_DEFAULT_TXN_ISOLATION, SQL_TXN_CAPABLE,
-  //     SQL_TXN_ISOLATION_OPTION, SQL_SCROLL_OPTIONS, SQL_SCROLL_CONCURRENCY,
-  //     SQL_POS_OPERATIONS, SQL_LOCK_TYPES, SQL_STATIC_SENSITIVITY,
-  //     SQL_BOOKMARK_PERSISTENCE, SQL_MULT_RESULT_SETS, SQL_NEED_LONG_DATA_LEN,
-  //     SQL_FORWARD_ONLY_CURSOR_ATTRIBUTES1, SQL_STATIC_CURSOR_ATTRIBUTES1,
-  //     SQL_STATIC_CURSOR_ATTRIBUTES2, SQL_KEYSET_CURSOR_ATTRIBUTES1,
-  //     SQL_KEYSET_CURSOR_ATTRIBUTES2.
-  //   - SQLColAttribute fields (S1092 - unknown): SQL_DESC_LABEL, SQL_DESC_UPDATABLE.
-  //   - SQLSetStmtAttr attribute (S1092 - unknown): SQL_ROWSET_SIZE.
-  // Re-run replay_excel against the new driver and remove this skip once implemented.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+TEST_CASE("Replay: excel vba_ado transactions", "[excel][vba_ado][transactions]") {
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
@@ -416,6 +403,18 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     CHECK(numericValue == 0x2u);
   }
 
+  // SQLSetConnectAttr - SQL_ATTR_TXN_ISOLATION
+  {
+    SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)2, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetConnectAttr - SQL_ATTR_AUTOCOMMIT
+  {
+    SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_AUTOCOMMIT, (SQLPOINTER)SQL_AUTOCOMMIT_OFF, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+  }
+
   SQLHSTMT stmt0 = SQL_NULL_HSTMT;
   // SQLAllocHandle - SQLHSTMT
   {
@@ -432,17 +431,17 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_PARAM_BIND_TYPE, (SQLPOINTER)10, 0);
     WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
     UNIX_ONLY {
-      // BD#100: misaligned bind type (10) behaviour differs by driver and platform.
+      // BD#92: misaligned bind type (10) behaviour differs by driver and platform.
       // Old driver: accepted on Linux x86_64, rejected (S1000) on aarch64/macOS.
       // New driver: accepted on all platforms.
       if (get_platform() == PLATFORM::PLATFORM_LINUX && get_arch() == ARCH::ARCH_X86_64) {
         CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
       } else {
-        OLD_DRIVER_ONLY("BD#100") {
+        OLD_DRIVER_ONLY("BD#92") {
           CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0),
                      OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1000"));
         }
-        NEW_DRIVER_ONLY("BD#100") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
+        NEW_DRIVER_ONLY("BD#92") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess()); }
       }
     }
   }
@@ -466,15 +465,6 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
-  // SQLGetInfo - SQL_MULT_RESULT_SETS
-  {
-    char buf[256] = {};
-    SQLSMALLINT len = 0;
-    SQLRETURN ret = SQLGetInfo(dbc0, SQL_MULT_RESULT_SETS, buf, 255, &len);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf) == "N");
-  }
-
   // SQLSetStmtAttr - SQL_ATTR_QUERY_TIMEOUT
   {
     SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_QUERY_TIMEOUT, (SQLPOINTER)30, -6);
@@ -489,10 +479,11 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
 
   // SQLExecDirect
   {
-    SQLRETURN ret = SQLExecDirect(stmt0,
-                                  sqlchar("SELECT ROWKIND, INTVAL, VARCHARVAL\nFROM "
-                                          "ODBCMETADATATESTDB.DATATYPETESTS.ALLDATATYPES\nORDER BY ROWKIND;"),
-                                  SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(
+        stmt0,
+        sqlchar(
+            "INSERT INTO ODBCSCRATCHTESTDB.SCRATCHTESTS.SCRATCHINSERT (LABEL, NUMVAL)\nVALUES ('ado-6 marker', 42);"),
+        SQL_NTS);
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
@@ -501,119 +492,19 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     SQLLEN rowCount = 0;
     SQLRETURN ret = SQLRowCount(stmt0, &rowCount);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(rowCount == 4);
+    CHECK(rowCount == 1);
   }
 
-  // SQLNumResultCols
+  // SQLFreeStmt
   {
-    SQLSMALLINT numCols = 0;
-    SQLRETURN ret = SQLNumResultCols(stmt0, &numCols);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numCols == 3);
-  }
-
-  // SQLNumResultCols
-  {
-    SQLSMALLINT numCols = 0;
-    SQLRETURN ret = SQLNumResultCols(stmt0, &numCols);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numCols == 3);
-  }
-
-  // SQLDescribeCol col 1
-  {
-    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
-    SQLULEN colSize = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt0, 1, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(dataType == 12);
-    CHECK(colSize == 16);
-    CHECK(scale == 0);
-    CHECK(nullable == 1);
-  }
-
-  // SQLColAttribute - SQL_DESC_LABEL
-  {
-    SQLUSMALLINT col = 1;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    char buf[1024] = {};
-    SQLRETURN ret = SQLColAttribute(stmt0, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
+    SQLRETURN ret = SQLFreeStmt(stmt0, SQL_CLOSE);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
   }
 
-  // SQLColAttribute - SQL_DESC_UPDATABLE
+  // SQLFreeStmt
   {
-    SQLUSMALLINT col = 1;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    SQLRETURN ret = SQLColAttribute(stmt0, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
+    SQLRETURN ret = SQLFreeStmt(stmt0, SQL_DROP);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == 2);
-  }
-
-  // SQLDescribeCol col 2
-  {
-    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
-    SQLULEN colSize = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt0, 2, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(dataType == 3);
-    CHECK(colSize == 38);
-    CHECK(scale == 0);
-    CHECK(nullable == 1);
-  }
-
-  // SQLColAttribute - SQL_DESC_LABEL
-  {
-    SQLUSMALLINT col = 2;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    char buf[1024] = {};
-    SQLRETURN ret = SQLColAttribute(stmt0, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLColAttribute - SQL_DESC_UPDATABLE
-  {
-    SQLUSMALLINT col = 2;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    SQLRETURN ret = SQLColAttribute(stmt0, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == 2);
-  }
-
-  // SQLDescribeCol col 3
-  {
-    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
-    SQLULEN colSize = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt0, 3, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(dataType == 12);
-    CHECK(colSize == 256);
-    CHECK(scale == 0);
-    CHECK(nullable == 1);
-  }
-
-  // SQLColAttribute - SQL_DESC_LABEL
-  {
-    SQLUSMALLINT col = 3;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    char buf[1024] = {};
-    SQLRETURN ret = SQLColAttribute(stmt0, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLColAttribute - SQL_DESC_UPDATABLE
-  {
-    SQLUSMALLINT col = 3;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    SQLRETURN ret = SQLColAttribute(stmt0, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == 2);
   }
 
   SQLHSTMT stmt1 = SQL_NULL_HSTMT;
@@ -622,15 +513,6 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc0, &stmt1);
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
     REQUIRE(stmt1 != SQL_NULL_HSTMT);
-  }
-
-  // SQLGetInfo - SQL_MULT_RESULT_SETS
-  {
-    char buf[256] = {};
-    SQLSMALLINT len = 0;
-    SQLRETURN ret = SQLGetInfo(dbc0, SQL_MULT_RESULT_SETS, buf, 255, &len);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
-    CHECK(std::string(buf) == "N");
   }
 
   // SQLSetStmtAttr - SQL_ATTR_QUERY_TIMEOUT
@@ -645,12 +527,14 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
   }
 
+  // Unique temp table name so concurrent CI reference runs don't collide on
+  // CREATE TABLE (Snowflake DDL auto-commits, so a shared ADO6_TMP races).
+  const std::string ado6_tmp = "ODBCSCRATCHTESTDB.SCRATCHTESTS.ADO6_TMP_" + std::to_string(GET_PROCESS_ID());
+
   // SQLExecDirect
   {
-    SQLRETURN ret = SQLExecDirect(stmt1,
-                                  sqlchar("SELECT ROWKIND, DATEVAL, DATEADD('day', -1, TSLTZ) AS TSLTZ FROM "
-                                          "ODBCMETADATATESTDB.DATATYPETESTS.ALLDATATYPES ORDER BY ROWKIND DESC"),
-                                  SQL_NTS);
+    const std::string create_sql = "CREATE TABLE " + ado6_tmp + " (ID INTEGER, NAME VARCHAR(64))";
+    SQLRETURN ret = SQLExecDirect(stmt1, sqlchar(create_sql.c_str()), SQL_NTS);
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
   }
 
@@ -659,377 +543,7 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
     SQLLEN rowCount = 0;
     SQLRETURN ret = SQLRowCount(stmt1, &rowCount);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(rowCount == 4);
-  }
-
-  // SQLNumResultCols
-  {
-    SQLSMALLINT numCols = 0;
-    SQLRETURN ret = SQLNumResultCols(stmt1, &numCols);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(numCols == 3);
-  }
-
-  // SQLNumResultCols
-  {
-    SQLSMALLINT numCols = 0;
-    SQLRETURN ret = SQLNumResultCols(stmt1, &numCols);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(numCols == 3);
-  }
-
-  // SQLDescribeCol col 1
-  {
-    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
-    SQLULEN colSize = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt1, 1, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(dataType == 12);
-    CHECK(colSize == 16);
-    CHECK(scale == 0);
-    CHECK(nullable == 1);
-  }
-
-  // SQLColAttribute - SQL_DESC_LABEL
-  {
-    SQLUSMALLINT col = 1;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    char buf[1024] = {};
-    SQLRETURN ret = SQLColAttribute(stmt1, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLColAttribute - SQL_DESC_UPDATABLE
-  {
-    SQLUSMALLINT col = 1;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    SQLRETURN ret = SQLColAttribute(stmt1, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == 2);
-  }
-
-  // SQLDescribeCol col 2
-  {
-    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
-    SQLULEN colSize = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt1, 2, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(dataType == 9);
-    CHECK(colSize == 10);
-    CHECK(scale == 0);
-    CHECK(nullable == 1);
-  }
-
-  // SQLColAttribute - SQL_DESC_LABEL
-  {
-    SQLUSMALLINT col = 2;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    char buf[1024] = {};
-    SQLRETURN ret = SQLColAttribute(stmt1, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLColAttribute - SQL_DESC_UPDATABLE
-  {
-    SQLUSMALLINT col = 2;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    SQLRETURN ret = SQLColAttribute(stmt1, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == 2);
-  }
-
-  // SQLDescribeCol col 3
-  {
-    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
-    SQLULEN colSize = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt1, 3, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(dataType == 11);
-    CHECK(colSize == 29);
-    CHECK(scale == 9);
-    CHECK(nullable == 1);
-  }
-
-  // SQLColAttribute - SQL_DESC_LABEL
-  {
-    SQLUSMALLINT col = 3;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    char buf[1024] = {};
-    SQLRETURN ret = SQLColAttribute(stmt1, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLColAttribute - SQL_DESC_UPDATABLE
-  {
-    SQLUSMALLINT col = 3;
-    SQLLEN numAttr = 0;
-    SQLSMALLINT strLen = 0;
-    SQLRETURN ret = SQLColAttribute(stmt1, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == 2);
-  }
-
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ROWSET_SIZE, (SQLPOINTER)2, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_TYPE
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)496, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  SQLULEN attr_ptr_1 = 0;
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_ROW_BIND_OFFSET_PTR, (SQLPOINTER)&attr_ptr_1, -4);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_ROW_BIND_OFFSET_PTR, nullptr, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_RETRIEVE_DATA
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_RETRIEVE_DATA, nullptr, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_RETRIEVE_DATA
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_RETRIEVE_DATA, (SQLPOINTER)1, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  SQLULEN attr_ptr_2 = 0;
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ATTR_ROW_BIND_OFFSET_PTR, (SQLPOINTER)&attr_ptr_2, -4);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLBindCol col 1
-  std::vector<char> row_buf_stmt0(2 * 496, 0);
-  {
-    SQLRETURN ret = SQLBindCol(stmt0, 1, SQL_C_CHAR, row_buf_stmt0.data() + 152, 17,
-                               reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 144));
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLBindCol col 2
-  {
-    SQLRETURN ret = SQLBindCol(stmt0, 2, SQL_C_NUMERIC, row_buf_stmt0.data() + 192, 19,
-                               reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 184));
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLBindCol col 3
-  {
-    SQLRETURN ret = SQLBindCol(stmt0, 3, SQL_C_CHAR, row_buf_stmt0.data() + 232, 257,
-                               reinterpret_cast<SQLLEN*>(row_buf_stmt0.data() + 224));
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt0, SQL_ROWSET_SIZE, (SQLPOINTER)1, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_3 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_3(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt0, SQL_FETCH_NEXT, 0, &extfetch_rows_3, extfetch_status_3.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_3 == 1);
-    CHECK(extfetch_status_3[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ROWSET_SIZE, (SQLPOINTER)2, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_TYPE
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)240, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  SQLULEN attr_ptr_4 = 0;
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ATTR_ROW_BIND_OFFSET_PTR, (SQLPOINTER)&attr_ptr_4, -4);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ATTR_ROW_BIND_OFFSET_PTR, nullptr, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_RETRIEVE_DATA
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ATTR_RETRIEVE_DATA, nullptr, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ATTR_RETRIEVE_DATA
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ATTR_RETRIEVE_DATA, (SQLPOINTER)1, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  SQLULEN attr_ptr_5 = 0;
-  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ATTR_ROW_BIND_OFFSET_PTR, (SQLPOINTER)&attr_ptr_5, -4);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLBindCol col 1
-  std::vector<char> row_buf_stmt1(2 * 240, 0);
-  {
-    SQLRETURN ret = SQLBindCol(stmt1, 1, SQL_C_CHAR, row_buf_stmt1.data() + 152, 17,
-                               reinterpret_cast<SQLLEN*>(row_buf_stmt1.data() + 144));
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLBindCol col 2
-  {
-    SQLRETURN ret = SQLBindCol(stmt1, 2, SQL_C_DATE, row_buf_stmt1.data() + 192, 16,
-                               reinterpret_cast<SQLLEN*>(row_buf_stmt1.data() + 184));
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLBindCol col 3
-  {
-    SQLRETURN ret = SQLBindCol(stmt1, 3, SQL_C_TIMESTAMP, row_buf_stmt1.data() + 224, 16,
-                               reinterpret_cast<SQLLEN*>(row_buf_stmt1.data() + 216));
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLSetStmtAttr - SQL_ROWSET_SIZE
-  {
-    SQLRETURN ret = SQLSetStmtAttr(stmt1, SQL_ROWSET_SIZE, (SQLPOINTER)1, -6);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_6 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_6(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt1, SQL_FETCH_NEXT, 0, &extfetch_rows_6, extfetch_status_6.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_6 == 1);
-    CHECK(extfetch_status_6[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_7 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_7(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt0, SQL_FETCH_NEXT, 0, &extfetch_rows_7, extfetch_status_7.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_7 == 1);
-    CHECK(extfetch_status_7[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_8 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_8(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt1, SQL_FETCH_NEXT, 0, &extfetch_rows_8, extfetch_status_8.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_8 == 1);
-    CHECK(extfetch_status_8[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_9 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_9(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt0, SQL_FETCH_NEXT, 0, &extfetch_rows_9, extfetch_status_9.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_9 == 1);
-    CHECK(extfetch_status_9[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_10 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_10(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt1, SQL_FETCH_NEXT, 0, &extfetch_rows_10, extfetch_status_10.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_10 == 1);
-    CHECK(extfetch_status_10[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_11 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_11(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt0, SQL_FETCH_NEXT, 0, &extfetch_rows_11, extfetch_status_11.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_11 == 1);
-    CHECK(extfetch_status_11[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_12 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_12(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt1, SQL_FETCH_NEXT, 0, &extfetch_rows_12, extfetch_status_12.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
-    CHECK(extfetch_rows_12 == 1);
-    CHECK(extfetch_status_12[0] == SQL_ROW_SUCCESS);
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_13 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_13(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt0, SQL_FETCH_NEXT, 0, &extfetch_rows_13, extfetch_status_13.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsNoData());
-  }
-
-  // SQLExtendedFetch
-  SQLULEN extfetch_rows_14 = 0;
-  std::vector<SQLUSMALLINT> extfetch_status_14(2, 0);
-  {
-    SQLRETURN ret = SQLExtendedFetch(stmt1, SQL_FETCH_NEXT, 0, &extfetch_rows_14, extfetch_status_14.data());
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsNoData());
-  }
-
-  // SQLFreeStmt
-  {
-    SQLRETURN ret = SQLFreeStmt(stmt0, SQL_UNBIND);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLFreeStmt
-  {
-    SQLRETURN ret = SQLFreeStmt(stmt0, SQL_CLOSE);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-  }
-
-  // SQLFreeStmt
-  {
-    SQLRETURN ret = SQLFreeStmt(stmt1, SQL_UNBIND);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
+    CHECK(rowCount == -1);
   }
 
   // SQLFreeStmt
@@ -1040,14 +554,256 @@ TEST_CASE("Replay: excel vba_ado concurrent_recordsets", "[excel][vba_ado][concu
 
   // SQLFreeStmt
   {
-    SQLRETURN ret = SQLFreeStmt(stmt0, SQL_DROP);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
+    SQLRETURN ret = SQLFreeStmt(stmt1, SQL_DROP);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
+  }
+
+  SQLHSTMT stmt2 = SQL_NULL_HSTMT;
+  // SQLAllocHandle - SQLHSTMT
+  {
+    SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc0, &stmt2);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+    REQUIRE(stmt2 != SQL_NULL_HSTMT);
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_QUERY_TIMEOUT
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt2, SQL_ATTR_QUERY_TIMEOUT, (SQLPOINTER)30, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_PARAMSET_SIZE
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt2, SQL_ATTR_PARAMSET_SIZE, (SQLPOINTER)1, 0);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLExecDirect
+  {
+    const std::string drop_sql = "DROP TABLE " + ado6_tmp;
+    SQLRETURN ret = SQLExecDirect(stmt2, sqlchar(drop_sql.c_str()), SQL_NTS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLRowCount
+  {
+    SQLLEN rowCount = 0;
+    SQLRETURN ret = SQLRowCount(stmt2, &rowCount);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
+    CHECK(rowCount == -1);
   }
 
   // SQLFreeStmt
   {
-    SQLRETURN ret = SQLFreeStmt(stmt1, SQL_DROP);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
+    SQLRETURN ret = SQLFreeStmt(stmt2, SQL_CLOSE);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLFreeStmt
+  {
+    SQLRETURN ret = SQLFreeStmt(stmt2, SQL_DROP);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLTransact -> SQLEndTran
+  {
+    SQLRETURN ret = SQLEndTran(SQL_HANDLE_DBC, dbc0, SQL_COMMIT);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetConnectAttr - SQL_ATTR_AUTOCOMMIT
+  {
+    SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_AUTOCOMMIT, (SQLPOINTER)SQL_AUTOCOMMIT_ON, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLGetInfo - SQL_CURSOR_COMMIT_BEHAVIOR
+  {
+    char buf[256] = {};
+    SQLSMALLINT len = 0;
+    SQLRETURN ret = SQLGetInfo(dbc0, SQL_CURSOR_COMMIT_BEHAVIOR, buf, 255, &len);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+    SQLUINTEGER numericValue = 0;
+    std::memcpy(&numericValue, buf, sizeof(numericValue));
+    CHECK(numericValue == 0x1u);
+  }
+
+  SQLHSTMT stmt3 = SQL_NULL_HSTMT;
+  // SQLAllocHandle - SQLHSTMT
+  {
+    SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc0, &stmt3);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+    REQUIRE(stmt3 != SQL_NULL_HSTMT);
+  }
+
+  // SQLGetInfo - SQL_MULT_RESULT_SETS
+  {
+    char buf[256] = {};
+    SQLSMALLINT len = 0;
+    SQLRETURN ret = SQLGetInfo(dbc0, SQL_MULT_RESULT_SETS, buf, 255, &len);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+    CHECK(std::string(buf) == "N");
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_QUERY_TIMEOUT
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_QUERY_TIMEOUT, (SQLPOINTER)30, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_PARAMSET_SIZE
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_PARAMSET_SIZE, (SQLPOINTER)1, 0);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLExecDirect
+  {
+    SQLRETURN ret =
+        SQLExecDirect(stmt3, sqlchar("SELECT COUNT(*) FROM ODBCSCRATCHTESTDB.SCRATCHTESTS.SCRATCHINSERT"), SQL_NTS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLRowCount
+  {
+    SQLLEN rowCount = 0;
+    SQLRETURN ret = SQLRowCount(stmt3, &rowCount);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+    CHECK(rowCount == 1);
+  }
+
+  // SQLNumResultCols
+  {
+    SQLSMALLINT numCols = 0;
+    SQLRETURN ret = SQLNumResultCols(stmt3, &numCols);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+    CHECK(numCols == 1);
+  }
+
+  // SQLNumResultCols
+  {
+    SQLSMALLINT numCols = 0;
+    SQLRETURN ret = SQLNumResultCols(stmt3, &numCols);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+    CHECK(numCols == 1);
+  }
+
+  // SQLDescribeCol col 1
+  {
+    SQLSMALLINT dataType = 0, scale = 0, nullable = 0;
+    SQLULEN colSize = 0;
+    SQLRETURN ret = SQLDescribeCol(stmt3, 1, nullptr, 0, nullptr, &dataType, &colSize, &scale, &nullable);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+    CHECK(dataType == 3);
+    CHECK(colSize == 18);
+    CHECK(scale == 0);
+    CHECK(nullable == 0);
+  }
+
+  // SQLColAttribute - SQL_DESC_LABEL
+  {
+    SQLUSMALLINT col = 1;
+    SQLLEN numAttr = 0;
+    SQLSMALLINT strLen = 0;
+    char buf[1024] = {};
+    SQLRETURN ret = SQLColAttribute(stmt3, col, SQL_DESC_LABEL, buf, 1024, &strLen, &numAttr);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLColAttribute - SQL_DESC_UPDATABLE
+  {
+    SQLUSMALLINT col = 1;
+    SQLLEN numAttr = 0;
+    SQLSMALLINT strLen = 0;
+    SQLRETURN ret = SQLColAttribute(stmt3, col, SQL_DESC_UPDATABLE, nullptr, 0, &strLen, &numAttr);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+    CHECK(numAttr == 2);
+  }
+
+  // SQLSetStmtAttr - SQL_ROWSET_SIZE
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ROWSET_SIZE, (SQLPOINTER)2, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_TYPE
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)176, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  SQLULEN attr_ptr_1 = 0;
+  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_ROW_BIND_OFFSET_PTR, (SQLPOINTER)&attr_ptr_1, -4);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_ROW_BIND_OFFSET_PTR, nullptr, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_RETRIEVE_DATA
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_RETRIEVE_DATA, nullptr, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ATTR_RETRIEVE_DATA
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_RETRIEVE_DATA, (SQLPOINTER)1, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  SQLULEN attr_ptr_2 = 0;
+  // SQLSetStmtAttr - SQL_ATTR_ROW_BIND_OFFSET_PTR
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ATTR_ROW_BIND_OFFSET_PTR, (SQLPOINTER)&attr_ptr_2, -4);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLBindCol col 1
+  std::vector<char> row_buf_stmt3(2 * 176, 0);
+  {
+    SQLRETURN ret = SQLBindCol(stmt3, 1, SQL_C_NUMERIC, row_buf_stmt3.data() + 152, 19,
+                               reinterpret_cast<SQLLEN*>(row_buf_stmt3.data() + 144));
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLSetStmtAttr - SQL_ROWSET_SIZE
+  {
+    SQLRETURN ret = SQLSetStmtAttr(stmt3, SQL_ROWSET_SIZE, (SQLPOINTER)1, -6);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLExtendedFetch
+  SQLULEN extfetch_rows_3 = 0;
+  std::vector<SQLUSMALLINT> extfetch_status_3(2, 0);
+  {
+    SQLRETURN ret = SQLExtendedFetch(stmt3, SQL_FETCH_NEXT, 0, &extfetch_rows_3, extfetch_status_3.data());
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+    CHECK(extfetch_rows_3 == 1);
+    CHECK(extfetch_status_3[0] == SQL_ROW_SUCCESS);
+  }
+
+  // SQLFreeStmt
+  {
+    SQLRETURN ret = SQLFreeStmt(stmt3, SQL_UNBIND);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLFreeStmt
+  {
+    SQLRETURN ret = SQLFreeStmt(stmt3, SQL_CLOSE);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
+  }
+
+  // SQLFreeStmt
+  {
+    SQLRETURN ret = SQLFreeStmt(stmt3, SQL_DROP);
+    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
   }
 
   // SQLDisconnect
