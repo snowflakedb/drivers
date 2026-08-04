@@ -1,4 +1,11 @@
 import type { CoreStatementInstance } from '../core/index.js';
+import type { SnowflakeError } from '../error.js';
+
+export type StatementCallback = (
+  err: SnowflakeError | undefined,
+  stmt: RowStatement | FileAndStageBindStatement,
+  rows: Array<unknown> | undefined,
+) => void;
 
 // TODO:
 // Not sure if we actually need to have a wrapper around core statement.

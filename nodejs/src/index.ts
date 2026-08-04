@@ -1,9 +1,14 @@
+import type { SnowflakeError } from './error.js';
 import { CoreConnection, type CoreConnectionInstance } from './core';
 import { collectRows } from './query-result/rows.js';
-import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
+import {
+  RowStatement,
+  FileAndStageBindStatement,
+  type StatementCallback,
+} from './query-result/RowStatement.js';
 
-// TODO: implement SnowflakeError like in old driver
-export type SnowflakeError = Error;
+export { RowStatement, type StatementCallback };
+
 // TODO: implement ConnectionOptions like in old driver
 export type ConnectionOptions = Record<string, string>;
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
@@ -20,16 +25,10 @@ export interface FetchResultOptions {
   complete?: StatementCallback;
 }
 
-export type StatementCallback = (
-  err: SnowflakeError | undefined,
-  stmt: RowStatement | FileAndStageBindStatement,
-  rows: Array<unknown> | undefined,
-) => void;
-
 // TODO:
 // - think whether we should have connection class only in bridge that exposes same api as old driver
 // - think how to export nicer types so we wouldnt have to use typeof
-class Connection {
+export class Connection {
   #core: CoreConnectionInstance;
 
   constructor(options: ConnectionOptions) {
@@ -89,6 +88,13 @@ class Connection {
       });
 
     return rowStatement;
+  }
+
+  destroy(callback?: ConnectionCallback) {
+    this.#core
+      .destroy()
+      .then(() => callback?.(undefined, this))
+      .catch((err) => callback?.(err, this));
   }
 }
 
