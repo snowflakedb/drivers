@@ -771,3 +771,32 @@ behavior_differences:
       "Java 5.3.0" would misidentify which implementation produced the blob, which has real
       diagnostic value during the mixed-fleet rollout period when legacy and universal drivers
       both write objects into the same stages.
+
+  46:
+    name: "Azure EncryptionAgent.EncryptionAlgorithm stays 256; Python-Azure emits 128"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure `encryptiondata` JSON: `EncryptionAgent.EncryptionAlgorithm = "AES_CBC_128"`;
+      `WrappedContentKey.Algorithm = "AES_CBC_256"` in the same blob (self-inconsistent).
+      Origin: commit 4455b4e1 (2017-10-26) introduced both fields self-consistently at 128-bit
+      (`A128KW` + `AES_CBC_128`). Commit 07309aaf (2017-11-03) changed only
+      `WrappedContentKey.Algorithm` to `AES_CBC_256`, without updating the sibling field.
+      No commit, comment, or test treats this as deliberate; `git log -S "AES_CBC_128" --all`
+      shows no revisits since 2017. JDBC had the same class of incomplete edit one week later
+      (cf776907, 2017-11-10), but its `EncryptionAgent` was already 256, so no visible split
+      resulted there.
+    new_driver_behavior: |
+      UD emits `256` for both fields on Azure, matching JDBC-Azure, ODBC-Azure, and GCS.
+      Source-confirmed (Python/JDBC/ODBC): no decrypt path reads this field's value. Python/JDBC
+      deserialize via JSON parsers that never look up `EncryptionAgent`; ODBC's Azure reader
+      slices substrings between the literal delimiters `","Algorithm"` and
+      `","KeyWrappingMetadata"`, keyed on field names, not values. Cross-driver decryption is
+      therefore unaffected either way. Not changed to match Python's `128`: that value is an
+      unrevisited 2017 editing miss, not an intentional legacy behavior, and matching it would
+      newly diverge UD from JDBC/ODBC/GCS. Both fields are static labels in every driver,
+      disconnected from the real per-file cipher (follows QSMK length; recorded separately in
+      `matdesc.keySize`).
