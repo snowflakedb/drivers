@@ -10,7 +10,6 @@ use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::client::create_tls_client_with_config;
 use sf_core::tls::config::TlsConfig;
-use std::fs;
 
 #[test]
 fn should_maintain_session_across_multiple_queries() {
@@ -67,8 +66,8 @@ fn should_refresh_session_proactively() {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
 
     rt.block_on(async {
-        let temp_key_file = private_key_helper::get_private_key_from_parameters(&parameters)
-            .expect("Failed to create private key file");
+        let private_key_pem = private_key_helper::get_private_key_pem_from_parameters(&parameters)
+            .expect("Failed to read private key");
 
         let server_url = parameters
             .get_server_url()
@@ -76,9 +75,7 @@ fn should_refresh_session_proactively() {
 
         let client_info = test_client_info();
 
-        let private_key = SensitiveString::from(
-            fs::read_to_string(temp_key_file.path()).expect("Failed to read private key file"),
-        );
+        let private_key = SensitiveString::from(private_key_pem);
 
         let login_parameters = LoginParameters {
             server_url: server_url.clone(),
