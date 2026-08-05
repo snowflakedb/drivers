@@ -37,7 +37,7 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario: should authenticate using private_key as pem string
     Given Authentication is set to JWT and private key is provided as plaintext PEM
     When Trying to Connect
