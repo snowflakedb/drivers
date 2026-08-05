@@ -9,8 +9,7 @@ from ..logging.config import LoggingConfiguration
 
 
 try:
-    # PyO3 extension; typed stubs (sf_core_python.pyi) will land with stub_gen later.
-    from snowflake.connector._core import sf_core_python  # type: ignore[attr-defined]
+    from snowflake.connector._core import sf_core_python
 except ImportError as err:
     raise OperationalError(
         msg=(

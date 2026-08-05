@@ -22,8 +22,7 @@ import traceback
 
 from typing import TYPE_CHECKING
 
-# PyO3 extension; typed stubs (sf_core_python.pyi) will land with stub_gen later.
-from snowflake.connector._core import sf_core_python  # type: ignore[attr-defined]
+from snowflake.connector._core import sf_core_python
 
 from .config import LoggingConfiguration
 

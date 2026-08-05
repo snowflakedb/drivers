@@ -3,6 +3,7 @@
 members = [
     "sf_core",
     "python_bridge",
+    "python_bridge/stub_gen",
     "proto_utils",
     "error_trace",
     "error_trace_derive",
