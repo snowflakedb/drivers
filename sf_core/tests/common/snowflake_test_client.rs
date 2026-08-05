@@ -78,8 +78,7 @@ impl SnowflakeTestClient {
         setup_logging();
         let mut client = Self::with_default_params();
 
-        let temp_key_file = client.setup_jwt_auth();
-        client.private_key_file = Some(temp_key_file);
+        client.setup_jwt_auth();
         client
     }
 
@@ -87,7 +86,7 @@ impl SnowflakeTestClient {
         setup_logging();
         let mut test_client = Self::with_default_params();
 
-        let temp_key_file = test_client.setup_jwt_auth();
+        test_client.setup_jwt_auth();
 
         test_client
             .client
@@ -98,7 +97,6 @@ impl SnowflakeTestClient {
             })
             .unwrap();
 
-        test_client.private_key_file = Some(temp_key_file);
         test_client
     }
 
@@ -816,16 +814,16 @@ impl SnowflakeTestClient {
         assert!(!error_msg.is_empty(), "Error message should not be empty");
     }
 
-    /// Sets up JWT authentication configuration and returns a private key file
-    fn setup_jwt_auth(&mut self) -> PrivateKeyFile {
+    /// Sets up JWT authentication configuration, passing the PEM directly (no temp file)
+    fn setup_jwt_auth(&mut self) {
         self.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_private_key_from_parameters(&self.parameters)
-            .expect("Failed to create private key file");
-        self.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        let private_key_pem =
+            private_key_helper::get_private_key_pem_from_parameters(&self.parameters)
+                .expect("Failed to read private key");
+        self.set_connection_option("private_key", &private_key_pem);
         if let Some(password) = &self.parameters.private_key_password {
             self.set_connection_option("private_key_password", password);
         }
-        temp_key_file
     }
 
     fn set_options_from_parameters(&self) {

@@ -36,6 +36,20 @@ impl PrivateKeyFile {
     }
 }
 
+/// Return private-key PEM text from test parameters, without materializing a temp file.
+///
+/// Prefers `private_key_file` when set; otherwise joins `private_key_contents`.
+pub fn get_private_key_pem_from_parameters(parameters: &Parameters) -> Result<String, String> {
+    if let Some(path) = parameters.private_key_file.as_ref() {
+        return fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read private key file at {path}: {e}"));
+    }
+    let private_key_contents = parameters.private_key_contents.as_ref().ok_or_else(|| {
+        "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found in parameters.json".to_string()
+    })?;
+    Ok(private_key_contents.join("\n") + "\n")
+}
+
 pub fn get_private_key_from_parameters(parameters: &Parameters) -> Result<PrivateKeyFile, String> {
     if let Some(path) = parameters.private_key_file.as_ref() {
         return Path::new(path)
