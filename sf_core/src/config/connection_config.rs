@@ -211,18 +211,25 @@ fn read_private_key(settings: &ParamStore) -> Result<String, ConfigError> {
         return der_to_pem(private_key_bytes);
     }
 
-    // String (base64-encoded)
-    if let Some(private_key_base64) = settings.get_string(PRIVATE_KEY) {
-        let private_key_bytes = general_purpose::STANDARD
-            .decode(&private_key_base64)
-            .map_err(|e| {
-                InvalidParameterValueSnafu {
-                    parameter: String::from(PRIVATE_KEY),
-                    value: "(redacted)".to_string(),
-                    explanation: format!("Could not decode base64 private key: {e}"),
-                }
-                .build()
-            })?;
+    // String: plaintext PEM, or base64-encoded PEM/DER.
+    // Wrappers such as ODBC/JDBC typically base64-encode PEM before setting
+    // `private_key`; snowflake-sdk-shaped APIs pass PEM text directly.
+    if let Some(private_key_str) = settings.get_string(PRIVATE_KEY) {
+        if private_key_str.trim_start().starts_with("-----BEGIN") {
+            return Ok(private_key_str);
+        }
+
+        let private_key_bytes =
+            general_purpose::STANDARD
+                .decode(&private_key_str)
+                .map_err(|e| {
+                    InvalidParameterValueSnafu {
+                        parameter: String::from(PRIVATE_KEY),
+                        value: "(redacted)".to_string(),
+                        explanation: format!("Could not decode base64 private key: {e}"),
+                    }
+                    .build()
+                })?;
 
         if private_key_bytes.starts_with(b"-----BEGIN") {
             return String::from_utf8(private_key_bytes).map_err(|e| {
@@ -1876,6 +1883,87 @@ mod tests {
             !err_msg.contains("Invalid authenticator"),
             "Should recognize 'snowflake_jwt' (lowercase): {err_msg}"
         );
+    }
+
+    #[test]
+    fn build_jwt_auth_accepts_plaintext_pem_private_key() {
+        // Leading whitespace is ignored when detecting PEM (trim_start).
+        let pem = "\n  -----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFake\n-----END ENCRYPTED PRIVATE KEY-----\n";
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            ("private_key", Setting::String(pem.into())),
+            ("private_key_password", Setting::String("secret".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Jwt {
+                private_key_pem,
+                passphrase,
+                ..
+            } => {
+                assert_eq!(private_key_pem.reveal(), pem);
+                assert_eq!(
+                    passphrase.as_ref().map(|p| p.reveal().as_str()),
+                    Some("secret")
+                );
+            }
+            other => panic!("Expected Jwt auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_jwt_auth_accepts_base64_encoded_pem_private_key() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let pem = "-----BEGIN PRIVATE KEY-----\nMIIFake\n-----END PRIVATE KEY-----\n";
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            (
+                "private_key",
+                Setting::String(STANDARD.encode(pem.as_bytes())),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Jwt {
+                private_key_pem, ..
+            } => {
+                assert_eq!(private_key_pem.reveal(), pem);
+            }
+            other => panic!("Expected Jwt auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_jwt_auth_rejects_invalid_base64_private_key_string() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            ("private_key", Setting::String("not-valid-base64!!!".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let err = ConnectionConfig::build(&settings).unwrap_err();
+        match err {
+            ConfigError::InvalidParameterValue {
+                ref parameter,
+                ref explanation,
+                ..
+            } => {
+                assert_eq!(parameter, "private_key");
+                assert!(
+                    explanation.contains("Could not decode base64 private key"),
+                    "Expected base64 decode explanation, got: {explanation}"
+                );
+            }
+            other => panic!("Expected InvalidParameterValue, got: {other}"),
+        }
     }
 
     #[test]
