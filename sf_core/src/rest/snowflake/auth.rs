@@ -84,6 +84,8 @@ pub struct AuthRequestData {
     pub authenticator: Option<String>,
     #[serde(rename = "SESSION_PARAMETERS", skip_serializing_if = "Option::is_none")]
     pub session_parameters: Option<HashMap<String, serde_json::Value>>,
+    #[serde(rename = "SECONDARY_ROLES", skip_serializing_if = "Option::is_none")]
+    pub secondary_roles: Option<String>,
     #[serde(rename = "CLIENT_CAPABILITIES")]
     pub client_capabilities: AuthRequestClientCapabilities,
     #[serde(rename = "CLIENT_ENVIRONMENT")]

@@ -67,6 +67,7 @@ pub mod param_names {
     pub const SCHEMA: ParamKey = ParamKey("schema");
     pub const WAREHOUSE: ParamKey = ParamKey("warehouse");
     pub const ROLE: ParamKey = ParamKey("role");
+    pub const SECONDARY_ROLES: ParamKey = ParamKey("secondary_roles");
     pub const CONNECTION_NAME: ParamKey = ParamKey("connection_name");
     pub const CUSTOM_ROOT_STORE_PATH: ParamKey = ParamKey("custom_root_store_path");
     pub const VERIFY_HOSTNAME: ParamKey = ParamKey("verify_hostname");
@@ -891,6 +892,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         scopes: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::SECONDARY_ROLES.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Secondary-roles activation mode sent at login (e.g. ALL or NONE)",
+        deprecated_by: None,
+        scopes: &[ParamScope::Connection],
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     // ── TLS ─────────────────────────────────────────────────────────────
     ParamDef {
@@ -2417,6 +2432,18 @@ mod tests {
             assert!(d.used_at_connect, "key {key}");
             assert!(d.mutable_after_connect, "key {key}");
         }
+    }
+
+    #[test]
+    fn secondary_roles_is_connection_scoped_and_immutable_after_connect() {
+        let r = registry();
+        let d = r
+            .resolve("secondary_roles")
+            .expect("expected registry entry for secondary_roles");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(d.used_at_connect);
+        assert!(!d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::String);
     }
 
     #[test]

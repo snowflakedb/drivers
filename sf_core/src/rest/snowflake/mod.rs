@@ -568,6 +568,12 @@ pub async fn auth_request_data(
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
 
+    if let Some(secondary_roles) = login_parameters.secondary_roles.as_deref()
+        && !secondary_roles.is_empty()
+    {
+        data.secondary_roles = Some(secondary_roles.to_uppercase());
+    }
+
     if let Some(params) = session_parameters {
         let json_params = params
             .iter()
@@ -2706,6 +2712,7 @@ mod tests {
             schema: None,
             warehouse: None,
             role: None,
+            secondary_roles: None,
             client_info: test_client_info(),
             session_parameters: None,
             spcs_token: None,
@@ -3176,6 +3183,83 @@ mod tests {
             data.authenticator.as_deref(),
             Some("PROGRAMMATIC_ACCESS_TOKEN")
         );
+    }
+
+    #[test]
+    fn secondary_roles_is_uppercased_in_auth_body() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        for (input, expected) in [
+            ("ALL", "ALL"),
+            ("all", "ALL"),
+            ("All", "ALL"),
+            ("NONE", "NONE"),
+            ("none", "NONE"),
+            ("None", "NONE"),
+            ("DEFAULT", "DEFAULT"),
+            ("default", "DEFAULT"),
+        ] {
+            let login_params = LoginParameters {
+                secondary_roles: Some(input.to_string()),
+                ..test_login_params()
+            };
+            let data = rt
+                .block_on(auth_request_data(
+                    &client,
+                    &login_params,
+                    None,
+                    None,
+                    None,
+                    &RetryPolicy::default(),
+                ))
+                .unwrap();
+            assert_eq!(
+                data.secondary_roles.as_deref(),
+                Some(expected),
+                "input {input:?} should uppercase to {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn secondary_roles_omitted_when_not_specified() {
+        let login_params = test_login_params();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(data.secondary_roles, None);
+    }
+
+    #[test]
+    fn secondary_roles_omitted_when_empty_string() {
+        let login_params = LoginParameters {
+            secondary_roles: Some(String::new()),
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+            ))
+            .unwrap();
+
+        assert_eq!(data.secondary_roles, None);
     }
 
     mod send_login_request_retry_tests {

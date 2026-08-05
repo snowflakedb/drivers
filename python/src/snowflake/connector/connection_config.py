@@ -296,6 +296,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     timeout)
     """
 
+    secondary_roles: str | None = None
+    """Secondary-roles activation mode sent at login (e.g. ALL or NONE)"""
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 

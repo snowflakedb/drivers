@@ -7,6 +7,7 @@ New features:
 Bug fixes:
 
 - Fixed `SQLCancelHandle(SQL_HANDLE_DBC)` to return SQLSTATE HY010 when an associated statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8 Diagnostics table (previously a no-op like the reference driver). (snowflakedb/universal-driver#871)
+- Fixed the `SecondaryRoles` connection attribute being silently dropped: the connection-string parser uppercases keys with no separator preserved, so `SecondaryRoles=None;` arrived as `SECONDARYROLES` and was never mapped to the shared `secondary_roles` parameter. It is now mapped correctly, restoring parity with legacy ODBC. (snowflakedb/universal-driver#954)
 
 ## v0.0.8
 

@@ -34,6 +34,8 @@ pub struct ConnectionConfig {
     pub proxy: ProxyConfig,
     pub disable_parallel_user_prompt: bool,
     pub diagnostic: DiagnosticConfig,
+    /// Secondary-roles activation mode sent at login (e.g. `ALL` or `NONE`).
+    pub secondary_roles: Option<String>,
 }
 
 /// Configuration for SnowCD-style connectivity diagnostics.
@@ -480,6 +482,7 @@ impl ConnectionConfig {
             } else {
                 DiagnosticConfig::Disabled
             },
+            secondary_roles: settings.get_string(SECONDARY_ROLES),
         })
     }
 }
@@ -602,6 +605,7 @@ impl LoginParameters {
             schema: config.session.schema.clone(),
             warehouse: config.session.warehouse.clone(),
             role: config.session.role.clone(),
+            secondary_roles: config.secondary_roles.clone(),
             client_info,
             session_parameters,
             spcs_token,

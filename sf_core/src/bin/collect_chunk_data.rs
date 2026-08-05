@@ -336,6 +336,7 @@ fn build_login_params(
         schema: params.schema.clone(),
         warehouse: params.warehouse(),
         role: params.role.clone(),
+        secondary_roles: None,
         client_info,
         session_parameters: None,
         spcs_token: None,

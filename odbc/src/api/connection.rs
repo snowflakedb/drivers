@@ -126,6 +126,11 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
+        // Legacy ODBC's `SecondaryRoles` connection attribute has no separator to
+        // preserve once the connection-string parser uppercases the key, so it
+        // collapses to `SECONDARYROLES` and would otherwise never match the
+        // shared `secondary_roles` parameter.
+        "SECONDARYROLES" => Some(("secondary_roles".to_owned(), value.into())),
         // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
@@ -2500,6 +2505,19 @@ mod tests {
             Some("42")
         );
         assert!(!options.contains_key("LOGIN_TIMEOUT"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_secondary_roles() {
+        // The connection-string parser uppercases keys with no separator preserved,
+        // so `SecondaryRoles=None;` arrives here as `SECONDARYROLES`.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "SECONDARYROLES".to_owned(),
+            "None".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "secondary_roles"), Some("None"));
+        assert!(!options.contains_key("SECONDARYROLES"));
     }
 
     #[test]
