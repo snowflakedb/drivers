@@ -98,7 +98,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UTINYINT to SQL_DOUBLE an
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UBIGINT to SQL_DOUBLE and read back",
-                 "[c_integer][conversion][sql_real][flaky]") {
+                 "[c_integer][conversion][sql_real]") {
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
@@ -114,9 +114,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UBIGINT to SQL_DOUBLE and
   REQUIRE_ODBC(ret, stmt);
 
   // Then The value should round to double precision when read back
+  // The tolerance covers the JSON result format too: it sends DOUBLE as a
+  // decimal string shorter than an f64 needs to round-trip, which costs about
+  // 2.7e-15 relative at this magnitude. Arrow is exact.
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   double expected = static_cast<double>(val);
-  CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinRel(expected, 1e-15));
+  CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinRel(expected, 1e-14));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_STINYINT to SQL_DOUBLE and read back",
