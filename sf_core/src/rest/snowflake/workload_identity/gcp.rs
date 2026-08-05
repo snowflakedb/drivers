@@ -170,6 +170,16 @@ async fn generate_identity_token(
         "includeEmail": true,
         "delegates": delegate_names,
     });
+    let parsed = reqwest::Url::parse(&url).ok();
+    tracing::info!(
+        method = "POST",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let resp = tokio::time::timeout(
         std::time::Duration::from_secs(METADATA_TIMEOUT_SECS),
         client
@@ -183,6 +193,7 @@ async fn generate_identity_token(
     .context(RequestSnafu { context: CTX })?;
 
     let status = resp.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
     let text = resp
         .text()
         .await
@@ -206,6 +217,16 @@ async fn metadata_get(
     url: &str,
     context: &'static str,
 ) -> Result<String, GcpAttestationError> {
+    let parsed = reqwest::Url::parse(url).ok();
+    tracing::info!(
+        method = "GET",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let resp = tokio::time::timeout(
         std::time::Duration::from_secs(METADATA_TIMEOUT_SECS),
         client
@@ -218,6 +239,7 @@ async fn metadata_get(
     .context(RequestSnafu { context })?;
 
     let status = resp.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
     let text = resp
         .text()
         .await
@@ -589,5 +611,61 @@ mod tests {
             }
             other => panic!("expected UnexpectedHttpStatus, got {other:?}"),
         }
+    }
+
+    /// Proves the GCE metadata identity-token call is logged at INFO per
+    /// `ud-log-every-http-call-at-info`, and that the URL query string
+    /// (`audience` / `format`) is stripped so only host and path are logged.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn metadata_call_is_logged_at_info_without_query_string() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/computeMetadata/v1/instance/service-accounts/default/identity",
+            ))
+            .and(header(METADATA_FLAVOR_HEADER, METADATA_FLAVOR_VALUE))
+            .respond_with(ResponseTemplate::new(200).set_body_string("mocked-gcp-identity-token"))
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            gcp_metadata_base_url: server.uri(),
+            ..Default::default()
+        };
+        let config = WorkloadIdentityConfig {
+            provider: WifProvider::Gcp,
+            entra_resource: None,
+            impersonation_path: Vec::new(),
+            oidc_token: None,
+        };
+        let client = reqwest::Client::new();
+
+        let token = get_identity_token(&client, &config, &endpoints)
+            .await
+            .expect("expected identity token");
+        assert_eq!(token, "mocked-gcp-identity-token");
+
+        assert!(logs_contain("outbound HTTP call"), "dispatch log missing");
+        let expected_host = reqwest::Url::parse(&server.uri())
+            .unwrap()
+            .host_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            logs_contain(&expected_host),
+            "host not logged on dispatch line"
+        );
+        assert!(
+            logs_contain("/computeMetadata/v1/instance/service-accounts/default/identity"),
+            "host/path not logged"
+        );
+        assert!(logs_contain("HTTP response"), "response log missing");
+        assert!(logs_contain("status=200"), "response status not logged");
+        assert!(
+            !logs_contain("format=full"),
+            "query string leaked into logs"
+        );
+        assert!(!logs_contain("audience="), "query string leaked into logs");
     }
 }
