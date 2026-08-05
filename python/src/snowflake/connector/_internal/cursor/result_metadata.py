@@ -204,7 +204,7 @@ class ResultMetadataV2:
             precision=precision,
             scale=scale,
             vector_dimension=vector_dimension,
-            fields=None,  # proto has no nested field list — BD#43
+            fields=None,  # proto has no nested field list — BD#43 (SNOW-3895458)
         )
 
     @classmethod
