@@ -24,7 +24,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from ..errors import Error
-from .decorators import _schedule_async_telemetry, _telemetry_client_for
+from .decorators import _schedule_async_telemetry, _telemetry_client_if_enabled
 from .logging import get_logger
 
 
@@ -112,7 +112,7 @@ def _report_wrapper_error(self: Any, method: Callable[..., Any], exc: BaseExcept
         from .telemetry import AsyncTelemetryClient
 
         error_source = f"{type(self).__name__}.{method.__name__}"
-        client = _telemetry_client_for(self)
+        client = _telemetry_client_if_enabled(self)
         if client is None:
             return
         if isinstance(client, AsyncTelemetryClient):
@@ -133,7 +133,7 @@ async def _report_wrapper_error_async(self: Any, method: Callable[..., Any], exc
         from .telemetry import AsyncTelemetryClient
 
         error_source = f"{type(self).__name__}.{method.__name__}"
-        client = _telemetry_client_for(self)
+        client = _telemetry_client_if_enabled(self)
         if client is None:
             return
         if isinstance(client, AsyncTelemetryClient):

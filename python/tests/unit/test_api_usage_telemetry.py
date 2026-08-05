@@ -4,7 +4,7 @@ import asyncio
 import inspect
 
 from io import StringIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,8 +17,22 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ResultSetDescriptor,
     StatementHandle,
 )
+from snowflake.connector.constants import SessionParameterName
 from snowflake.connector.errors import ProgrammingError
 from tests.helpers.fixtures import _make_execute_response
+
+
+def _get_parameter_side_effect(request: object) -> MagicMock:
+    """Default CLIENT_TELEMETRY_ENABLED to "true" so telemetry-assertion tests in this
+    file exercise their intended path by default; every other parameter stays unset,
+    matching the shared ``mock_db_api`` fixture in ``tests/helpers/fixtures.py``.
+
+    ``core_driver.connection_get_parameter`` calls ``self.client.connection_get_parameter(request)``
+    with a single positional ``ConnectionGetParameterRequest``, not ``key=`` kwargs.
+    """
+    if request.key == SessionParameterName.CLIENT_TELEMETRY_ENABLED:
+        return MagicMock(value="true")
+    return MagicMock(value="")
 
 
 @pytest.fixture
@@ -29,7 +43,13 @@ def mock_db_api():
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
-    db_api.connection_get_parameter.return_value = MagicMock(value="")
+    db_api.connection_get_parameter.side_effect = _get_parameter_side_effect
+    # Mirrors connection_get_parameter's default: sf_core's connection_get_all_parameters
+    # sources from the same session_parameters cache, so the bulk snapshot taken by
+    # SessionParametersProxy.freeze() (on close()) must agree with the per-key default.
+    db_api.connection_get_all_parameters.return_value = MagicMock(
+        parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"}
+    )
 
     def _connection_is_closed(request):
         return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
@@ -107,8 +127,27 @@ def _run_async(awaitable):
 
 
 @pytest.fixture
-def async_connection(mock_async_db_api):
-    """Create an async Connection with a mocked async db_api."""
+def mock_async_db_api(mock_async_db_api):
+    """Layer the CLIENT_TELEMETRY_ENABLED default onto the shared ``mock_async_db_api``
+    (`tests/helpers/fixtures.py`), mirroring this file's ``mock_db_api`` override so the
+    frozen-snapshot path (``connection_get_all_parameters``) agrees with the per-key default.
+    """
+    mock_async_db_api.connection_get_all_parameters = AsyncMock(
+        return_value=MagicMock(parameters={SessionParameterName.CLIENT_TELEMETRY_ENABLED: "true"})
+    )
+    return mock_async_db_api
+
+
+@pytest.fixture
+def async_connection(mock_async_db_api, mock_db_api):
+    """Create an async Connection with a mocked async db_api.
+
+    Also depends on ``mock_db_api``: single-key session-parameter reads (used by
+    ``Connection.telemetry_enabled`` gating) always go through the *sync*
+    ``core_driver`` client, even from async code — see
+    ``SessionParametersProxyMixin`` in ``_internal/connection/freezable_proxy.py``.
+    Without this, those reads would fall through to a real, unpatched client.
+    """
     from snowflake.connector.aio.connection._connection import Connection
 
     with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
@@ -452,6 +491,83 @@ class TestAsyncWrapperErrorTelemetry:
             ("ProgrammingError", "SnowflakeCursor.execute"),
             ("ProgrammingError", "Connection.commit"),
         ]
+
+
+class TestTelemetryEnabledGating:
+    """Tests that Connection.telemetry_enabled actually gates wrapper telemetry sends,
+    matching the legacy driver's AND-of-client-and-server gating (not just the client half).
+    """
+
+    def test_client_disabled_suppresses_api_usage_telemetry(self, connection, mock_db_api):
+        connection.telemetry_enabled = False
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        connection.cursor()
+
+        assert _get_api_methods(mock_db_api) == []
+
+    def test_client_disabled_suppresses_wrapper_error_telemetry(self, cursor, mock_db_api):
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        cursor._connection.telemetry_enabled = False
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("boom")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("BAD SQL")
+
+        assert mock_db_api.telemetry_send_wrapper_error.call_count == 0
+
+    def test_server_param_disabled_suppresses_telemetry_even_when_client_enabled(self, connection, mock_db_api):
+        """Regression guard: gating must consult the server half too, not just the client flag."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        assert connection._client_param_telemetry_enabled is True
+        mock_db_api.connection_get_parameter.side_effect = None
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="false")
+
+        connection.cursor()
+
+        assert _get_api_methods(mock_db_api) == []
+
+    def test_client_enabled_and_server_enabled_sends_telemetry(self, connection, mock_db_api):
+        """Baseline: with both halves on (this file's fixture default), telemetry flows."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        connection.cursor()
+
+        assert "Connection.cursor" in _get_api_methods(mock_db_api)
+
+    def test_re_enabling_resumes_telemetry(self, connection, mock_db_api):
+        connection.telemetry_enabled = False
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+        assert _get_api_methods(mock_db_api) == []
+
+        connection.telemetry_enabled = True
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.cursor()
+        assert "Connection.cursor" in _get_api_methods(mock_db_api)
+
+
+class TestAsyncTelemetryEnabledGating:
+    """Async counterpart of TestTelemetryEnabledGating."""
+
+    def test_client_disabled_suppresses_api_usage_telemetry(self, async_connection, mock_async_db_api):
+        async_connection.telemetry_enabled = False
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+
+        _run_async(async_connection.cursor())
+
+        methods = [call[0][0].api_method for call in mock_async_db_api.telemetry_send_api_usage.call_args_list]
+        assert methods == []
+
+    def test_client_disabled_suppresses_wrapper_error_telemetry(self, async_cursor, mock_async_db_api):
+        mock_async_db_api.telemetry_send_wrapper_error.reset_mock()
+        async_cursor._connection.telemetry_enabled = False
+        mock_async_db_api.statement_execute_query.side_effect = ProgrammingError("boom")
+
+        with pytest.raises(ProgrammingError):
+            _run_async(async_cursor.execute("BAD SQL"))
+
+        assert mock_async_db_api.telemetry_send_wrapper_error.call_count == 0
 
 
 class TestApiTelemetryFailureIsolation:
