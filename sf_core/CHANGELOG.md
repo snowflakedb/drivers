@@ -4,6 +4,7 @@
 
 New features:
 
+- Added a `secondary_roles` connection parameter that lets a client control secondary-role activation at login (e.g. `ALL` or `NONE`) without relying on the user's `DEFAULT_SECONDARY_ROLES` setting, ported from legacy snowflake-connector-python. Also restores parity with legacy ODBC's `SecondaryRoles` connection attribute, and is newly available (with no legacy equivalent) for JDBC. (snowflakedb/universal-driver#954)
 - Added server-side query cancel: capture the in-flight `requestId`/`sqlText` on the statement at submit time and add a `statement_cancel` driver API (plus `StatementCancel` RPC) that aborts the running query via `POST /queries/v1/abort-request`, so a cross-thread `SQLCancel` can stop a query on the server. (snowflakedb/universal-driver#628)
 - Added a shared operation-cancellation registry and `RustTransport::handle_message_cancellable`, letting a bridge race an in-flight RPC against a cancellation token and surface cancellation as `DriverException` with `STATUS_CODE_CANCELLED`; the async C API now cancels through this registry. (snowflakedb/universal-driver#TBD)
 - Added async-first RPCs: an RPC marked `async_first` in the proto generates a `Future`-returning client method, and JDBC's `ConnectionInit` now uses it via new `nativeSubmitMessage`/`nativeAwaitMessage`/`nativeCancel` JNI entries. (snowflakedb/universal-driver#TBD)

@@ -92,6 +92,7 @@ fn should_refresh_session_proactively() {
             schema: parameters.schema.clone(),
             warehouse: parameters.warehouse(),
             role: parameters.role.clone(),
+            secondary_roles: None,
             client_info: client_info.clone(),
             session_parameters: None,
             spcs_token: None,

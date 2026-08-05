@@ -208,6 +208,10 @@ pub struct LoginParameters {
     pub schema: Option<String>,
     pub warehouse: Option<String>,
     pub role: Option<String>,
+    /// Secondary-roles activation mode sent at login (e.g. `ALL` or `NONE`).
+    /// Lets a client control secondary-role activation without relying on
+    /// the user's `DEFAULT_SECONDARY_ROLES` setting.
+    pub secondary_roles: Option<String>,
     pub client_info: ClientInfo,
     pub session_parameters: Option<HashMap<String, String>>,
     pub spcs_token: Option<String>,
@@ -237,6 +241,7 @@ impl LoginParameters {
             schema: settings.get_string("schema"),
             warehouse: settings.get_string("warehouse"),
             role: settings.get_string("role"),
+            secondary_roles: settings.get_string("secondary_roles"),
             client_info: ClientInfo::from_settings(settings)?,
             session_parameters: None,
             spcs_token: None,
