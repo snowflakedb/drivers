@@ -5,6 +5,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "SchemaFixtures.hpp"
 #include "TestTable.hpp"
 #include "conversion_checks.hpp"
+#include "test_setup.hpp"
 
 /// Helper: fetch a column with SQL_C_DEFAULT into an SQLDOUBLE.
 /// Per ODBC spec, SQL_C_DEFAULT for SQL_DOUBLE resolves to SQL_C_DOUBLE.
@@ -64,8 +66,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - integer values st
   CHECK(get_data_default_as_double(stmt, 4) == 1.0);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values near DBL_MAX",
-                 "[e2e][types][real][flaky]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values near DBL_MAX", "[e2e][types][real]") {
+  // JSON serializes DOUBLE as a decimal string capped at ~15 significant digits.
+  // That both collapses the values below into each other and pushes the
+  // DBL_MAX-magnitude ones outside the f64 range. The two tests that follow pin
+  // what JSON does instead, so this coverage is not simply dropped there.
+  SKIP_FOR_JSON_RESULT_SET("JSON truncates DOUBLE to ~15 significant digits, losing DBL_MAX precision");
+
   // Given A Snowflake connection
 
   // When Extreme values near DBL_MAX are inserted and fetched via SQL_C_DEFAULT
@@ -79,31 +86,98 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values ne
       "(-1.7e308), "
       "(-1.7976931348623157e308)");
 
-  auto stmt = conn.execute_fetch("SELECT * FROM test_real_extreme");
+  // ORDER BY makes the row order deterministic — without it the per-row
+  // assertions below rely on an unspecified scan order.
+  auto stmt = conn.execute_fetch("SELECT * FROM test_real_extreme ORDER BY val");
 
-  // Then The correct extreme double values are returned
-  CHECK(get_data_default_as_double(stmt, 1) == 1.7976931348623157e308);
+  // Then The correct extreme double values are returned, in ascending order
+  const std::vector<double> expected = {-1.7976931348623157e308, -1.7976931348623151e308, -1.7e308, 1.7e308,
+                                        1.7976931348623151e308,  1.7976931348623157e308};
 
-  SQLRETURN ret;
-  ret = SQLFetch(stmt.getHandle());
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(get_data_default_as_double(stmt, 1) == 1.7e308);
+  CHECK(get_data_default_as_double(stmt, 1) == expected[0]);
+  for (size_t i = 1; i < expected.size(); ++i) {
+    INFO("Row " << i);
+    SQLRETURN ret = SQLFetch(stmt.getHandle());
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(get_data_default_as_double(stmt, 1) == expected[i]);
+  }
+}
 
-  ret = SQLFetch(stmt.getHandle());
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(get_data_default_as_double(stmt, 1) == 1.7976931348623151e308);
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "REAL default conversion - JSON truncation overflows DBL_MAX-magnitude values to infinity",
+                 "[e2e][types][real]") {
+  RUN_ONLY_FOR_JSON_RESULT_SET("Arrow carries exact IEEE-754 doubles, so no truncation happens there");
 
-  ret = SQLFetch(stmt.getHandle());
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(get_data_default_as_double(stmt, 1) == -1.7976931348623151e308);
+  // Given A Snowflake connection
 
-  ret = SQLFetch(stmt.getHandle());
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(get_data_default_as_double(stmt, 1) == -1.7e308);
+  // When DBL_MAX-magnitude DOUBLE values are fetched via SQL_C_DEFAULT over JSON
+  //
+  // The server caps the decimal representation at ~15 significant digits, so
+  // 1.7976931348623157e308 (DBL_MAX) arrives as "1.79769313486232e+308". That
+  // decimal is *larger* than DBL_MAX — it exceeds it by ~4.3e293, well over the
+  // ~1.0e292 half-ULP rounding boundary — so a correctly-rounded parse
+  // overflows and yields infinity. The legacy ODBC driver ends up in the same
+  // place (picojson strtod, no ERANGE check), so this is not a UD regression,
+  // but it does mean a stored DBL_MAX cannot be read back over JSON.
+  auto stmt = conn.execute_fetch(
+      "SELECT 1.7976931348623157e308::DOUBLE, "
+      "       -1.7976931348623157e308::DOUBLE, "
+      "       1.7976931348623151e308::DOUBLE, "
+      "       1.7e308::DOUBLE");
 
-  ret = SQLFetch(stmt.getHandle());
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(get_data_default_as_double(stmt, 1) == -1.7976931348623157e308);
+  double max_pos = get_data_default_as_double(stmt, 1);
+  double max_neg = get_data_default_as_double(stmt, 2);
+  double near_max = get_data_default_as_double(stmt, 3);
+  double representable = get_data_default_as_double(stmt, 4);
+
+  // Then DBL_MAX-magnitude values overflow to signed infinity
+  CHECK(std::isinf(max_pos));
+  CHECK(max_pos > 0);
+  CHECK(std::isinf(max_neg));
+  CHECK(max_neg < 0);
+
+  // And 1.7976931348623151e308 truncates to the same decimal as DBL_MAX, so the
+  // two are indistinguishable over JSON
+  CHECK(near_max == max_pos);
+
+  // And a value exactly representable in 15 significant digits is unaffected
+  CHECK(representable == 1.7e308);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "REAL default conversion - extreme values within 15 significant digits round-trip exactly in JSON",
+                 "[e2e][types][real]") {
+  RUN_ONLY_FOR_JSON_RESULT_SET("pins the JSON precision boundary; Arrow is exact for all doubles");
+
+  // Given A Snowflake connection
+
+  // When Extreme DOUBLE values that fit in 15 significant digits are fetched
+  // via SQL_C_DEFAULT over JSON
+  conn.execute("CREATE TEMPORARY TABLE test_real_json_extreme (val DOUBLE)");
+  conn.execute(
+      "INSERT INTO test_real_json_extreme VALUES "
+      "(1.79769313486231e308), "
+      "(1.7e308), "
+      "(-1.7e308), "
+      "(-1.79769313486231e308)");
+
+  auto stmt = conn.execute_fetch("SELECT * FROM test_real_json_extreme ORDER BY val");
+
+  // Then Each value survives the JSON round-trip exactly and stays finite
+  const std::vector<double> expected = {-1.79769313486231e308, -1.7e308, 1.7e308, 1.79769313486231e308};
+
+  CHECK(get_data_default_as_double(stmt, 1) == expected[0]);
+  for (size_t i = 1; i < expected.size(); ++i) {
+    INFO("Row " << i);
+    SQLRETURN ret = SQLFetch(stmt.getHandle());
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(get_data_default_as_double(stmt, 1) == expected[i]);
+  }
+
+  // And none of them overflowed
+  auto stmt_finite = conn.execute_fetch("SELECT MAX(val), MIN(val) FROM test_real_json_extreme");
+  CHECK_FALSE(std::isinf(get_data_default_as_double(stmt_finite, 1)));
+  CHECK_FALSE(std::isinf(get_data_default_as_double(stmt_finite, 2)));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - very small values", "[e2e][types][real]") {
