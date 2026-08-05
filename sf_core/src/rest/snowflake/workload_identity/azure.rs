@@ -194,6 +194,16 @@ async fn get_from_azure_functions(
         url.push_str(&format!("&client_id={id}"));
     }
 
+    let parsed = reqwest::Url::parse(&url).ok();
+    tracing::info!(
+        method = "GET",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(IMDS_TIMEOUT_SECS),
         client
@@ -206,6 +216,7 @@ async fn get_from_azure_functions(
     .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -250,6 +261,16 @@ async fn get_from_imds(
         url.push_str(&format!("&client_id={id}"));
     }
 
+    let parsed = reqwest::Url::parse(&url).ok();
+    tracing::info!(
+        method = "GET",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(IMDS_TIMEOUT_SECS),
         client.get(&url).header("Metadata", "true").send(),
@@ -259,6 +280,7 @@ async fn get_from_imds(
     .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -345,6 +367,16 @@ async fn get_sp_token_via_impersonation(
         ("scope", &format!("{snowflake_resource}/.default")),
     ];
 
+    let parsed = reqwest::Url::parse(&url).ok();
+    tracing::info!(
+        method = "POST",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(IMDS_TIMEOUT_SECS),
         client.post(&url).form(&params).send(),
@@ -354,6 +386,7 @@ async fn get_sp_token_via_impersonation(
     .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -1190,5 +1223,78 @@ mod tests {
             );
         })
         .await;
+    }
+
+    /// Proves the IMDS token call is logged at INFO per
+    /// `ud-log-every-http-call-at-info`, and that the URL query string — which
+    /// carries the managed-identity `client_id` — is stripped so only host and
+    /// path appear in the log.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn imds_call_is_logged_at_info_without_query_string() {
+        const CLIENT_ID_CANARY: &str = "client-id-canary-DEADBEEF";
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metadata/identity/oauth2/token"))
+            .and(header("Metadata", "true"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"access_token":"mocked-mi-token"}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+        let config = WorkloadIdentityConfig {
+            provider: WifProvider::Azure,
+            entra_resource: None,
+            impersonation_path: Vec::new(),
+            oidc_token: None,
+        };
+        let client = reqwest::Client::new();
+
+        temp_env::async_with_vars(
+            [
+                ("IDENTITY_ENDPOINT", None::<&str>),
+                ("IDENTITY_HEADER", None::<&str>),
+                ("MSI_ENDPOINT", None::<&str>),
+                ("MSI_SECRET", None::<&str>),
+                ("MANAGED_IDENTITY_CLIENT_ID", Some(CLIENT_ID_CANARY)),
+            ],
+            async {
+                let token = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect("expected managed identity token");
+                assert_eq!(token, "mocked-mi-token");
+            },
+        )
+        .await;
+
+        assert!(logs_contain("outbound HTTP call"), "dispatch log missing");
+        let expected_host = reqwest::Url::parse(&server.uri())
+            .unwrap()
+            .host_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            logs_contain(&expected_host),
+            "host not logged on dispatch line"
+        );
+        assert!(
+            logs_contain("/metadata/identity/oauth2/token"),
+            "host/path not logged"
+        );
+        assert!(logs_contain("HTTP response"), "response log missing");
+        assert!(logs_contain("status=200"), "response status not logged");
+        assert!(
+            !logs_contain(CLIENT_ID_CANARY),
+            "client_id query param leaked into logs"
+        );
+        assert!(
+            !logs_contain("api-version"),
+            "query string leaked into logs"
+        );
     }
 }

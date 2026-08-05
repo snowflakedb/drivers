@@ -263,14 +263,22 @@ async fn get_web_identity_token(
         sts_client
     };
 
-    let response = final_sts_client
+    tracing::info!("STS GetWebIdentityToken request");
+    let result = final_sts_client
         .get_web_identity_token()
         .audience(SNOWFLAKE_AUDIENCE)
         .signing_algorithm(AWS_WIF_SIGNING_ALGORITHM)
         .send()
-        .await
-        .boxed()
-        .context(WebIdentityTokenSnafu)?;
+        .await;
+    if let Err(ref e) = result
+        && let Some(status) = sts_sdk_error_status(e)
+    {
+        tracing::warn!(status, "STS GetWebIdentityToken failed");
+    }
+    let response = result.boxed().context(WebIdentityTokenSnafu)?;
+    // These STS operations only reach the success branch on HTTP 200; the
+    // AWS SDK output type carries no status object to read it from directly.
+    tracing::info!(status = 200u16, "STS GetWebIdentityToken response");
 
     response
         .web_identity_token()
@@ -281,6 +289,17 @@ async fn get_web_identity_token(
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/// Extract the raw HTTP status from an AWS SDK service error, for logging per
+/// `ud-log-every-http-call-at-info`. Returns `None` for non-service-level
+/// failures (construction, timeout, dispatch) that never reached the server
+/// and therefore have no HTTP status to report.
+fn sts_sdk_error_status<E>(err: &aws_sdk_sts::error::SdkError<E>) -> Option<u16> {
+    match err {
+        aws_sdk_sts::error::SdkError::ServiceError(e) => Some(e.raw().status().as_u16()),
+        _ => None,
+    }
+}
 
 /// Resolve final credentials: load ambient creds and optionally walk an
 /// impersonation chain via `sts:AssumeRole`.
@@ -343,16 +362,27 @@ impl AssumeRoleProvider for StsAssumeRoleProvider {
             let client = StsClient::new(&sdk_config);
 
             let session_name = format!("snowflake-wif-{}", std::process::id());
-            let resp = client
+            tracing::info!(role_arn = %role_arn, "STS AssumeRole request");
+            let result = client
                 .assume_role()
                 .role_arn(role_arn)
                 .role_session_name(&session_name)
                 .send()
-                .await
-                .boxed()
-                .context(AssumeRoleSnafu {
-                    role_arn: role_arn.to_string(),
-                })?;
+                .await;
+            if let Err(ref e) = result
+                && let Some(status) = sts_sdk_error_status(e)
+            {
+                tracing::warn!(role_arn = %role_arn, status, "STS AssumeRole failed");
+            }
+            let resp = result.boxed().context(AssumeRoleSnafu {
+                role_arn: role_arn.to_string(),
+            })?;
+            // This STS operation only reaches the success branch on HTTP 200;
+            // the AWS SDK output type carries no status object to read it from
+            // directly. `chain_assume_role_via` calls this once per hop in the
+            // impersonation path, so every hop gets its own request/response
+            // log pair for free.
+            tracing::info!(role_arn = %role_arn, status = 200u16, "STS AssumeRole response");
 
             let raw_creds = resp
                 .credentials()
@@ -430,20 +460,44 @@ async fn try_imds_region(imds_base_url: &str) -> Option<String> {
         .build()
         .ok()?;
 
+    let token_url = format!("{imds_base_url}/latest/api/token");
+    let token_parsed = reqwest::Url::parse(&token_url).ok();
+    tracing::info!(
+        method = "PUT",
+        host = token_parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = token_parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let token_resp = client
-        .put(format!("{imds_base_url}/latest/api/token"))
+        .put(token_url)
         .header("X-aws-ec2-metadata-token-ttl-seconds", "60")
         .send()
         .await
         .ok()?;
+    tracing::info!(status = token_resp.status().as_u16(), "HTTP response");
     let token = token_resp.text().await.ok()?;
 
+    let region_url = format!("{imds_base_url}/latest/meta-data/placement/region");
+    let region_parsed = reqwest::Url::parse(&region_url).ok();
+    tracing::info!(
+        method = "GET",
+        host = region_parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = region_parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
     let region_resp = client
-        .get(format!("{imds_base_url}/latest/meta-data/placement/region"))
+        .get(region_url)
         .header("X-aws-ec2-metadata-token", &token)
         .send()
         .await
         .ok()?;
+    tracing::info!(status = region_resp.status().as_u16(), "HTTP response");
 
     if region_resp.status().is_success() {
         region_resp.text().await.ok()
@@ -528,6 +582,60 @@ mod tests {
             },
         )
         .await;
+    }
+
+    /// Proves the two IMDS region-resolution calls are logged at INFO per
+    /// `ud-log-every-http-call-at-info`: a dispatch log carrying method + path
+    /// before each call and a response-status log after each.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn imds_region_calls_are_logged_at_info() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/latest/api/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/latest/meta-data/placement/region"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("us-west-2"))
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            aws_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+
+        temp_env::async_with_vars(
+            [
+                ("AWS_REGION", None::<&str>),
+                ("AWS_DEFAULT_REGION", None::<&str>),
+            ],
+            async {
+                let region = resolve_region(&endpoints).await;
+                assert_eq!(region, "us-west-2");
+            },
+        )
+        .await;
+
+        assert!(logs_contain("outbound HTTP call"), "dispatch log missing");
+        let expected_host = reqwest::Url::parse(&server.uri())
+            .unwrap()
+            .host_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            logs_contain(&expected_host),
+            "host not logged on dispatch line"
+        );
+        assert!(logs_contain("/latest/api/token"), "token path not logged");
+        assert!(
+            logs_contain("/latest/meta-data/placement/region"),
+            "region path not logged"
+        );
+        assert!(logs_contain("HTTP response"), "response log missing");
+        assert!(logs_contain("status=200"), "response status not logged");
     }
 
     /// `AWS_REGION` must win without ever falling through to IMDS. IMDS is
