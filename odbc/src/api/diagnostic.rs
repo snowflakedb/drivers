@@ -585,6 +585,26 @@ pub fn get_diag_field<E: OdbcEncoding>(
 
     let diag_id = DiagIdentifier::try_from(diag_identifier)?;
 
+    // Statement-only diagnostic header fields (SQL_DIAG_ROW_COUNT, CURSOR_ROW_COUNT,
+    // DYNAMIC_FUNCTION, DYNAMIC_FUNCTION_CODE) are undefined for environment,
+    // connection, and descriptor handles. Per the ODBC spec SQLGetDiagField returns
+    // SQL_ERROR for them unless the handle is a statement handle. SQL_DIAG_NUMBER and
+    // SQL_DIAG_RETURNCODE remain valid on every handle type (incl. descriptors).
+    if handle_type != sql::HandleType::Stmt
+        && matches!(
+            diag_id,
+            DiagIdentifier::RowCount
+                | DiagIdentifier::CursorRowCount
+                | DiagIdentifier::DynamicFunction
+                | DiagIdentifier::DynamicFunctionCode
+        )
+    {
+        return InvalidDiagnosticIdentifierSnafu {
+            identifier: diag_identifier,
+        }
+        .fail();
+    }
+
     if rec_number == 0 {
         match diag_id {
             DiagIdentifier::Number => {
