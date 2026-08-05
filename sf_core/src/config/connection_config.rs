@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::path::PathBuf;
 
-use base64::{Engine as _, engine::general_purpose};
-use openssl::pkey::PKey;
 use snafu::OptionExt;
 use url::Url;
 
+use super::private_key::{has_private_key_params, read_private_key};
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
@@ -15,10 +13,9 @@ use crate::config::rest_parameters::{
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
     WifProvider, WorkloadIdentityConfig,
 };
-use crate::config::settings::{Setting, Settings};
+use crate::config::settings::Settings;
 use crate::config::{
-    ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
-    ValidationSnafu,
+    ConfigError, InvalidParameterValueSnafu, MissingParameterSnafu, ValidationSnafu,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig, TlsVersion};
@@ -160,114 +157,6 @@ impl fmt::Display for ValidationIssue {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Private key helpers (mirrored from rest_parameters.rs)
-// ---------------------------------------------------------------------------
-
-fn der_to_pem(der_bytes: &[u8]) -> Result<String, ConfigError> {
-    let pkey = PKey::private_key_from_der(der_bytes).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(PRIVATE_KEY),
-            value: "(binary data)".to_string(),
-            explanation: format!("Could not parse DER private key: {e}"),
-        }
-        .build()
-    })?;
-
-    let pem_bytes = pkey.private_key_to_pem_pkcs8().map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(PRIVATE_KEY),
-            value: "(binary data)".to_string(),
-            explanation: format!("Could not convert private key to PEM: {e}"),
-        }
-        .build()
-    })?;
-
-    String::from_utf8(pem_bytes).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(PRIVATE_KEY),
-            value: "(binary data)".to_string(),
-            explanation: format!("PEM output is not valid UTF-8: {e}"),
-        }
-        .build()
-    })
-}
-
-fn read_private_key(settings: &ParamStore) -> Result<String, ConfigError> {
-    let has_private_key = settings.get(PRIVATE_KEY).is_some();
-    let has_private_key_file = settings.get_string(PRIVATE_KEY_FILE).is_some();
-
-    if has_private_key && has_private_key_file {
-        return ConflictingParametersSnafu {
-            explanation:
-                "Both 'private_key' and 'private_key_file' are set. Please provide only one."
-                    .to_string(),
-        }
-        .fail();
-    }
-
-    // Bytes (DER from Python)
-    if let Some(Setting::Bytes(private_key_bytes)) = settings.get(PRIVATE_KEY) {
-        return der_to_pem(private_key_bytes);
-    }
-
-    // String: plaintext PEM, or base64-encoded PEM/DER.
-    // Wrappers such as ODBC/JDBC typically base64-encode PEM before setting
-    // `private_key`; snowflake-sdk-shaped APIs pass PEM text directly.
-    if let Some(private_key_str) = settings.get_string(PRIVATE_KEY) {
-        if private_key_str.trim_start().starts_with("-----BEGIN") {
-            return Ok(private_key_str);
-        }
-
-        let private_key_bytes =
-            general_purpose::STANDARD
-                .decode(&private_key_str)
-                .map_err(|e| {
-                    InvalidParameterValueSnafu {
-                        parameter: String::from(PRIVATE_KEY),
-                        value: "(redacted)".to_string(),
-                        explanation: format!("Could not decode base64 private key: {e}"),
-                    }
-                    .build()
-                })?;
-
-        if private_key_bytes.starts_with(b"-----BEGIN") {
-            return String::from_utf8(private_key_bytes).map_err(|e| {
-                InvalidParameterValueSnafu {
-                    parameter: String::from(PRIVATE_KEY),
-                    value: "(redacted)".to_string(),
-                    explanation: format!("Private key is not valid UTF-8: {e}"),
-                }
-                .build()
-            });
-        }
-
-        return der_to_pem(&private_key_bytes);
-    }
-
-    // File path
-    if let Some(private_key_file) = settings.get_string(PRIVATE_KEY_FILE) {
-        let private_key = fs::read_to_string(&private_key_file).map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: String::from(PRIVATE_KEY_FILE),
-                value: private_key_file,
-                explanation: format!("Could not read private key file: {e}"),
-            }
-            .build()
-        })?;
-        return Ok(private_key);
-    }
-
-    MissingParameterSnafu {
-        parameter: "private_key or private_key_file".to_string(),
-    }
-    .fail()
-}
-
-fn has_private_key_params(settings: &ParamStore) -> bool {
-    settings.get(PRIVATE_KEY).is_some() || settings.get_string(PRIVATE_KEY_FILE).is_some()
-}
-
 fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Option<String> {
     settings.get_string(key).filter(|value| !value.is_empty())
 }
@@ -375,7 +264,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            private_key_pem: SensitiveString::from(read_private_key(settings)?),
+            private_key_pem: read_private_key(settings)?,
             passphrase: settings.get_sensitive_string(PRIVATE_KEY_PASSWORD),
         });
     }
@@ -1237,6 +1126,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::Setting;
     use crate::crl::config::CertRevocationCheckMode;
 
     fn settings_from(pairs: &[(&str, Setting)]) -> ParamStore {

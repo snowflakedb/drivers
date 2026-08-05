@@ -6,6 +6,7 @@ pub mod logging_config_loader;
 pub mod logout;
 pub mod param_registry;
 pub mod param_store;
+mod private_key;
 pub use ini_loader::{IniConfig, get_ini_config, load_ini_files};
 pub use logging_config_loader::{logging_config_from_ini, logging_config_from_toml_section};
 pub use param_registry::ParamKey;

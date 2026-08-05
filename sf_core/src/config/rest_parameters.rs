@@ -1,21 +1,20 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::sync::Arc;
 
 use url::Url;
 
+use super::private_key::{has_private_key_params, read_private_key};
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::configured_redirect_uri::ConfiguredRedirectUri;
 use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
-use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
+use crate::config::{ConfigError, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
 use crate::rest::snowflake::BrowserLaunchFn;
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig};
-use openssl::pkey::PKey;
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -840,108 +839,6 @@ impl OAuthClientCredentialsConfig {
 }
 
 impl LoginMethod {
-    /// Convert DER-encoded private key bytes to PEM format string
-    fn der_to_pem(der_bytes: &[u8]) -> Result<String, ConfigError> {
-        let pkey = PKey::private_key_from_der(der_bytes).map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: "private_key",
-                value: "(binary data)".to_string(),
-                explanation: format!("Could not parse DER private key: {e}"),
-            }
-            .build()
-        })?;
-
-        let pem_bytes = pkey.private_key_to_pem_pkcs8().map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: "private_key",
-                value: "(binary data)".to_string(),
-                explanation: format!("Could not convert private key to PEM: {e}"),
-            }
-            .build()
-        })?;
-
-        String::from_utf8(pem_bytes).map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: "private_key",
-                value: "(binary data)".to_string(),
-                explanation: format!("PEM output is not valid UTF-8: {e}"),
-            }
-            .build()
-        })
-    }
-
-    fn read_private_key(settings: &dyn Settings) -> Result<String, ConfigError> {
-        let has_private_key = settings.get("private_key").is_some();
-        let has_private_key_file = settings.get_string("private_key_file").is_some();
-
-        // Validate that both are not set at the same time
-        if has_private_key && has_private_key_file {
-            return ConflictingParametersSnafu {
-                explanation:
-                    "Both 'private_key' and 'private_key_file' are set. Please provide only one."
-                        .to_string(),
-            }
-            .fail();
-        }
-
-        // First, check if private_key is provided as bytes (DER format from Python)
-        if let Some(Setting::Bytes(private_key_bytes)) = settings.get("private_key") {
-            return Self::der_to_pem(&private_key_bytes);
-        }
-
-        // Check if private_key is provided as a string (base64-encoded)
-        if let Some(private_key_base64) = settings.get_string("private_key") {
-            use base64::{Engine as _, engine::general_purpose};
-            let private_key_bytes = general_purpose::STANDARD
-                .decode(&private_key_base64)
-                .map_err(|e| {
-                    InvalidParameterValueSnafu {
-                        parameter: "private_key",
-                        value: "(redacted)".to_string(),
-                        explanation: format!("Could not decode base64 private key: {e}"),
-                    }
-                    .build()
-                })?;
-
-            // Check if it's PEM format (starts with "-----BEGIN")
-            if private_key_bytes.starts_with(b"-----BEGIN") {
-                let private_key = String::from_utf8(private_key_bytes).map_err(|e| {
-                    InvalidParameterValueSnafu {
-                        parameter: "private_key",
-                        value: "(redacted)".to_string(),
-                        explanation: format!("Private key is not valid UTF-8: {e}"),
-                    }
-                    .build()
-                })?;
-                return Ok(private_key);
-            }
-
-            // Otherwise, assume it's DER format and convert to PEM
-            return Self::der_to_pem(&private_key_bytes);
-        }
-        if let Some(private_key_file) = settings.get_string("private_key_file") {
-            let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
-                InvalidParameterValueSnafu {
-                    parameter: "private_key_file",
-                    value: private_key_file,
-                    explanation: format!("Could not read private key file: {e}"),
-                }
-                .build()
-            })?;
-            return Ok(private_key);
-        }
-
-        MissingParameterSnafu {
-            parameter: "private_key or private_key_file",
-        }
-        .fail()?
-    }
-
-    /// Check if private key parameters are present in settings
-    fn has_private_key_params(settings: &dyn Settings) -> bool {
-        settings.get("private_key").is_some() || settings.get_string("private_key_file").is_some()
-    }
-
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         // Auto-detect session token auth: both session_token and master_token must be present.
         // Checked before authenticator dispatch so it works regardless of the authenticator value.
@@ -963,13 +860,13 @@ impl LoginMethod {
         // Auto-detect JWT authentication if private key params are present
         // and authenticator is not explicitly set to something else
         let use_jwt = auth_upper == "SNOWFLAKE_JWT"
-            || (authenticator.is_empty() && Self::has_private_key_params(settings));
+            || (authenticator.is_empty() && has_private_key_params(settings));
 
         if use_jwt {
             return Ok(Self::PrivateKey {
                 username: non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                private_key: Self::read_private_key(settings)?.into(),
+                private_key: read_private_key(settings)?,
                 passphrase: settings
                     .get_string("private_key_password")
                     .map(SensitiveString::from),
