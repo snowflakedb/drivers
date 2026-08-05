@@ -543,6 +543,16 @@ fn synthetic_names(func: &str) -> &'static [&'static str] {
             "TableName",
             "ColumnName",
         ],
+        "SQLPrimaryKeys" => &["Statement", "CatalogName", "SchemaName", "TableName"],
+        "SQLForeignKeys" => &[
+            "Statement",
+            "PKCatalogName",
+            "PKSchemaName",
+            "PKTableName",
+            "FKCatalogName",
+            "FKSchemaName",
+            "FKTableName",
+        ],
         "SQLBindCol" => &[
             "Statement",
             "Column Number",

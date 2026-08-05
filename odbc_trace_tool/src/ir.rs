@@ -516,7 +516,20 @@ impl TraceIr {
             for op in ops {
                 if let OdbcCall::GetData(ref mut gd) = op.call {
                     if let Some(val) = by_seq.get(&op.seq) {
-                        gd.captured = Some(val.clone());
+                        if !crate::captured_value::apply_text_capture(
+                            &mut gd.value,
+                            &mut gd.indicator,
+                            val,
+                        ) {
+                            // WChar decode failure: drop any stale CP_ACP trace
+                            // string so the generator cannot pin it, and keep
+                            // `captured` so `captured_assert_lines` can emit a
+                            // visible skip comment.
+                            if matches!(val, crate::captured_value::CapturedValue::WChar(_)) {
+                                gd.value = None;
+                            }
+                            gd.captured = Some(val.clone());
+                        }
                     }
                 }
             }
@@ -1288,6 +1301,59 @@ b6dcc-1 1234-5678\tEXIT  SQLExecDirectW  with return code 0 (SQL_SUCCESS)\n\
         assert_eq!(
             gd.captured,
             Some(CapturedValue::Double(DoubleVal::Finite(2.5)))
+        );
+    }
+
+    #[test]
+    fn apply_captured_values_clears_stale_value_on_wchar_decode_failure() {
+        use std::collections::HashMap;
+
+        use crate::captured_value::{CapturedValue, WCharCapture};
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let mut ir = TraceIr {
+            header: TraceHeader::default(),
+            roots: vec![],
+            unscoped_operations: vec![Operation {
+                seq: 3,
+                call: OdbcCall::GetData(GetData {
+                    return_code: ReturnCode::Success,
+                    handle: Some("0xstmt".to_string()),
+                    column_number: Some(1),
+                    target_type: Some(-8),
+                    target_type_name: Some("SQL_C_WCHAR".to_string()),
+                    buffer_length: Some(2048),
+                    value: Some("stale-cp-acp".to_string()),
+                    indicator: Some(24),
+                    captured: None,
+                    seq: None,
+                }),
+                entry_line: None,
+                exit_line: None,
+            }],
+            total_operations: 1,
+        };
+
+        let mut by_seq = HashMap::new();
+        by_seq.insert(
+            3,
+            CapturedValue::WChar(WCharCapture {
+                hex: "00d8".into(),
+                ind: 2,
+            }),
+        );
+        ir.apply_captured_values(&by_seq);
+
+        let OdbcCall::GetData(gd) = &ir.unscoped_operations[0].call else {
+            panic!("expected GetData");
+        };
+        assert!(
+            gd.value.is_none(),
+            "stale CP_ACP value must be cleared on WChar decode failure"
+        );
+        assert!(
+            matches!(gd.captured, Some(CapturedValue::WChar(_))),
+            "failed WChar capture is retained for a visible skip comment"
         );
     }
 
