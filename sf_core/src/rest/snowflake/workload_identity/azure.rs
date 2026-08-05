@@ -22,8 +22,8 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 
-const IMDS_URL: &str =
-    "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01";
+use super::AttestationEndpoints;
+
 const IMDS_TIMEOUT_SECS: u64 = 10;
 /// Audience used when requesting a Managed Identity token for service-principal
 /// impersonation. The MI token is exchanged (not sent to Snowflake directly).
@@ -115,6 +115,7 @@ struct ManagedIdentityTokenResponse {
 pub(super) async fn get_managed_identity_token(
     client: &reqwest::Client,
     config: &WorkloadIdentityConfig,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AzureAttestationError> {
     let snowflake_resource = config
         .entra_resource
@@ -143,6 +144,7 @@ pub(super) async fn get_managed_identity_token(
             client,
             snowflake_resource,
             &config.impersonation_path,
+            endpoints,
         )
         .await;
     }
@@ -158,6 +160,7 @@ pub(super) async fn get_managed_identity_token(
             client,
             snowflake_resource,
             &config.impersonation_path,
+            endpoints,
         )
         .await;
     }
@@ -168,10 +171,12 @@ pub(super) async fn get_managed_identity_token(
         client,
         snowflake_resource,
         &config.impersonation_path,
+        endpoints,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn get_from_azure_functions(
     endpoint: &str,
     identity_header: &str,
@@ -180,6 +185,7 @@ async fn get_from_azure_functions(
     client: &reqwest::Client,
     snowflake_resource: &str,
     impersonation_path: &[String],
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AzureAttestationError> {
     const CTX: &str = "Azure Functions identity request";
 
@@ -221,6 +227,7 @@ async fn get_from_azure_functions(
         snowflake_resource,
         impersonation_path,
         client,
+        endpoints,
     )
     .await
 }
@@ -231,10 +238,14 @@ async fn get_from_imds(
     client: &reqwest::Client,
     snowflake_resource: &str,
     impersonation_path: &[String],
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AzureAttestationError> {
     const CTX: &str = "Azure IMDS request";
 
-    let mut url = format!("{IMDS_URL}&resource={mi_resource}");
+    let mut url = format!(
+        "{}/metadata/identity/oauth2/token?api-version=2018-02-01&resource={mi_resource}",
+        endpoints.azure_imds_base_url
+    );
     if let Some(id) = client_id {
         url.push_str(&format!("&client_id={id}"));
     }
@@ -269,6 +280,7 @@ async fn get_from_imds(
         snowflake_resource,
         impersonation_path,
         client,
+        endpoints,
     )
     .await
 }
@@ -281,13 +293,21 @@ async fn maybe_impersonate_sp(
     snowflake_resource: &str,
     impersonation_path: &[String],
     client: &reqwest::Client,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AzureAttestationError> {
     if impersonation_path.is_empty() {
         return Ok(mi_token);
     }
     // Validation in connection_config ensures exactly one element for Azure.
     let sp_client_id = &impersonation_path[0];
-    get_sp_token_via_impersonation(&mi_token, sp_client_id, snowflake_resource, client).await
+    get_sp_token_via_impersonation(
+        &mi_token,
+        sp_client_id,
+        snowflake_resource,
+        client,
+        endpoints,
+    )
+    .await
 }
 
 /// Exchange a Managed Identity JWT for a Service Principal access token.
@@ -299,6 +319,7 @@ async fn get_sp_token_via_impersonation(
     sp_client_id: &str,
     snowflake_resource: &str,
     client: &reqwest::Client,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AzureAttestationError> {
     const CTX: &str = "Entra ID SP token exchange";
 
@@ -309,7 +330,10 @@ async fn get_sp_token_via_impersonation(
         access_token: String,
     }
 
-    let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
+    let url = format!(
+        "{}/{tenant_id}/oauth2/v2.0/token",
+        endpoints.azure_entra_base_url
+    );
     let params = [
         ("grant_type", "client_credentials"),
         ("client_id", sp_client_id),
@@ -366,4 +390,56 @@ fn extract_tid_from_jwt(jwt: &str) -> Result<String, AzureAttestationError> {
         .as_str()
         .map(str::to_string)
         .context(JwtMissingTidClaimSnafu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::rest_parameters::WifProvider;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// `get_managed_identity_token` returns the token from the Azure IMDS
+    /// response.
+    #[tokio::test]
+    async fn get_managed_identity_token_reads_token_from_imds() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metadata/identity/oauth2/token"))
+            .and(header("Metadata", "true"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"access_token":"mocked-mi-token"}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+        let config = WorkloadIdentityConfig {
+            provider: WifProvider::Azure,
+            entra_resource: None,
+            impersonation_path: Vec::new(),
+            oidc_token: None,
+        };
+        let client = reqwest::Client::new();
+
+        temp_env::async_with_vars(
+            [
+                ("IDENTITY_ENDPOINT", None::<&str>),
+                ("IDENTITY_HEADER", None::<&str>),
+                ("MSI_ENDPOINT", None::<&str>),
+                ("MSI_SECRET", None::<&str>),
+                ("MANAGED_IDENTITY_CLIENT_ID", None::<&str>),
+            ],
+            async {
+                let token = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect("expected managed identity token");
+                assert_eq!(token, "mocked-mi-token");
+            },
+        )
+        .await;
+    }
 }

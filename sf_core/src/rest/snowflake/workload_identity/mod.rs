@@ -62,6 +62,41 @@ pub enum AttestationError {
     },
 }
 
+/// Injectable base URLs for the cloud-metadata / IdP endpoints that the
+/// provider modules call. Defaults are the real production endpoints;
+/// tests override individual fields to point at a `wiremock::MockServer`.
+#[derive(Debug, Clone)]
+pub(crate) struct AttestationEndpoints {
+    /// AWS EC2 instance-metadata service (IMDS) base URL, used only to
+    /// resolve the AWS region when `AWS_REGION`/`AWS_DEFAULT_REGION` are
+    /// unset. AWS STS itself is never called directly by the default
+    /// (pre-signed `GetCallerIdentity`) path — that path only builds a URL
+    /// string embedded in the attestation body for Snowflake GS to replay.
+    pub(crate) aws_imds_base_url: String,
+    /// Azure IMDS base URL for the Managed Identity token endpoint.
+    pub(crate) azure_imds_base_url: String,
+    /// Entra ID base URL used for the SP token exchange during Azure
+    /// impersonation (`{base}/{tenant_id}/oauth2/v2.0/token`).
+    pub(crate) azure_entra_base_url: String,
+    /// GCE metadata server base URL.
+    pub(crate) gcp_metadata_base_url: String,
+    /// IAM Service Account Credentials API base URL (host only; callers
+    /// append `/v1/projects/-/serviceAccounts/...`).
+    pub(crate) gcp_iam_credentials_base_url: String,
+}
+
+impl Default for AttestationEndpoints {
+    fn default() -> Self {
+        Self {
+            aws_imds_base_url: "http://169.254.169.254".to_string(),
+            azure_imds_base_url: "http://169.254.169.254".to_string(),
+            azure_entra_base_url: "https://login.microsoftonline.com".to_string(),
+            gcp_metadata_base_url: "http://metadata.google.internal".to_string(),
+            gcp_iam_credentials_base_url: "https://iamcredentials.googleapis.com".to_string(),
+        }
+    }
+}
+
 /// Acquire a Workload Identity Federation attestation token.
 ///
 /// Dispatches to the provider-specific module and returns the raw token
@@ -70,9 +105,10 @@ pub async fn create_attestation(
     client: &reqwest::Client,
     config: &WorkloadIdentityConfig,
 ) -> Result<Attestation, AttestationError> {
+    let endpoints = AttestationEndpoints::default();
     match config.provider {
         WifProvider::Aws => {
-            let token = aws::get_attestation_token(client, config)
+            let token = aws::get_attestation_token(client, config, &endpoints)
                 .await
                 .context(AwsAttestationSnafu)?;
             Ok(Attestation {
@@ -81,7 +117,7 @@ pub async fn create_attestation(
             })
         }
         WifProvider::Azure => {
-            let token = azure::get_managed_identity_token(client, config)
+            let token = azure::get_managed_identity_token(client, config, &endpoints)
                 .await
                 .context(AzureAttestationSnafu)?;
             Ok(Attestation {
@@ -90,7 +126,7 @@ pub async fn create_attestation(
             })
         }
         WifProvider::Gcp => {
-            let token = gcp::get_identity_token(client, config)
+            let token = gcp::get_identity_token(client, config, &endpoints)
                 .await
                 .context(GcpAttestationSnafu)?;
             Ok(Attestation {

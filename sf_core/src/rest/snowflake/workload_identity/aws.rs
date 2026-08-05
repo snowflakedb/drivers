@@ -31,6 +31,8 @@ use std::collections::BTreeMap;
 
 use crate::config::rest_parameters::WorkloadIdentityConfig;
 
+use super::AttestationEndpoints;
+
 const SNOWFLAKE_AUDIENCE: &str = "snowflakecomputing.com";
 const AWS_WIF_SIGNING_ALGORITHM: &str = "ES384";
 const EMPTY_BODY_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -106,11 +108,12 @@ pub enum AwsAttestationError {
 pub(super) async fn get_attestation_token(
     client: &reqwest::Client,
     config: &WorkloadIdentityConfig,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     if enable_outbound_token() {
-        get_web_identity_token(client, config).await
+        get_web_identity_token(client, config, endpoints).await
     } else {
-        get_caller_identity_token(config).await
+        get_caller_identity_token(config, endpoints).await
     }
 }
 
@@ -129,8 +132,9 @@ fn enable_outbound_token() -> bool {
 /// base64-encoded as `{"url":…,"method":"POST","headers":{…}}`.
 async fn get_caller_identity_token(
     config: &WorkloadIdentityConfig,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
-    let region = resolve_region().await;
+    let region = resolve_region(endpoints).await;
     let credentials = resolve_credentials(config, &region).await?;
 
     let now = chrono::Utc::now();
@@ -232,8 +236,9 @@ fn build_signed_caller_identity_request(
 async fn get_web_identity_token(
     _client: &reqwest::Client,
     config: &WorkloadIdentityConfig,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
-    let region = resolve_region().await;
+    let region = resolve_region(endpoints).await;
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
         .region(Region::new(region))
         .load()
@@ -355,7 +360,7 @@ async fn chain_assume_role(
 /// Resolve the AWS region.
 ///
 /// Priority: `AWS_REGION` → `AWS_DEFAULT_REGION` → IMDS → `us-east-1`.
-async fn resolve_region() -> String {
+async fn resolve_region(endpoints: &AttestationEndpoints) -> String {
     if let Ok(r) = std::env::var("AWS_REGION")
         && !r.is_empty()
     {
@@ -366,20 +371,20 @@ async fn resolve_region() -> String {
     {
         return r;
     }
-    if let Some(r) = try_imds_region().await {
+    if let Some(r) = try_imds_region(&endpoints.aws_imds_base_url).await {
         return r;
     }
     "us-east-1".to_string()
 }
 
-async fn try_imds_region() -> Option<String> {
+async fn try_imds_region(imds_base_url: &str) -> Option<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .ok()?;
 
     let token_resp = client
-        .put("http://169.254.169.254/latest/api/token")
+        .put(format!("{imds_base_url}/latest/api/token"))
         .header("X-aws-ec2-metadata-token-ttl-seconds", "60")
         .send()
         .await
@@ -387,7 +392,7 @@ async fn try_imds_region() -> Option<String> {
     let token = token_resp.text().await.ok()?;
 
     let region_resp = client
-        .get("http://169.254.169.254/latest/meta-data/placement/region")
+        .get(format!("{imds_base_url}/latest/meta-data/placement/region"))
         .header("X-aws-ec2-metadata-token", &token)
         .send()
         .await
@@ -438,6 +443,43 @@ fn derive_signing_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// `resolve_region` returns the region from the EC2 IMDS response.
+    #[tokio::test]
+    async fn resolve_region_reads_region_from_imds() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/latest/api/token"))
+            .and(header("X-aws-ec2-metadata-token-ttl-seconds", "60"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/latest/meta-data/placement/region"))
+            .and(header("X-aws-ec2-metadata-token", "imds-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("us-west-2"))
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            aws_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+
+        temp_env::async_with_vars(
+            [
+                ("AWS_REGION", None::<&str>),
+                ("AWS_DEFAULT_REGION", None::<&str>),
+            ],
+            async {
+                let region = resolve_region(&endpoints).await;
+                assert_eq!(region, "us-west-2");
+            },
+        )
+        .await;
+    }
 
     #[test]
     fn sts_hostname_china() {
