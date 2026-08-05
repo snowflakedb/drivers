@@ -4244,6 +4244,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "python_stub_gen"
+version = "0.1.0"
+dependencies = [
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

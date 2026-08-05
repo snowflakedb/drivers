@@ -97,6 +97,12 @@ class TestWheelPackaging:
                 f"Wheel _core contents: {[n for n in names if '_core' in n]}"
             )
 
+            stub_files = [n for n in names if n.endswith("sf_core_python.pyi")]
+            assert stub_files, (
+                f"sf_core_python.pyi stub not found in wheel. "
+                f"Wheel _core contents: {[n for n in names if '_core' in n]}"
+            )
+
             pb2_files = [n for n in names if n.endswith("_pb2.py")]
             assert pb2_files, "No protobuf generated files (*_pb2.py) found in wheel"
 
