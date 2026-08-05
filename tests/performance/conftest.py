@@ -152,6 +152,11 @@ def _resolve_parameters_path(config) -> str:
     return str(Path("parameters") / "parameters_perf_aws.json")
 
 
+def _resolve_driver(config) -> str:
+    """Resolve the active driver from CLI flag or environment (default: core)."""
+    return config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+
+
 @pytest.fixture
 def parameters_json_path(request):
     """Get parameters JSON path from command line, cloud option, or environment."""
@@ -230,14 +235,14 @@ def warmup_iterations(request):
 @pytest.fixture
 def driver(request):
     """Get driver name from command line or environment"""
-    return request.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+    return _resolve_driver(request.config)
 
 
 @pytest.fixture
 def driver_type(request):
     """Get driver type from command line or environment"""
     driver_type_value = request.config.getoption("--driver-type") or os.getenv("DRIVER_TYPE", "universal")
-    driver_value = request.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+    driver_value = _resolve_driver(request.config)
     
     # Validate: Core driver only has universal implementation
     if driver_value == "core" and driver_type_value != "universal":
@@ -590,8 +595,29 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
     return _run_test
 
 
+def _skip_unsupported_driver(item):
+    """Skip a test whose @pytest.mark.supported_drivers list excludes the active driver.
+
+    Some test types are only implemented by a subset of driver apps. Cold-start, for
+    example, lives only in the Python driver app; the Core/ODBC/JDBC apps have no
+    cold-start executor and abort on the unknown TEST_TYPE. Marking those tests keeps
+    the perf job green for drivers that do not (yet) support them, and the allowlist
+    grows naturally as each driver gains support.
+    """
+    marker = item.get_closest_marker("supported_drivers")
+    if marker is None:
+        return
+    supported = {name.lower() for name in marker.args}
+    active_driver = _resolve_driver(item.config).lower()
+    if active_driver not in supported:
+        pytest.skip(
+            f"'{item.name}' supports drivers {sorted(supported)}; skipping for --driver={active_driver}"
+        )
+
+
 def pytest_runtest_setup(item):
-    """Hook called before each test starts - add visual separation."""
+    """Hook called before each test starts - gate by driver, add visual separation."""
+    _skip_unsupported_driver(item)
     logger.info("")
     logger.info("=" * 80)
     logger.info(f">>> TEST: {item.name}")
@@ -720,7 +746,7 @@ def pytest_sessionfinish(session, exitstatus):
         try:
             from runner.pr_smoke_reg_detection.regression_check import run_regression_check
 
-            driver_val = session.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+            driver_val = _resolve_driver(session.config)
             threshold = session.config.getoption("--regression-threshold")
 
             run_id_val = _current_run_dir.name if _current_run_dir else None
