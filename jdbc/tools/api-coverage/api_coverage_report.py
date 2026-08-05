@@ -47,10 +47,16 @@ JDBC_INTERFACES = [
     "javax.sql.XADataSource",
     "javax.sql.XAConnection",
 ]
-# Interfaces required only for GA, not for Public Preview (PuPr). PuPr readiness
-# is reported over the baseline MINUS these; GA readiness over the full baseline.
-# SQLInput/SQLOutput back user-defined SQLData mapping — out of PuPr scope.
-PUPR_EXCLUDED_INTERFACES = frozenset({"java.sql.SQLInput", "java.sql.SQLOutput"})
+# Cumulative readiness milestones (PuPr ⊂ GA ⊂ Post-GA). Interfaces are deferred
+# past the earlier milestones:
+#   - SQLInput/SQLOutput back user-defined SQLData mapping — deferred to Post-GA.
+#   - Loader (the bulk-load API) lands at GA, so it is excluded from PuPr only.
+# Each milestone's coverage is reported over the baseline MINUS its exclusion set;
+# Post-GA excludes nothing.
+POST_GA_ONLY_INTERFACES = frozenset({"java.sql.SQLInput", "java.sql.SQLOutput"})
+GA_ONLY_INTERFACES = frozenset({"net.snowflake.client.api.loader.Loader"})
+PUPR_EXCLUDED_INTERFACES = POST_GA_ONLY_INTERFACES | GA_ONLY_INTERFACES
+GA_EXCLUDED_INTERFACES = POST_GA_ONLY_INTERFACES
 
 SUMMARY_ORDER = ["implemented", "unsupported_by_design", "not_implemented"]
 # Worst-case rollup across all concrete classes implementing an (interface, signature):
@@ -445,8 +451,8 @@ def buckets_from_categories(categories: dict[str, str], excluded_interfaces: fro
     """done/remaining/pct + totals over a method_categories map, optionally
     excluding whole interfaces (by the `iface` component of each `iface::sig` key).
 
-    Used to report PuPr (excluding SQLInput/SQLOutput) and GA (full baseline)
-    from the same reconciled categories."""
+    Used to report the cumulative milestones (PuPr, GA, Post-GA) from the same
+    reconciled categories, each with its own exclusion set."""
     totals: dict[str, int] = defaultdict(int)
     for key, cat in categories.items():
         if key.split("::", 1)[0] in excluded_interfaces:
@@ -465,8 +471,11 @@ def buckets_from_categories(categories: dict[str, str], excluded_interfaces: fro
 
 
 def phase_buckets(old_categories: dict[str, str], new_categories: dict[str, str]) -> dict:
-    """Two-phase readiness: `pupr` (baseline minus PUPR_EXCLUDED_INTERFACES) and
-    `ga` (full baseline), each with old/new buckets."""
+    """Three-phase cumulative readiness (PuPr ⊂ GA ⊂ Post-GA), each with old/new
+    buckets:
+      - `pupr`    — baseline minus PUPR_EXCLUDED_INTERFACES (SQLInput/SQLOutput + Loader)
+      - `ga`      — baseline minus GA_EXCLUDED_INTERFACES (SQLInput/SQLOutput), i.e. PuPr + Loader
+      - `post_ga` — full baseline"""
     return {
         "pupr": {
             "excluded_interfaces": sorted(PUPR_EXCLUDED_INTERFACES),
@@ -474,6 +483,11 @@ def phase_buckets(old_categories: dict[str, str], new_categories: dict[str, str]
             "new": buckets_from_categories(new_categories, PUPR_EXCLUDED_INTERFACES),
         },
         "ga": {
+            "excluded_interfaces": sorted(GA_EXCLUDED_INTERFACES),
+            "old": buckets_from_categories(old_categories, GA_EXCLUDED_INTERFACES),
+            "new": buckets_from_categories(new_categories, GA_EXCLUDED_INTERFACES),
+        },
+        "post_ga": {
             "old": buckets_from_categories(old_categories),
             "new": buckets_from_categories(new_categories),
         },
