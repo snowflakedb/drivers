@@ -2,6 +2,7 @@
 Unit tests for Connection.
 """
 
+import logging
 import warnings
 
 from unittest.mock import MagicMock, patch
@@ -203,6 +204,76 @@ class TestGetAutocommit:
         assert connection.get_autocommit() is False
         mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
         assert connection.get_autocommit() is True
+
+
+class TestTelemetryEnabled:
+    """Unit tests for Connection.telemetry_enabled."""
+
+    def test_false_when_server_param_unset(self, connection):
+        """Absent CLIENT_TELEMETRY_ENABLED session parameter means unconfirmed, matching legacy."""
+        assert connection.telemetry_enabled is False
+
+    @pytest.mark.parametrize(
+        ("server_value", "expected"),
+        [
+            ("true", True),
+            ("TRUE", True),
+            ("True", True),
+            ("false", False),
+            ("yes", False),
+        ],
+    )
+    def test_reads_server_param_case_insensitively(self, connection, mock_db_api, server_value, expected):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value=server_value)
+        assert connection.telemetry_enabled is expected
+
+    def test_client_false_overrides_server_true(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        connection.telemetry_enabled = False
+        assert connection.telemetry_enabled is False
+
+    def test_client_default_and_server_true(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        assert connection.telemetry_enabled is True
+
+    @pytest.mark.parametrize("raw_value", [1, 0, "", None])
+    def test_setter_coerces_to_bool(self, connection, raw_value):
+        connection.telemetry_enabled = raw_value
+        assert connection._client_param_telemetry_enabled is (bool(raw_value))
+        assert isinstance(connection._client_param_telemetry_enabled, bool)
+
+    def test_enabling_while_server_disabled_logs_info(self, connection, caplog):
+        """Re-enabling while the server half is off should log the legacy message."""
+        with caplog.at_level(logging.INFO):
+            connection.telemetry_enabled = True
+        assert "Telemetry has been disabled by the session parameter CLIENT_TELEMETRY_ENABLED" in caplog.text
+
+    def test_enabling_while_server_enabled_does_not_log(self, connection, mock_db_api, caplog):
+        mock_db_api.connection_get_parameter.return_value = MagicMock(value="true")
+        with caplog.at_level(logging.INFO):
+            connection.telemetry_enabled = True
+        assert "CLIENT_TELEMETRY_ENABLED" not in caplog.text
+
+    def test_disabling_does_not_log(self, connection, caplog):
+        with caplog.at_level(logging.INFO):
+            connection.telemetry_enabled = False
+        assert "CLIENT_TELEMETRY_ENABLED" not in caplog.text
+
+    def test_getter_never_raises_on_rpc_failure(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.side_effect = RuntimeError("boom")
+        assert connection.telemetry_enabled is False
+
+    def test_read_after_close_uses_frozen_snapshot(self, connection, mock_db_api):
+        """Post-close reads should answer from the frozen snapshot, matching legacy retaining its last value."""
+        mock_db_api.connection_get_all_parameters.return_value = MagicMock(
+            parameters={"CLIENT_TELEMETRY_ENABLED": "true"}
+        )
+        connection.close()
+
+        assert connection.telemetry_enabled is True
+        call_count_before = mock_db_api.connection_get_parameter.call_count
+        assert connection.telemetry_enabled is True
+        assert mock_db_api.connection_get_parameter.call_count == call_count_before
 
 
 class TestAutocommitKwargUnit:

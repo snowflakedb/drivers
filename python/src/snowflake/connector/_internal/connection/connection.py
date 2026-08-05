@@ -6,15 +6,18 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from ...connection_config import ConnectionConfig
-from ...constants import QueryStatus
+from ...constants import QueryStatus, SessionParameterName
 from ...errors import Error, ErrorValue, InterfaceError, ProgrammingError
 from ..binding_converters import ParamStyle
 from ..decorators import api_telemetry, backward_compatibility, pep249
 from ..errorhandler import ErrorHandlerMixin
 from ..extras import check_dependency
 from ..extras import numpy as np
+from ..logging import get_logger
 from .constants import LOG_MAX_QUERY_LENGTH
 
+
+logger = get_logger(__name__)
 
 # Matches the legacy connector's `MAX_CLIENT_PREFETCH_THREADS` /
 # `_validate_client_prefetch_threads` bounds (`connection.py`).
@@ -47,6 +50,7 @@ class ConnectionMixin(ErrorHandlerMixin):
     _interpolate_empty_sequences: bool
     _session_parameters: Any
     _connection_info: Any
+    _client_param_telemetry_enabled: bool
 
     def __init__(
         self,
@@ -58,6 +62,7 @@ class ConnectionMixin(ErrorHandlerMixin):
     ) -> None:
         self._messages = []
         self._errorhandler = Error.default_errorhandler
+        self._client_param_telemetry_enabled = True
 
         self.config = ConnectionConfig.from_connection_args(
             connection_name=connection_name,
@@ -313,16 +318,41 @@ class ConnectionMixin(ErrorHandlerMixin):
     # Logging & options
     # ------------------------------------------------------------------
 
+    def _server_param_telemetry_enabled(self) -> bool:
+        try:
+            value = self._session_parameters[SessionParameterName.CLIENT_TELEMETRY_ENABLED]
+        except Exception:
+            logger.debug("Failed to read CLIENT_TELEMETRY_ENABLED session parameter")
+            return False
+        return value is not None and value.lower() == "true"
+
     @property
     @api_telemetry
     def telemetry_enabled(self) -> bool:
-        """Whether client-side telemetry collection is enabled."""
-        raise NotImplementedError("telemetry_enabled is not yet implemented")
+        """Whether client-side telemetry collection is enabled.
+
+        True only when both halves agree: the client has not disabled it via
+        this property, AND the server has confirmed ``CLIENT_TELEMETRY_ENABLED``
+        for the session. Unlike ``sf_core``'s own (unrelated) OTEL-export gate,
+        an unconfirmed server parameter is treated as disabled, not enabled,
+        matching the legacy driver. Reading this property issues an RPC.
+        """
+        return self._client_param_telemetry_enabled and self._server_param_telemetry_enabled()
 
     @telemetry_enabled.setter
     @api_telemetry
     def telemetry_enabled(self, value: bool) -> None:
-        raise NotImplementedError("telemetry_enabled is not yet implemented")
+        """Set the client-side telemetry flag.
+
+        This can only narrow, never widen, server policy: it never issues an
+        RPC or ``ALTER SESSION``.
+        """
+        self._client_param_telemetry_enabled = bool(value)
+        if self._client_param_telemetry_enabled and not self._server_param_telemetry_enabled():
+            logger.info(
+                "Telemetry has been disabled by the session parameter CLIENT_TELEMETRY_ENABLED."
+                " Set session parameter CLIENT_TELEMETRY_ENABLED to true to enable telemetry."
+            )
 
     @property
     @api_telemetry

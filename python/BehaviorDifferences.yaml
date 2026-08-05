@@ -818,3 +818,27 @@ behavior_differences:
       parameter name) and `validation_code` (the structured sf_core `ValidationCode` enum
       value) when the error originated from a connection-config validation failure. Both
       default to `None` for errors from any other source, so existing callers are unaffected.
+
+  49:
+    name: "Connection.telemetry_enabled restored; matches legacy AND semantics"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `Connection.telemetry_enabled` is a cached attribute: an AND of a local client-side
+      flag (default `True`, settable via the property, never sent to the server) and a
+      server-side flag last updated from the `CLIENT_TELEMETRY_ENABLED` session parameter
+      whenever the server sent one (default disabled until confirmed). Both halves gate
+      whether the driver flushes its batched telemetry queue.
+    new_driver_behavior: |
+      `Connection.telemetry_enabled` returns the same AND (client flag default `True`,
+      never sent to the server; server half read from `CLIENT_TELEMETRY_ENABLED`, absent
+      treated as disabled). Both halves also gate the wrapper's own per-call telemetry RPCs,
+      matching legacy's gating exactly. Two residual, non-observable differences: (1) each
+      read issues an FFI call to the Rust core to fetch the live session parameter rather
+      than returning a cached value — the same tradeoff every other session-parameter-backed
+      property in the universal driver already makes (e.g. `autocommit`); (2) legacy's
+      batched-queue flush model has no analog, since the universal driver sends each
+      telemetry event immediately via RPC.
