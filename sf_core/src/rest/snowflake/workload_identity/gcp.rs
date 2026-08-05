@@ -19,17 +19,12 @@ use crate::sensitive::SensitiveString;
 use serde::Deserialize;
 use snafu::{Location, ResultExt, Snafu};
 
-const GCE_METADATA_HOST: &str = "http://metadata.google.internal";
+use super::AttestationEndpoints;
+
 const METADATA_FLAVOR_HEADER: &str = "metadata-flavor";
 const METADATA_FLAVOR_VALUE: &str = "Google";
 const SNOWFLAKE_AUDIENCE: &str = "snowflakecomputing.com";
 const METADATA_TIMEOUT_SECS: u64 = 10;
-/// Base URL of the IAM Service Account Credentials API's `serviceAccounts`
-/// collection (the `iamcredentials.googleapis.com` API root plus the
-/// `v1/projects/-/serviceAccounts` path). Per-account methods such as
-/// `:generateIdToken` are appended to `{base}/{service_account}`.
-const IAM_CREDENTIALS_SERVICE_ACCOUNTS_BASE_URL: &str =
-    "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts";
 
 /// Errors raised while acquiring a GCP identity-token attestation.
 ///
@@ -85,20 +80,22 @@ pub enum GcpAttestationError {
 pub(super) async fn get_identity_token(
     client: &reqwest::Client,
     config: &WorkloadIdentityConfig,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, GcpAttestationError> {
     match config.impersonation_path.split_last() {
         // No impersonation — fetch the identity token directly.
-        None => get_identity_token_from_metadata(client).await,
+        None => get_identity_token_from_metadata(client, endpoints).await,
         // Impersonation — `target_sa` is the final account; `delegates` is the
         // (possibly empty) intermediate delegation chain.
         Some((target_sa, delegates)) => {
-            let access_token = get_access_token_from_metadata(client).await?;
+            let access_token = get_access_token_from_metadata(client, endpoints).await?;
             generate_identity_token(
                 client,
                 access_token.reveal(),
                 target_sa,
                 delegates,
                 SNOWFLAKE_AUDIENCE,
+                endpoints,
             )
             .await
         }
@@ -108,6 +105,7 @@ pub(super) async fn get_identity_token(
 /// Fetch an OAuth access token for the VM's default service account.
 async fn get_access_token_from_metadata(
     client: &reqwest::Client,
+    endpoints: &AttestationEndpoints,
 ) -> Result<SensitiveString, GcpAttestationError> {
     const CTX: &str = "GCE metadata access token";
 
@@ -116,8 +114,10 @@ async fn get_access_token_from_metadata(
         access_token: SensitiveString,
     }
 
-    let url =
-        format!("{GCE_METADATA_HOST}/computeMetadata/v1/instance/service-accounts/default/token");
+    let url = format!(
+        "{}/computeMetadata/v1/instance/service-accounts/default/token",
+        endpoints.gcp_metadata_base_url
+    );
     let body = metadata_get(client, &url, CTX).await?;
     let parsed: TokenResponse =
         serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
@@ -127,9 +127,11 @@ async fn get_access_token_from_metadata(
 /// Fetch an OIDC identity token for the VM's default service account.
 async fn get_identity_token_from_metadata(
     client: &reqwest::Client,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, GcpAttestationError> {
     let url = format!(
-        "{GCE_METADATA_HOST}/computeMetadata/v1/instance/service-accounts/default/identity?audience={SNOWFLAKE_AUDIENCE}&format=full"
+        "{}/computeMetadata/v1/instance/service-accounts/default/identity?audience={SNOWFLAKE_AUDIENCE}&format=full",
+        endpoints.gcp_metadata_base_url
     );
     // The metadata server returns the JWT directly as plain text.
     metadata_get(client, &url, "GCE metadata identity token").await
@@ -146,6 +148,7 @@ async fn generate_identity_token(
     target_service_account: &str,
     delegates: &[String],
     audience: &str,
+    endpoints: &AttestationEndpoints,
 ) -> Result<String, GcpAttestationError> {
     const CTX: &str = "GCP IAM generateIdToken";
 
@@ -155,7 +158,8 @@ async fn generate_identity_token(
     }
 
     let url = format!(
-        "{IAM_CREDENTIALS_SERVICE_ACCOUNTS_BASE_URL}/{target_service_account}:generateIdToken"
+        "{}/v1/projects/-/serviceAccounts/{target_service_account}:generateIdToken",
+        endpoints.gcp_iam_credentials_base_url
     );
     let delegate_names: Vec<String> = delegates
         .iter()
@@ -227,4 +231,44 @@ async fn metadata_get(
         .fail();
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::rest_parameters::WifProvider;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// `get_identity_token` (no impersonation) returns the token from the
+    /// GCE metadata server's response.
+    #[tokio::test]
+    async fn get_identity_token_reads_token_from_metadata_server() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/computeMetadata/v1/instance/service-accounts/default/identity",
+            ))
+            .and(header(METADATA_FLAVOR_HEADER, METADATA_FLAVOR_VALUE))
+            .respond_with(ResponseTemplate::new(200).set_body_string("mocked-gcp-identity-token"))
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            gcp_metadata_base_url: server.uri(),
+            ..Default::default()
+        };
+        let config = WorkloadIdentityConfig {
+            provider: WifProvider::Gcp,
+            entra_resource: None,
+            impersonation_path: Vec::new(),
+            oidc_token: None,
+        };
+        let client = reqwest::Client::new();
+
+        let token = get_identity_token(&client, &config, &endpoints)
+            .await
+            .expect("expected identity token");
+        assert_eq!(token, "mocked-gcp-identity-token");
+    }
 }
