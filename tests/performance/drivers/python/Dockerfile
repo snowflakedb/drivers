@@ -71,14 +71,13 @@ RUN cd python && \
     ln -s ../error_trace_derive error_trace_derive && \
     ln -s ../python_bridge python_bridge
 
-# Use pre-built sf_core_python.abi3.so from sf-core-builder (abi3 works with any Python >= 3.11).
-COPY tests/performance/.tmp/sf_core_python.abi3.so /workdir/python/src/snowflake/connector/_core/sf_core_python.abi3.so
-COPY tests/performance/.tmp/rust_version /etc/rust_version
-
-# Install the driver — builds Cython extensions via hatch_build.py.
-# SKIP_CORE_BUILD tells hatch to skip cargo build of python_bridge (we use the pre-built one above).
-ENV SKIP_CORE_BUILD=1
+# Install the driver — builds Cython extensions + python_bridge via hatch_build.py.
+# SF_PERF_METRICS enables sf_core/perf_timing in the PyO3 extension build.
+ENV SF_PERF_METRICS=1
 RUN pip install --no-cache-dir "/workdir/python/[pandas]"
+
+# Record the Rust toolchain that built python_bridge (for results metadata).
+RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /etc/rust_version
 
 ENV DRIVER_TYPE=universal
 

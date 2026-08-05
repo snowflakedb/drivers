@@ -111,8 +111,9 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
+# The version-tagged sf_core_python.<EXT_SUFFIX> binary is force-included per interpreter by hatch_build.py.
 artifacts = [
-    "src/snowflake/connector/_core/sf_core_python.*",
+    "src/snowflake/connector/_core/sf_core_python.pyi",
     "src/snowflake/connector/_internal/*.so",
     "src/snowflake/connector/_internal/*.pyd",
 ]

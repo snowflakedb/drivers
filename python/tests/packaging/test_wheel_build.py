@@ -86,7 +86,7 @@ class TestWheelPackaging:
         with zipfile.ZipFile(wheel_path, "r") as whl:
             names = whl.namelist()
 
-            # Unix: sf_core_python.abi3.so; Windows: sf_core_python.pyd (abi3 stable ABI).
+            # Version-tagged PyO3 extension, e.g. sf_core_python.cpython-313-*.so / .cp313-*.pyd.
             core_files = [
                 n
                 for n in names
@@ -95,6 +95,10 @@ class TestWheelPackaging:
             assert core_files, (
                 f"sf_core_python extension not found in wheel. "
                 f"Wheel _core contents: {[n for n in names if '_core' in n]}"
+            )
+            # Exactly one ABI-tagged binary per wheel.
+            assert len(core_files) == 1, (
+                f"Expected exactly one sf_core_python binary in the wheel, found {len(core_files)}: {core_files}"
             )
 
             stub_files = [n for n in names if n.endswith("sf_core_python.pyi")]
