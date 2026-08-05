@@ -34,6 +34,39 @@ public class JNICoreTransport implements CoreTransport {
     return response;
   }
 
+  @Override
+  public long submitMessage(String serviceName, String methodName, byte[] requestBytes)
+      throws TransportException {
+    logger.debug(
+        "JNI async submit: service={}, method={}, requestBytes={}",
+        serviceName,
+        methodName,
+        requestBytes == null ? -1 : requestBytes.length);
+    return nativeSubmitMessage(serviceName, methodName, requestBytes);
+  }
+
+  @Override
+  public TransportResponse awaitMessage(long handle) throws TransportException {
+    TransportResponse response = nativeAwaitMessage(handle);
+    if (response == null) {
+      throw new TransportException("Empty transport response for handle " + handle);
+    }
+    logger.debug("JNI async await: handle={}, code={}", handle, response.getCode());
+    return response;
+  }
+
+  @Override
+  public void cancel(long handle) {
+    nativeCancel(handle);
+  }
+
   private static native TransportResponse nativeHandleMessage(
       String serviceName, String methodName, byte[] requestBytes);
+
+  private static native long nativeSubmitMessage(
+      String serviceName, String methodName, byte[] requestBytes);
+
+  private static native TransportResponse nativeAwaitMessage(long handle);
+
+  private static native void nativeCancel(long handle);
 }

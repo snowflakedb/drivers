@@ -12,6 +12,9 @@ extend google.protobuf.ServiceOptions {
 
 extend google.protobuf.MethodOptions {
   optional string method_error = 412312;
+  // Marks a slow, cancellable RPC as async-first: language generators emit a
+  // Future/awaitable-returning client method instead of a blocking one.
+  optional bool async_first = 412313;
 }
 
 // Status codes corresponding to Thrift StatusCode enum
@@ -1046,7 +1049,9 @@ service DatabaseDriver {
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
   rpc ConnectionSetOptions(ConnectionSetOptionsRequest) returns (ConnectionSetOptionsResponse);
-  rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
+  rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
   rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
   rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);

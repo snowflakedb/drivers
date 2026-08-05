@@ -126,6 +126,21 @@ impl JavaGenerator {
         snake_to_pascal_case(name)
     }
 
+    /// True if a method is marked `async_first` in the proto (emit a
+    /// `Future`-returning client method instead of a blocking one).
+    fn is_async_first(method: &crate::protobuf::MethodDescriptorProto) -> bool {
+        method
+            .options
+            .as_ref()
+            .and_then(|o| o.async_first)
+            .unwrap_or(false)
+    }
+
+    /// True if any method in the service is `async_first` (drives conditional imports).
+    fn has_async_first(service: &crate::protobuf::ServiceDescriptorProto) -> bool {
+        service.method.iter().any(Self::is_async_first)
+    }
+
     fn generate_service_interface_file(
         &self,
         service: &crate::protobuf::ServiceDescriptorProto,
@@ -139,18 +154,24 @@ impl JavaGenerator {
         // Package declaration
         content += &format!("package {};\n\n", java_package);
 
+        let future_import = if Self::has_async_first(service) {
+            "import java.util.concurrent.Future;\n"
+        } else {
+            ""
+        };
+
         // Interface
         content += &format!(
             r#"
+{future_import}import net.snowflake.client.internal.unicore.ServiceException;
 import net.snowflake.client.internal.unicore.TransportException;
 
 /**
- * Service interface for {}
+ * Service interface for {service_name}
  * This file is auto-generated. Do not edit manually.
  */
-public interface {}Service {{
-"#,
-            service_name, service_name
+public interface {service_name}Service {{
+"#
         );
 
         // Generate method signatures
@@ -167,36 +188,30 @@ public interface {}Service {{
                 outer_class,
             );
 
-            content += &format!(
-                r#"    /**
-     * Method: {}
+            if Self::is_async_first(method) {
+                // Async-first: return a Future; ServiceException surfaces via get().
+                content += &format!(
+                    r#"    /**
+     * Method: {method_name} (async-first)
      */
-    {} {}({} request) throws ServiceException, TransportException;
+    Future<{output_type}> {method_name}({input_type} request) throws TransportException;
 
-"#,
-                method_name, output_type, method_name, input_type
-            );
-        }
-        let service_error = service
-            .options
-            .as_ref()
-            .and_then(|o| o.service_error.as_ref());
-
-        let error_type = service_error
-            .map(|e| Self::to_java_type_with_outer(e, proto_package, outer_class))
-            .expect("Service error not found");
-        content += &format!(
-            r#"
-    class ServiceException extends RuntimeException {{
-        public final {error_type} error;
-        public ServiceException({error_type} error) {{
-            super(error.toString());
-            this.error = error;
-        }}
-    }}
-}}
 "#
-        );
+                );
+            } else {
+                content += &format!(
+                    r#"    /**
+     * Method: {method_name}
+     */
+    {output_type} {method_name}({input_type} request) throws ServiceException, TransportException;
+
+"#
+                );
+            }
+        }
+        // ServiceException is a shared transport-layer type
+        // (net.snowflake.client.internal.unicore.ServiceException), not nested here.
+        content += "}\n";
         content
     }
 
@@ -219,13 +234,19 @@ public interface {}Service {{
         // TODO: Move this string formatting to a template file for better readability
         content += &format!("package {};\n\n", java_package);
 
-        // Import only Message, protobuf classes are now in the same package
+        let async_imports = if Self::has_async_first(service) {
+            "import java.util.concurrent.Future;\nimport net.snowflake.client.internal.unicore.CoreFuture;\n"
+        } else {
+            ""
+        };
+
+        // Decode logic lives in ResponseDecoder (shared with CoreFuture), so the client no longer
+        // needs Message / TransportResponse / InvalidProtocolBufferException directly.
         content += &format!(
-            r#"import com.google.protobuf.Message;
-import net.snowflake.client.internal.unicore.CoreTransport;
-import net.snowflake.client.internal.unicore.CoreTransport.TransportResponse;
+            r#"{async_imports}import net.snowflake.client.internal.unicore.CoreTransport;
+import net.snowflake.client.internal.unicore.ResponseDecoder;
+import net.snowflake.client.internal.unicore.ServiceException;
 import net.snowflake.client.internal.unicore.TransportException;
-import com.google.protobuf.InvalidProtocolBufferException;
 import {java_package}.{service_name}Service;
 
 "#
@@ -269,43 +290,35 @@ public class {service_name}ServiceClient implements {service_name}Service {{
                 .unwrap_or_else(|| "Exception".to_string());
             let proto_method_name = camel_to_snake_case(method.name.as_ref().unwrap());
 
-            content += &format!(
-                r#"    /**
+            if Self::is_async_first(method) {
+                // Async-first: submit returns immediately with a handle; the CoreFuture decodes the
+                // response on get() using the shared ResponseDecoder. ServiceException surfaces via
+                // ExecutionException on get() rather than a direct throw.
+                content += &format!(
+                    r#"    /**
+     * Method: {method_name} (async-first)
+     */
+    public Future<{output_type}> {method_name}({input_type} request) throws TransportException {{
+        long handle = transport.submitMessage("{service_name}", "{proto_method_name}", request.toByteArray());
+        return new CoreFuture<>(
+            transport, handle, new ResponseDecoder<>({output_type}.parser(), {error_type}.parser()));
+    }}
+
+"#
+                );
+            } else {
+                content += &format!(
+                    r#"    /**
      * Method: {method_name}
      */
     public {output_type} {method_name}({input_type} request) throws ServiceException, TransportException {{
-        TransportResponse response = transport.handleMessage(
-            "{service_name}",
-            "{proto_method_name}",
-            request.toByteArray()
-        );
-        
-        int code = response.getCode();
-        byte[] responseBytes = response.getResponseBytes();
-        
-        if (code == CoreTransport.CODE_SUCCESS) {{
-            try {{
-                return {output_type}.parseFrom(responseBytes);
-            }} catch (InvalidProtocolBufferException e) {{
-                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
-            }}
-        }} else if (code == CoreTransport.CODE_APPLICATION_ERROR) {{
-            try {{
-                {error_type} error = {error_type}.parseFrom(responseBytes);
-                throw new ServiceException(error);
-            }} catch (InvalidProtocolBufferException e) {{
-                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
-            }}
-        }} else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {{
-            String errorMessage = new String(responseBytes);
-            throw new TransportException(errorMessage);
-        }} else {{
-            throw new TransportException("Unknown error code: " + code);
-        }}
+        return new ResponseDecoder<>({output_type}.parser(), {error_type}.parser())
+            .decode(transport.handleMessage("{service_name}", "{proto_method_name}", request.toByteArray()));
     }}
-    
+
 "#
-            );
+                );
+            }
         }
 
         content += "}\n";

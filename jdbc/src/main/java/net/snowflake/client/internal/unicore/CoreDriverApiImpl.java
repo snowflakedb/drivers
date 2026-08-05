@@ -4,6 +4,8 @@ import com.google.protobuf.UnsafeByteOperations;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
@@ -158,7 +160,9 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setDbHandle(dbHandle)
             .setWrapperIdentity(wrapperIdentity)
             .build();
-    return invoke(() -> client.connectionInit(request));
+    // connectionInit is async-first (returns a Future); block on it here. There
+    // is no user-facing cancel trigger yet, so this stays a plain get().
+    return await(client.connectionInit(request));
   }
 
   public ConnectionSetOptionsResponse connectionSetOptions(
@@ -539,16 +543,45 @@ class CoreDriverApiImpl implements CoreDriverApi {
 
   @FunctionalInterface
   private interface ServiceCall<T> {
-    T call() throws DatabaseDriverService.ServiceException, TransportException;
+    T call() throws ServiceException, TransportException;
   }
 
   private <T> T invoke(ServiceCall<T> callable) throws SQLException {
     try {
       return callable.call();
-    } catch (DatabaseDriverService.ServiceException e) {
-      throw SnowflakeSQLException.fromServiceException(e);
-    } catch (TransportException e) {
-      throw new SQLException("Driver communication error: " + e.getMessage(), e);
+    } catch (ServiceException | TransportException e) {
+      throw toSqlException(e);
     }
+  }
+
+  /**
+   * Block on an async-first RPC future, mapping its failure to a {@link SQLException}. {@link
+   * CoreFuture#get()} wraps the decoder's {@code ServiceException} / {@code TransportException} in
+   * an {@link ExecutionException}, so unwrap the cause here.
+   */
+  private <T> T await(Future<T> future) throws SQLException {
+    try {
+      return future.get();
+    } catch (ExecutionException e) {
+      throw toSqlException(e.getCause());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new SQLException("Interrupted while waiting for connection init", e);
+    }
+  }
+
+  /**
+   * Map an RPC failure — thrown directly by a blocking call or unwrapped from an {@link
+   * ExecutionException} on the async path — to a {@link SQLException}.
+   */
+  private static SQLException toSqlException(Throwable cause) {
+    if (cause instanceof ServiceException) {
+      return SnowflakeSQLException.fromServiceException((ServiceException) cause);
+    }
+    if (cause instanceof TransportException) {
+      return new SQLException("Driver communication error: " + cause.getMessage(), cause);
+    }
+    return new SQLException(
+        "Driver error: " + (cause != null ? cause.getMessage() : "unknown"), cause);
   }
 }

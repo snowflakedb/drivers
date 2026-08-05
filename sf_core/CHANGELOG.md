@@ -5,6 +5,8 @@
 New features:
 
 - Added server-side query cancel: capture the in-flight `requestId`/`sqlText` on the statement at submit time and add a `statement_cancel` driver API (plus `StatementCancel` RPC) that aborts the running query via `POST /queries/v1/abort-request`, so a cross-thread `SQLCancel` can stop a query on the server. (snowflakedb/universal-driver#628)
+- Added a shared operation-cancellation registry and `RustTransport::handle_message_cancellable`, letting a bridge race an in-flight RPC against a cancellation token and surface cancellation as `DriverException` with `STATUS_CODE_CANCELLED`; the async C API now cancels through this registry. (snowflakedb/universal-driver#TBD)
+- Added async-first RPCs: an RPC marked `async_first` in the proto generates a `Future`-returning client method, and JDBC's `ConnectionInit` now uses it via new `nativeSubmitMessage`/`nativeAwaitMessage`/`nativeCancel` JNI entries. (snowflakedb/universal-driver#TBD)
 
 Bug fixes:
 
