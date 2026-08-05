@@ -24,6 +24,8 @@ use aws_credential_types::provider::ProvideCredentials as _;
 use aws_sdk_sts::config::SharedCredentialsProvider;
 use aws_sdk_sts::{Client as StsClient, config::Builder as StsConfigBuilder};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use futures::FutureExt as _;
+use futures::future::BoxFuture;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
@@ -240,7 +242,7 @@ async fn get_web_identity_token(
 ) -> Result<String, AwsAttestationError> {
     let region = resolve_region(endpoints).await;
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(region))
+        .region(Region::new(region.clone()))
         .load()
         .await;
 
@@ -249,7 +251,7 @@ async fn get_web_identity_token(
     let credentials = if config.impersonation_path.is_empty() {
         None
     } else {
-        Some(chain_assume_role(&sts_client, &config.impersonation_path).await?)
+        Some(chain_assume_role(&region, &config.impersonation_path).await?)
     };
 
     let final_sts_client = if let Some(creds) = credentials {
@@ -286,12 +288,11 @@ async fn resolve_credentials(
     config: &WorkloadIdentityConfig,
     region: &str,
 ) -> Result<Credentials, AwsAttestationError> {
-    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(region.to_string()))
-        .load()
-        .await;
-
     if config.impersonation_path.is_empty() {
+        let sdk_config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new(region.to_string()))
+            .load()
+            .await;
         let provider = sdk_config
             .credentials_provider()
             .context(NoCredentialsProviderSnafu)?;
@@ -301,57 +302,103 @@ async fn resolve_credentials(
             .boxed()
             .context(CredentialsLoadSnafu)
     } else {
-        let sts_client = StsClient::new(&sdk_config);
-        chain_assume_role(&sts_client, &config.impersonation_path).await
+        chain_assume_role(region, &config.impersonation_path).await
     }
 }
 
-/// Walk an impersonation chain via `sts:AssumeRole`, returning the credentials
-/// obtained after assuming all roles.
+/// Seam for a single `sts:AssumeRole` call. `aws_sdk_sts::Client` speaks
+/// AWS's Query/XML protocol, which isn't practical to wiremock directly, so
+/// production drives a real call ([`StsAssumeRoleProvider`]) while tests
+/// drive a fake that returns canned credentials.
+trait AssumeRoleProvider: Send + Sync {
+    /// Assume `role_arn`. `credentials`, when present, is the previous
+    /// role's temporary credentials, used instead of the ambient credential
+    /// chain to authorize this call.
+    fn assume_role<'a>(
+        &'a self,
+        role_arn: &'a str,
+        credentials: Option<&'a Credentials>,
+    ) -> BoxFuture<'a, Result<Credentials, AwsAttestationError>>;
+}
+
+/// Production [`AssumeRoleProvider`]: issues a real `sts:AssumeRole` call
+/// via `aws_sdk_sts::Client`.
+struct StsAssumeRoleProvider {
+    region: String,
+}
+
+impl AssumeRoleProvider for StsAssumeRoleProvider {
+    fn assume_role<'a>(
+        &'a self,
+        role_arn: &'a str,
+        credentials: Option<&'a Credentials>,
+    ) -> BoxFuture<'a, Result<Credentials, AwsAttestationError>> {
+        async move {
+            let mut loader = aws_config::defaults(BehaviorVersion::latest())
+                .region(Region::new(self.region.clone()));
+            if let Some(creds) = credentials {
+                loader = loader.credentials_provider(SharedCredentialsProvider::new(creds.clone()));
+            }
+            let sdk_config = loader.load().await;
+            let client = StsClient::new(&sdk_config);
+
+            let session_name = format!("snowflake-wif-{}", std::process::id());
+            let resp = client
+                .assume_role()
+                .role_arn(role_arn)
+                .role_session_name(&session_name)
+                .send()
+                .await
+                .boxed()
+                .context(AssumeRoleSnafu {
+                    role_arn: role_arn.to_string(),
+                })?;
+
+            let raw_creds = resp
+                .credentials()
+                .context(AssumeRoleMissingCredentialsSnafu {
+                    role_arn: role_arn.to_string(),
+                })?;
+
+            Ok(Credentials::new(
+                raw_creds.access_key_id(),
+                raw_creds.secret_access_key(),
+                Some(raw_creds.session_token().to_string()),
+                None,
+                "snowflake-wif-assume-role",
+            ))
+        }
+        .boxed()
+    }
+}
+
+/// Walk an impersonation chain via `sts:AssumeRole`, returning the
+/// credentials obtained after assuming all roles in `region`.
 async fn chain_assume_role(
-    initial_client: &StsClient,
+    region: &str,
     role_arns: &[String],
 ) -> Result<Credentials, AwsAttestationError> {
-    let mut current_client = initial_client.clone();
+    let provider = StsAssumeRoleProvider {
+        region: region.to_string(),
+    };
+    chain_assume_role_via(&provider, role_arns).await
+}
+
+/// Provider-agnostic core of [`chain_assume_role`]: calls `sts:AssumeRole`
+/// once per entry in `role_arns`, in order, threading each hop's returned
+/// credentials into the next hop's call. The first hop uses the ambient
+/// credential chain (`credentials: None`).
+async fn chain_assume_role_via(
+    provider: &dyn AssumeRoleProvider,
+    role_arns: &[String],
+) -> Result<Credentials, AwsAttestationError> {
     let mut current_credentials: Option<Credentials> = None;
 
     for role_arn in role_arns {
-        let client_to_use = if let Some(ref creds) = current_credentials {
-            let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-                .credentials_provider(SharedCredentialsProvider::new(creds.clone()))
-                .load()
-                .await;
-            StsClient::new(&sdk_config)
-        } else {
-            current_client.clone()
-        };
-
-        let session_name = format!("snowflake-wif-{}", std::process::id());
-        let resp = client_to_use
-            .assume_role()
-            .role_arn(role_arn)
-            .role_session_name(&session_name)
-            .send()
-            .await
-            .boxed()
-            .context(AssumeRoleSnafu {
-                role_arn: role_arn.clone(),
-            })?;
-
-        let raw_creds = resp
-            .credentials()
-            .context(AssumeRoleMissingCredentialsSnafu {
-                role_arn: role_arn.clone(),
-            })?;
-
-        current_credentials = Some(Credentials::new(
-            raw_creds.access_key_id(),
-            raw_creds.secret_access_key(),
-            Some(raw_creds.session_token().to_string()),
-            None,
-            "snowflake-wif-assume-role",
-        ));
-        current_client = client_to_use;
+        let creds = provider
+            .assume_role(role_arn, current_credentials.as_ref())
+            .await?;
+        current_credentials = Some(creds);
     }
 
     current_credentials.context(ImpersonationChainEmptySnafu)
