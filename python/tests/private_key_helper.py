@@ -6,7 +6,9 @@ from .config import get_test_parameters
 from .utils import repo_root
 
 
-# Global registry to keep TempPrivateKeyFile objects alive
+# Keep TempPrivateKeyFile alive when a real path is required (old-driver default
+# JWT setup and explicit private_key_file tests). New-driver paths prefer PEM via
+# get_private_key_pem_from_parameters() so core accepts the string directly.
 _temp_key_files_registry = []
 
 
@@ -46,20 +48,46 @@ class TempPrivateKeyFile:
                 pass
 
 
+def get_private_key_pem_from_parameters() -> str:
+    """Return private-key PEM text from test parameters.
+
+    Prefers ``SNOWFLAKE_TEST_PRIVATE_KEY_FILE`` when set; otherwise joins
+    ``SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS``. Pass the result as ``private_key``
+    to the new driver — no tempfile required.
+
+    Raises:
+        RuntimeError: If neither file nor contents are configured.
+    """
+    test_params = get_test_parameters()
+
+    private_key_file = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_FILE")
+    if private_key_file:
+        return Path(private_key_file).read_text()
+
+    private_key_contents = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")
+    if not private_key_contents:
+        raise RuntimeError("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found in test parameters.")
+
+    if isinstance(private_key_contents, list):
+        return "\n".join(private_key_contents) + "\n"
+    return str(private_key_contents)
+
+
 def get_private_key_from_parameters() -> str:
     """Get private key file path from test parameters.
 
-    Creates a temporary file that persists until program exit.
+    Used by old-driver JWT defaults and tests that specifically exercise
+    ``private_key_file``. Prefer :func:`get_private_key_pem_from_parameters`
+    for new-driver ``private_key`` string paths.
 
     Returns:
-        Path to the temporary private key file
+        Path to the private key file (configured path or a temp file for contents)
 
     Raises:
         RuntimeError: If SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found
     """
     test_params = get_test_parameters()
 
-    # First check if a private key file path is provided
     private_key_file = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_FILE")
     if private_key_file:
         return private_key_file
@@ -68,6 +96,9 @@ def get_private_key_from_parameters() -> str:
 
     if not private_key_contents:
         raise RuntimeError("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found in test parameters.")
+
+    if not isinstance(private_key_contents, list):
+        private_key_contents = str(private_key_contents).splitlines()
 
     temp_file = TempPrivateKeyFile(private_key_contents)
     # Keep object alive so file persists until program exit
