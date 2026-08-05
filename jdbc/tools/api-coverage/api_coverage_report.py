@@ -47,8 +47,17 @@ JDBC_INTERFACES = [
     "javax.sql.XADataSource",
     "javax.sql.XAConnection",
 ]
+# Interfaces required only for GA, not for Public Preview (PuPr). PuPr readiness
+# is reported over the baseline MINUS these; GA readiness over the full baseline.
+# SQLInput/SQLOutput back user-defined SQLData mapping — out of PuPr scope.
+PUPR_EXCLUDED_INTERFACES = frozenset({"java.sql.SQLInput", "java.sql.SQLOutput"})
+
 SUMMARY_ORDER = ["implemented", "unsupported_by_design", "not_implemented"]
-CATEGORY_PRIORITY = {"implemented": 3, "unsupported_by_design": 2, "not_implemented": 1, "missing": 0}
+# Worst-case rollup across all concrete classes implementing an (interface, signature):
+# a method counts as not_implemented if ANY implementing class still throws
+# NotImplementedException, so a delegating wrapper can't mask a mainline gap.
+# `missing` stays lowest — it is an analyzer-resolution artifact, not a real state.
+CATEGORY_PRIORITY = {"not_implemented": 3, "implemented": 2, "unsupported_by_design": 1, "missing": 0}
 METHOD_RE = re.compile(r"^\s*public\s+.*\s+([A-Za-z_]\w*)\(([^)]*)\).*$")
 GENERIC_RE = re.compile(r"<[^<>]*>")
 ARRAY_CTOR_METHOD_REF_RE = re.compile(r"\b([A-Za-z_][\w\.]*)\s*((?:\[\s*\])+)\s*::\s*new\b")
@@ -432,6 +441,45 @@ def leadership_buckets(report: dict) -> dict[str, float | int]:
     }
 
 
+def buckets_from_categories(categories: dict[str, str], excluded_interfaces: frozenset[str] = frozenset()) -> dict:
+    """done/remaining/pct + totals over a method_categories map, optionally
+    excluding whole interfaces (by the `iface` component of each `iface::sig` key).
+
+    Used to report PuPr (excluding SQLInput/SQLOutput) and GA (full baseline)
+    from the same reconciled categories."""
+    totals: dict[str, int] = defaultdict(int)
+    for key, cat in categories.items():
+        if key.split("::", 1)[0] in excluded_interfaces:
+            continue
+        totals[cat] += 1
+    done = totals["implemented"] + totals["unsupported_by_design"]
+    remaining = totals["not_implemented"]
+    total = done + remaining
+    return {
+        "done": done,
+        "remaining": remaining,
+        "done_pct": round((done / total) * 100, 2) if total else 0.0,
+        "remaining_pct": round((remaining / total) * 100, 2) if total else 0.0,
+        "totals": dict(sorted(totals.items())),
+    }
+
+
+def phase_buckets(old_categories: dict[str, str], new_categories: dict[str, str]) -> dict:
+    """Two-phase readiness: `pupr` (baseline minus PUPR_EXCLUDED_INTERFACES) and
+    `ga` (full baseline), each with old/new buckets."""
+    return {
+        "pupr": {
+            "excluded_interfaces": sorted(PUPR_EXCLUDED_INTERFACES),
+            "old": buckets_from_categories(old_categories, PUPR_EXCLUDED_INTERFACES),
+            "new": buckets_from_categories(new_categories, PUPR_EXCLUDED_INTERFACES),
+        },
+        "ga": {
+            "old": buckets_from_categories(old_categories),
+            "new": buckets_from_categories(new_categories),
+        },
+    }
+
+
 def main() -> int:
     args = parse_args()
     if not args.old_root.exists() or not args.new_root.exists():
@@ -476,10 +524,7 @@ def main() -> int:
         },
         "old": old_report,
         "new": new_report,
-        "leadership_buckets": {
-            "old": leadership_buckets(old_report),
-            "new": leadership_buckets(new_report),
-        },
+        "phases": phase_buckets(old_cat, new_cat),
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
