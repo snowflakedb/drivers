@@ -355,6 +355,24 @@ pub struct GetTypeInfo {
     pub data_type_name: Option<String>,
 }
 
+/// ODBC catalog metadata functions that open a result set (`SQLTables`,
+/// `SQLColumns`, `SQLPrimaryKeys`, `SQLForeignKeys`). Power Query Navigator
+/// and MS Query both exercise these before the data-fetch `SQLExecDirect`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogFunction {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub function_name: String,
+    #[serde(default)]
+    pub string_args: Vec<CatalogStringArg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogStringArg {
+    pub value: Option<String>,
+    pub length: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetInfo {
     pub return_code: ReturnCode,
@@ -577,6 +595,8 @@ pub enum OdbcCall {
     CloseCursor(CloseCursor),
     #[serde(rename = "SQLGetTypeInfo")]
     GetTypeInfo(GetTypeInfo),
+    #[serde(rename = "CatalogFunction")]
+    Catalog(CatalogFunction),
     #[serde(rename = "SQLGetInfo")]
     GetInfo(GetInfo),
     #[serde(rename = "SQLGetDiagRec")]
@@ -628,6 +648,7 @@ impl OdbcCall {
             Self::MoreResults(c) => c.return_code,
             Self::CloseCursor(c) => c.return_code,
             Self::GetTypeInfo(c) => c.return_code,
+            Self::Catalog(c) => c.return_code,
             Self::GetInfo(c) => c.return_code,
             Self::GetDiagRec(c) => c.return_code,
             Self::GetFunctions(c) => c.return_code,
@@ -668,6 +689,7 @@ impl OdbcCall {
             Self::MoreResults(_) => "SQLMoreResults",
             Self::CloseCursor(_) => "SQLCloseCursor",
             Self::GetTypeInfo(_) => "SQLGetTypeInfo",
+            Self::Catalog(c) => &c.function_name,
             Self::GetInfo(_) => "SQLGetInfo",
             Self::GetDiagRec(_) => "SQLGetDiagRec",
             Self::GetFunctions(_) => "SQLGetFunctions",
@@ -717,6 +739,7 @@ impl OdbcCall {
             Self::MoreResults(c) => c.handle.as_deref(),
             Self::CloseCursor(c) => c.handle.as_deref(),
             Self::GetTypeInfo(c) => c.handle.as_deref(),
+            Self::Catalog(c) => c.handle.as_deref(),
             Self::GetInfo(c) => c.handle.as_deref(),
             Self::GetDiagRec(c) => c.handle.as_deref(),
             Self::GetFunctions(c) => c.handle.as_deref(),
@@ -768,6 +791,7 @@ impl OdbcCall {
             Self::MoreResults(c) => resolve(&mut c.handle, map),
             Self::CloseCursor(c) => resolve(&mut c.handle, map),
             Self::GetTypeInfo(c) => resolve(&mut c.handle, map),
+            Self::Catalog(c) => resolve(&mut c.handle, map),
             Self::GetInfo(c) => resolve(&mut c.handle, map),
             Self::GetDiagRec(c) => resolve(&mut c.handle, map),
             Self::GetFunctions(c) => resolve(&mut c.handle, map),
@@ -923,6 +947,9 @@ impl OdbcCall {
                 })
             }
             "SQLGetTypeInfo" => raw::build_get_type_info(input_params, output_params, return_code),
+            "SQLTables" | "SQLColumns" | "SQLPrimaryKeys" | "SQLForeignKeys" => {
+                raw::build_catalog_function(normalized, input_params, output_params, return_code)
+            }
             "SQLGetInfo" => raw::build_get_info(input_params, output_params, return_code),
             "SQLGetDiagRec" => raw::build_get_diag_rec(input_params, output_params, return_code),
             "SQLGetFunctions" => raw::build_get_functions(input_params, output_params, return_code),
@@ -1322,6 +1349,67 @@ mod raw {
             data_type: int_or_named(&output, 1).or_else(|| int_by_name(&input, "Data Type")),
             data_type_name: named_const_at(&output, 1)
                 .or_else(|| named_const_by_name(&input, "Data Type")),
+        })
+    }
+
+    fn is_catalog_string_slot(p: &Parameter) -> bool {
+        matches!(
+            p.value,
+            ParamValue::StringValue { .. } | ParamValue::NullPointer | ParamValue::Address(_)
+        )
+    }
+
+    fn catalog_string_value(p: &Parameter) -> Option<String> {
+        match &p.value {
+            ParamValue::StringValue { value, .. } if !value.is_empty() => Some(value.clone()),
+            ParamValue::StringValue { .. } | ParamValue::NullPointer => None,
+            ParamValue::Address(a)
+                if a.starts_with("0x0000000000000000")
+                    || a.contains("<null pointer>")
+                    || a.contains("<zero length>") =>
+            {
+                None
+            }
+            ParamValue::Address(_) => None,
+            _ => None,
+        }
+    }
+
+    fn catalog_length_value(p: &Parameter) -> Option<i64> {
+        match &p.value {
+            ParamValue::Integer(v) => Some(*v),
+            ParamValue::NamedConstant { value: Some(v), .. } => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn build_catalog_function(
+        function_name: &str,
+        input: Vec<Parameter>,
+        _output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement").or_else(|| first_addr(&input));
+        let mut string_args = Vec::new();
+        if input.len() > 1 {
+            let mut i = 1;
+            while i < input.len() {
+                if is_catalog_string_slot(&input[i]) {
+                    string_args.push(CatalogStringArg {
+                        value: catalog_string_value(&input[i]),
+                        length: input.get(i + 1).and_then(catalog_length_value),
+                    });
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        OdbcCall::Catalog(CatalogFunction {
+            return_code: rc,
+            handle,
+            function_name: function_name.to_string(),
+            string_args,
         })
     }
 
