@@ -92,9 +92,18 @@ def _passed_arguments_for(mock_db_api, api_method):
     return matches[0]
 
 
-def _run_async(coro):
-    """Run a coroutine in a fresh event loop (no pytest-asyncio dependency)."""
-    return asyncio.run(coro)
+def _run_async(awaitable):
+    """Run a coroutine/awaitable in a fresh event loop (no pytest-asyncio dependency).
+
+    Accepts plain coroutines and awaitables such as ``_AwaitableContextManager``
+    (returned by ``@awaitable_context_manager``-decorated factories like
+    ``Connection.cursor``).
+    """
+
+    async def _run():
+        return await awaitable
+
+    return asyncio.run(_run())
 
 
 @pytest.fixture

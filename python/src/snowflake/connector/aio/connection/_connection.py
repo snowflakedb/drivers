@@ -23,7 +23,13 @@ from ..._internal.connection import (
     clamp_client_prefetch_threads,
     requires_open,
 )
-from ..._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
+from ..._internal.decorators import (
+    api_telemetry,
+    awaitable_context_manager,
+    backward_compatibility,
+    internal_api,
+    pep249,
+)
 from ..._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from ..._internal.logging import get_logger
 from ..._internal.logout_config_mapping import (
@@ -243,6 +249,7 @@ class Connection(ConnectionMixin):
     # ------------------------------------------------------------------
 
     @pep249
+    @awaitable_context_manager
     @api_telemetry
     @requires_open
     async def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
