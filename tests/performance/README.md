@@ -715,12 +715,13 @@ For ODBC, Python, and JDBC jar assembly, a shared base image is built first usin
 
 This creates an intermediate image containing Core libraries:
 - `libsf_core.so` - Core Snowflake driver library
-- `sf_core_python.abi3.so` - PyO3 Python extension (abi3 stable ABI, works with Python >= 3.11)
 - `libsfodbc.so` - ODBC wrapper around `sf_core`
 - `libjdbc_bridge.so` - JNI transport around `sf_core` (loaded by the JDBC driver)
 
+The Python performance image builds `sf_core_python` (version-tagged PyO3 extension) itself during `pip install` via hatch, matching the image's CPython ABI.
+
 These libraries are copied into the final driver images:
-- **Python**: Copies `sf_core_python.abi3.so` → Used by `snowflake-connector-python` package
+- **Python**: Builds `sf_core_python` in-image → Used by `snowflake-connector-python` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
 - **JDBC**: Copies `libjdbc_bridge.so` → Loaded by `NativeLibraryLoader` via `CORE_PATH`. The
   universal JDBC fat jar (`snowflake-jdbc-native-all.jar`) is assembled by the jar stage of

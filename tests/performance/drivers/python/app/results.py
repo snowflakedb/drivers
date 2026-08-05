@@ -140,7 +140,7 @@ def write_run_metadata(driver_type, driver_version, server_version):
     }
     
     # Only add build_rust_version for universal driver (old driver is pure Python, no Rust)
-    # This is the Rust compiler version that built sf_core_python.abi3.so (from sf-core-builder)
+    # This is the Rust compiler version that built sf_core_python (from the image build).
     if driver_type == "universal":
         metadata["build_rust_version"] = _get_build_rust_version()
     
@@ -174,5 +174,5 @@ def _get_python_version():
 
 
 def _get_build_rust_version():
-    """Get Rust compiler version that built sf_core_python.abi3.so (from sf-core-builder)."""
+    """Get Rust compiler version that built sf_core_python (from the image build)."""
     return os.environ.get('BUILD_RUST_VERSION', 'NA')

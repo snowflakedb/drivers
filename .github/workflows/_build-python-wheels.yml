@@ -21,7 +21,8 @@ jobs:
   # ── Expand targets into per-platform build matrices ────────────────
   # One matrix entry per platform (not per platform+python).
   # Each entry carries all Python versions for that platform so that a
-  # single runner builds sf_core + all wheels, reducing worker count.
+  # single runner builds python_bridge for each version + all wheels,
+  # reducing worker count.
   configure:
     runs-on: ubuntu-latest
     outputs:
@@ -40,7 +41,6 @@ jobs:
                   "os": "ubuntu-latest",
                   "container": "quay.io/pypa/manylinux_2_28_x86_64",
                   "cargo_lib": "libsf_core_python.so",
-                  "dest_lib": "sf_core_python.abi3.so",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_x86_64",
@@ -51,7 +51,6 @@ jobs:
                   "os": "ubuntu-24.04-arm",
                   "container": "quay.io/pypa/manylinux_2_28_aarch64",
                   "cargo_lib": "libsf_core_python.so",
-                  "dest_lib": "sf_core_python.abi3.so",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_aarch64",
@@ -62,7 +61,6 @@ jobs:
                   "os": "macos-15-intel",
                   "container": "",
                   "cargo_lib": "libsf_core_python.dylib",
-                  "dest_lib": "sf_core_python.abi3.so",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "macosx_x86_64",
@@ -73,7 +71,6 @@ jobs:
                   "os": "macos-latest",
                   "container": "",
                   "cargo_lib": "libsf_core_python.dylib",
-                  "dest_lib": "sf_core_python.abi3.so",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "macosx_arm64",
@@ -84,7 +81,6 @@ jobs:
                   "os": "windows-latest",
                   "container": "",
                   "cargo_lib": "sf_core_python.dll",
-                  "dest_lib": "sf_core_python.pyd",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "win_amd64",
@@ -121,7 +117,6 @@ jobs:
                       "os": p["os"],
                       "container": p["container"],
                       "cargo_lib": p["cargo_lib"],
-                      "dest_lib": p["dest_lib"],
                       "cargo_extra_args": p["cargo_extra_args"],
                       "cibw_arch": p["cibw_arch"],
                       "artifact_id": p["artifact_id"],
@@ -247,8 +242,9 @@ jobs:
           path: python/dist/*.tar.gz
 
   # ── Build python_bridge + wheels per platform (cibuildwheel) ───────
-  # Each runner builds python_bridge (abi3, one .so for all Pythons),
-  # then builds all Python-version wheels via a single cibuildwheel invocation.
+  # Each runner loops over all Python versions: builds python_bridge for
+  # each CPython ABI (no abi3), places the version-tagged .so, then
+  # builds all wheels via a single cibuildwheel invocation.
   build_wheels:
     needs: [configure, generate_proto]
     if: fromJSON(needs.configure.outputs.cibw-matrix)[0] != null
@@ -262,10 +258,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install uv
+        if: runner.os != 'Linux'
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up all Python versions
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          for v in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
+            uv python install "$v"
+          done
+
       # ── python_bridge build: Linux (Docker + manylinux for glibc compat) ──
       # Cannot use job-level container: because cibuildwheel needs Docker.
       # Instead, build python_bridge via docker run with the manylinux image.
-      # abi3 means one build works for all Python versions.
+      # Without abi3 we loop over each Python version inside the container,
+      # building python_bridge against each CPython ABI and placing the
+      # version-tagged .so side by side.
       #
       # Caching strategy: cargo-cache (registry + target/) runs on the HOST,
       # and its dirs are volume-mounted into the manylinux container so the
@@ -293,11 +305,17 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.artifact_id }}-rustup-stable-minimal-v1
           restore-keys: ${{ runner.os }}-${{ matrix.artifact_id }}-rustup-stable-minimal-
 
-      - name: Build python_bridge in manylinux container
+      - name: Build python_bridge for all versions in manylinux container
         if: runner.os == 'Linux'
+        env:
+          PYTHON_VERSIONS_JSON: ${{ matrix.python_versions_json }}
+          CARGO_LIB: ${{ matrix.cargo_lib }}
+          CARGO_EXTRA_ARGS: ${{ matrix.cargo_extra_args }}
+          CONTAINER: ${{ matrix.container }}
         run: |
           mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git" \
-                   "$HOME/.cargo/bin" "$HOME/.rustup"
+                   "$HOME/.cargo/bin" "$HOME/.rustup" \
+                   python/src/snowflake/connector/_core
           docker run --rm \
             -v "$HOME/.cargo/registry:/root/.cargo/registry" \
             -v "$HOME/.cargo/git:/root/.cargo/git" \
@@ -309,7 +327,10 @@ jobs:
             -e RUSTUP_HOME=/root/.rustup \
             -e CARGO_HOME=/root/.cargo \
             -e PYO3_BUILD_EXTENSION_MODULE=1 \
-            ${{ matrix.container }} \
+            -e CARGO_LIB="$CARGO_LIB" \
+            -e "CARGO_EXTRA_ARGS=$CARGO_EXTRA_ARGS" \
+            -e "PYTHON_VERSIONS_JSON=$PYTHON_VERSIONS_JSON" \
+            "$CONTAINER" \
             bash -c '
               set -e
               export PATH="/root/.cargo/bin:$PATH"
@@ -321,7 +342,24 @@ jobs:
                 echo "Using cached rustup toolchain"
               fi
               yum install -y perl-IPC-Cmd perl-Time-Piece
-              cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
+              for V in $(echo "$PYTHON_VERSIONS_JSON" | python3 -c "import json,sys; [print(v) for v in json.load(sys.stdin)]"); do
+                CP_TAG="cp${V//./}"
+                PY="/opt/python/${CP_TAG}-${CP_TAG}/bin/python"
+                if [ ! -x "$PY" ]; then
+                  echo "Missing manylinux Python at $PY"
+                  ls -la /opt/python/
+                  exit 1
+                fi
+                echo "── Building python_bridge for $V ($PY) ──"
+                export PYO3_PYTHON="$PY"
+                # shellcheck disable=SC2086
+                cargo build --release --package python_bridge $CARGO_EXTRA_ARGS
+                EXT_SUFFIX="$($PY -c "import sysconfig; print(sysconfig.get_config_var(\"EXT_SUFFIX\"))")"
+                DEST="python/src/snowflake/connector/_core/sf_core_python${EXT_SUFFIX}"
+                cp "target/release/${CARGO_LIB}" "$DEST"
+                chmod +x "$DEST"
+                echo "Placed $DEST"
+              done
             '
 
       # Chown runs in its own always() step so cache save is possible even
@@ -344,29 +382,45 @@ jobs:
           mode: restore
           shared-key: sf-core-release
 
-      - name: Build python_bridge (macOS)
+      - name: Build and place python_bridge for all versions (macOS)
         if: runner.os == 'macOS'
-        run: cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-arm64' && '11.0' || '10.14' }}
           PYO3_BUILD_EXTENSION_MODULE: "1"
+          CARGO_LIB: ${{ matrix.cargo_lib }}
+        run: |
+          mkdir -p python/src/snowflake/connector/_core
+          for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
+            PY="$(uv python find "$V")"
+            echo "── Building python_bridge for $V ($PY) ──"
+            export PYO3_PYTHON="$PY"
+            cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
+            EXT_SUFFIX="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
+            DEST="python/src/snowflake/connector/_core/sf_core_python${EXT_SUFFIX}"
+            cp "target/release/${CARGO_LIB}" "$DEST"
+            chmod +x "$DEST"
+            echo "Placed $DEST"
+          done
 
-      - name: Build python_bridge (Windows)
+      - name: Build and place python_bridge for all versions (Windows)
         if: runner.os == 'Windows'
-        run: cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
         env:
           PYO3_BUILD_EXTENSION_MODULE: "1"
-
-      # ── Place python_bridge in python package ──
-      - name: Place python_bridge in python package
+          CARGO_LIB: ${{ matrix.cargo_lib }}
         shell: bash
         run: |
           mkdir -p python/src/snowflake/connector/_core
-          cp target/release/${{ matrix.cargo_lib }} python/src/snowflake/connector/_core/${{ matrix.dest_lib }}
-
-      - name: Ensure python_bridge is executable
-        if: runner.os != 'Windows'
-        run: chmod +x python/src/snowflake/connector/_core/*
+          for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
+            PY="$(uv python find "$V")"
+            PY_WIN="$(cygpath -w "$PY")"
+            echo "── Building python_bridge for $V ($PY) ──"
+            export PYO3_PYTHON="$PY_WIN"
+            cargo build --release --package python_bridge ${{ matrix.cargo_extra_args }}
+            EXT_SUFFIX="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
+            DEST="python/src/snowflake/connector/_core/sf_core_python${EXT_SUFFIX}"
+            cp "target/release/${CARGO_LIB}" "$DEST"
+            echo "Placed $DEST"
+          done
 
       - name: Save Rust cache
         if: always() && runner.os != 'Linux'
