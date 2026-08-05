@@ -1394,14 +1394,14 @@ async fn create_s3_client(
     stage_info: &StageInfo,
     provider_name: &'static str,
     policy: &RetryPolicy,
-) -> Result<S3Client, S3CredentialError> {
+) -> Result<S3Client, CreateS3ClientError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
         ref aws_secret_key,
         ref aws_token,
     } = stage_info.creds
     else {
-        return Err(S3CredentialError);
+        return Err(CreateS3ClientError::MissingCredentials);
     };
 
     let credentials = Credentials::new(
@@ -1412,17 +1412,26 @@ async fn create_s3_client(
         provider_name,
     );
 
-    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+    // Build the HTTP client over the same reqwest transport Azure/GCS use, so S3
+    // honours the connection's full TLS policy (version window, CRL, custom root
+    // store) and proxy handling (explicit proxy, `no_proxy`, `use_proxy_env`)
+    // through one shared implementation. Fails the build on a bad custom root
+    // store or CRL verifier, matching Azure/GCS.
+    let http_client = crate::tls::aws_http_client::build_s3_reqwest_client(
+        &stage_info.tls_config,
+        Some(&stage_info.proxy_config),
+        stage_info.crl_worker.clone(),
+    )
+    .map_err(CreateS3ClientError::HttpClient)?;
+
+    let loader = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
         .retry_config(to_aws_retry_config(policy))
-        .timeout_config(to_aws_timeout_config(policy));
-    // Always inject our hyper/rustls client so S3 connections honour the
-    // connection's full TLS policy (version window, CRL, custom root store).
-    loader = loader.http_client(crate::tls::aws_http_client::tls_configured_aws_http_client(
-        &stage_info.tls_config,
-        stage_info.crl_worker.clone(),
-    ));
+        .timeout_config(to_aws_timeout_config(policy))
+        .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+            http_client,
+        ));
     let config = loader.load().await;
 
     let accelerate = resolve_acceleration(stage_info, &config).await;
@@ -1568,19 +1577,39 @@ fn regional_s3_endpoint(region: &str) -> String {
     format!("https://s3.{region}.{suffix}")
 }
 
-/// Error returned when `create_s3_client` is called with non-S3 credentials.
+/// Error returned when `create_s3_client` cannot produce an `S3Client`: the stage
+/// carries non-S3 credentials, or the TLS/proxy-configured HTTP client failed to
+/// build (mirroring Azure/GCS, which also surface a `configure_tls_builder`
+/// failure rather than silently continuing).
 #[derive(Debug)]
-struct S3CredentialError;
+enum CreateS3ClientError {
+    MissingCredentials,
+    HttpClient(crate::tls::error::TlsError),
+}
 
-impl From<S3CredentialError> for UploadFileError {
-    fn from(_: S3CredentialError) -> Self {
-        upload_file_error::MissingS3CredentialsSnafu.build()
+impl From<CreateS3ClientError> for UploadFileError {
+    fn from(err: CreateS3ClientError) -> Self {
+        match err {
+            CreateS3ClientError::MissingCredentials => {
+                upload_file_error::MissingS3CredentialsSnafu.build()
+            }
+            CreateS3ClientError::HttpClient(source) => {
+                upload_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+        }
     }
 }
 
-impl From<S3CredentialError> for DownloadFileError {
-    fn from(_: S3CredentialError) -> Self {
-        download_file_error::MissingS3CredentialsSnafu.build()
+impl From<CreateS3ClientError> for DownloadFileError {
+    fn from(err: CreateS3ClientError) -> Self {
+        match err {
+            CreateS3ClientError::MissingCredentials => {
+                download_file_error::MissingS3CredentialsSnafu.build()
+            }
+            CreateS3ClientError::HttpClient(source) => {
+                download_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+        }
     }
 }
 
@@ -1652,6 +1681,13 @@ pub enum UploadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to build the S3 HTTP client"))]
+    HttpClientBuild {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
     StageInfoRefresh {
         #[snafu(source(from(StageInfoRefreshError, Box::new)))]
@@ -1706,6 +1742,13 @@ pub enum DownloadFileError {
     },
     #[snafu(display("Missing S3 credentials"))]
     MissingS3Credentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build the S3 HTTP client"))]
+    HttpClientBuild {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
