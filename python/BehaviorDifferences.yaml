@@ -677,7 +677,7 @@ behavior_differences:
       Callers who previously disabled caching via `enable_crl_cache=False` must
       set both toggles to `False` explicitly.
   43:
-    name: "ResultMetadataV2 lacks vector_dimension and fields attributes"
+    name: "cursor._describe_internal is not implemented in this branch"
     status: todo
     type: api_incompatibility
     reviewed: false
@@ -691,18 +691,19 @@ behavior_differences:
       Snowpark and other callers read these attributes to handle VECTOR and structured
       columns correctly.
     new_driver_behavior: |
-      The Universal Driver aliases `ResultMetadataV2 = ResultMetadata` (a NamedTuple).
-      The alias lacks `vector_dimension` and `fields`; accessing either attribute on a
-      result from `cursor._describe_internal()` raises `AttributeError`. As a result,
-      `cursor._describe_internal()` currently raises `NotImplementedError` to prevent
-      silent data loss for callers that read these fields.
+      This branch does not define `cursor._describe_internal` at all (no stub, no
+      implementation); calling it raises `AttributeError`. `ResultMetadataV2` here is
+      still just an alias for `ResultMetadata` (a NamedTuple), which lacks
+      `vector_dimension` and `fields`.
       Snowpark falls back to `cursor.description` (V1 path) for schema inference.
     description: |
-      Tracked as part of SNOW-2912540 Snowpark compatibility work. Proper fix requires
-      implementing a distinct `ResultMetadataV2` class in the UD with `vector_dimension`
-      and `fields` populated from the protobuf column descriptor, then wiring
-      `_describe_internal` to use it. Until then, VECTOR column schema inference and
-      structured-type introspection via `_describe_internal` are unsupported.
+      The real implementation lives entirely in SNOW-2912540-describe-internal (#516),
+      which defines a distinct `ResultMetadataV2` class with `vector_dimension` fully
+      populated from the protobuf column descriptor; `fields` remains unpopulated there
+      too (the UD proto's `ColumnMetadata` carries no nested field list for structured
+      types) and is tracked as this same BD-43 in that branch's own BehaviorDifferences.yaml.
+      This branch intentionally carries no stub for `_describe_internal` — see
+      SNOW-2912540-describe-internal for the actual fix.
 
   44:
     name: "ReauthenticationRequest is not raised in MasterTokenExpired scenarios"
@@ -716,10 +717,10 @@ behavior_differences:
       original exception as `.cause`) when the master token expires and a refresh
       is required. Snowpark catches this exception to trigger session re-establishment.
     new_driver_behavior: |
-      The universal driver does not raise `ReauthenticationRequest` in the same
-      token-refresh scenarios. The compat stub in `network.py` provides the class so
-      Snowpark can import and subclass it, but the UD has not yet wired it to the
-      equivalent internal refresh paths.
+      The universal driver does not raise `ReauthenticationRequest` or any equivalent
+      signal in these token-refresh scenarios; the UD has no compat class for Snowpark
+      to catch or subclass, and no wiring to the internal refresh paths that would need
+      to raise it.
     description: |
       TODO: identify the UD token-refresh code paths that correspond to the old
       driver's MasterTokenExpired handling and raise `ReauthenticationRequest`
@@ -776,7 +777,7 @@ behavior_differences:
       With the flag off (the default), a content-matching `PUT ... OVERWRITE=TRUE` re-uploads,
       matching legacy Python; the content-match skip fires only when the caller opts in.
 
-  45:
+  52:
     name: "login_timeout, network_timeout, and socket_timeout connection getters are now implemented"
     status: unknown
     type: api_incompatibility
@@ -894,7 +895,7 @@ behavior_differences:
       value) when the error originated from a connection-config validation failure. Both
       default to `None` for errors from any other source, so existing callers are unaffected.
 
-  49:
+  53:
     name: "Connection.telemetry_enabled restored; matches legacy AND semantics"
     status: allowed
     type: api_incompatibility
