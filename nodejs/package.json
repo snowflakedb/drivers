@@ -23,6 +23,7 @@
     "lint:fix": "oxlint --fix .",
     "fmt:check": "oxfmt --check .",
     "fmt:fix": "oxfmt --write .",
+    "creds:decode": "cd .. && ./scripts/decode_secrets.sh",
     "test:unit": "vitest run --project unit",
     "test:e2e": "vitest run --project e2e",
     "test:e2e-old-driver": "vitest run --project e2e-old-driver",
