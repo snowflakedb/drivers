@@ -75,10 +75,9 @@ pub enum ExecuteQueryResult {
 /// and Async). `connection_get_query_result` is the only path without one, and
 /// it returns `ExecuteQueryResult` directly — never `ExecuteQueryOutcome`.
 ///
-/// Every caller that receives an `ExecuteQueryOutcome` MUST forward
-/// `request_id` onward rather than discarding it after unpacking `.result`
-/// (see `statement_prepare`, which carries it into `PrepareResult.request_id`)
-/// — dropping it silently reintroduces a real gap, not a cosmetic one.
+/// Callers that receive an `ExecuteQueryOutcome` must forward `request_id`
+/// into whatever result type they produce — dropping it silently leaves
+/// that call path unable to correlate its submission with a response.
 pub struct ExecuteQueryOutcome {
     pub result: ExecuteQueryResult,
     pub request_id: uuid::Uuid,

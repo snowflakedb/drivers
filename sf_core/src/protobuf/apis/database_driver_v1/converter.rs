@@ -398,9 +398,8 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
     }
 }
 
-/// Used by `connection_get_query_result`, which has no client-generated UUID.
-/// The proto field is `optional string`, so leaving it `None` is correct —
-/// legacy `get_results_from_sfqid` never set `_request_id` on the outer cursor.
+/// Used by callers with no client-generated UUID for this result (the proto
+/// field is `optional string`, so `None` is a valid value here).
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
         match result {
@@ -428,9 +427,10 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
 
 impl From<NativeExecuteQueryOutcome> for ExecuteQueryResponse {
     fn from(outcome: NativeExecuteQueryOutcome) -> Self {
-        let mut response: ExecuteQueryResponse = outcome.result.into();
-        response.request_id = Some(outcome.request_id.to_string());
-        response
+        ExecuteQueryResponse {
+            request_id: Some(outcome.request_id.to_string()),
+            ..outcome.result.into()
+        }
     }
 }
 
