@@ -33,12 +33,6 @@ class TelemetryField(Enum):
 
 
 class TelemetryClient:
-    def try_add_log_to_batch(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    def add_log_to_batch(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
     def send_log_batch(self, *args: Any, **kwargs: Any) -> None:
         pass
 

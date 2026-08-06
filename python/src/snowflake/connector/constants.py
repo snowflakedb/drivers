@@ -24,7 +24,6 @@ class QueryStatus(Enum):
 
 
 # backward compatibility constants
-ENV_VAR_PARTNER = "SF_PARTNER"
 UTF8 = "utf-8"
 
 
