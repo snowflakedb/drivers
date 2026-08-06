@@ -30,11 +30,3 @@ class TelemetryField(Enum):
     KEY_TYPE = "type"
     KEY_SFQID = "query_id"
     KEY_VALUE = "value"
-
-
-class TelemetryClient:
-    def send_log_batch(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    def close(self, *args: Any, **kwargs: Any) -> None:
-        pass

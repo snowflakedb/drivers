@@ -49,7 +49,6 @@ from ..._internal.text_utils import split_statements
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
 from ...errors import Error, ProgrammingError
-from ...telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ...version import __version__
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from ._freezable_proxy import _ConnectionInfoProxy, _SessionParametersProxy
@@ -430,10 +429,11 @@ class Connection(ConnectionMixin):
             include_master_token=include_master_token,
         )
 
+    @property
     @internal_api
     @backward_compatibility
-    def _telemetry(self) -> _BackwardCompatTelemetryClient:
-        raise NotImplementedError("async _BackwardCompatTelemetryClient is not yet implemented")
+    def _telemetry(self) -> AsyncTelemetryClient:
+        return self._telemetry_client
 
     # ------------------------------------------------------------------
     # Session info
