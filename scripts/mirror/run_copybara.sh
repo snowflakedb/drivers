@@ -26,7 +26,7 @@
 #                           (outbound: git fetch origin; inbound: inlined
 #                           into --git-destination-url).
 #   DRIVER_MIRROR_TOKEN_SNOWFLAKEDB
-#                           Push token for snowflakedb/universal-driver
+#                           Push token for snowflakedb/drivers
 #                           (outbound: inlined into --git-destination-url;
 #                           inbound: git fetch origin + PR metadata API).
 #
@@ -166,7 +166,7 @@ case "${SUBCOMMAND}" in
     # against a not-yet-mirrored branch, seed it first (or pass --init-history
     # via single_ref/last_rev for a full-history replay).
     run_copybara migrate ci/mirroring/copy.bara.sky mirror "${BRANCH}" \
-      --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/universal-driver.git" \
+      --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}@github.com/snowflakedb/drivers.git" \
       --git-destination-push="${BRANCH}" \
       --force \
       "${extra_args[@]}"

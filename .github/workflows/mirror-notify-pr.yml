@@ -1,6 +1,6 @@
 # Slack notifications for new PRs on the public mirror repo.
 #
-# Operates on the MIRROR repo (snowflakedb/universal-driver). When an
+# Operates on the MIRROR repo (snowflakedb/drivers). When an
 # external contributor opens a PR (or marks a draft ready for review),
 # posts a short announcement to the drivers review channel via
 # slackapi/slack-github-action — same transport as pr-review-bot.yml,
@@ -42,7 +42,7 @@ jobs:
     # Repository guard: workflow file is mirrored, so it also exists on
     # the internal repo. Only announce PRs on the public mirror.
     if: >-
-      github.repository == 'snowflakedb/universal-driver'
+      github.repository == 'snowflakedb/drivers'
       && (
         github.event_name == 'workflow_dispatch'
         || github.event.pull_request.draft == false

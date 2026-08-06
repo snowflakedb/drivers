@@ -107,7 +107,7 @@ fi
 cd "$REVOCATION_DIR"
 
 # ─── Cargo shim ────────────────────────────────────────────────────────────────
-# PR snowflakedb/universal-driver#902 (Apr 2026) made clap an optional dep gated
+# PR snowflakedb/drivers#902 (Apr 2026) made clap an optional dep gated
 # behind a `cli` feature, with `required-features = ["cli"]` on the tls_client and
 # collect_chunk_data binaries. This shaved ~17% off sf_core's library binary size
 # but broke the implicit contract that `cargo build --bin tls_client` works

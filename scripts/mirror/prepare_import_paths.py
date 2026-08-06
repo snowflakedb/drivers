@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MIRROR_REPO = "snowflakedb/universal-driver"
+MIRROR_REPO = "snowflakedb/drivers"
 OUTPUT = Path(__file__).resolve().parents[2] / "ci" / "mirroring" / "import_paths.bara.sky"
 
 # Keep in sync with ci/mirroring/copy.bara.sky.

@@ -90,7 +90,7 @@ class AssignSlackMessageTests(unittest.TestCase):
 )
 class LiveGitHubPrStatsTests(unittest.TestCase):
     def test_get_pr_includes_change_stats(self) -> None:
-        repo = os.environ.get("GH_REPO", "snowflakedb/universal-driver")
+        repo = os.environ.get("GH_REPO", "snowflakedb/drivers")
         pr_number = int(os.environ.get("PR_NUMBER", "597"))
         pr = bot.get_pr(repo, pr_number)
 
