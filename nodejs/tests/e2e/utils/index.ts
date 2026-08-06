@@ -7,8 +7,11 @@ import type {
 } from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk';
 // TODO:
-// Ensure tests run against the built package to catch any missing files in the build output
-import newSnowflakeSDK from '../../../src/index.js';
+// Ensure tests run against the built package to catch any missing files in the build output.
+// Namespace import (not default): src/index.js only has named exports. A default import
+// works under Vitest interop but fails under plain Node/tsx with
+// "does not provide an export named 'default'".
+import * as newSnowflakeSDK from '../../../src/index.js';
 import getTestParameter from './getTestParameter';
 
 export function isRunningForOldDriver() {

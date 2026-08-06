@@ -7,6 +7,7 @@ use super::connection::{Connection, WrapperIdentity};
 use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
+use super::stream_transfer::{DownloadStream, UploadStreamSession};
 use crate::crl::worker::{CrlWorker, SharedCrlWorker};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -29,7 +30,7 @@ pub enum PutGetResultsetFlavor {
 /// at startup. These are **not** exposed to end users — they capture
 /// compile-time / init-time differences between wrappers so that shared Rust
 /// code can branch on them without hard-coding wrapper knowledge everywhere.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
     /// When true, PUT auto-detect mirrors legacy libsnowflakeclient
@@ -39,6 +40,23 @@ pub struct WrapperPresets {
     /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
     /// of the `infer` crate.
     pub legacy_odbc_compression_autodetect: bool,
+    /// Default for PUT_FASTFAIL/GET_FASTFAIL when unset (mirrors old ODBC's
+    /// connection-string attrs). `true` = fail-fast (abort on first error);
+    /// `false` = collect-all (ODBC's default; failures become ERROR rows).
+    pub put_get_fastfail_default: bool,
+}
+
+impl Default for WrapperPresets {
+    /// Hand-written rather than derived: `#[derive(Default)]` would give
+    /// `put_get_fastfail_default` `bool::default() == false`, flipping every
+    /// wrapper but ODBC to collect-all by accident.
+    fn default() -> Self {
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::default(),
+            legacy_odbc_compression_autodetect: false,
+            put_get_fastfail_default: true,
+        }
+    }
 }
 
 impl WrapperPresets {
@@ -51,12 +69,11 @@ impl WrapperPresets {
     }
 
     /// Presets for the ODBC driver.
-    #[allow(clippy::needless_update)]
     pub fn odbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
             legacy_odbc_compression_autodetect: true,
-            ..Self::default()
+            put_get_fastfail_default: false,
         }
     }
 
@@ -95,6 +112,16 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     pub(super) results: HandleManager<Mutex<ResultSet>>,
+    /// Pending chunked uploads; see `stream_transfer::UploadStreamSession` for
+    /// the registration/mutation/consumption lifecycle. `UploadStreamSession`
+    /// carries its own interior `Mutex` around the growing buffer (its
+    /// `conn_handle`/`sql` fields are set once and never mutated), so it is
+    /// stored directly rather than double-wrapped.
+    pub(super) upload_streams: HandleManager<UploadStreamSession>,
+    /// Pending chunked downloads; see `stream_transfer::DownloadStream` for
+    /// the registration/mutation/teardown lifecycle (`download_stream_begin`,
+    /// `download_stream_chunk`, `download_stream_close`).
+    pub(super) download_streams: HandleManager<DownloadStream>,
     token_cache: once_cell::sync::OnceCell<Arc<dyn TokenCache>>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -125,6 +152,8 @@ impl DatabaseDriverV1 {
             connections: HandleManager::new(),
             statements: HandleManager::new(),
             results: HandleManager::new(),
+            upload_streams: HandleManager::new(),
+            download_streams: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),

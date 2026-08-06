@@ -3,16 +3,21 @@ Unit tests for PEP 249 Cursor class.
 """
 
 import asyncio
+import io
 
 from decimal import Decimal
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from snowflake.connector._internal.api_client.client_api import core_driver
+from snowflake.connector._internal.api_client.client_api import CHUNK_SIZE, async_core_driver, core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle, parse_stage_binding_threshold
 from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
-from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_NO_PYARROW
+from snowflake.connector._internal.errorcode import (
+    ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT,
+    ER_INVALID_VALUE,
+    ER_NO_PYARROW,
+)
 from snowflake.connector._internal.extras import (
     MissingOptionalDependency,
 )
@@ -23,8 +28,10 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ABORT_QUERY_OUTCOME_ABORTED,
     ABORT_QUERY_OUTCOME_NOT_RUNNING,
     ConnectionHandle,
+    DownloadStreamHandle,
     ResultSetHandle,
     StatementHandle,
+    UploadStreamHandle,
 )
 from snowflake.connector.aio.cursor import SnowflakeCursor as AsyncSnowflakeCursor
 from snowflake.connector.constants import QueryStatus, StatementParameterName
@@ -742,6 +749,37 @@ class TestSfqidOnFailedQuery:
             cursor.execute("INVALID SQL")
 
         assert cursor.sfqid is None
+
+    def test_request_id_set_from_error_on_failed_execute(self, cursor, mock_core_client):
+        """Both request_id and sfqid appear in the error message for user troubleshooting."""
+        request_id = "550e8400-e29b-41d4-a716-446655440000"
+        sfqid = "01abc-def-12345"
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError(
+            "SQL error",
+            sfqid=sfqid,
+            request_id=request_id,
+        )
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.execute("INVALID SQL")
+
+        error = excinfo.value
+        msg = str(error)
+        # Both IDs must be visible in the formatted message so users can share it with support.
+        assert request_id in msg, f"expected request_id in error message: {msg!r}"
+        assert sfqid in msg, f"expected sfqid in error message: {msg!r}"
+        # And mirrored on the cursor.
+        assert cursor.request_id == error.request_id
+        assert cursor.sfqid == error.sfqid
+
+    def test_request_id_none_when_error_has_no_request_id(self, cursor, mock_core_client):
+        """request_id is None when the error carries no request_id."""
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", sfqid="01abc-def-12345")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.request_id is None
 
 
 class TestQueryResultStats:
@@ -1620,7 +1658,11 @@ class TestResetIntegration:
         assert cursor._binding_data is None
 
     def test_executemany_calls_reset_once_before_loop(self, cursor, mock_connection):
-        """executemany() calls reset() once before the loop, not for each execute."""
+        """executemany() calls reset() once before the loop, not for each execute.
+
+        Uses UPDATE (not INSERT) so this exercises the per-row client-side
+        binding fallback path rather than the multi-row INSERT rewrite.
+        """
         mock_connection.paramstyle = ParamStyle.PYFORMAT
         cursor._query_result.rowcount = 100
 
@@ -1628,7 +1670,7 @@ class TestResetIntegration:
             with patch.object(cursor, "_execute") as mock_execute:
                 mock_execute.return_value = cursor
                 cursor._query_result.rowcount = 1
-                cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
+                cursor.executemany("UPDATE t SET x = %s", [(1,), (2,), (3,)])
 
         # reset should be called once, not 3 times
         mock_reset.assert_called_once()
@@ -2877,3 +2919,330 @@ class TestAsyncDescribeInternal:
         mock_connection.is_closed = AsyncMock(return_value=True)
         with pytest.raises(InterfaceError):
             asyncio.run(fresh._describe_internal("SELECT 1"))
+
+
+class TestExecutemanyMultirowInsertRewrite:
+    """Unit tests for the pyformat/format multi-row INSERT rewrite in executemany().
+
+    For client-side binding (pyformat/format paramstyle), executemany() on an
+    INSERT rewrites the per-row VALUES clause into a single multi-row INSERT
+    and issues one execute_query call instead of one per row.
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        cur = SnowflakeCursor(mock_connection)
+        yield cur
+        cur.close()
+
+    def test_should_rewrite_simple_multirow_insert_for_pyformat(self, cursor, mock_core_client):
+        """A pyformat INSERT with positional params is sent as one multi-row INSERT."""
+        cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (1),(2),(3)"
+
+    def test_should_rewrite_with_named_pyformat_dict_params(self, cursor, mock_core_client):
+        """A pyformat INSERT with named (dict) params is rewritten the same way."""
+        cursor.executemany(
+            "INSERT INTO t VALUES (%(id)s, %(name)s)",
+            [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t VALUES (1, 'Alice'),(2, 'Bob')"
+
+    def test_should_rewrite_insert_with_parse_json_nested_parens(self, cursor, mock_core_client):
+        """A VALUES clause containing nested function-call parens (e.g. PARSE_JSON)
+        is extracted correctly by the balanced-parens parser."""
+        cursor.executemany(
+            "INSERT INTO t (col) VALUES (PARSE_JSON(%(col)s))",
+            [{"col": '{"a": 1}'}],
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t (col) VALUES (PARSE_JSON('{\"a\": 1}'))"
+
+    def test_should_strip_block_comments_before_extracting_values(self, cursor, mock_core_client):
+        """A comment containing text that looks like a VALUES clause must not
+        confuse the search for the real VALUES clause."""
+        cursor.executemany(
+            "INSERT INTO t /* legacy: VALUES (0) */ VALUES (%s)",
+            [(1,), (2,)],
+        )
+
+        assert mock_core_client.statement_execute_query.call_count == 1
+        sql_request = mock_core_client.statement_set_sql_query.call_args.args[0]
+        assert sql_request.query == "INSERT INTO t /* legacy: VALUES (0) */ VALUES (1),(2)"
+
+    def test_should_not_rewrite_update_statements(self, cursor, mock_core_client):
+        """UPDATE is not an INSERT, so executemany() falls back to per-row execution."""
+        cursor.executemany("UPDATE t SET x = %s WHERE id = %s", [(1, 10), (2, 20)])
+
+        assert mock_core_client.statement_execute_query.call_count == 2
+
+    def test_should_raise_when_values_clause_missing(self, cursor, mock_core_client):
+        """An INSERT with no VALUES clause cannot be rewritten and raises ProgrammingError."""
+        with pytest.raises(ProgrammingError, match="no VALUES clause found") as exc_info:
+            cursor.executemany("INSERT INTO t", [(1,), (2,)])
+
+        assert exc_info.value.errno == ER_FAILED_TO_REWRITE_MULTI_ROW_INSERT
+        mock_core_client.statement_execute_query.assert_not_called()
+
+
+class TestFileStreamUpload:
+    """Unit tests for cursor.execute(sql, file_stream=...), mocking the core client.
+
+    `_apply_result_set` is patched out so these assert only the
+    begin/chunk/finish/abort streaming behavior, not result-set wiring.
+    """
+
+    @pytest.fixture
+    def cursor(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        conn.conn_handle = ConnectionHandle(id=1)
+        return SnowflakeCursor(conn)
+
+    @pytest.fixture
+    def async_mock_core_client(self):
+        """Mock (upload-stream RPCs as AsyncMock) patched into async_core_driver.client."""
+        mock = MagicMock()
+        mock.connection_upload_stream_begin = AsyncMock(
+            return_value=MagicMock(upload_handle=UploadStreamHandle(id=3, magic=1))
+        )
+        mock.connection_upload_stream_chunk = AsyncMock()
+        mock.connection_upload_stream_finish = AsyncMock()
+        mock.connection_upload_stream_abort = AsyncMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    def test_streams_all_chunks_then_finishes(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        payload = b"a" * (CHUNK_SIZE + 100)  # spans two reads
+        with patch.object(SnowflakeCursor, "_apply_result_set"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(payload))
+
+        assert mock_core_client.connection_upload_stream_begin.call_count == 1
+        assert mock_core_client.connection_upload_stream_finish.call_count == 1
+        assert mock_core_client.connection_upload_stream_chunk.call_count == 2
+        sent = b"".join(c.args[0].data for c in mock_core_client.connection_upload_stream_chunk.call_args_list)
+        assert sent == payload  # full payload forwarded, in order
+        mock_core_client.connection_upload_stream_abort.assert_not_called()
+
+    def test_empty_stream_finishes_without_chunks(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        with patch.object(SnowflakeCursor, "_apply_result_set"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b""))
+
+        mock_core_client.connection_upload_stream_chunk.assert_not_called()
+        mock_core_client.connection_upload_stream_finish.assert_called_once()
+
+    def test_aborts_and_reraises_on_chunk_failure(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        mock_core_client.connection_upload_stream_chunk.side_effect = DatabaseError(msg="mid-upload failure")
+
+        with pytest.raises(DatabaseError):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data"))
+
+        mock_core_client.connection_upload_stream_abort.assert_called_once()
+        mock_core_client.connection_upload_stream_finish.assert_not_called()
+
+    def test_original_error_propagates_when_finish_fails_and_abort_also_fails(self, cursor, mock_core_client):
+        mock_core_client.connection_upload_stream_begin.return_value = MagicMock(
+            upload_handle=UploadStreamHandle(id=3, magic=1)
+        )
+        mock_core_client.connection_upload_stream_finish.side_effect = DatabaseError(msg="finish failed")
+        mock_core_client.connection_upload_stream_abort.side_effect = ProgrammingError(msg="abort also failed")
+
+        with pytest.raises(DatabaseError, match="finish failed"):
+            cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data"))
+
+        mock_core_client.connection_upload_stream_abort.assert_called_once()
+
+    def test_async_aborts_and_reraises_on_chunk_failure(self, async_mock_core_client):
+        conn = MagicMock()
+        conn.is_closed = AsyncMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        async_mock_core_client.connection_upload_stream_chunk.side_effect = DatabaseError(msg="mid-upload failure")
+
+        with pytest.raises(DatabaseError):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data")))
+
+        async_mock_core_client.connection_upload_stream_abort.assert_awaited_once()
+        async_mock_core_client.connection_upload_stream_finish.assert_not_awaited()
+
+    def test_async_original_error_propagates_when_finish_fails_and_abort_also_fails(self, async_mock_core_client):
+        conn = MagicMock()
+        conn.is_closed = AsyncMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        async_mock_core_client.connection_upload_stream_finish.side_effect = DatabaseError(msg="finish failed")
+        async_mock_core_client.connection_upload_stream_abort.side_effect = ProgrammingError(msg="abort also failed")
+
+        with pytest.raises(DatabaseError, match="finish failed"):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(b"data")))
+
+        async_mock_core_client.connection_upload_stream_abort.assert_awaited_once()
+
+    def test_async_streams_all_chunks_then_finishes(self, async_mock_core_client):
+        conn = MagicMock()
+        conn.is_closed = AsyncMock(return_value=False)
+        conn.conn_handle = ConnectionHandle(id=1)
+        cursor = AsyncSnowflakeCursor(conn)
+
+        payload = b"b" * (CHUNK_SIZE + 50)
+        with patch.object(AsyncSnowflakeCursor, "_apply_result_set", new=AsyncMock()):
+            asyncio.run(cursor.execute("PUT file://f @s AUTO_COMPRESS=FALSE", file_stream=io.BytesIO(payload)))
+        assert async_mock_core_client.connection_upload_stream_chunk.await_count == 2
+        sent = b"".join(c.args[0].data for c in async_mock_core_client.connection_upload_stream_chunk.call_args_list)
+        assert sent == payload
+        async_mock_core_client.connection_upload_stream_finish.assert_awaited_once()
+        async_mock_core_client.connection_upload_stream_abort.assert_not_awaited()
+
+
+def _dl_chunk(data: bytes, eof: bool):
+    """Fake ConnectionDownloadStreamChunkResponse."""
+    return MagicMock(data=data, eof=eof)
+
+
+class TestDownloadStream:
+    """Unit tests for Cursor.download_stream (chunked GET), mocking the core client."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        conn.conn_handle = ConnectionHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_does_not_fetch_chunks_until_read(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+
+        out = cursor.download_stream("@stg/data.csv")
+        try:
+            mock_core_client.connection_download_stream_chunk.assert_not_called()
+            mock_core_client.connection_download_stream_close.assert_not_called()
+        finally:
+            out.close()
+
+    def test_reassembles_chunks_and_closes_on_eof(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = [
+            _dl_chunk(b"foo", False),
+            _dl_chunk(b"bar", False),
+            _dl_chunk(b"", True),
+        ]
+
+        out = cursor.download_stream("@stg/data.csv")
+
+        assert out.read() == b"foobar"
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_readall_does_not_truncate_on_empty_non_final_chunk(self, cursor, mock_core_client):
+        # data=b"" with eof=False is a legal core response; readinto must keep
+        # pulling rather than return 0, which io.RawIOBase.readall() would read as
+        # EOF and truncate on (regression guard for the empty-chunk fix).
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = [
+            _dl_chunk(b"", False),
+            _dl_chunk(b"foobar", True),
+        ]
+
+        out = cursor.download_stream("@stg/data.csv")
+
+        assert out.read() == b"foobar"
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_closing_without_reading_still_releases_handle(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+
+        with cursor.download_stream("@stg/data.csv"):
+            mock_core_client.connection_download_stream_chunk.assert_not_called()
+
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_splits_stage_location_and_forwards_decompress(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+
+        cursor.download_stream("@my_stage/sub/dir/file.csv.gz", decompress=True)
+
+        req = mock_core_client.connection_download_stream_begin.call_args.args[0]
+        assert req.stage_name == "@my_stage/sub/dir"
+        assert req.source_filename == "file.csv.gz"
+        assert req.decompress is True
+
+    def test_closes_session_on_error_during_read(self, cursor, mock_core_client):
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = DatabaseError(msg="mid-stream failure")
+
+        out = cursor.download_stream("@stg/data.csv")
+        mock_core_client.connection_download_stream_close.assert_not_called()
+
+        with pytest.raises(DatabaseError):
+            out.read()
+
+        mock_core_client.connection_download_stream_close.assert_called_once()
+
+    def test_read_size_returns_at_most_one_chunk(self, cursor, mock_core_client):
+        # read(size) is RawIOBase-style: one chunk pull, up to size bytes, short read before EOF is fine.
+        mock_core_client.connection_download_stream_begin.return_value = MagicMock(
+            download_handle=DownloadStreamHandle(id=7, magic=1)
+        )
+        mock_core_client.connection_download_stream_chunk.side_effect = [
+            _dl_chunk(b"foo", False),
+            _dl_chunk(b"bar", False),
+            _dl_chunk(b"", True),
+        ]
+
+        out = cursor.download_stream("@stg/data.csv")
+        try:
+            assert out.read(5) == b"foo"
+            assert mock_core_client.connection_download_stream_chunk.call_count == 1
+            assert out.read(5) == b"bar"
+        finally:
+            out.close()

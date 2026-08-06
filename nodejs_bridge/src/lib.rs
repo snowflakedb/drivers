@@ -1,5 +1,6 @@
 mod connection;
 mod error;
+mod sql_value;
 mod statement;
 
 pub use connection::Connection;
@@ -17,6 +18,3 @@ pub(crate) static DRIVER: LazyLock<DatabaseDriverV1> = LazyLock::new(|| {
         .try_init();
     DatabaseDriverV1::new()
 });
-
-pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> =
-    LazyLock::new(|| tokio::runtime::Runtime::new().expect("failed to build tokio runtime"));

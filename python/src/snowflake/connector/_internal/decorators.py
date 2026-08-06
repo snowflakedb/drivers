@@ -152,17 +152,30 @@ def backward_compatibility(obj: T) -> T:
 _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
-def _telemetry_client_for(self: Any) -> Any:
+def _telemetry_client_if_enabled(self: Any) -> Any:
+    """Return the telemetry client for *self*, or ``None`` if there is none to send to
+    or ``Connection.telemetry_enabled`` is currently ``False``.
+
+    Deliberately re-implements the ``telemetry_enabled`` AND rather than reading
+    the public property: that property is ``@api_telemetry``-decorated, and
+    calling it from here (inside telemetry dispatch) would recurse into sending
+    telemetry about itself.
+    """
     from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
     from snowflake.connector.aio.cursor._base import SnowflakeCursorBase as AsyncSnowflakeCursorBase
     from snowflake.connector.connection import Connection
     from snowflake.connector.cursor._base import SnowflakeCursorBase
 
     if isinstance(self, (Connection, AsyncConnection)):
-        return self._telemetry_client
-    if isinstance(self, (SnowflakeCursorBase, AsyncSnowflakeCursorBase)):
-        return self._connection._telemetry_client
-    raise TypeError(f"Unexpected telemetry target: {type(self)!r}")
+        connection = self
+    elif isinstance(self, (SnowflakeCursorBase, AsyncSnowflakeCursorBase)):
+        connection = self._connection
+    else:
+        raise TypeError(f"Unexpected telemetry target: {type(self)!r}")
+
+    if not (connection._client_param_telemetry_enabled and connection._server_param_telemetry_enabled()):
+        return None
+    return connection._telemetry_client
 
 
 def _passed_argument_names(
@@ -215,7 +228,7 @@ def _send_api_usage(self: Any, func: Callable[..., Any], passed_arguments: list[
         from snowflake.connector._internal.telemetry import AsyncTelemetryClient
 
         api_name = f"{type(self).__name__}.{func.__name__}"
-        client = _telemetry_client_for(self)
+        client = _telemetry_client_if_enabled(self)
         if client is None:
             return
         if isinstance(client, AsyncTelemetryClient):
@@ -232,7 +245,7 @@ async def _send_api_usage_async(self: Any, func: Callable[..., Any], passed_argu
         from snowflake.connector._internal.telemetry import AsyncTelemetryClient
 
         api_name = f"{type(self).__name__}.{func.__name__}"
-        client = _telemetry_client_for(self)
+        client = _telemetry_client_if_enabled(self)
         if client is None:
             return
         if isinstance(client, AsyncTelemetryClient):

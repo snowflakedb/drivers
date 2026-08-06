@@ -29,6 +29,7 @@ import java.util.TimeZone;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
@@ -324,7 +325,10 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new DecoratedSnowflakeResultSetMetaDataImpl(resultSetMetaData);
+    // No connection in scope for serializable-derived result sets (statement == null) — NOOP then.
+    Telemetry telemetry =
+        statement != null ? statement.getConnectionInternal().getTelemetry() : Telemetry.NOOP;
+    return new DecoratedSnowflakeResultSetMetaDataImpl(resultSetMetaData, telemetry);
   }
 
   @Override

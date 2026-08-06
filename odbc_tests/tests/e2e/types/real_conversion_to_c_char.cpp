@@ -72,19 +72,23 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_CHAR buffer handling", "[e2e][ty
     CHECK_THAT(std::stod(std::string(buffer, indicator)), Catch::Matchers::WithinRel(42.5));
   }
 
-  SECTION("fractional-only truncation returns 01004") {
-    SKIP_OLD_DRIVER(
-        "BD#15",
-        "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small SQL_C_CHAR buffer on FLOAT columns");
-
+  SECTION("fractional-only truncation") {
     auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
 
     char small_buffer[4];
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
 
-    CHECK(ret == SQL_SUCCESS_WITH_INFO);
-    CHECK(get_sqlstate(stmt) == "01004");
+    // BD#15: old returns SQL_SUCCESS_WITH_INFO for small CHAR buffer; new also returns SQL_SUCCESS_WITH_INFO 01004
+    OLD_DRIVER_ONLY("BD#15") {
+      CHECK(ret == SQL_SUCCESS_WITH_INFO);
+      // Old driver omits SQLSTATE 01004 alongside SQL_SUCCESS_WITH_INFO
+      CHECK(get_sqlstate(stmt) != "01004");
+    }
+    NEW_DRIVER_ONLY("BD#15") {
+      CHECK(ret == SQL_SUCCESS_WITH_INFO);
+      CHECK(get_sqlstate(stmt) == "01004");
+    }
   }
 
   SECTION("whole digits lost returns 22003") {
@@ -111,19 +115,23 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_WCHAR buffer handling", "[e2e][t
     CHECK(!result.empty());
   }
 
-  SECTION("fractional-only truncation returns 01004") {
-    SKIP_OLD_DRIVER(
-        "BD#15",
-        "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small SQL_C_WCHAR buffer on FLOAT columns");
-
+  SECTION("fractional-only truncation") {
     auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
 
     SQLWCHAR small_buffer[4];
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, small_buffer, sizeof(small_buffer), &indicator);
 
-    CHECK(ret == SQL_SUCCESS_WITH_INFO);
-    CHECK(get_sqlstate(stmt) == "01004");
+    // BD#15: old returns SQL_SUCCESS_WITH_INFO for small WCHAR buffer; new also returns SQL_SUCCESS_WITH_INFO 01004
+    OLD_DRIVER_ONLY("BD#15") {
+      CHECK(ret == SQL_SUCCESS_WITH_INFO);
+      // Old driver omits SQLSTATE 01004 alongside SQL_SUCCESS_WITH_INFO
+      CHECK(get_sqlstate(stmt) != "01004");
+    }
+    NEW_DRIVER_ONLY("BD#15") {
+      CHECK(ret == SQL_SUCCESS_WITH_INFO);
+      CHECK(get_sqlstate(stmt) == "01004");
+    }
   }
 
   SECTION("whole digits lost returns 22003") {

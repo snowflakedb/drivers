@@ -60,6 +60,9 @@ jobs:
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
       - name: Cleanup stale schemas and PATs (test user/role)

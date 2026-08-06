@@ -1,6 +1,7 @@
 package net.snowflake.jdbc.e2e.authentication;
 
 import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
+import static net.snowflake.jdbc.utils.DriverCompatibility.isOldDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -141,6 +142,41 @@ class OauthTests implements WithQueryUtils, WithConnect, WithOauthAccessToken {
                 () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD)) {
           // Then Login is successful and a simple query can be executed
           assertSimpleQuerySucceeds(conn);
+        }
+      } finally {
+        cleanBrowserProcesses();
+      }
+    }
+
+    @Test
+    void oauthShouldReuseCachedAccessTokenWithoutBrowserInteraction() throws Exception {
+      // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with
+      // client_store_temporary_credential=true
+      //       and a token has been cached from a previous browser authentication
+      Properties props = loadDefaultConnectionProperties();
+      props.setProperty("authenticator", "OAUTH_AUTHORIZATION_CODE");
+      props.setProperty("user", USER);
+      props.setProperty("oauthClientId", CLIENT_ID);
+      props.setProperty("oauthClientSecret", CLIENT_SECRET);
+      props.setProperty("oauthRedirectUri", REDICTED_URI);
+      props.setProperty("clientStoreTemporaryCredential", "true");
+      if (isOldDriver()) {
+        // BD#42: legacy snowflake-jdbc on Linux gates OAuth token cache on this session parameter.
+        props.put("CLIENT_STORE_TEMPORARY_CREDENTIAL", Boolean.TRUE);
+      }
+
+      cleanBrowserProcesses();
+      try {
+        try (Connection first =
+            connectWithBrowserAutomation(
+                () -> connect(props), "internalOauthSnowflakeSuccess", USER, PASSWORD)) {
+          assertSimpleQuerySucceeds(first);
+        }
+
+        // When Trying to Connect without browser interaction
+        try (Connection second = connect(props)) {
+          // Then Login is successful and a simple query can be executed
+          assertSimpleQuerySucceeds(second);
         }
       } finally {
         cleanBrowserProcesses();

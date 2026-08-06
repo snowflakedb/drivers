@@ -18,7 +18,7 @@ allowed_folders:
   - "odbc_trace_tool"
   - "jdbc_bridge"
 excluded_folders:
-  - "_internal"
+  - "NOMIRROR"
   - ".ai"
   - ".cursor"
   - ".claude"

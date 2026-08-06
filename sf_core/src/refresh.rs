@@ -15,9 +15,8 @@
 //! # Termination
 //!
 //! `execute_with_refresh` retries at most as many times as the refresher
-//! agrees to rotate. A refresher returns `Ok(false)` from `refresh` when it
-//! declines further rotation (e.g. recent refresh still considered valid, or
-//! retry budget exhausted), and the helper then propagates the original
+//! agrees to rotate. A refresher signals "no new rotation" by returning
+//! `Ok(false)` from `refresh`, and the helper then propagates the original
 //! error. Callers that want a stricter cap can encode it inside `refresh`.
 //!
 //! # Object safety
@@ -54,10 +53,9 @@ where
 
     /// Rotate the resource. Returns:
     ///
-    /// - `Ok(true)` — rotation happened; the next `current()` will return a
-    ///   fresh value and the helper will retry.
-    /// - `Ok(false)` — the refresher coalesced or has exhausted its retry
-    ///   budget. The helper propagates the original error.
+    /// - `Ok(true)` — rotation happened; the helper retries with the new resource.
+    /// - `Ok(false)` — no new rotation (coalesced within the window or budget
+    ///   exhausted); the helper propagates the original error.
     /// - `Err(e)` — the refresh itself failed; this is terminal.
     fn refresh(&mut self) -> RefreshFuture<'_, Result<bool, Err>>;
 }
@@ -86,9 +84,8 @@ where
             return Err(err);
         }
         if !refresher.refresh().await? {
-            // Retrying without a fresh resource would loop, so propagate.
             // Refresher declined to rotate: coalescing window or exhausted
-            // budget.
+            // budget. Retrying without a fresh resource would loop.
             return Err(err);
         }
     }

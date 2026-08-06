@@ -152,6 +152,11 @@ def _resolve_parameters_path(config) -> str:
     return str(Path("parameters") / "parameters_perf_aws.json")
 
 
+def _resolve_driver(config) -> str:
+    """Resolve the active driver from CLI flag or environment (default: core)."""
+    return config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+
+
 @pytest.fixture
 def parameters_json_path(request):
     """Get parameters JSON path from command line, cloud option, or environment."""
@@ -230,14 +235,14 @@ def warmup_iterations(request):
 @pytest.fixture
 def driver(request):
     """Get driver name from command line or environment"""
-    return request.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+    return _resolve_driver(request.config)
 
 
 @pytest.fixture
 def driver_type(request):
     """Get driver type from command line or environment"""
     driver_type_value = request.config.getoption("--driver-type") or os.getenv("DRIVER_TYPE", "universal")
-    driver_value = request.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+    driver_value = _resolve_driver(request.config)
     
     # Validate: Core driver only has universal implementation
     if driver_value == "core" and driver_type_value != "universal":
@@ -358,6 +363,10 @@ def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_
             use_db_query = f"USE DATABASE {database}"
             return [use_db_query] + (setup_queries or [])
 
+        case PerfTestType.COLD_START | PerfTestType.COLD_START_RECORDED_HTTP:
+            # Cold-start: bare connect + SELECT 1, no setup queries
+            return []
+
 
 @pytest.fixture
 def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iterations, driver, driver_type, use_local_binary, preserve_mappings, reuse_mappings_dir, request):
@@ -393,7 +402,8 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_name: str = None,
         test_type: PerfTestType = PerfTestType.SELECT,
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
-        s3_download_dir: str = None  # Local directory for downloaded files
+        s3_download_dir: str = None,  # Local directory for downloaded files
+        fetch_mode: str = "fetchmany",  # Cursor fetch strategy for SELECT tests (e2e only)
     ):
         # Prepare test parameters
         if test_name is None:
@@ -403,7 +413,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
         is_comparison = _should_run_comparison(driver, driver_type)
 
-        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
+        if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
             _regression_test_params[test_name] = {
                 "sql_command": sql_command,
                 "parameters_json": parameters_json,
@@ -411,13 +421,14 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
             }
 
         # Route to appropriate runner based on test type
-        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
+        if test_type in (PerfTestType.SELECT_RECORDED_HTTP, PerfTestType.COLD_START_RECORDED_HTTP):
             result = _run_wiremock_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
+                test_type=test_type,
             )
         else:
             result = _run_e2e_test(
@@ -427,6 +438,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 test_type=test_type,
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
+                fetch_mode=fetch_mode,
             )
 
         # Performance history comparison
@@ -440,9 +452,17 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         setup_queries: list[str],
         s3_files_dir,
         is_comparison: bool,
+        test_type: PerfTestType = PerfTestType.SELECT_RECORDED_HTTP,
     ):
         """Run WireMock test (recorded HTTP traffic)."""
         _validate_wiremock_old_driver(driver, driver_type)
+
+        # Map recorded-HTTP types to the underlying container test type
+        container_type_map = {
+            PerfTestType.SELECT_RECORDED_HTTP: PerfTestType.SELECT,
+            PerfTestType.COLD_START_RECORDED_HTTP: PerfTestType.COLD_START,
+        }
+        container_test_type = container_type_map.get(test_type, PerfTestType.SELECT)
         
         if is_comparison:
             from runner.modes.wiremock_runner import run_wiremock_comparison_test
@@ -460,6 +480,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 run_id=run_id,
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
+                test_type=container_test_type,
             )
         else:
             from runner.modes.wiremock_runner import run_wiremock_performance_test
@@ -478,6 +499,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 run_id=run_id,
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
+                test_type=container_test_type,
             )
     
     def _run_e2e_test(
@@ -487,6 +509,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_type: PerfTestType,
         s3_files_dir,
         is_comparison: bool,
+        fetch_mode: str = "fetchmany",
     ):
         """Run E2E test (real Snowflake connection)."""
         if is_comparison:
@@ -501,6 +524,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 warmup_iterations=warmup_iterations,
                 driver=driver,
                 s3_files_dir=s3_files_dir,
+                fetch_mode=fetch_mode,
             )
         else:
             return run_performance_test(
@@ -516,6 +540,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 driver_type=_normalize_driver_type(driver, driver_type),
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
+                fetch_mode=fetch_mode,
             )
     
     def _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir):
@@ -570,8 +595,29 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
     return _run_test
 
 
+def _skip_unsupported_driver(item):
+    """Skip a test whose @pytest.mark.supported_drivers list excludes the active driver.
+
+    Some test types are only implemented by a subset of driver apps. Cold-start, for
+    example, lives only in the Python driver app; the Core/ODBC/JDBC apps have no
+    cold-start executor and abort on the unknown TEST_TYPE. Marking those tests keeps
+    the perf job green for drivers that do not (yet) support them, and the allowlist
+    grows naturally as each driver gains support.
+    """
+    marker = item.get_closest_marker("supported_drivers")
+    if marker is None:
+        return
+    supported = {name.lower() for name in marker.args}
+    active_driver = _resolve_driver(item.config).lower()
+    if active_driver not in supported:
+        pytest.skip(
+            f"'{item.name}' supports drivers {sorted(supported)}; skipping for --driver={active_driver}"
+        )
+
+
 def pytest_runtest_setup(item):
-    """Hook called before each test starts - add visual separation."""
+    """Hook called before each test starts - gate by driver, add visual separation."""
+    _skip_unsupported_driver(item)
     logger.info("")
     logger.info("=" * 80)
     logger.info(f">>> TEST: {item.name}")
@@ -700,7 +746,7 @@ def pytest_sessionfinish(session, exitstatus):
         try:
             from runner.pr_smoke_reg_detection.regression_check import run_regression_check
 
-            driver_val = session.config.getoption("--driver") or os.getenv("PERF_DRIVER", "core")
+            driver_val = _resolve_driver(session.config)
             threshold = session.config.getoption("--regression-threshold")
 
             run_id_val = _current_run_dir.name if _current_run_dir else None

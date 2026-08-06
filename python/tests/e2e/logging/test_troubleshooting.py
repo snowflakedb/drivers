@@ -9,7 +9,7 @@ import pytest
 from tests.e2e.session.test_close import _assert_subprocess_ok
 
 
-# Spawn a child Python so env vars are visible before snowflake.connector import triggers sf_core_init.
+# Spawn a child Python so env vars are visible before snowflake.connector import triggers sf_core_python.init.
 _DEBUG_LOGIN_MARKER = "Login successful, extracting session tokens"
 _WORKER_CODE = textwrap.dedent("""\
     import logging

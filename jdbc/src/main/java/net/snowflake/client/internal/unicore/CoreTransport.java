@@ -39,4 +39,26 @@ public interface CoreTransport {
 
   TransportResponse handleMessage(String serviceName, String methodName, byte[] requestBytes)
       throws TransportException;
+
+  /**
+   * Submit a message asynchronously. Returns immediately with an opaque handle identifying the
+   * in-flight operation; the work runs in the background. Pair with {@link #awaitMessage(long)} to
+   * obtain the result and {@link #cancel(long)} to abort it.
+   *
+   * @return a non-zero handle, or 0 if the request could not be submitted
+   */
+  long submitMessage(String serviceName, String methodName, byte[] requestBytes)
+      throws TransportException;
+
+  /**
+   * Block until the operation identified by {@code handle} (from {@link #submitMessage}) completes,
+   * returning its {@link TransportResponse}.
+   */
+  TransportResponse awaitMessage(long handle) throws TransportException;
+
+  /**
+   * Cancel the in-flight operation identified by {@code handle}. No-op for unknown or already
+   * completed handles.
+   */
+  void cancel(long handle);
 }

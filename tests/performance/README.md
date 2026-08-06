@@ -243,6 +243,11 @@ def test_put_files_12mx100(perf_test):
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
 - PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
+- **SELECT tests (Python, e2e only)**: pass `fetch_mode="fetchone"`, `"fetchall"`, or `"pandas"` to exercise a
+  different cursor fetch API instead of the default `fetchmany()` chunked loop (see
+  `tests/test_select_1M_fetchone.py`, `test_select_1M_fetchall.py`, `test_select_1M_pandas.py`). `"pandas"` uses
+  `cursor.fetch_pandas_all()` and requires the `pandas` extra, already installed in the Python driver image.
+  Not wired to the WireMock recorded-HTTP path.
 
 ### Test Configuration Priority
 
@@ -369,6 +374,7 @@ All drivers receive their configuration through **environment variables**. The r
 | `DRIVER_TYPE` | String | `"universal"` or `"old"` | `"universal"` |
 | `TEST_TYPE` | String | `"select"` or `"put_get"` | `"select"` |
 | `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended. | `[]` |
+| `FETCH_MODE` | String | Cursor fetch strategy for SELECT tests: `"fetchmany"`, `"fetchone"`, `"fetchall"`, or `"pandas"` (Python driver only) | `"fetchmany"` |
 
 ### PARAMETERS_JSON Format
 
@@ -447,7 +453,7 @@ results/
 
 ### CSV Format
 
-Results CSV files contain per-iteration timing, CPU, and memory data with actual execution timestamps. When the `perf_timing` Cargo feature is enabled, additional core instrumentation columns are automatically included (the Python driver auto-detects this from the compiled library via `sf_core_perf_enabled()`).
+Results CSV files contain per-iteration timing, CPU, and memory data with actual execution timestamps. When the `perf_timing` Cargo feature is enabled, additional core instrumentation columns are automatically included (the Python driver auto-detects this from the compiled library via `sf_core_python.perf_enabled()`).
 
 **For SELECT tests (Core driver):**
 ```csv
@@ -571,7 +577,7 @@ core_arrow_decode_s    — typically negligible for Arrow (< 1ms)
 **Implementation details:**
 
 - **Core driver**: Calls `sf_core::perf_timing::reset_perf_counters()` before fetch, then `sf_core::perf_timing::get_perf_data()` after fetch to read counters directly into a struct. No `wrapper_time_s` (core consumes batches directly).
-- **Python driver**: Auto-detects perf capability via `sf_core_perf_enabled()` FFI call. When enabled, uses `sf_core_reset_perf_metrics()` and `sf_core_get_perf_data()` (returns a `#[repr(C)]` struct — no JSON, no heap allocation) from the connector's `c_api` module. Computes `wrapper_time_s = fetch_s - core_batch_wait_s`.
+- **Python driver**: Auto-detects perf capability via `sf_core_python.perf_enabled()`. When enabled, uses `sf_core_python.reset_perf_metrics()` and `sf_core_python.get_perf_data()` (returns a `(batch_wait_ns, chunk_download_ns, arrow_decode_ns)` tuple — no JSON, no heap allocation) from the PyO3 extension. Computes `wrapper_time_s = fetch_s - core_batch_wait_s`.
 - **ODBC driver**: The C++ test app uses `dlopen`/`dlsym` to resolve `sf_core_get_perf_data` and `sf_core_reset_perf_metrics` from the already-loaded `libsfodbc.so` (which statically links `sf_core`). `sf_core_get_perf_data` returns a flat C struct with nanosecond counters — no JSON parsing or string management needed. The `CoreInstrumentation` class (`perf_metrics.cpp`) encapsulates this and falls back gracefully when the symbols are absent. Computes `wrapper_time_s = fetch_s - core_batch_wait_s`.
 - **Tracing mechanism**: Standard `tracing` spans alone only emit events to subscribers — they don't aggregate timing data or expose it via FFI. The custom `PerfTimingLayer` bridges this gap: it intercepts spans tagged with `target: "sf_core::perf"`, measures their wall-clock duration, and accumulates nanosecond totals into atomic counters that can be read and reset from C/Python/C++ callers. Other tracing subscribers (logging, OpenTelemetry) ignore these spans entirely, so there is no cross-subscriber overhead.
 - **Feature gating**: The `perf_timing` Cargo feature controls whether the `PerfTimingLayer` and FFI functions are compiled in. The `tracing` spans at measurement sites are **always compiled** (unconditional `trace_span!` calls). When no `PerfTimingLayer` is registered the spans short-circuit after a single atomic load (~1-2ns) — the same cost as the 48+ existing `#[instrument]` spans on API methods. When the feature is **on**, the layer is registered with the global subscriber during `init_logging`, and FFI calls return real timing data. This keeps instrumentation sites simple (no `#[cfg]` guards) while perf test builds (via `sf-core-builder` with `--features perf_timing`) get full timing breakdown.
@@ -701,7 +707,7 @@ The framework uses a multi-stage Docker build strategy with **cargo-chef** for R
 
 ### Shared Builder Image (`sf-core-builder`)
 
-For ODBC and Python drivers, a shared base image is built first using `Dockerfile.sf_core_builder` to not repeat core building steps:
+For ODBC, Python, and JDBC jar assembly, a shared base image is built first using `Dockerfile.sf_core_builder` to not repeat core building steps:
 
 ```bash
 ./drivers/build_sf_core_builder.sh
@@ -712,8 +718,10 @@ This creates an intermediate image containing Core libraries:
 - `libsfodbc.so` - ODBC wrapper around `sf_core`
 - `libjdbc_bridge.so` - JNI transport around `sf_core` (loaded by the JDBC driver)
 
+The Python performance image builds `sf_core_python` (version-tagged PyO3 extension) itself during `pip install` via hatch, matching the image's CPython ABI.
+
 These libraries are copied into the final driver images:
-- **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python` package
+- **Python**: Builds `sf_core_python` in-image → Used by `snowflake-connector-python` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
 - **JDBC**: Copies `libjdbc_bridge.so` → Loaded by `NativeLibraryLoader` via `CORE_PATH`. The
   universal JDBC fat jar (`snowflake-jdbc-native-all.jar`) is assembled by the jar stage of

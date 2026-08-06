@@ -49,8 +49,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC", "[fixed][con
 
 TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_PRECISION and SQL_DESC_SCALE",
                  "[fixed][conversion][c_numeric][descriptor]") {
-  SKIP_OLD_DRIVER("BD#13", "Old driver ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField");
   // Given A Snowflake connection is established
+  // BD#13: old driver ignores SQL_DESC_PRECISION and SQL_DESC_SCALE, always using precision=38 scale=0.
+  // New driver honours the descriptor settings.
 
   {
     INFO("target scale matches source scale - no truncation");
@@ -66,12 +67,23 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    REQUIRE(ret == SQL_SUCCESS);
-    // Then SQL_NUMERIC_STRUCT respects the custom precision and scale settings
-    CHECK(numeric.precision == 10);
-    CHECK(numeric.scale == 2);
+    // Then The conversion result and precision differ between old and new driver (BD#13)
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(ret == SQL_SUCCESS_WITH_INFO);
+      CHECK(get_sqlstate(stmt) == "01S07");
+    }
+    NEW_DRIVER_ONLY("BD#13") { REQUIRE(ret == SQL_SUCCESS); }
     CHECK(numeric.sign == 1);
-    CHECK(numeric_val_to_ull(numeric) == 12345);
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 38);
+      CHECK(numeric.scale == 0);
+      CHECK(numeric_val_to_ull(numeric) == 123);
+    }
+    NEW_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 10);
+      CHECK(numeric.scale == 2);
+      CHECK(numeric_val_to_ull(numeric) == 12345);
+    }
   }
 
   {
@@ -88,10 +100,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    // Then SQL_SUCCESS_WITH_INFO with 01S07 and truncated value
+    // Both drivers truncate .45 → 01S07; precision differs
     CHECK(ret == SQL_SUCCESS_WITH_INFO);
     CHECK(get_sqlstate(stmt) == "01S07");
     CHECK(numeric_val_to_ull(numeric) == 123);
+    OLD_DRIVER_ONLY("BD#13") { CHECK(numeric.precision == 38); }
+    NEW_DRIVER_ONLY("BD#13") { CHECK(numeric.precision == 10); }
   }
 
   {
@@ -108,9 +122,18 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    REQUIRE(ret == SQL_SUCCESS);
-    // Then Value is upscaled
-    CHECK(numeric_val_to_ull(numeric) == 42000);
+    // Both return SQL_SUCCESS (42 is integer, no fractional truncation either way)
+    CHECK(ret == SQL_SUCCESS);
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 38);
+      CHECK(numeric.scale == 0);
+      CHECK(numeric_val_to_ull(numeric) == 42);
+    }
+    NEW_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 10);
+      CHECK(numeric.scale == 3);
+      CHECK(numeric_val_to_ull(numeric) == 42000);
+    }
   }
 
   {
@@ -127,8 +150,20 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    REQUIRE(ret == SQL_SUCCESS);
-    CHECK(numeric_val_to_ull(numeric) == 123);
+    // Old uses scale=0, truncates .300 → 01S07. New uses scale=1, exact → SQL_SUCCESS.
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(ret == SQL_SUCCESS_WITH_INFO);
+      CHECK(get_sqlstate(stmt) == "01S07");
+      CHECK(numeric.precision == 38);
+      CHECK(numeric.scale == 0);
+      CHECK(numeric_val_to_ull(numeric) == 12);
+    }
+    NEW_DRIVER_ONLY("BD#13") {
+      REQUIRE(ret == SQL_SUCCESS);
+      CHECK(numeric.precision == 10);
+      CHECK(numeric.scale == 1);
+      CHECK(numeric_val_to_ull(numeric) == 123);
+    }
   }
 
   {
@@ -145,9 +180,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
+    // Both truncate fractional part → 01S07; but to different scales (0 vs 1)
     CHECK(ret == SQL_SUCCESS_WITH_INFO);
     CHECK(get_sqlstate(stmt) == "01S07");
-    CHECK(numeric_val_to_ull(numeric) == 19);
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 38);
+      CHECK(numeric.scale == 0);
+      CHECK(numeric_val_to_ull(numeric) == 1);
+    }
+    NEW_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 10);
+      CHECK(numeric.scale == 1);
+      CHECK(numeric_val_to_ull(numeric) == 19);
+    }
   }
 
   {
@@ -164,8 +209,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    REQUIRE(ret == SQL_SUCCESS);
-    CHECK(numeric.precision == 5);
+    CHECK(ret == SQL_SUCCESS);
+    OLD_DRIVER_ONLY("BD#13") { CHECK(numeric.precision == 38); }
+    NEW_DRIVER_ONLY("BD#13") { CHECK(numeric.precision == 5); }
   }
 
   {
@@ -182,9 +228,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(ret == SQL_SUCCESS);
     CHECK(numeric.sign == 0);
-    CHECK(numeric_val_to_ull(numeric) == 700);
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 38);
+      CHECK(numeric.scale == 0);
+      CHECK(numeric_val_to_ull(numeric) == 7);
+    }
+    NEW_DRIVER_ONLY("BD#13") { CHECK(numeric_val_to_ull(numeric) == 700); }
   }
 
   {
@@ -201,8 +252,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_
     SQL_NUMERIC_STRUCT numeric = {};
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
-    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(ret == SQL_SUCCESS);
     CHECK(numeric_val_to_ull(numeric) == 0);
+    OLD_DRIVER_ONLY("BD#13") {
+      CHECK(numeric.precision == 38);
+      CHECK(numeric.scale == 0);
+    }
+    NEW_DRIVER_ONLY("BD#13") { CHECK(numeric.scale == 5); }
   }
 }
 

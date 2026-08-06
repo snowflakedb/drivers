@@ -168,6 +168,42 @@ impl From<Handle> for ResultSetHandle {
     }
 }
 
+impl From<UploadStreamHandle> for Handle {
+    fn from(handle: UploadStreamHandle) -> Self {
+        Handle {
+            id: handle.id as u64,
+            magic: handle.magic as u64,
+        }
+    }
+}
+
+impl From<Handle> for UploadStreamHandle {
+    fn from(handle: Handle) -> Self {
+        UploadStreamHandle {
+            id: handle.id as i64,
+            magic: handle.magic as i64,
+        }
+    }
+}
+
+impl From<DownloadStreamHandle> for Handle {
+    fn from(handle: DownloadStreamHandle) -> Self {
+        Handle {
+            id: handle.id as u64,
+            magic: handle.magic as u64,
+        }
+    }
+}
+
+impl From<Handle> for DownloadStreamHandle {
+    fn from(handle: Handle) -> Self {
+        DownloadStreamHandle {
+            id: handle.id as i64,
+            magic: handle.magic as i64,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Chunk format conversions (native ↔ proto)
 // ---------------------------------------------------------------------------
@@ -583,12 +619,8 @@ pub(super) fn proto_options_to_hashmap(
 // Validation issue conversion
 // ---------------------------------------------------------------------------
 
-pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> ValidationIssue {
-    let severity = match issue.severity {
-        CoreValidationSeverity::Error => ValidationSeverity::Error as i32,
-        CoreValidationSeverity::Warning => ValidationSeverity::Warning as i32,
-    };
-    let code = match issue.code {
+pub(super) fn core_validation_code_to_proto(code: CoreValidationCode) -> i32 {
+    match code {
         CoreValidationCode::Unspecified => ValidationCode::Unspecified as i32,
         CoreValidationCode::MissingRequired => ValidationCode::MissingRequired as i32,
         CoreValidationCode::InvalidType => ValidationCode::InvalidType as i32,
@@ -596,12 +628,22 @@ pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> Vali
         CoreValidationCode::UnknownParameter => ValidationCode::UnknownParameter as i32,
         CoreValidationCode::DeprecatedParameter => ValidationCode::DeprecatedParameter as i32,
         CoreValidationCode::ConflictingParameters => ValidationCode::ConflictingParameters as i32,
+        CoreValidationCode::ConflictingWifParameters => {
+            ValidationCode::ConflictingWifParameters as i32
+        }
+    }
+}
+
+pub(super) fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> ValidationIssue {
+    let severity = match issue.severity {
+        CoreValidationSeverity::Error => ValidationSeverity::Error as i32,
+        CoreValidationSeverity::Warning => ValidationSeverity::Warning as i32,
     };
     ValidationIssue {
         severity,
         parameter: issue.parameter,
         message: issue.message,
-        code,
+        code: core_validation_code_to_proto(issue.code),
     }
 }
 
@@ -632,6 +674,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     parameter: parameter.clone(),
                     value: value.clone(),
                     explanation: Some(explanation.clone()),
+                    code: None,
                 },
             )),
         },
@@ -654,6 +697,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     parameter: "private_key/private_key_file".to_string(),
                     value: "(both set)".to_string(),
                     explanation: Some(explanation.clone()),
+                    // Not produced by validate_settings (this is a separate, older
+                    // check in read_private_key), so no ValidationCode to report.
+                    code: None,
                 },
             )),
         },
@@ -687,12 +733,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     )),
                 }
             } else {
+                // Mirrors the MissingRequired handling above: a WIF-conflict
+                // issue must win over blind `.first()` selection, or
+                // `_is_wif_conflict` on the Python side silently misses it
+                // whenever validate_settings also pushes an unrelated
+                // Error-severity issue earlier in the same call.
+                let wif_issue = issues
+                    .iter()
+                    .find(|issue| issue.code == CoreValidationCode::ConflictingWifParameters);
+                let (chosen_param, chosen_code) = match wif_issue {
+                    Some(issue) => (issue.parameter.clone(), Some(issue.code)),
+                    None => (first_param, issues.first().map(|issue| issue.code)),
+                };
                 DriverError {
                     error_type: Some(driver_error::ErrorType::InvalidParameterValue(
                         InvalidParameterValue {
-                            parameter: first_param,
+                            parameter: chosen_param,
                             value: String::new(),
                             explanation: Some(summary),
+                            code: chosen_code.map(core_validation_code_to_proto),
                         },
                     )),
                 }
@@ -774,6 +833,7 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                     parameter: format!("column: {column}"),
                     value: String::new(),
                     explanation: Some("Failed to parse column metadata".to_string()),
+                    code: None,
                 },
             )),
         },
@@ -854,6 +914,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::CancelTimeout { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
+        ApiError::SpoolBufferWrite { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
     }
 }
 
@@ -904,6 +967,27 @@ fn extract_query_id(error: &ApiError) -> Option<String> {
     match error {
         ApiError::Query { source, .. } => match source.as_ref() {
             RestError::QueryFailed { query_id, .. } => query_id.clone(),
+            RestError::AsyncQuery { query_id, .. } => query_id.map(|id| id.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Extract the client-generated `requestId` used for the query submission.
+///
+/// Unlike [`extract_query_id`] (the server-assigned Snowflake Query ID), this
+/// is the UUID the driver sent as `?requestId=` on the submission request. It
+/// is useful for correlating a failure with server-side dedup/retry logs.
+///
+/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
+/// New query-related error variants should be added here as they are
+/// introduced.
+fn extract_request_id(error: &ApiError) -> Option<String> {
+    match error {
+        ApiError::Query { source, .. } => match source.as_ref() {
+            RestError::QueryFailed { request_id, .. } => request_id.map(|id| id.to_string()),
+            RestError::AsyncQuery { request_id, .. } => request_id.map(|id| id.to_string()),
             _ => None,
         },
         _ => None,
@@ -995,7 +1079,13 @@ fn to_driver_exception(error: ApiError) -> DriverException {
                     // error, not a driver fault — surface it as
                     // `InvalidArgument` rather than `InternalError`.
                     s if s.is_file_too_large() => StatusCode::InvalidArgument,
-                    _ => StatusCode::InternalError,
+                    // Everything else here (Io, UploadBatch, cloud
+                    // transport errors, ...) is an environmental/transfer
+                    // failure, not an internal driver bug — `Io` maps to
+                    // `OperationalError` on the Python side, matching the
+                    // reference connector's own classification for the
+                    // same class of failure.
+                    _ => StatusCode::Io,
                 },
                 QueryResponseProcessingError::RemoteFileNotFound { .. } => {
                     StatusCode::RemoteFileNotFound
@@ -1033,10 +1123,14 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         // language wrappers can surface HYT00 / OperationalError correctly.
         ApiError::QueryTimeout { .. } => StatusCode::GenericError,
         ApiError::CancelTimeout { .. } => StatusCode::GenericError,
+        // Local temp-file / in-memory spool I/O failure while buffering a
+        // chunked upload-stream chunk — a driver-side fault, not caller input.
+        ApiError::SpoolBufferWrite { .. } => StatusCode::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
     let query_id = extract_query_id(&error);
+    let request_id = extract_request_id(&error);
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
@@ -1060,6 +1154,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         sql_state,
         root_cause,
         query_id,
+        request_id,
     }
 }
 
@@ -1110,6 +1205,7 @@ mod tests {
                 code,
                 sql_state: sql_state.map(|s| s.to_owned()),
                 query_id: None,
+                request_id: None,
                 location: loc(),
             }),
         }
@@ -1218,6 +1314,7 @@ mod tests {
                 code: Some(2003),
                 sql_state: Some("42S02".to_owned()),
                 query_id: None,
+                request_id: None,
                 location: loc(),
             }),
         };
@@ -1238,10 +1335,309 @@ mod tests {
                 code: Some(1003),
                 sql_state: Some("42000".to_owned()),
                 query_id: None,
+                request_id: None,
                 location: loc(),
             }),
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.message, "SQL compilation error: syntax error line 1");
+    }
+
+    fn validation_error(issues: Vec<CoreValidationIssue>) -> ApiError {
+        ApiError::Configuration {
+            location: loc(),
+            source: ConfigError::Validation {
+                issues,
+                location: loc(),
+            },
+        }
+    }
+
+    fn conflicting_parameters_issue(parameter: &str, message: &str) -> CoreValidationIssue {
+        CoreValidationIssue {
+            severity: CoreValidationSeverity::Error,
+            parameter: parameter.to_owned(),
+            message: message.to_owned(),
+            code: CoreValidationCode::ConflictingParameters,
+        }
+    }
+
+    fn conflicting_wif_parameters_issue(parameter: &str, message: &str) -> CoreValidationIssue {
+        CoreValidationIssue {
+            severity: CoreValidationSeverity::Error,
+            parameter: parameter.to_owned(),
+            message: message.to_owned(),
+            code: CoreValidationCode::ConflictingWifParameters,
+        }
+    }
+
+    #[test]
+    fn validation_error_carries_first_issue_validation_code_on_the_wire() {
+        // The WIF cross-param guards must surface their dedicated ValidationCode
+        // so wrappers can discriminate without substring-matching the message.
+        let err = validation_error(vec![conflicting_wif_parameters_issue(
+            "workload_identity_provider",
+            "workload_identity_provider was set but authenticator was not set to WORKLOAD_IDENTITY",
+        )]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "workload_identity_provider");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingWifParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_error_with_multiple_issues_prefers_wif_conflict_issue() {
+        // A WIF-conflict issue always wins the `parameter`/`code` slot over any
+        // other Error-severity issue in the same batch, regardless of position
+        // in `issues` — see `wif_conflict_wins_even_when_pushed_after_an_unrelated_issue`
+        // for the ordering-sensitive case this guards against.
+        let err = validation_error(vec![
+            conflicting_wif_parameters_issue(
+                "workload_identity_impersonation_path",
+                "unsupported for OIDC",
+            ),
+            CoreValidationIssue {
+                severity: CoreValidationSeverity::Error,
+                parameter: "token".to_owned(),
+                message: "Missing required parameter 'token'".to_owned(),
+                code: CoreValidationCode::InvalidValue,
+            },
+        ]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "workload_identity_impersonation_path");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingWifParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wif_conflict_wins_even_when_pushed_after_an_unrelated_issue() {
+        // Regression test: before the fix, `first_param`/`first_code` took
+        // `issues.first()` unconditionally, so a non-WIF issue pushed before
+        // the WIF-conflict issue would shadow it on the wire, silently
+        // defeating `_is_wif_conflict` on the Python side.
+        let err = validation_error(vec![
+            CoreValidationIssue {
+                severity: CoreValidationSeverity::Error,
+                parameter: "some_unrelated_param".to_owned(),
+                message: "unrelated invalid value".to_owned(),
+                code: CoreValidationCode::InvalidValue,
+            },
+            conflicting_wif_parameters_issue(
+                "workload_identity_provider",
+                "workload_identity_provider was set but authenticator was not WORKLOAD_IDENTITY",
+            ),
+        ]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "workload_identity_provider");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingWifParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_error_for_private_key_conflict_does_not_get_wif_code() {
+        // private_key + private_key_file is a ConflictingParameters issue that
+        // shares the abstract bucket with the WIF guards but must NOT be
+        // remapped to the WIF-specific code (no false positive).
+        let err = validation_error(vec![conflicting_parameters_issue(
+            "private_key",
+            "Both 'private_key' and 'private_key_file' are set. Please provide only one.",
+        )]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.parameter, "private_key");
+                assert_eq!(
+                    inner.code,
+                    Some(ValidationCode::ConflictingParameters as i32)
+                );
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_error_missing_required_takes_priority_over_code_field() {
+        // Existing behavior: any MissingRequired issue routes to MissingParameter
+        // instead of InvalidParameterValue, regardless of ValidationCode on other
+        // issues. MissingParameter has no `code` field — nothing new to carry.
+        let err = validation_error(vec![
+            conflicting_parameters_issue("workload_identity_provider", "conflict"),
+            CoreValidationIssue {
+                severity: CoreValidationSeverity::Error,
+                parameter: "account".to_owned(),
+                message: "Missing required parameter 'account'".to_owned(),
+                code: CoreValidationCode::MissingRequired,
+            },
+        ]);
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::MissingParameter(inner)) => {
+                assert_eq!(inner.parameter, "account");
+            }
+            other => panic!("expected MissingParameter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn direct_invalid_parameter_value_error_has_no_validation_code() {
+        // ConfigError::InvalidParameterValue does not originate from
+        // validate_settings, so it carries no ValidationCode.
+        let err = ApiError::Configuration {
+            location: loc(),
+            source: ConfigError::InvalidParameterValue {
+                parameter: "authenticator".to_owned(),
+                value: "BAD".to_owned(),
+                explanation: "not supported".to_owned(),
+                location: loc(),
+            },
+        };
+        let driver_error = to_driver_error(&err);
+        match driver_error.error_type {
+            Some(driver_error::ErrorType::InvalidParameterValue(inner)) => {
+                assert_eq!(inner.code, None);
+            }
+            other => panic!("expected InvalidParameterValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn query_failed_populates_query_id_and_request_id() {
+        // A synchronous query failure carries both the server-assigned query_id
+        // and the client-generated request_id all the way to DriverException.
+        let request_id = uuid::Uuid::new_v4();
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::QueryFailed {
+                message: "SQL compilation error".to_owned(),
+                code: Some(1003),
+                sql_state: Some("42000".to_owned()),
+                query_id: Some("01abc-def-12345".to_owned()),
+                request_id: Some(request_id),
+                location: loc(),
+            }),
+        };
+        assert_eq!(extract_query_id(&err), Some("01abc-def-12345".to_owned()));
+        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, Some("01abc-def-12345".to_owned()));
+        assert_eq!(exc.request_id, Some(request_id.to_string()));
+    }
+
+    #[test]
+    fn async_query_populates_query_id_and_request_id() {
+        // The async-poll failure path carries UUID query_id/request_id which are
+        // stringified onto DriverException.
+        let request_id = uuid::Uuid::new_v4();
+        let query_id = uuid::Uuid::new_v4();
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::AsyncQuery {
+                location: loc(),
+                request_id: Some(request_id),
+                query_id: Some(query_id),
+                source: SfError::SnowflakeBody {
+                    code: 1003,
+                    message: "boom".to_owned(),
+                    location: loc(),
+                },
+            }),
+        };
+        assert_eq!(extract_query_id(&err), Some(query_id.to_string()));
+        assert_eq!(extract_request_id(&err), Some(request_id.to_string()));
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, Some(query_id.to_string()));
+        assert_eq!(exc.request_id, Some(request_id.to_string()));
+    }
+
+    #[test]
+    fn query_failed_without_ids_leaves_fields_unset() {
+        // When the server omits the query_id and no request_id was recorded,
+        // both fields stay None on DriverException.
+        let err = query_failed(Some(1003), Some("42000"));
+        assert_eq!(extract_query_id(&err), None);
+        assert_eq!(extract_request_id(&err), None);
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.request_id, None);
+    }
+
+    #[test]
+    fn non_query_error_leaves_ids_unset() {
+        // Non-query errors (e.g. invalid argument) never carry query correlation ids.
+        let err = crate::apis::database_driver_v1::error::InvalidArgumentSnafu {
+            argument: "bad".to_owned(),
+        }
+        .build();
+        assert_eq!(extract_query_id(&err), None);
+        assert_eq!(extract_request_id(&err), None);
+
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.query_id, None);
+        assert_eq!(exc.request_id, None);
+    }
+
+    #[test]
+    fn file_transfer_io_error_maps_to_io_status_code_not_internal_error() {
+        // A local file-transfer I/O failure (e.g. permission denied reading
+        // the source file) is an environmental/transfer fault, not an
+        // internal driver bug — it must map to `StatusCode::Io`
+        // (-> `OperationalError` in Python), matching the reference
+        // connector's own classification for the same class of failure.
+        use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
+        use crate::file_manager::FileManagerError;
+
+        let upload_err = ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::FileUpload {
+                source: FileManagerError::Io {
+                    source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+                    location: loc(),
+                },
+                location: loc(),
+            }),
+        };
+        assert_eq!(
+            to_driver_exception(upload_err).status_code,
+            StatusCode::Io as i32
+        );
+
+        let download_err = ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::FileDownload {
+                source: FileManagerError::Io {
+                    source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+                    location: loc(),
+                },
+                location: loc(),
+            }),
+        };
+        assert_eq!(
+            to_driver_exception(download_err).status_code,
+            StatusCode::Io as i32
+        );
     }
 }

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.internal.unicore.CoreLoggingBridge;
 import org.junit.jupiter.api.Test;
@@ -46,7 +48,6 @@ public class CoreLoggerTest {
     boolean enabled = true;
     Integer fallbackLevel;
     String fallbackMessage;
-    Boolean fallbackMasked;
 
     @Override
     public boolean isDebugEnabled() {
@@ -69,29 +70,28 @@ public class CoreLoggerTest {
     }
 
     @Override
-    public void debug(String msg, boolean isMasked) {
-      record(WIRE_DEBUG, msg, isMasked);
+    public void debug(String msg) {
+      record(WIRE_DEBUG, msg);
     }
 
     @Override
-    public void error(String msg, boolean isMasked) {
-      record(WIRE_ERROR, msg, isMasked);
+    public void error(String msg) {
+      record(WIRE_ERROR, msg);
     }
 
     @Override
-    public void info(String msg, boolean isMasked) {
-      record(WIRE_INFO, msg, isMasked);
+    public void info(String msg) {
+      record(WIRE_INFO, msg);
     }
 
     @Override
-    public void warn(String msg, boolean isMasked) {
-      record(WIRE_WARN, msg, isMasked);
+    public void warn(String msg) {
+      record(WIRE_WARN, msg);
     }
 
-    private void record(int level, String msg, boolean isMasked) {
+    private void record(int level, String msg) {
       fallbackLevel = level;
       fallbackMessage = msg;
-      fallbackMasked = isMasked;
     }
 
     @Override
@@ -120,6 +120,29 @@ public class CoreLoggerTest {
   }
 
   @Test
+  public void shouldDeferForeignThrowableDetailFromWarnToDebug() {
+    List<Integer> levels = new ArrayList<>();
+    List<String> messages = new ArrayList<>();
+    CoreLogger.CoreLogEventSink sink =
+        (level, message, file, line, function, name) -> {
+          levels.add(level);
+          messages.add(message);
+          return CoreLoggingBridge.CORE_DELIVERED;
+        };
+    RecordingDelegate delegate = new RecordingDelegate();
+    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
+
+    logger.warn("handled failure", new RuntimeException("secret=TopSecret"));
+
+    assertEquals(2, levels.size());
+    assertEquals(WIRE_WARN, (int) levels.get(0));
+    assertEquals("handled failure: java.lang.RuntimeException", messages.get(0));
+    assertFalse(messages.get(0).contains("TopSecret"));
+    assertEquals(WIRE_DEBUG, (int) levels.get(1));
+    assertTrue(messages.get(1).contains("TopSecret"));
+  }
+
+  @Test
   public void shouldSendFormattedEventToCoreWhenPipelineLive() {
     RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
     RecordingDelegate delegate = new RecordingDelegate();
@@ -145,7 +168,6 @@ public class CoreLoggerTest {
     assertEquals(1, sink.calls.get());
     assertEquals(WIRE_WARN, delegate.fallbackLevel);
     assertEquals("early message", delegate.fallbackMessage);
-    assertFalse(delegate.fallbackMasked);
   }
 
   @Test
@@ -175,18 +197,6 @@ public class CoreLoggerTest {
 
     assertEquals(0, sink.calls.get());
     assertNull(delegate.fallbackLevel);
-  }
-
-  @Test
-  public void shouldMaskSecretsBeforeSendingToCore() {
-    RecordingSink sink = new RecordingSink(CoreLoggingBridge.CORE_DELIVERED);
-    RecordingDelegate delegate = new RecordingDelegate();
-    CoreLogger logger = new CoreLogger("net.snowflake.client.Foo", delegate, sink, () -> false);
-
-    logger.error("password=TopSecret123", true);
-
-    assertTrue(sink.message.contains("password=****"));
-    assertFalse(sink.message.contains("TopSecret123"));
   }
 
   @Test

@@ -915,8 +915,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: invalid option returns err
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeStmt: SQL_DROP frees statement handle",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 

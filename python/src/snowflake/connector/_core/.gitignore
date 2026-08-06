@@ -1,3 +1,4 @@
 *
 !.gitignore
 !__init__.py
+!sf_core_python.pyi

@@ -409,7 +409,7 @@ tasks.named('shadowJar') {
 def configureCommonPom = { pom ->
     pom.name = 'Snowflake JDBC Driver'
     pom.description = 'JDBC driver for Snowflake database'
-    pom.url = 'https://github.com/snowflakedb/universal-driver/tree/main/jdbc'
+    pom.url = 'https://github.com/snowflakedb/drivers/tree/main/jdbc'
     pom.licenses {
         license {
             name = 'The Apache License, Version 2.0'
@@ -426,9 +426,9 @@ def configureCommonPom = { pom ->
     }
     // SCM points at the repo root; driver sources live in jdbc/ (the project url).
     pom.scm {
-        connection = 'scm:git:https://github.com/snowflakedb/universal-driver.git'
-        developerConnection = 'scm:git:git@github.com:snowflakedb/universal-driver.git'
-        url = 'https://github.com/snowflakedb/universal-driver'
+        connection = 'scm:git:https://github.com/snowflakedb/drivers.git'
+        developerConnection = 'scm:git:git@github.com:snowflakedb/drivers.git'
+        url = 'https://github.com/snowflakedb/drivers'
     }
 }
 
@@ -774,6 +774,9 @@ tasks.register('referenceTest', Test) {
     // Tests that reference symbols only present in this module's SnowflakeDriver
     // (not on the legacy snowflake-jdbc artifact) must be excluded from this run.
     exclude '**/SnowflakeDriverVersionTest.class'
+    // Offline config-surface tests that reference SnowflakePooledConnectionDataSource, which is
+    // absent from the legacy artifact.
+    exclude '**/integration/pooling/PoolDataSourceConfigurationTest*.class'
     // Parity tests are designed to be invoked only via the parityTest task; their harness
     // assumes both drivers are loaded into isolated URLClassLoaders, which the legacy-driver
     // reference run does not provide.

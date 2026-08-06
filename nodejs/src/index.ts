@@ -1,22 +1,38 @@
-import core from './core';
+import type { SnowflakeError } from './error.js';
+import { CoreConnection, type CoreConnectionInstance } from './core';
+import { collectRows } from './query-result/rows.js';
+import {
+  RowStatement,
+  FileAndStageBindStatement,
+  type StatementCallback,
+} from './query-result/RowStatement.js';
 
-// TODO: implement SnowflakeError like in old driver
-export type SnowflakeError = Error;
+export { RowStatement, type StatementCallback };
+
 // TODO: implement ConnectionOptions like in old driver
 export type ConnectionOptions = Record<string, string>;
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
-// TODO: proper row typing once the bridge returns real column types.
-export type Row = Record<string, unknown>;
+// This should be called StatementOptions or ExecuteStatementOptions but we keep the name
+// for backwards compatibility
+export interface StatementOption {
+  sqlText: string;
+  complete?: StatementCallback;
+}
+
+export interface FetchResultOptions {
+  queryId: string;
+  complete?: StatementCallback;
+}
 
 // TODO:
 // - think whether we should have connection class only in bridge that exposes same api as old driver
 // - think how to export nicer types so we wouldnt have to use typeof
-class Connection {
-  private _core: InstanceType<typeof core.Connection>;
+export class Connection {
+  #core: CoreConnectionInstance;
 
   constructor(options: ConnectionOptions) {
-    this._core = new core.Connection(options);
+    this.#core = new CoreConnection(options);
   }
 
   connect(callback?: ConnectionCallback) {
@@ -30,27 +46,55 @@ class Connection {
   }
 
   connectAsync(): Promise<void> {
-    return this._core.connect();
+    return this.#core.connect();
   }
 
-  async execute(query: string): Promise<Row[]> {
-    const statement = await this._core.execute(query);
+  // TODO: BCR for execute and fetchResult returning an unusable RowStatement
+  // - Applies to both execute and fetchResult
+  // - Option A: do not return RowStatement synchronously — only available in complete callback
+  // - Option B: throw on RowStatement method calls if used before the statement is ready
+  // - Related: old driver returns undefined from getNumRows()/getQueryId() when called
+  //   before query completion or when the query errors / returns no rows (see BCR_LOG.md)
+  execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
+    const executePromise = this.#core.execute(options.sqlText);
+    const rowStatement = new RowStatement(executePromise);
 
-    try {
-      const rows: Row[] = [];
+    // TODO:
+    // This block looks ugly, it will evolve into something better as we implement all properties
+    // from the old driver's StatementOption interface
+    executePromise
+      .then(async (coreStatement) => {
+        const rows = await collectRows(coreStatement);
+        options.complete?.(undefined, rowStatement, rows);
+      })
+      .catch((err: Error) => {
+        options.complete?.(err as SnowflakeError, rowStatement, undefined);
+      });
 
-      while (true) {
-        const row = await statement.getNextRow();
-        if (row === null) {
-          break;
-        }
-        rows.push(row);
-      }
+    return rowStatement;
+  }
 
-      return rows;
-    } finally {
-      statement.close();
-    }
+  fetchResult(options: FetchResultOptions): RowStatement | FileAndStageBindStatement {
+    const queryResultPromise = this.#core.getQueryResult(options.queryId);
+    const rowStatement = new RowStatement(queryResultPromise);
+
+    queryResultPromise
+      .then(async (coreStatement) => {
+        const rows = await collectRows(coreStatement);
+        options.complete?.(undefined, rowStatement, rows);
+      })
+      .catch((err: Error) => {
+        options.complete?.(err as SnowflakeError, rowStatement, undefined);
+      });
+
+    return rowStatement;
+  }
+
+  destroy(callback?: ConnectionCallback) {
+    this.#core
+      .destroy()
+      .then(() => callback?.(undefined, this))
+      .catch((err) => callback?.(err, this));
   }
 }
 

@@ -45,7 +45,8 @@ filterwarnings = [
 ]
 markers = [
     "iterations(n): set number of test iterations for this test",
-    "warmup_iterations(n): set number of warmup iterations for this test"
+    "warmup_iterations(n): set number of warmup iterations for this test",
+    "supported_drivers(*names): restrict this test to the named drivers; skipped for any other --driver"
 ]
 
 [tool.hatch.envs.default.scripts]

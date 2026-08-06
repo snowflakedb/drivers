@@ -65,7 +65,17 @@ class _LoopRunner:
                     cls._instance = cls()
         return cls._instance
 
-    def run(self, coro: Any) -> Any:
+    def run(self, awaitable: Any) -> Any:
+        if inspect.iscoroutine(awaitable):
+            coro = awaitable
+        elif inspect.isawaitable(awaitable):
+
+            async def _await() -> Any:
+                return await awaitable
+
+            coro = _await()
+        else:
+            raise TypeError(f"expected awaitable, got {type(awaitable)!r}")
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def iterate(self, agen: Any) -> Any:
@@ -81,10 +91,10 @@ def _blocking_method(facade: Any, async_obj: Any, loop: _LoopRunner, bound: Any)
     @functools.wraps(bound)
     def blocking(*args: Any, **kwargs: Any) -> Any:
         result = bound(*args, **kwargs)
-        if inspect.iscoroutine(result):
-            result = loop.run(result)
-        elif inspect.isasyncgen(result):
+        if inspect.isasyncgen(result):
             return loop.iterate(result)
+        if inspect.isawaitable(result):
+            result = loop.run(result)
         return facade if result is async_obj else result
 
     return blocking
@@ -159,6 +169,8 @@ class BlockingConnection(_BlockingAsyncFacade):
     def cursor(self, cursor_class: type = SyncSnowflakeCursor) -> BlockingCursor:
         async_connection = object.__getattribute__(self, "_async_obj")
         loop = object.__getattribute__(self, "_loop")
+        # cursor() is @awaitable_context_manager — returns _AwaitableContextManager;
+        # _LoopRunner.run accepts that awaitable.
         async_cur = loop.run(async_connection.cursor(cursor_class=self._async_cursor_class(cursor_class)))
         return BlockingCursor(async_cur, loop)
 

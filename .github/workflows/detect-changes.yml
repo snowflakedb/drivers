@@ -173,6 +173,10 @@ jobs:
               - 'scripts/odbc/**'
               - 'scripts/old_odbc/**'
               - '.github/workflows/test-odbc.yml'
+              # Reusable workflows called by test-odbc.yml; edits here must
+              # re-run ODBC CI the same way edits to the top-level workflow do.
+              - '.github/workflows/_test-odbc.yml'
+              - '.github/workflows/_test-odbc-reference.yml'
               - '.github/actions/setup-msvc/**'
               - '.github/actions/setup-windows-openssl/**'
               - '.github/actions/vcpkg-version/**'
@@ -189,6 +193,7 @@ jobs:
               - 'scripts/validate_behavior_differences.py'
               - 'scripts/odbc/run_tests_unix.sh'
               - 'scripts/odbc/run_tests_windows.ps1'
+              - '.github/workflows/_test-odbc-reference.yml'
               - 'ci/reference-odbc-version'
               - 'ci/reference-odbc-checksums'
               - 'ci/test_matrix/models/odbc.py'

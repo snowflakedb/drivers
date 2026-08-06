@@ -67,10 +67,13 @@ TEST_CASE("DECFLOAT zero to SQL_C_BINARY", "[decfloat][conversion][c_binary]") {
 // BUFFER TOO SMALL
 // ============================================================================
 
-TEST_CASE("DECFLOAT SQL_C_BINARY buffer too small returns 22003", "[decfloat][conversion][c_binary][22003]") {
+TEST_CASE("DECFLOAT SQL_C_BINARY buffer too small", "[decfloat][conversion][c_binary][22003]") {
+  // BD#12: old driver does not check BufferLength for SQL_NUMERIC_STRUCT output; a physical
+  //        allocation smaller than sizeof(SQL_NUMERIC_STRUCT) (19 bytes) has undefined behavior
   SKIP_OLD_DRIVER("BD#12",
-                  "Old driver does not return SQL_ERROR (22003) when SQL_C_BINARY buffer is too small for "
-                  "SQL_NUMERIC_STRUCT");
+                  "old driver does not check BufferLength when writing SQL_NUMERIC_STRUCT; "
+                  "a physically small buffer has undefined behavior");
+
   // Given Snowflake client is logged in
   Connection conn;
 

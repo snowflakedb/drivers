@@ -251,7 +251,8 @@ public class MetaDataObjects {
             try {
               jsonNode = mapper.readTree(dataTypeStr);
             } catch (Exception ex) {
-              logger.error("Exception when parsing column result", ex);
+              logger.error("Exception when parsing column result: {}", ex.getClass().getName());
+              logger.debug("Exception when parsing column result", ex);
               throw new SnowflakeSQLException(
                   ErrorCode.INTERNAL_ERROR, "error parsing data type: " + dataTypeStr);
             }

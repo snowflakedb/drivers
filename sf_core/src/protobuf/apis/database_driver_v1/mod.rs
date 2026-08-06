@@ -613,43 +613,135 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_upload_stream", skip(self, input))]
-    async fn connection_upload_stream(
+    #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_begin",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_begin(
         &self,
-        input: ConnectionUploadStreamRequest,
-    ) -> Result<ConnectionUploadStreamResponse, DriverException> {
+        input: ConnectionUploadStreamBeginRequest,
+    ) -> Result<ConnectionUploadStreamBeginResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        let rs_info = self
+        let upload_handle = self
             .driver
-            .connection_upload_stream(conn_handle.into(), input.sql, input.data)
+            .connection_upload_stream_begin(conn_handle.into(), input.sql)
             .await
             .to_protobuf()?;
-        Ok(ConnectionUploadStreamResponse {
+        Ok(ConnectionUploadStreamBeginResponse {
+            upload_handle: Some(upload_handle.into()),
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_chunk",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_chunk(
+        &self,
+        input: ConnectionUploadStreamChunkRequest,
+    ) -> Result<ConnectionUploadStreamChunkResponse, DriverException> {
+        let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
+        self.driver
+            .connection_upload_stream_chunk(upload_handle.into(), input.data)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamChunkResponse {})
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_upload_stream_finish",
+        skip(self, input)
+    )]
+    async fn connection_upload_stream_finish(
+        &self,
+        input: ConnectionUploadStreamFinishRequest,
+    ) -> Result<ConnectionUploadStreamFinishResponse, DriverException> {
+        let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
+        let rs_info = self
+            .driver
+            .connection_upload_stream_finish(upload_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamFinishResponse {
             result_set_handle: Some(rs_info.handle.into()),
             result_descriptor: Some(rs_info.descriptor.into()),
         })
     }
 
     #[instrument(
-        name = "DatabaseDriverV1::connection_download_stream",
+        name = "DatabaseDriverV1::connection_upload_stream_abort",
         skip(self, input)
     )]
-    async fn connection_download_stream(
+    async fn connection_upload_stream_abort(
         &self,
-        input: ConnectionDownloadStreamRequest,
-    ) -> Result<ConnectionDownloadStreamResponse, DriverException> {
+        input: ConnectionUploadStreamAbortRequest,
+    ) -> Result<ConnectionUploadStreamAbortResponse, DriverException> {
+        let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
+        self.driver
+            .connection_upload_stream_abort(upload_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamAbortResponse {})
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream_begin",
+        skip(self, input)
+    )]
+    async fn connection_download_stream_begin(
+        &self,
+        input: ConnectionDownloadStreamBeginRequest,
+    ) -> Result<ConnectionDownloadStreamBeginResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        let data = self
+        let (download_handle, total_len) = self
             .driver
-            .connection_download_stream(
+            .download_stream_begin(
                 conn_handle.into(),
-                &input.stage_name,
-                &input.source_filename,
+                input.stage_name,
+                input.source_filename,
                 input.decompress,
             )
             .await
             .to_protobuf()?;
-        Ok(ConnectionDownloadStreamResponse { data })
+        Ok(ConnectionDownloadStreamBeginResponse {
+            download_handle: Some(download_handle.into()),
+            total_len,
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream_chunk",
+        skip(self, input)
+    )]
+    async fn connection_download_stream_chunk(
+        &self,
+        input: ConnectionDownloadStreamChunkRequest,
+    ) -> Result<ConnectionDownloadStreamChunkResponse, DriverException> {
+        let download_handle =
+            required(input.download_handle, "Download stream handle is required")?;
+        let (data, eof) = self
+            .driver
+            .download_stream_chunk(download_handle.into(), input.max_len)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamChunkResponse { data, eof })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream_close",
+        skip(self, input)
+    )]
+    async fn connection_download_stream_close(
+        &self,
+        input: ConnectionDownloadStreamCloseRequest,
+    ) -> Result<ConnectionDownloadStreamCloseResponse, DriverException> {
+        let download_handle =
+            required(input.download_handle, "Download stream handle is required")?;
+        self.driver
+            .download_stream_close(download_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamCloseResponse {})
     }
 
     #[instrument(
@@ -1305,14 +1397,18 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetQueryResultRequest,
     ) -> BlockingProtoResult<ExecuteQueryResponse>;
-    fn connection_upload_stream_blocking(
+    fn connection_download_stream_begin_blocking(
         &self,
-        input: ConnectionUploadStreamRequest,
-    ) -> BlockingProtoResult<ConnectionUploadStreamResponse>;
-    fn connection_download_stream_blocking(
+        input: ConnectionDownloadStreamBeginRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamBeginResponse>;
+    fn connection_download_stream_chunk_blocking(
         &self,
-        input: ConnectionDownloadStreamRequest,
-    ) -> BlockingProtoResult<ConnectionDownloadStreamResponse>;
+        input: ConnectionDownloadStreamChunkRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamChunkResponse>;
+    fn connection_download_stream_close_blocking(
+        &self,
+        input: ConnectionDownloadStreamCloseRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamCloseResponse>;
     fn connection_abort_query_blocking(
         &self,
         input: ConnectionAbortQueryRequest,
@@ -1514,18 +1610,25 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         block_on_client_call(self.connection_get_query_result(input))
     }
 
-    fn connection_upload_stream_blocking(
+    fn connection_download_stream_begin_blocking(
         &self,
-        input: ConnectionUploadStreamRequest,
-    ) -> BlockingProtoResult<ConnectionUploadStreamResponse> {
-        block_on_client_call(self.connection_upload_stream(input))
+        input: ConnectionDownloadStreamBeginRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamBeginResponse> {
+        block_on_client_call(self.connection_download_stream_begin(input))
     }
 
-    fn connection_download_stream_blocking(
+    fn connection_download_stream_chunk_blocking(
         &self,
-        input: ConnectionDownloadStreamRequest,
-    ) -> BlockingProtoResult<ConnectionDownloadStreamResponse> {
-        block_on_client_call(self.connection_download_stream(input))
+        input: ConnectionDownloadStreamChunkRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamChunkResponse> {
+        block_on_client_call(self.connection_download_stream_chunk(input))
+    }
+
+    fn connection_download_stream_close_blocking(
+        &self,
+        input: ConnectionDownloadStreamCloseRequest,
+    ) -> BlockingProtoResult<ConnectionDownloadStreamCloseResponse> {
+        block_on_client_call(self.connection_download_stream_close(input))
     }
 
     fn connection_abort_query_blocking(

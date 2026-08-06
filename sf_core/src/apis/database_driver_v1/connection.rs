@@ -36,8 +36,8 @@ use crate::config::settings::Settings;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    self, QueryExecutionMode, QueryInput, RestError, SessionTokens, SnowflakeResponseError,
-    heartbeat, snowflake_query_with_client,
+    self, QueryInput, QueryOptions, RestError, SessionTokens, SnowflakeResponseError, heartbeat,
+    snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::config::ProxyConfig;
@@ -247,9 +247,10 @@ impl DatabaseDriverV1 {
                 query_parameters.clone(),
                 session_token.reveal(),
                 query_input.clone(),
-                &retry_policy,
-                QueryExecutionMode::Blocking,
-                None,
+                QueryOptions {
+                    retry_policy: retry_policy.clone(),
+                    ..Default::default()
+                },
             )
             .await
             {
@@ -1139,6 +1140,28 @@ impl Connection {
             .unwrap_or(false)
     }
 
+    /// Resolves a two-tier boolean override: session override first, else the
+    /// connect-time seed. `None` if unset, so the caller falls back to the
+    /// wrapper preset. Backs `put_fastfail`/`get_fastfail`.
+    ///
+    /// Only 2 tiers: these are client-only params never echoed by the server,
+    /// so the session-param cache and resolved_connect don't apply.
+    fn resolve_override_bool(&self, key: ParamKey) -> Option<bool> {
+        self.session_overrides
+            .get_bool(key)
+            .or_else(|| self.connection_seed.get_bool(key))
+    }
+
+    /// Resolves `PUT_FASTFAIL` (see [`Self::resolve_override_bool`]).
+    pub(crate) fn put_fastfail(&self) -> Option<bool> {
+        self.resolve_override_bool(param_names::PUT_FASTFAIL)
+    }
+
+    /// Resolves `GET_FASTFAIL` (see [`Self::resolve_override_bool`]).
+    pub(crate) fn get_fastfail(&self) -> Option<bool> {
+        self.resolve_override_bool(param_names::GET_FASTFAIL)
+    }
+
     /// The resolved TLS config for this connection, read from the established
     /// [`ClientInfo`]. Falls back to the default `TlsConfig` before login
     /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP
@@ -1148,6 +1171,18 @@ impl Connection {
         self.client_info
             .as_ref()
             .map(|ci| ci.tls_config.clone())
+            .unwrap_or_default()
+    }
+
+    /// The resolved proxy config for this connection, read from the established
+    /// [`ClientInfo`]. Falls back to the default `ProxyConfig` before login
+    /// (when `client_info` is unset). Used by the storage (S3/GCS/Azure) HTTP
+    /// clients on the PUT/GET path to honour `proxy_host`/`proxy_port`/
+    /// `no_proxy`/`use_proxy_env` — mirroring the GS/REST connection client.
+    pub(crate) fn proxy_config(&self) -> crate::tls::config::ProxyConfig {
+        self.client_info
+            .as_ref()
+            .map(|ci| ci.proxy_config.clone())
             .unwrap_or_default()
     }
 
@@ -2533,6 +2568,13 @@ impl DatabaseDriverV1 {
             return Ok(());
         };
 
+        // Reap any upload/download stream sessions still open on this
+        // connection before logout I/O invalidates its credentials — a
+        // download's background tasks reading from cloud storage with a
+        // soon-to-be-revoked session would otherwise keep running (or sit
+        // stalled) until they hit their own error path.
+        self.reap_connection_streams(conn_handle);
+
         // Flush telemetry before logout — session tokens are still alive and
         // telemetry records the connection's lifetime events (session_init, api_usage).
         self.flush_connection_telemetry(conn_handle).await;
@@ -2562,6 +2604,12 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
 
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
+    // Upload/download stream sessions are reaped in connection_close, before
+    // logout I/O, via DatabaseDriverV1::reap_connection_streams — not here.
+    // TODO(SNOW-3704961): a session that outlives its connection because the
+    // wrapper never calls connection_close (process crash, or a stream begun
+    // and simply abandoned) still leaks until process exit; there is no
+    // idle-timeout reaper for abandoned upload/download stream sessions yet.
 
     Ok(())
 }
@@ -2702,6 +2750,46 @@ mod tests {
             get_session_or_setting(&conn, "DATABASE", param_names::DATABASE),
             Some("override_db".into())
         );
+    }
+
+    #[test]
+    fn put_fastfail_returns_none_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(conn.put_fastfail(), None);
+    }
+
+    #[test]
+    fn put_fastfail_returns_connection_seed_value_when_only_seed_set() {
+        let conn = make_connection_with_settings(vec![("put_fastfail", Setting::Bool(true))]);
+        assert_eq!(conn.put_fastfail(), Some(true));
+    }
+
+    #[test]
+    fn put_fastfail_prefers_session_override_over_connection_seed() {
+        let mut conn = make_connection_with_settings(vec![("put_fastfail", Setting::Bool(true))]);
+        conn.session_overrides
+            .insert("put_fastfail".into(), Setting::Bool(false));
+        assert_eq!(conn.put_fastfail(), Some(false));
+    }
+
+    #[test]
+    fn get_fastfail_returns_none_when_unset() {
+        let conn = Connection::new();
+        assert_eq!(conn.get_fastfail(), None);
+    }
+
+    #[test]
+    fn get_fastfail_returns_connection_seed_value_when_only_seed_set() {
+        let conn = make_connection_with_settings(vec![("get_fastfail", Setting::Bool(true))]);
+        assert_eq!(conn.get_fastfail(), Some(true));
+    }
+
+    #[test]
+    fn get_fastfail_prefers_session_override_over_connection_seed() {
+        let mut conn = make_connection_with_settings(vec![("get_fastfail", Setting::Bool(true))]);
+        conn.session_overrides
+            .insert("get_fastfail".into(), Setting::Bool(false));
+        assert_eq!(conn.get_fastfail(), Some(false));
     }
 
     #[tokio::test]

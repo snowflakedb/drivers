@@ -21,10 +21,11 @@ def run_performance_test(
     test_type: PerfTestType = PerfTestType.SELECT,
     use_local_binary: bool = False,
     s3_files_dir: Path = None,
+    fetch_mode: str = "fetchmany",
 ) -> list[Path]:
     """
     Run a performance test with the specified configuration.
-    
+
     Args:
         test_name: Name of the test (used for result filenames)
         sql_command: SQL command to execute
@@ -38,24 +39,27 @@ def run_performance_test(
         test_type: Type of test (PerfTestType.SELECT or PerfTestType.PUT_GET)
         use_local_binary: Use locally built binary instead of Docker (Core only)
         s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
-    
+        fetch_mode: Cursor fetch strategy for SELECT tests (fetchmany, fetchone, fetchall, pandas)
+
     Returns:
         List of result file paths created
     """
     driver_label = f"{driver.upper()}"
     if driver != "core" and driver_type:
         driver_label += f" ({driver_type})"
-    
+
     if use_local_binary:
         driver_label += " (local binary)"
-    
+
     logger.info(f"Running {test_name} ({driver_label}): {iterations} iterations [type={test_type}]")
-    
+
     env_vars = {}
     expected = extract_limit_from_sql(sql_command)
     if expected:
         env_vars["EXPECTED_ROW_COUNT"] = str(expected)
-    
+    if fetch_mode != "fetchmany":
+        env_vars["FETCH_MODE"] = fetch_mode
+
     execute_test(
         test_name=test_name,
         sql_command=sql_command,
@@ -92,10 +96,11 @@ def run_comparison_test(
     setup_queries: list[str] = None,
     test_type: PerfTestType = PerfTestType.SELECT,
     s3_files_dir: Path = None,
+    fetch_mode: str = "fetchmany",
 ) -> dict[str, list[Path]]:
     """
     Run the same test on both universal and old driver implementations.
-    
+
     Args:
         test_name: Name of the test (used for result filenames)
         sql_command: SQL command to execute
@@ -107,7 +112,8 @@ def run_comparison_test(
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
         test_type: Type of test (PerfTestType.SELECT or PerfTestType.PUT_GET)
         s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
-    
+        fetch_mode: Cursor fetch strategy for SELECT tests (fetchmany, fetchone, fetchall, pandas)
+
     Returns:
         Dict with 'universal' and 'old' keys, each containing list of result file paths
     """
@@ -131,8 +137,9 @@ def run_comparison_test(
         setup_queries=setup_queries,
         test_type=test_type,
         s3_files_dir=s3_files_dir,
+        fetch_mode=fetch_mode,
     )
-    
+
     # Run Old driver second
     logger.info("")
     logger.info(">>> DRIVER: Old")
@@ -149,7 +156,8 @@ def run_comparison_test(
         setup_queries=setup_queries,
         test_type=test_type,
         s3_files_dir=s3_files_dir,
+        fetch_mode=fetch_mode,
     )
-    
+
     return results
 

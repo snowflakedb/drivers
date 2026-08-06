@@ -314,17 +314,27 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
     CHECK(numericValue == 0x3u);
   }
 
-  // SQLSetConnectAttr - SQL_ATTR_MAX_ROWS
-  // Class A divergence: the Windows DM accepts this ODBC 2.x statement attribute
-  // set on a connection handle; unixODBC forwards it and the Snowflake driver
-  // rejects it (S1092). Assert the platform-correct outcome on each side.
+  // SQLSetConnectAttr - SQL_ATTR_MAX_ROWS (BD#107)
+  // Windows DM and iODBC both forward this call to the driver (do not intercept).
+  // unixODBC also forwards and remaps HY092→S1092 (ODBC 2.x mode).
+  // Old driver swallowed silently (SQL_SUCCESS); new driver rejects with HY092.
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_MAX_ROWS, nullptr, -6);
-    WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+    WINDOWS_ONLY {
+      OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      NEW_DRIVER_ONLY("BD#107") {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+      }
+    }
     UNIX_ONLY {
-      // iODBC's DM accepts these ODBC 2.x attributes on the connection handle;
-      // unixODBC forwards them and the old driver rejects them with S1092.
-      IODBC_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      IODBC_ONLY {
+        OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+        NEW_DRIVER_ONLY("BD#107") {
+          CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                     OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+        }
+      }
       NON_IODBC {
         CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
                    OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));
@@ -332,16 +342,24 @@ TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
     }
   }
 
-  // SQLSetConnectAttr - SQL_ATTR_QUERY_TIMEOUT
-  // Class A divergence: same as SQL_ATTR_MAX_ROWS above - accepted by the Windows
-  // DM, rejected by the driver under unixODBC (S1092).
+  // SQLSetConnectAttr - SQL_ATTR_QUERY_TIMEOUT (BD#107; same as SQL_ATTR_MAX_ROWS above)
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_QUERY_TIMEOUT, nullptr, -6);
-    WINDOWS_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+    WINDOWS_ONLY {
+      OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      NEW_DRIVER_ONLY("BD#107") {
+        CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+      }
+    }
     UNIX_ONLY {
-      // iODBC's DM accepts these ODBC 2.x attributes on the connection handle;
-      // unixODBC forwards them and the old driver rejects them with S1092.
-      IODBC_ONLY { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+      IODBC_ONLY {
+        OLD_DRIVER_ONLY("BD#107") { CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess()); }
+        NEW_DRIVER_ONLY("BD#107") {
+          CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                     OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+        }
+      }
       NON_IODBC {
         CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
                    OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1092"));

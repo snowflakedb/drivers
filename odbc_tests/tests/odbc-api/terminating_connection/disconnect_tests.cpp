@@ -401,8 +401,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection hand
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Clears previous diagnostic records",
                  "[odbc-api][disconnect][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Connect
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -423,7 +421,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Clears previous diagnosti
 
   ret = SQLGetDiagRec(SQL_HANDLE_STMT, stmt, 1, temp_sqlstate, &temp_native_error, temp_message, sizeof(temp_message),
                       &temp_message_len);
-  REQUIRE(ret == SQL_SUCCESS);
+  // SQL_SUCCESS_WITH_INFO is also valid here (message may be truncated in the
+  // fixed-size buffer); we only need to confirm a diagnostic record exists.
+  REQUIRE(SQL_SUCCEEDED(ret));
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 

@@ -185,6 +185,36 @@ class TestOAuthAuthorizationCode:
         with connection:
             verify_simple_query_execution(connection)
 
+    def test_oauth_should_reuse_cached_access_token_without_browser_interaction(
+        self, connection_factory, authorization_code_params
+    ):
+        # Given Authentication is set to OAUTH_AUTHORIZATION_CODE with client_store_temporary_credential=true
+        #       and a token has been cached from a previous browser authentication
+        connect_params = {
+            "authenticator": "OAUTH_AUTHORIZATION_CODE",
+            "user": authorization_code_params["user"],
+            "oauth_client_id": authorization_code_params["client_id"],
+            "oauth_client_secret": authorization_code_params["client_secret"],
+            "oauth_redirect_uri": authorization_code_params["redirect_uri"],
+            "client_store_temporary_credential": True,
+        }
+
+        first = connect_with_browser_automation(
+            connect_fn=lambda: connection_factory(**connect_params),
+            scenario="internalOauthSnowflakeSuccess",
+            login=authorization_code_params["user"],
+            password=authorization_code_params["password"],
+        )
+        with first:
+            verify_simple_query_execution(first)
+
+        # When Trying to Connect without browser interaction
+        second = connection_factory(**connect_params)
+
+        # Then Login is successful and a simple query can be executed
+        with second:
+            verify_simple_query_execution(second)
+
     @pytest.mark.skip(reason="Bad-secret tests cause pipeline flakiness by blocking the test account")
     def test_oauth_should_fail_authorization_code_flow_with_bad_client_secret(
         self, connection_factory, authorization_code_params

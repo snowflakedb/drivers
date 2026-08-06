@@ -15,6 +15,7 @@ import com.google.protobuf.ByteString;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Arrays;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
@@ -46,6 +47,7 @@ class ResultSetFactoryTest {
     InternalSnowflakeConnection mockConnection = mock(InternalSnowflakeConnection.class);
     when(mockStatement.getConnectionInternal()).thenReturn(mockConnection);
     when(mockConnection.getParameters()).thenReturn(FrozenParametersRegistry.EMPTY);
+    when(mockConnection.getTelemetry()).thenReturn(Telemetry.NOOP);
     when(mockCoreApi.resultSetRelease(any()))
         .thenReturn(ResultSetReleaseResponse.getDefaultInstance());
   }

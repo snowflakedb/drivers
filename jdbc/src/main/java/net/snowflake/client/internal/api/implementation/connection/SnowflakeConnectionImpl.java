@@ -42,18 +42,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.QueryStatus;
+import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import net.snowflake.client.internal.api.implementation.parameters.CoreParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
+import net.snowflake.client.internal.api.implementation.parameters.ParameterValueNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.api.implementation.telemetry.CoreTelemetry;
 import net.snowflake.client.internal.log.Jdk14LoggerBootstrap;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -66,8 +70,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity.Builder;
@@ -78,12 +84,19 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
 
+  // Bounds JDBC-side memory for chunked upload/download to ~one chunk regardless of file size,
+  // matching sf_core's own per-RPC chunk bound (see ConnectionUploadStreamChunk /
+  // ConnectionDownloadStreamChunk in database_driver_v1.proto).
+  private static final int STREAM_CHUNK_SIZE = 8 * 1024 * 1024;
+
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final Set<Statement> openStatements = ConcurrentHashMap.newKeySet();
+  private final Set<ChunkedDownloadInputStream> openDownloadStreams = ConcurrentHashMap.newKeySet();
   private final CoreDriverApi coreDriverApi;
   private final DatabaseHandle databaseHandle;
   private final ConnectionHandle connectionHandle;
   private final ParametersRegistry parametersRegistry;
+  private final Telemetry telemetry;
 
   private boolean autoCommit;
   private String catalog;
@@ -123,6 +136,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
+      this.telemetry = new CoreTelemetry(coreDriverApi, connHandle);
       this.sqlWarnings = sqlWarnings;
       this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
@@ -164,7 +178,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
             return;
           }
           String keyStr = ParameterKeyNormalizer.normalize((String) key);
-          ConfigSetting configSetting = ConfigSettingFactory.from(value);
+          Object normalizedValue = ParameterValueNormalizer.normalize(keyStr, value);
+          ConfigSetting configSetting = ConfigSettingFactory.from(normalizedValue);
           if (configSetting != null) {
             options.put(keyStr, configSetting);
           }
@@ -190,6 +205,11 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public ConnectionHandle getHandle() {
     return connectionHandle;
+  }
+
+  @Override
+  public Telemetry getTelemetry() {
+    return telemetry;
   }
 
   @Override
@@ -262,11 +282,12 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
     logger.debug("Closing connection");
     closeOpenStatements();
+    closeOpenDownloadStreams();
 
     try {
       coreDriverApi.connectionClose(connectionHandle);
     } catch (SQLException e) {
-      logger.warn("Error during connection close: {}", e.getMessage());
+      logger.warn("Error during connection close: {}", e.getClass().getName());
       logger.debug("Connection close error details", e);
       throw e;
     } finally {
@@ -290,6 +311,17 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       }
     }
     openStatements.clear();
+  }
+
+  private void closeOpenDownloadStreams() {
+    for (ChunkedDownloadInputStream stream : openDownloadStreams) {
+      try {
+        stream.close();
+      } catch (IOException e) {
+        logger.debug("Error closing download stream during connection close", e);
+      }
+    }
+    openDownloadStreams.clear();
   }
 
   private static void releaseHandlesQuietly(
@@ -324,7 +356,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   @Override
   public void setReadOnly(boolean readOnly) throws SQLException {
     checkClosed();
-    logger.debug("setReadOnly not supported.", false);
+    logger.debug("setReadOnly not supported.");
   }
 
   @Override
@@ -662,25 +694,46 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     checkClosed();
     logger.info("uploadStream: entry");
     try {
-      byte[] data;
-      try {
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = inputStream.read(buf)) != -1) {
-          baos.write(buf, 0, n);
-        }
-        data = baos.toByteArray();
-      } catch (java.io.IOException e) {
-        throw new net.snowflake.client.api.exception.SnowflakeSQLException(
-            "Failed to read input stream: " + e.getMessage(), e);
-      }
       String destPrefix = config != null ? config.getDestPrefix() : null;
       boolean compressData = config == null || config.isCompressData();
       String sql = buildPutSql(stageName, destFileName, destPrefix, compressData);
-      coreDriverApi.connectionUploadStream(connectionHandle, sql, data);
+      UploadStreamHandle uploadHandle =
+          coreDriverApi.connectionUploadStreamBegin(connectionHandle, sql).getUploadHandle();
+      try {
+        // InputStream#read may return fewer bytes than requested (network streams,
+        // pipes, etc.); fill buf to STREAM_CHUNK_SIZE across multiple reads before
+        // firing a chunk RPC, so partial reads don't turn into many small RPCs.
+        byte[] buf = new byte[STREAM_CHUNK_SIZE];
+        int filled = 0;
+        int n;
+        while ((n = inputStream.read(buf, filled, buf.length - filled)) != -1) {
+          filled += n;
+          if (filled == buf.length) {
+            coreDriverApi.connectionUploadStreamChunk(uploadHandle, buf, 0, filled);
+            filled = 0;
+          }
+        }
+        if (filled > 0) {
+          coreDriverApi.connectionUploadStreamChunk(uploadHandle, buf, 0, filled);
+        }
+      } catch (IOException e) {
+        abortUploadStreamQuietly(uploadHandle);
+        throw new SnowflakeSQLException("Failed to read input stream: " + e.getMessage(), e);
+      } catch (SQLException | RuntimeException e) {
+        abortUploadStreamQuietly(uploadHandle);
+        throw e;
+      }
+      coreDriverApi.connectionUploadStreamFinish(uploadHandle);
     } finally {
       logger.info("uploadStream: exit");
+    }
+  }
+
+  private void abortUploadStreamQuietly(UploadStreamHandle uploadHandle) {
+    try {
+      coreDriverApi.connectionUploadStreamAbort(uploadHandle);
+    } catch (SQLException e) {
+      logger.debug("Error aborting upload stream", e);
     }
   }
 
@@ -727,14 +780,18 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     logger.info("downloadStream: entry");
     try {
       boolean decompress = config != null && config.isDecompress();
-      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1
-              .ConnectionDownloadStreamResponse
-          response =
-              coreDriverApi.connectionDownloadStream(
-                  connectionHandle, stageName, sourceFileName, decompress);
-      return new java.io.ByteArrayInputStream(response.getData().toByteArray());
+      DownloadStreamHandle downloadHandle =
+          coreDriverApi
+              .connectionDownloadStreamBegin(
+                  connectionHandle, stageName, sourceFileName, decompress)
+              .getDownloadHandle();
+      ChunkedDownloadInputStream stream =
+          new ChunkedDownloadInputStream(
+              coreDriverApi, downloadHandle, STREAM_CHUNK_SIZE, openDownloadStreams);
+      openDownloadStreams.add(stream);
+      return stream;
     } finally {
-      logger.info("downloadStream: exit");
+      logger.info("downloadStream: session opened");
     }
   }
 

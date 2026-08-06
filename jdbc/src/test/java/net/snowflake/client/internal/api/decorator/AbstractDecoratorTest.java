@@ -34,8 +34,8 @@ public class AbstractDecoratorTest {
     }
 
     @Override
-    public void recordWrapperError(String exceptionType, String errorSource) {
-      wrapperErrors.add(exceptionType + ":" + errorSource);
+    public void recordWrapperError(Throwable error) {
+      wrapperErrors.add(error.getClass().getSimpleName());
     }
   }
 
@@ -115,8 +115,35 @@ public class AbstractDecoratorTest {
                     }));
     assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), thrown.getSQLState());
     assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), thrown.getErrorCode());
-    // The wrapper-error signal is wired by the real-emitter PR, not PR 0.
-    assertTrue(telemetry.wrapperErrors.isEmpty());
+    // The decorator forwards the raw caught throwable to the telemetry layer for classification.
+    assertEquals(Arrays.asList("SFException"), telemetry.wrapperErrors);
+  }
+
+  @Test
+  public void shouldRecordWrapperErrorOnlyForOutermostCall() throws SQLException {
+    TestDecorator inner = new TestDecorator("inner", telemetry);
+    SQLException thrown =
+        assertThrows(
+            SnowflakeSQLException.class,
+            () ->
+                decorator.instrumentedCall(
+                    "Connection.createStatement",
+                    () -> {
+                      // A nested boundary that fails must not also record — only the outermost
+                      // does.
+                      try {
+                        return inner.instrumentedCall(
+                            "Statement.execute",
+                            () -> {
+                              throw new SFException(ErrorCode.INVALID_PARAMETER_VALUE);
+                            });
+                      } catch (SQLException e) {
+                        throw new SFException(ErrorCode.CONNECTION_CLOSED);
+                      }
+                    }));
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), thrown.getSQLState());
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), thrown.getErrorCode());
+    assertEquals(Arrays.asList("SFException"), telemetry.wrapperErrors);
   }
 
   @Test

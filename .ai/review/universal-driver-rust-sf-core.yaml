@@ -11,6 +11,7 @@ allowed_folders:
   - "sf_core/src"
   - "odbc/src"
   - "jdbc_bridge/src"
+  - "python_bridge/src"
   - "error_trace/src"
   - "error_trace_derive/src"
   - "proto_utils/src"
@@ -18,6 +19,7 @@ excluded_folders:
   # Dev tooling that lives *inside* an allowed folder must be carved out here
   # (whole dev-tool crates are handled by omission from allowed_folders above).
   - "sf_core/src/bin"
+  - "python_bridge/src/bin"
 allowed_file_extensions:
   - ".rs"
 rules:

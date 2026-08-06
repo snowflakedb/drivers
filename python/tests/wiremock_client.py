@@ -1,6 +1,8 @@
 import json
+import os
 import socket
 import subprocess
+import tempfile
 import time
 
 from pathlib import Path
@@ -14,19 +16,40 @@ WIREMOCK_VERSION = "3.13.2"
 WIREMOCK_DIR = "tests/wiremock"
 WIREMOCK_JAR_SUBDIR = "wiremock_standalone"
 WIREMOCK_MAPPINGS_SUBDIR = "mappings"
+WIREMOCK_KEYSTORE = "wiremock-keystore.p12"
+WIREMOCK_KEYSTORE_PASSWORD = "password"
+
+# Protocols disabled in all modes; per-version tests extend this list.
+_TLS_BASE_DISABLED = "SSLv3, TLSv1, TLSv1.1"
+_TLS_VERSION_EXTRA_DISABLED = {
+    "tls12": ", TLSv1.3",  # server speaks only 1.2 — disable 1.3
+    "tls13": ", TLSv1.2",  # server speaks only 1.3 — disable 1.2
+}
 
 
 class WiremockClient:
-    def __init__(self):
+    def __init__(self, tls_version: str | None = None):
+        """Create a WiremockClient.
+
+        Args:
+            tls_version: When set to ``"tls12"`` or ``"tls13"``, the WireMock
+                JVM is started with an HTTPS listener that accepts only that
+                protocol version. Use ``https_url()`` to connect to it.
+        """
+        if tls_version is not None and tls_version not in _TLS_VERSION_EXTRA_DISABLED:
+            raise ValueError(f"tls_version must be 'tls12' or 'tls13', got: {tls_version!r}")
+        self.tls_version = tls_version
         self.process: subprocess.Popen | None = None
         self.http_port: int | None = None
+        self.https_port: int | None = None
         self.host: str = "localhost"
         self.workspace_root: Path | None = None
+        self._security_props_file: str | None = None
 
     def start(self) -> "WiremockClient":
         """Start a new Wiremock instance.
 
-        - Find a free port for HTTP
+        - Find a free port for HTTP (and HTTPS when tls_version is set)
         - Start the Wiremock standalone JAR
         - Wait for Wiremock to be healthy
         """
@@ -39,28 +62,59 @@ class WiremockClient:
 
         self.http_port = self._find_free_port()
 
+        cmd = [
+            "java",
+        ]
+
+        if self.tls_version is not None:
+            self.https_port = self._find_free_port()
+            # Write a JVM security-properties override that restricts the server
+            # to the requested TLS version. Single = appends to platform defaults
+            # rather than replacing them (double == would replace everything).
+            disabled = _TLS_BASE_DISABLED + _TLS_VERSION_EXTRA_DISABLED[self.tls_version]
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".properties", prefix="wiremock-tls-", delete=False) as f:
+                f.write(f"jdk.tls.disabledAlgorithms={disabled}\n")
+                self._security_props_file = f.name
+            cmd += [f"-Djava.security.properties={self._security_props_file}"]
+
+        cmd += [
+            "-jar",
+            str(jar_path),
+            "--root-dir",
+            str(wiremock_dir),
+            "--enable-browser-proxying",  # work as forward proxy
+            "--proxy-pass-through",
+            "false",  # pass through only matched requests
+            "--port",
+            str(self.http_port),
+        ]
+
+        if self.tls_version is not None:
+            keystore_path = wiremock_dir / WIREMOCK_KEYSTORE
+            cmd += [
+                "--https-port",
+                str(self.https_port),
+                "--https-keystore",
+                str(keystore_path),
+                "--keystore-type",
+                "PKCS12",
+                "--keystore-password",
+                WIREMOCK_KEYSTORE_PASSWORD,
+            ]
+
         # Discard JVM stdout/stderr — nothing reads these pipes, and Windows pipe
         # buffers are small (4–8 KB), so a chatty Wiremock log can fill the buffer
         # and stall the JVM's logging thread (and via it, the HTTP server thread).
         # See investigation note in SNOW-3487070.
         self.process = subprocess.Popen(
-            [
-                "java",
-                "-jar",
-                str(jar_path),
-                "--root-dir",
-                str(wiremock_dir),
-                "--enable-browser-proxying",  # work as forward proxy
-                "--proxy-pass-through",
-                "false",  # pass through only matched requests
-                "--port",
-                str(self.http_port),
-            ],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
 
         self._wait_for_health()
+        if self.tls_version is not None:
+            self._wait_for_https_health()
         return self
 
     def http_url(self) -> str:
@@ -70,6 +124,18 @@ class WiremockClient:
             HTTP URL string (e.g., "http://localhost:12345")
         """
         return f"http://{self.host}:{self.http_port}"
+
+    def https_url(self) -> str:
+        """Get the HTTPS URL for connecting to this Wiremock instance.
+
+        Only valid when the client was created with a ``tls_version``.
+
+        Returns:
+            HTTPS URL string (e.g., "https://localhost:12346")
+        """
+        if self.https_port is None:
+            raise RuntimeError("https_url() requires WiremockClient(tls_version=...)")
+        return f"https://{self.host}:{self.https_port}"
 
     def add_mapping(self, mapping_path: str, placeholders: dict[str, str] | None = None) -> None:
         """Add a mapping to Wiremock with optional placeholder replacement.
@@ -203,6 +269,12 @@ class WiremockClient:
             except subprocess.TimeoutExpired:
                 self.process.kill()
             self.process = None
+        if self._security_props_file is not None:
+            try:
+                os.unlink(self._security_props_file)
+            except OSError:
+                pass
+            self._security_props_file = None
 
     def __enter__(self):
         """Context manager entry."""
@@ -251,4 +323,28 @@ class WiremockClient:
 
         raise RuntimeError(
             f"Wiremock did not become healthy after {max_retries * sleep_seconds} seconds. Last error: {last_error}"
+        )
+
+    def _wait_for_https_health(self, max_retries: int = 60, sleep_seconds: float = 0.5) -> None:
+        health_url = f"{self.https_url()}/__admin/health"
+        last_error = None
+
+        for _ in range(max_retries):
+            time.sleep(sleep_seconds)
+
+            if self.process.poll() is not None:
+                raise RuntimeError(f"Wiremock process died (exit {self.process.returncode}) before HTTPS became ready")
+
+            try:
+                response = requests.get(health_url, timeout=2, verify=False)
+                if response.status_code == 200:
+                    text = response.text
+                    if '"status"' in text and '"healthy"' in text:
+                        return
+            except requests.RequestException as e:
+                last_error = str(e)
+
+        raise RuntimeError(
+            f"Wiremock HTTPS did not become healthy after {max_retries * sleep_seconds} seconds. "
+            f"Last error: {last_error}"
         )

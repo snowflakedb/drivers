@@ -2,19 +2,19 @@ package net.snowflake.client.internal.api.decorator;
 
 import java.sql.SQLException;
 import java.util.function.Supplier;
+import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMapper;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 
 /**
  * Base for every JDBC decorator: holds the delegate and {@link Telemetry} emitter and exposes the
- * shared exception-translation entry points. A decorator delegates + translates and nothing else;
- * {@link DelegatingWrapper} resolves {@code unwrap}/{@code isWrapperFor} through {@link
- * #getDelegate()} so callers can still reach the Snowflake-specific types.
+ * shared exception-translation entry points. {@link DelegatingWrapper} resolves {@code
+ * unwrap}/{@code isWrapperFor} through {@link #getDelegate()} so callers can still reach the
+ * Snowflake-specific types.
  *
- * <p>This is the single interception point for wrapper telemetry. Curated boundaries pass an op
- * name via the instrumented {@code call/run(op, …)} overloads and record api-usage; hot per-row /
- * per-column accessors use the plain overloads and record nothing. A thread-local guard ensures
- * only the <em>outermost</em> decorated call records, so delegated inner calls do not double-count.
- * Wired to {@link Telemetry#NOOP} until the real emitter lands behind these signatures.
+ * <p>Single interception point for wrapper telemetry. Curated boundaries pass an op name via the
+ * instrumented {@code call/run(op, …)} overloads and record api-usage; hot per-row / per-column
+ * accessors use the plain overloads and record none. A thread-local guard ensures only the
+ * <em>outermost</em> decorated call records, so delegated inner calls do not double-count.
  *
  * @param <D> the delegate type being wrapped
  */
@@ -80,7 +80,9 @@ public abstract class AbstractDecorator<D> implements DelegatingWrapper {
     try {
       return action.get();
     } catch (RuntimeException e) {
-      // The real emitter will call telemetry.recordWrapperError(classify(e)) here.
+      if (outermost) {
+        telemetry.recordWrapperError(e);
+      }
       throw SqlExceptionMapper.translate(e);
     } finally {
       if (outermost) {

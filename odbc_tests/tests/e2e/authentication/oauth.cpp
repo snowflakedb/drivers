@@ -222,6 +222,56 @@ TEST_CASE("oauth should authenticate using authorization code flow", "[oauth_e2e
   REQUIRE_ODBC(disconnect_ret, dbc);
 }
 
+TEST_CASE("oauth should reuse cached access token without browser interaction", "[oauth_e2e][requires_browser]") {
+  REQUIRE_BROWSER("Authorization Code token caching needs the headless Chromium container");
+
+  auto params = get_test_parameters("testconnection");
+  const std::string user = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_USER");
+  const std::string password = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_PASSWORD");
+  const std::string client_id = get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_ID");
+  const std::string client_secret =
+      get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_CLIENT_SECRET");
+  const std::string redirect_uri =
+      get_param_required<std::string>(params, "SNOWFLAKE_TEST_OAUTH_SNOWFLAKE_REDIRECT_URI");
+
+  // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with client_store_temporary_credential=true
+  //       and a token has been cached from a previous browser authentication
+  std::stringstream ss;
+  ss << get_oauth_base_connection_string(params, "OAUTH_AUTHORIZATION_CODE", user);
+  ss << "OAUTH_CLIENT_ID=" << client_id << ";";
+  ss << "OAUTH_CLIENT_SECRET=" << client_secret << ";";
+  ss << "OAUTH_REDIRECT_URI=" << redirect_uri << ";";
+  ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=true;";
+  std::string connection_string = ss.str();
+
+  auto env = setup_oauth_environment();
+
+  oauth_auth::clean_browser_processes();
+  {
+    auto first = env.createConnectionHandle();
+    SQLRETURN ret = oauth_auth::connect_with_browser_automation(first, connection_string,
+                                                                "internalOauthSnowflakeSuccess", user, password);
+    oauth_auth::clean_browser_processes();
+    REQUIRE_ODBC(ret, first);
+    verify_oauth_simple_query_execution(first);
+
+    ret = SQLDisconnect(first.getHandle());
+    REQUIRE_ODBC(ret, first);
+  }
+
+  // When Trying to Connect without browser interaction
+  auto second = env.createConnectionHandle();
+  SQLRETURN ret = SQLDriverConnect(second.getHandle(), nullptr, (SQLCHAR*)connection_string.c_str(), SQL_NTS, nullptr,
+                                   0, nullptr, SQL_DRIVER_NOPROMPT);
+  REQUIRE_ODBC(ret, second);
+
+  // Then Login is successful and a simple query can be executed
+  verify_oauth_simple_query_execution(second);
+
+  ret = SQLDisconnect(second.getHandle());
+  REQUIRE_ODBC(ret, second);
+}
+
 TEST_CASE("oauth should fail authorization code flow with bad client secret", "[oauth_e2e][requires_browser]") {
   SKIP("Disabled: bad-secret tests cause pipeline flakiness by blocking the test account");
   REQUIRE_BROWSER("Authorization Code negative path needs the headless Chromium container");

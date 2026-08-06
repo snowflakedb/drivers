@@ -23,14 +23,21 @@ from ..._internal.connection import (
     clamp_client_prefetch_threads,
     requires_open,
 )
-from ..._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249, snowpark_compat
-from ..._internal.errorcode import ER_INVALID_VALUE
+from ..._internal.decorators import (
+    api_telemetry,
+    awaitable_context_manager,
+    backward_compatibility,
+    internal_api,
+    pep249,
+)
+from ..._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from ..._internal.logging import get_logger
 from ..._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
 )
 from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
+    VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS,
     ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
     ConnectionHandle,
@@ -41,7 +48,7 @@ from ..._internal.telemetry import AsyncTelemetryClient
 from ..._internal.text_utils import split_statements
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
-from ...errors import Error, NotSupportedError, ProgrammingError
+from ...errors import Error, ProgrammingError
 from ...telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from ...version import __version__
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
@@ -49,6 +56,13 @@ from ._freezable_proxy import _ConnectionInfoProxy, _SessionParametersProxy
 
 
 logger = get_logger(__name__)
+
+
+# Both WIF cross-param guards in sf_core's validate_settings emit a dedicated
+# ValidationCode, so the wrapper can key on the code alone without matching
+# parameter names or message text.
+def _is_wif_conflict(exc: ProgrammingError) -> bool:
+    return exc.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
 
 
 class Connection(ConnectionMixin):
@@ -127,17 +141,30 @@ class Connection(ConnectionMixin):
                 parameters=session_params,
             )
 
-        await async_core_driver.connection_init(
-            conn_handle=conn_handle,
-            db_handle=db_handle,
-            wrapper_identity=WrapperIdentity(
-                driver_name=APPLICATION_NAME,
-                driver_version=__version__,
-                language_runtime=platform.python_implementation(),
-                language_version=platform.python_version(),
-                language_compiler=platform.python_compiler(),
-            ),
-        )
+        try:
+            await async_core_driver.connection_init(
+                conn_handle=conn_handle,
+                db_handle=db_handle,
+                wrapper_identity=WrapperIdentity(
+                    driver_name=APPLICATION_NAME,
+                    driver_version=__version__,
+                    language_runtime=platform.python_implementation(),
+                    language_version=platform.python_version(),
+                    language_compiler=platform.python_compiler(),
+                ),
+            )
+        except ProgrammingError as e:
+            # The WIF cross-param guards fire in sf_core only via connection_init
+            # (ConnectionConfig::build -> validate_settings), surfaced as errno
+            # ER_INVALID_VALUE. Re-map to ER_INVALID_WIF_SETTINGS for legacy parity.
+            if _is_wif_conflict(e):
+                raise ProgrammingError(
+                    msg=str(e),
+                    errno=ER_INVALID_WIF_SETTINGS,
+                    parameter=e.parameter,
+                    validation_code=e.validation_code,
+                ) from e
+            raise
 
         self.conn_handle = conn_handle
         self.db_handle = db_handle
@@ -222,6 +249,7 @@ class Connection(ConnectionMixin):
     # ------------------------------------------------------------------
 
     @pep249
+    @awaitable_context_manager
     @api_telemetry
     @requires_open
     async def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
@@ -465,19 +493,6 @@ class Connection(ConnectionMixin):
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
-
-    # ------------------------------------------------------------------
-    # File-transfer stub (Snowpark compatibility only)
-    # ------------------------------------------------------------------
-
-    @snowpark_compat
-    @api_telemetry
-    async def upload_stream(self, *args: Any, **kwargs: Any) -> None:
-        """Noop stub — Snowpark calls this on the connection for streaming PUT.
-
-        File transfer is not yet supported by the Universal Driver.
-        """
-        raise NotSupportedError("upload_stream is not yet supported by the Universal Driver.")
 
 
 SnowflakeConnection = Connection

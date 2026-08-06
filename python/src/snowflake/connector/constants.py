@@ -45,3 +45,4 @@ class SessionParameterName:
     """Known Snowflake session parameter names referenced by the connector."""
 
     CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD"
+    CLIENT_TELEMETRY_ENABLED = "CLIENT_TELEMETRY_ENABLED"

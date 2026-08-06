@@ -4,7 +4,7 @@ steps:
     timeout_in_minutes: 10
     agents:
       queue: "discovery"
-      repo: "snowflake-eng/universal-driver"
+      repo: "snowflake-eng/drivers"
     notify:
       - github_check:
           name: "Skill Validation"
@@ -24,7 +24,7 @@ steps:
     timeout_in_minutes: 15
     agents:
       queue: "discovery"
-      repo: "snowflake-eng/universal-driver"
+      repo: "snowflake-eng/drivers"
     notify:
       - github_check:
           name: "Skill Eval"

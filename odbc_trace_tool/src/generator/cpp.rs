@@ -90,6 +90,51 @@ fn escape_cpp_string_literal(s: &str) -> String {
     out
 }
 
+/// The three ODBC temporal C types whose structs require a valid calendar
+/// value (a zero-filled buffer is rejected with SQLSTATE 22007).
+#[derive(Clone, Copy)]
+enum TemporalKind {
+    Date,
+    Time,
+    Timestamp,
+}
+
+/// Classify a `SQLBindParameter` `ValueType` as a temporal C type, preferring
+/// the symbolic name and falling back to the numeric ODBC constant. Covers both
+/// the ODBC 3.x (`SQL_C_TYPE_*`) and legacy (`SQL_C_DATE`/`TIME`/`TIMESTAMP`)
+/// spellings.
+fn temporal_c_type(value_type: Option<i64>, value_type_name: Option<&str>) -> Option<TemporalKind> {
+    match value_type_name {
+        Some("SQL_C_TYPE_DATE") | Some("SQL_C_DATE") => return Some(TemporalKind::Date),
+        Some("SQL_C_TYPE_TIME") | Some("SQL_C_TIME") => return Some(TemporalKind::Time),
+        Some("SQL_C_TYPE_TIMESTAMP") | Some("SQL_C_TIMESTAMP") => {
+            return Some(TemporalKind::Timestamp)
+        }
+        _ => {}
+    }
+    // Numeric fallbacks from sql.h / sqlext.h when the trace omitted the name.
+    match value_type {
+        Some(91) | Some(9) => Some(TemporalKind::Date), // SQL_C_TYPE_DATE | SQL_C_DATE
+        Some(92) | Some(10) => Some(TemporalKind::Time), // SQL_C_TYPE_TIME | SQL_C_TIME
+        Some(93) | Some(11) => Some(TemporalKind::Timestamp), // SQL_C_TYPE_TIMESTAMP | SQL_C_TIMESTAMP
+        _ => None,
+    }
+}
+
+/// True for an `SQLTables` call that enumerates objects across *every* catalog
+/// in the account — i.e. the `CatalogName` argument is the `%` wildcard
+/// (`SQL_ALL_CATALOGS`, the Power Query Navigator browse). Argument order is
+/// preserved by the parser (empty slots become `None`), so the first string
+/// arg is always `CatalogName`. The remaining args — a schema/table pattern or
+/// a `TableType` filter such as `"TABLE,VIEW"` — only narrow *what* is listed,
+/// not *which account*, so they don't affect the account-coupling that makes
+/// the result set non-replayable. A concrete catalog (e.g. a fixture DB name)
+/// scopes the browse to a deterministic set and is left unrolled.
+fn is_account_wide_tables(call: &crate::model::CatalogFunction) -> bool {
+    call.function_name == "SQLTables"
+        && call.string_args.first().and_then(|a| a.value.as_deref()) == Some("%")
+}
+
 /// Render an ODBC enum-style argument. Prefer the captured symbolic name when
 /// it's a header-defined `SQL_`-prefixed constant (compiles directly); else
 /// fall back to the captured integer; else the supplied default constant.
@@ -206,6 +251,17 @@ struct GenContext<'a> {
     /// been declared, so we declare it exactly once per (re)entry into
     /// row-wise mode.
     row_buf_declared: HashSet<String>,
+    /// Statement *addresses* whose currently-open cursor was opened by an
+    /// account-wide `SQLTables('%')` catalog enumeration. The row count and
+    /// catalog names such a cursor returns are a property of the connected
+    /// account, not the driver, so the `SQLFetch`/`SQLGetData` run draining it
+    /// is collapsed into a structural loop instead of unrolled per row.
+    enum_cursors: HashSet<String>,
+    /// Statement addresses whose account-wide enumeration drain loop has
+    /// already been emitted. Remaining `Fetch`/`GetData`/`SetStmtAttr` on
+    /// these handles are skipped until the trace's `SQL_NO_DATA` fetch (or a
+    /// cursor-ending call clears the set via [`Self::clear_enum_cursor`]).
+    draining: HashSet<String>,
 }
 
 impl<'a> GenContext<'a> {
@@ -232,6 +288,8 @@ impl<'a> GenContext<'a> {
             bind_buf_counter: 0,
             row_bind_type: HashMap::new(),
             row_buf_declared: HashSet::new(),
+            enum_cursors: HashSet::new(),
+            draining: HashSet::new(),
         }
     }
 
@@ -260,11 +318,44 @@ impl<'a> GenContext<'a> {
         self.emit_config_install();
         self.emit_synthetic_handles();
 
-        for call in self.calls {
+        let mut idx = 0;
+        while idx < self.calls.len() {
+            let call = &self.calls[idx];
             if matches!(call, OdbcCall::GetDiagRec(_) | OdbcCall::GetFunctions(_)) {
+                idx += 1;
                 continue;
             }
+            // Ops replaced by an already-emitted account-wide drain loop: skip
+            // as we go until the trace's SQL_NO_DATA fetch (or cursor clear).
+            if let Some(h) = Self::drain_replaced_handle(call).map(str::to_string) {
+                if self.draining.contains(&h) {
+                    let end_drain = matches!(
+                        call,
+                        OdbcCall::Fetch(f) if f.return_code == ReturnCode::NoData
+                    );
+                    if end_drain {
+                        self.draining.remove(&h);
+                    }
+                    idx += 1;
+                    continue;
+                }
+            }
+            // First Fetch on an account-wide enum cursor: emit the structural
+            // loop once, then skip this Fetch and remaining replaced ops.
+            if let OdbcCall::Fetch(f) = call {
+                if let Some(h) = f.handle.clone() {
+                    if self.enum_cursors.contains(&h) {
+                        self.emit_enumeration_drain(&h);
+                        self.enum_cursors.remove(&h);
+                        self.draining.insert(h);
+                        idx += 1;
+                        continue;
+                    }
+                }
+            }
             self.emit_call(call);
+            self.update_enum_cursor_state(call);
+            idx += 1;
         }
 
         if !self.unsupported.is_empty() && !self.config.allow_unsupported {
@@ -553,6 +644,7 @@ impl<'a> GenContext<'a> {
             OdbcCall::MoreResults(c) => self.emit_more_results(c),
             OdbcCall::CloseCursor(c) => self.emit_close_cursor(c),
             OdbcCall::GetTypeInfo(c) => self.emit_get_type_info(c),
+            OdbcCall::Catalog(c) => self.emit_catalog(c),
             OdbcCall::GetInfo(c) => self.emit_get_info(c),
             OdbcCall::FreeHandle(c) => self.emit_free_handle(c),
             OdbcCall::Disconnect(c) => self.emit_disconnect(c),
@@ -1048,6 +1140,55 @@ impl<'a> GenContext<'a> {
         let n = self.next_bind_buf();
 
         self.writeln(&format!("// SQLBindParameter {pnum}"));
+
+        // WinODBC traces record only the parameter buffer pointer, never its
+        // bytes, so the bound value is unrecoverable. For most C types a
+        // zero-filled buffer replays faithfully, but the temporal structs
+        // (`SQL_DATE_STRUCT`/`SQL_TIMESTAMP_STRUCT`) reject an all-zero
+        // year/month/day with SQLSTATE 22007. Emit a typed struct with a valid
+        // placeholder instead; capture and replay bind the same value, so the
+        // captured result set stays self-consistent.
+        if let Some(kind) = temporal_c_type(call.value_type, call.value_type_name.as_deref()) {
+            let (decl, sizeof) = match kind {
+                TemporalKind::Date => (
+                    format!("SQL_DATE_STRUCT param_val_{n} = {{}};"),
+                    format!("sizeof(param_val_{n})"),
+                ),
+                TemporalKind::Time => (
+                    format!("SQL_TIME_STRUCT param_val_{n} = {{}};"),
+                    format!("sizeof(param_val_{n})"),
+                ),
+                TemporalKind::Timestamp => (
+                    format!("SQL_TIMESTAMP_STRUCT param_val_{n} = {{}};"),
+                    format!("sizeof(param_val_{n})"),
+                ),
+            };
+            self.writeln(&decl);
+            // 00:00:00 is a valid time, but a zero date needs a real calendar day.
+            if matches!(kind, TemporalKind::Date | TemporalKind::Timestamp) {
+                self.writeln(&format!("param_val_{n}.year = 2000;"));
+                self.writeln(&format!("param_val_{n}.month = 1;"));
+                self.writeln(&format!("param_val_{n}.day = 1;"));
+            }
+            self.writeln(&format!("SQLLEN param_ind_{n} = {sizeof};"));
+            self.writeln("{");
+            self.indent += 1;
+            self.writeln(&format!(
+                "SQLRETURN ret = SQLBindParameter({stmt_var}, {pnum}, {io}, {vtype}, {ptype}, {colsize}, {digits}, &param_val_{n}, {sizeof}, &param_ind_{n});"
+            ));
+            self.emit_return_assertion(
+                call.return_code,
+                "SQL_HANDLE_STMT",
+                &stmt_var,
+                false,
+                false,
+            );
+            self.indent -= 1;
+            self.writeln("}");
+            self.writeln("");
+            return;
+        }
+
         // Function-scope param buffer (read by the subsequent SQLExecute). We
         // don't reconstruct the captured value; the buffer is zero-initialized,
         // which is sufficient to faithfully replay the bind/execute sequence.
@@ -1176,34 +1317,46 @@ impl<'a> GenContext<'a> {
                     -1 => self.writeln("CHECK(ind == SQL_NULL_DATA);"),
                     -4 => self.writeln("CHECK(ind == SQL_NO_TOTAL);"),
                     _ => {
-                        if let Some(val) = &call.value {
-                            let escaped = escape_cpp_string_literal(val);
-                            // Length-bounded comparison: SQL_C_CHAR's NUL
-                            // terminator is normally honoured, but with a
-                            // 0xFF sentinel fill we can't rely on it if the
-                            // driver writes a partial buffer without a NUL.
-                            // `ind` is the byte length (excluding NUL), capped
-                            // to the buffer size to defend against drivers
-                            // that report a larger untruncated length on
-                            // SQL_SUCCESS_WITH_INFO.
-                            self.writeln(
-                                "const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());",
-                            );
-                            self.writeln(&format!(
-                                "CHECK(std::string(buf.data(), n) == \"{escaped}\");"
-                            ));
+                        if !self.config.capture_mode {
+                            if let Some(val) = &call.value {
+                                let escaped = escape_cpp_string_literal(val);
+                                // Length-bounded comparison: SQL_C_CHAR's NUL
+                                // terminator is normally honoured, but with a
+                                // 0xFF sentinel fill we can't rely on it if the
+                                // driver writes a partial buffer without a NUL.
+                                // `ind` is the byte length (excluding NUL), capped
+                                // to the buffer size to defend against drivers
+                                // that report a larger untruncated length on
+                                // SQL_SUCCESS_WITH_INFO.
+                                self.writeln(
+                                    "const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());",
+                                );
+                                self.writeln(&format!(
+                                    "CHECK(std::string(buf.data(), n) == \"{escaped}\");"
+                                ));
+                            }
+                            self.writeln(&format!("CHECK(ind == {ind_val});"));
                         }
-                        self.writeln(&format!("CHECK(ind == {ind_val});"));
                     }
                 }
-            } else if let Some(val) = &call.value {
-                let escaped = escape_cpp_string_literal(val);
-                self.writeln(
-                    "const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());",
-                );
-                self.writeln(&format!(
-                    "CHECK(std::string(buf.data(), n) == \"{escaped}\");"
-                ));
+            } else if !self.config.capture_mode {
+                if let Some(val) = &call.value {
+                    let escaped = escape_cpp_string_literal(val);
+                    self.writeln(
+                        "const size_t n = std::min<size_t>(static_cast<size_t>(ind), buf.size());",
+                    );
+                    self.writeln(&format!(
+                        "CHECK(std::string(buf.data(), n) == \"{escaped}\");"
+                    ));
+                }
+            }
+
+            if self.config.capture_mode {
+                if let Some(seq) = call.seq {
+                    for line in getdata_codec::char_capture_lines(seq) {
+                        self.writeln(&line);
+                    }
+                }
             }
         } else {
             self.writeln("SQLLEN ind = 0;");
@@ -1262,36 +1415,38 @@ impl<'a> GenContext<'a> {
                         // contain a genuine '?', which we accept as the
                         // safer tradeoff vs. the WinODBC false-positive
                         // assertion failures it would otherwise cause.
-                        if let Some(val) = call
-                            .value
-                            .as_ref()
-                            .filter(|_| target_type == "SQL_C_WCHAR")
-                            .filter(|v| !v.contains('?'))
-                        {
-                            let escaped = escape_cpp_string_literal(val);
-                            self.writeln("const size_t code_units = std::min<size_t>(");
-                            self.writeln(
-                                "    static_cast<size_t>(ind) / sizeof(char16_t), buf.size() / sizeof(char16_t));",
-                            );
-                            self.writeln(
-                                "std::u16string actual(reinterpret_cast<const char16_t*>(buf.data()), code_units);",
-                            );
-                            self.writeln(&format!("CHECK(actual == u\"{escaped}\");"));
-                        } else if target_type == "SQL_C_WCHAR"
-                            && call.value.as_deref().is_some_and(|v| v.contains('?'))
-                        {
-                            // Surface the skip in the generated test so
-                            // readers don't wonder where the value check
-                            // went — without this line the assertion gap
-                            // is invisible.
-                            self.writeln(
-                                "// SQL_C_WCHAR value not pinned: trace rendering used CP_ACP",
-                            );
-                            self.writeln(
-                                "// and may have replaced unmappable codepoints with '?'.",
-                            );
+                        if !self.config.capture_mode {
+                            if let Some(val) = call
+                                .value
+                                .as_ref()
+                                .filter(|_| target_type == "SQL_C_WCHAR")
+                                .filter(|v| !v.contains('?'))
+                            {
+                                let escaped = escape_cpp_string_literal(val);
+                                self.writeln("const size_t code_units = std::min<size_t>(");
+                                self.writeln(
+                                    "    static_cast<size_t>(ind) / sizeof(char16_t), buf.size() / sizeof(char16_t));",
+                                );
+                                self.writeln(
+                                    "std::u16string actual(reinterpret_cast<const char16_t*>(buf.data()), code_units);",
+                                );
+                                self.writeln(&format!("CHECK(actual == u\"{escaped}\");"));
+                            } else if target_type == "SQL_C_WCHAR"
+                                && call.value.as_deref().is_some_and(|v| v.contains('?'))
+                            {
+                                // Surface the skip in the generated test so
+                                // readers don't wonder where the value check
+                                // went — without this line the assertion gap
+                                // is invisible.
+                                self.writeln(
+                                    "// SQL_C_WCHAR value not pinned: trace rendering used CP_ACP",
+                                );
+                                self.writeln(
+                                    "// and may have replaced unmappable codepoints with '?'.",
+                                );
+                            }
+                            self.writeln(&format!("CHECK(ind == {ind_val});"));
                         }
-                        self.writeln(&format!("CHECK(ind == {ind_val});"));
                         if !self.config.capture_mode {
                             if let Some(ref captured) = call.captured {
                                 for line in
@@ -1311,10 +1466,16 @@ impl<'a> GenContext<'a> {
                 }
             }
 
-            if self.config.capture_mode && getdata_codec::is_obscured_target(target_type) {
+            if self.config.capture_mode {
                 if let Some(seq) = call.seq {
-                    for line in getdata_codec::capture_record_lines(seq, target_type) {
-                        self.writeln(&line);
+                    if target_type == "SQL_C_WCHAR" || target_type == "SQL_WCHAR" {
+                        for line in getdata_codec::wchar_capture_lines(seq) {
+                            self.writeln(&line);
+                        }
+                    } else if getdata_codec::is_obscured_target(target_type) {
+                        for line in getdata_codec::capture_record_lines(seq, target_type) {
+                            self.writeln(&line);
+                        }
                     }
                 }
             }
@@ -1371,6 +1532,124 @@ impl<'a> GenContext<'a> {
             "SQLRETURN ret = SQLGetTypeInfo({stmt_var}, {data_type});"
         ));
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_catalog(&mut self, call: &crate::model::CatalogFunction) {
+        let stmt_var = self.stmt_var_for(&call.handle);
+        let fn_name = &call.function_name;
+        let mut args = vec![stmt_var.clone()];
+        for arg in &call.string_args {
+            match &arg.value {
+                None => {
+                    args.push("nullptr".to_string());
+                    args.push(arg.length.unwrap_or(0).to_string());
+                }
+                Some(s) => {
+                    args.push(format!("sqlchar(\"{}\")", escape_cpp_string_literal(s)));
+                    args.push(
+                        arg.length
+                            .map(|l| l.to_string())
+                            .unwrap_or_else(|| "SQL_NTS".to_string()),
+                    );
+                }
+            }
+        }
+        self.writeln(&format!("// {fn_name}"));
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!("SQLRETURN ret = {fn_name}({});", args.join(", ")));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    /// Update which statement cursors are account-wide catalog enumerations.
+    /// Set when an `SQLTables('%')` opens such a cursor; cleared whenever the
+    /// cursor is closed or a different statement begins on the same handle.
+    fn update_enum_cursor_state(&mut self, call: &OdbcCall) {
+        match call {
+            OdbcCall::Catalog(c) if is_account_wide_tables(c) => {
+                if let Some(h) = c.handle.clone() {
+                    self.enum_cursors.insert(h);
+                }
+            }
+            // Any other cursor-opening or cursor-closing call on a handle ends
+            // the enumeration association (a fetch-drain would otherwise also
+            // clear it, but a trace that never fetches the cursor must not leak
+            // the flag onto the handle's next result set).
+            OdbcCall::Catalog(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::ExecDirect(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::Execute(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::Prepare(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::GetTypeInfo(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::CloseCursor(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::MoreResults(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::FreeStmt(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            OdbcCall::FreeHandle(c) => self.clear_enum_cursor(c.handle.as_deref()),
+            _ => {}
+        }
+    }
+
+    fn clear_enum_cursor(&mut self, handle: Option<&str>) {
+        if let Some(h) = handle {
+            self.enum_cursors.remove(h);
+            self.draining.remove(h);
+        }
+    }
+
+    /// Handle whose `Fetch`/`GetData`/`SetStmtAttr` are replaced by the
+    /// structural drain loop (mid-scan attr resets are Power Query noise).
+    fn drain_replaced_handle(call: &OdbcCall) -> Option<&str> {
+        match call {
+            OdbcCall::Fetch(c) => c.handle.as_deref(),
+            OdbcCall::GetData(c) => c.handle.as_deref(),
+            OdbcCall::SetStmtAttr(c) => c.handle.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Emit a structural drain loop for an account-wide catalog enumeration
+    /// on `handle`. Remaining matching trace ops are skipped by the main loop
+    /// while the handle is in [`Self::draining`].
+    ///
+    /// The number of rows and the catalog names returned depend on the
+    /// connected account, not the driver, so instead of unrolling per-row
+    /// assertions we assert the protocol contract: every fetch succeeds until
+    /// `SQL_NO_DATA`, the driver returns at least one row, and each row's
+    /// `SQLGetData` on column 1 succeeds.
+    fn emit_enumeration_drain(&mut self, handle: &str) {
+        let stmt_var = self.stmt_var_for(&Some(handle.to_string()));
+        self.writeln("// account-wide SQLTables('%') catalog enumeration:");
+        self.writeln("// the row count and catalog names are a property of the");
+        self.writeln("// connected account, not the driver, so drain the cursor");
+        self.writeln("// structurally rather than pinning environment-specific rows.");
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln("SQLRETURN ret;");
+        self.writeln("long long enum_rows = 0;");
+        self.writeln(&format!(
+            "while ((ret = SQLFetch({stmt_var})) == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {{"
+        ));
+        self.indent += 1;
+        self.writeln("std::vector<char> buf(2048, static_cast<char>(0xFF));");
+        self.writeln("SQLLEN ind = 0;");
+        self.writeln(&format!(
+            "SQLRETURN g = SQLGetData({stmt_var}, 1, SQL_C_WCHAR, buf.data(), 2048, &ind);"
+        ));
+        self.writeln(&format!(
+            "CHECK_THAT(OdbcResult(g, SQL_HANDLE_STMT, {stmt_var}), OdbcMatchers::Succeeded());"
+        ));
+        self.writeln("++enum_rows;");
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln(&format!(
+            "CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, {stmt_var}), OdbcMatchers::IsNoData());"
+        ));
+        self.writeln("CHECK(enum_rows > 0);");
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
@@ -3446,6 +3725,52 @@ mod tests {
     }
 
     #[test]
+    fn get_data_wide_skips_value_assertion_when_wchar_capture_decode_fails() {
+        use crate::captured_value::{CapturedValue, WCharCapture};
+        use crate::model::{GetData, OdbcCall};
+
+        // Live capture hex that is not valid UTF-16 (lone high surrogate).
+        // `apply_captured_values` clears stale `value` and leaves `captured`
+        // set so the generator emits a visible skip instead of a silent gap.
+        let calls = vec![OdbcCall::GetData(GetData {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(1),
+            target_type: Some(-8),
+            target_type_name: Some("SQL_C_WCHAR".to_string()),
+            buffer_length: Some(2048),
+            value: None,
+            indicator: Some(2),
+            captured: Some(CapturedValue::WChar(WCharCapture {
+                hex: "00d8".into(),
+                ind: 2,
+            })),
+            seq: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "wide getdata decode fail".to_string(),
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("CHECK(actual"),
+            "must not assert a value when UTF-16 capture decode failed; output:\n{output}",
+        );
+        assert!(
+            output
+                .contains("// SQL_C_WCHAR value not pinned: live UTF-16 capture failed to decode;"),
+            "must explain the deliberate skip; output:\n{output}",
+        );
+        assert!(
+            output.contains("CHECK(ind == 2);"),
+            "indicator check still emitted; output:\n{output}",
+        );
+    }
+
+    #[test]
     fn test_generate_with_query_map() {
         let trace = iodbc::parse_str(SAMPLE_TRACE).expect("Failed to parse sample trace");
 
@@ -3521,6 +3846,356 @@ mod tests {
         assert!(
             !output.contains("CHECK(*reinterpret_cast<double*>"),
             "capture mode must not assert obscured values; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn account_wide_tables_enumeration_collapses_to_drain_loop() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, MoreResults, OdbcCall, ReturnCode,
+        };
+
+        let getdata = |col: i64, value: Option<&str>, ind: i64| {
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(col),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: value.map(str::to_string),
+                indicator: Some(ind),
+                captured: None,
+                seq: None,
+            })
+        };
+        let fetch = |rc| {
+            OdbcCall::Fetch(Fetch {
+                return_code: rc,
+                handle: Some("0xstmt".to_string()),
+            })
+        };
+
+        let nullarg = || CatalogStringArg {
+            value: None,
+            length: Some(0),
+        };
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                // CatalogName "%" with a TableType filter — still account-wide;
+                // the type filter must not defeat the detection.
+                string_args: vec![
+                    CatalogStringArg {
+                        value: Some("%".to_string()),
+                        length: Some(1),
+                    },
+                    nullarg(),
+                    nullarg(),
+                    CatalogStringArg {
+                        value: Some("TABLE,VIEW".to_string()),
+                        length: Some(10),
+                    },
+                ],
+            }),
+            fetch(ReturnCode::Success),
+            getdata(1, Some("SNOWFLAKE_SAMPLE_DATA"), 42),
+            fetch(ReturnCode::Success),
+            getdata(1, Some("ODBCMETADATATESTDB"), 36),
+            fetch(ReturnCode::NoData),
+            OdbcCall::MoreResults(MoreResults {
+                return_code: ReturnCode::NoData,
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "nav".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("while ((ret = SQLFetch("),
+            "enumeration drains in a loop; output:\n{output}"
+        );
+        assert!(
+            output.contains("CHECK(enum_rows > 0);"),
+            "drain loop asserts at least one row; output:\n{output}"
+        );
+        assert!(
+            output.contains("OdbcMatchers::IsNoData()"),
+            "drain loop asserts SQL_NO_DATA termination; output:\n{output}"
+        );
+        assert!(
+            !output.contains("SNOWFLAKE_SAMPLE_DATA"),
+            "account-specific catalog names must not be pinned; output:\n{output}"
+        );
+        assert!(
+            !output.contains("ODBCMETADATATESTDB"),
+            "account-specific catalog names must not be pinned; output:\n{output}"
+        );
+        // The SQLTables call itself and the post-enumeration SQLMoreResults
+        // still emit normally.
+        assert!(
+            output.contains("SQLRETURN ret = SQLTables("),
+            "the catalog call is still replayed; output:\n{output}"
+        );
+        assert!(
+            output.contains("SQLMoreResults("),
+            "post-enumeration MoreResults still emits; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn account_wide_tables_drain_skips_interleaved_diag_and_functions() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, GetDiagRec, GetFunctions,
+            HandleType, MoreResults, OdbcCall, ReturnCode, SetStmtAttr,
+        };
+
+        let getdata = |value: &str| {
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: Some(value.to_string()),
+                indicator: Some(42),
+                captured: None,
+                seq: None,
+            })
+        };
+        let fetch = |rc| {
+            OdbcCall::Fetch(Fetch {
+                return_code: rc,
+                handle: Some("0xstmt".to_string()),
+            })
+        };
+        let nullarg = || CatalogStringArg {
+            value: None,
+            length: Some(0),
+        };
+
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![
+                    CatalogStringArg {
+                        value: Some("%".to_string()),
+                        length: Some(1),
+                    },
+                    nullarg(),
+                    nullarg(),
+                    nullarg(),
+                ],
+            }),
+            fetch(ReturnCode::Success),
+            getdata("CATALOG_A"),
+            // Mid-drain noise that used to split the allowlist scanner.
+            OdbcCall::GetDiagRec(GetDiagRec {
+                return_code: ReturnCode::Success,
+                handle_type: Some(HandleType::Stmt),
+                handle: Some("0xstmt".to_string()),
+                rec_number: Some(1),
+            }),
+            OdbcCall::SetStmtAttr(SetStmtAttr {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                attribute: Some("SQL_ATTR_ROWS_FETCHED_PTR".to_string()),
+                value: Some(0),
+                str_len: Some(0),
+            }),
+            OdbcCall::GetFunctions(GetFunctions {
+                return_code: ReturnCode::Success,
+                handle: Some("0xdbc".to_string()),
+                function_id: Some(1),
+            }),
+            fetch(ReturnCode::Success),
+            getdata("CATALOG_B"),
+            fetch(ReturnCode::NoData),
+            OdbcCall::MoreResults(MoreResults {
+                return_code: ReturnCode::NoData,
+                handle: Some("0xstmt".to_string()),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "nav interleaved".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("while ((ret = SQLFetch("),
+            "enumeration still drains in a loop; output:\n{output}"
+        );
+        assert_eq!(
+            output.matches("while ((ret = SQLFetch(").count(),
+            1,
+            "exactly one drain loop; output:\n{output}"
+        );
+        assert!(
+            !output.contains("CATALOG_A") && !output.contains("CATALOG_B"),
+            "interleaved diag must not leave later rows unrolled; output:\n{output}"
+        );
+        assert!(
+            output.contains("SQLMoreResults("),
+            "post-enumeration MoreResults still emits; output:\n{output}"
+        );
+        assert!(
+            !output.contains("SQLGetDiagRec") && !output.contains("SQLGetFunctions"),
+            "diag/functions stay unreplayed; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn fixture_scoped_tables_is_not_treated_as_enumeration() {
+        use crate::model::{
+            CatalogFunction, CatalogStringArg, Fetch, GetData, OdbcCall, ReturnCode,
+        };
+
+        let calls = vec![
+            OdbcCall::Catalog(CatalogFunction {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                function_name: "SQLTables".to_string(),
+                string_args: vec![CatalogStringArg {
+                    value: Some("ODBCMETADATATESTDB".to_string()),
+                    length: None,
+                }],
+            }),
+            OdbcCall::Fetch(Fetch {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+            }),
+            OdbcCall::GetData(GetData {
+                return_code: ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(3),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(2048),
+                value: Some("ALLDATATYPESNAV".to_string()),
+                indicator: Some(30),
+                captured: None,
+                seq: None,
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "nav".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("while ((ret = SQLFetch("),
+            "fixture-scoped browse must stay unrolled; output:\n{output}"
+        );
+        assert!(
+            output.contains("ALLDATATYPESNAV"),
+            "fixture-scoped value stays asserted; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn date_parameter_binds_valid_struct_not_zero_buffer() {
+        use crate::model::{BindParameter, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::BindParameter(BindParameter {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            parameter_number: Some(1),
+            input_output_type: Some(1),
+            input_output_type_name: Some("SQL_PARAM_INPUT".to_string()),
+            value_type: Some(91),
+            value_type_name: Some("SQL_C_TYPE_DATE".to_string()),
+            parameter_type: Some(91),
+            parameter_type_name: Some("SQL_TYPE_DATE".to_string()),
+            column_size: Some(10),
+            decimal_digits: Some(0),
+            buffer_length: Some(8),
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "param".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            ..Default::default()
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        // A zero-filled char buffer would bind an all-zero SQL_DATE_STRUCT
+        // (year/month/day == 0), which the server rejects with SQLSTATE 22007.
+        assert!(
+            output.contains("SQL_DATE_STRUCT param_val_0"),
+            "date param must bind a typed struct; output:\n{output}"
+        );
+        assert!(
+            output.contains("param_val_0.year = 2000;"),
+            "date param must use a valid calendar value; output:\n{output}"
+        );
+        assert!(
+            !output.contains("std::vector<char> param_buf_0"),
+            "date param must not use the zero char-buffer path; output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn capture_mode_records_string_getdata_by_seq() {
+        use crate::captured_value::tags;
+        use crate::model::{GetData, OdbcCall, ReturnCode};
+
+        let calls = vec![OdbcCall::GetData(GetData {
+            return_code: ReturnCode::Success,
+            handle: Some("0xstmt".to_string()),
+            column_number: Some(1),
+            target_type: Some(-8),
+            target_type_name: Some("SQL_C_WCHAR".to_string()),
+            buffer_length: Some(256),
+            value: Some("TABLE".to_string()),
+            indicator: Some(10),
+            seq: Some(7),
+            captured: None,
+        })];
+
+        let config = GeneratorConfig {
+            test_name: "capture".to_string(),
+            tag: "capture".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+            capture_mode: true,
+        };
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            !output.contains("CHECK(actual =="),
+            "capture mode must not assert trace string values; output:\n{output}"
+        );
+        assert!(
+            output.contains("\"7\""),
+            "capture harness keys by seq; output:\n{output}"
+        );
+        assert!(
+            output.contains(tags::WCHAR),
+            "capture harness records wide strings; output:\n{output}"
         );
     }
 

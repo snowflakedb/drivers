@@ -553,28 +553,22 @@ behavior_differences:
       Intentional fix; trades the legacy event-then-flag ordering for a consistently-closed handle
       during listener callbacks.
   31:
-    name: "SnowflakeConnectionPoolDataSource exposes a reduced DataSource configuration surface"
+    name: "DataSource exposes a trimmed, sf_core-supported configuration surface"
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: medium
-    old_driver_behavior: |
-      The legacy ConnectionPoolDataSource extends a SnowflakeDataSource that exposes a large
-      configuration surface (50+ setters covering tracing, proxy host/port, put/get, diagnostics,
-      arrow/result-format toggles, setEnableClientRequestMfaToken, and many other knobs).
-    new_driver_behavior: |
-      SnowflakeConnectionPoolDataSource extends the universal driver's SnowflakeDataSource, which
-      currently exposes only the core connection-configuration setters. Callers that configured a
-      pooled DataSource through legacy-only setters must set the equivalent connection property
-      instead, where one exists.
-    description: |
-      The pooled DataSource inherits the universal SnowflakeDataSource API; this entry tracks the
-      pooling-visible portion of the broader DataSource API reduction. MFA-token consolidation is
-      tracked separately as BD#5.
     status_rationale: |
-      Not yet reviewed. The reduced surface is a deliberate simplification, but the full set of
-      dropped setters and their property equivalents needs an explicit compatibility decision.
+      Legacy snowflake-jdbc exposes 50+ DataSource setters on SnowflakeBasicDataSource and
+      SnowflakeConnectionPoolDataSource, including client-side JDBC knobs that sf_core does not
+      consume. The universal driver keeps setters whose values are either understood by sf_core
+      at connect time or honored by the JDBC wrapper (e.g. tracing, enablePatternSearch,
+      JDBC_TREAT_DECIMAL_AS_INT via setArrowTreatDecimalAsInt, JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE,
+      JDBC_GET_DATE_USE_NULL_TIMEZONE) and drops the rest rather than storing silent no-ops.
+      Wired setters are normalized and forwarded at connect time. OCSP and HttpHeadersCustomizer
+      are covered by BD#46 and BD#43. Note setArrowTreatDecimalAsInt writes JDBC_TREAT_DECIMAL_AS_INT
+      (not legacy JDBC_ARROW_TREAT_DECIMAL_AS_INT).
   32:
     name: "setClientInfo failures no longer fire connectionErrorOccurred"
     status: allowed
@@ -806,3 +800,139 @@ behavior_differences:
     status_rationale: |
       Legacy snowflake-jdbc on Linux ignores clientStoreTemporaryCredential for id-token cache I/O unless
       CLIENT_STORE_TEMPORARY_CREDENTIAL is also set; universal driver does not.
+  43:
+    name: "HttpHeadersCustomizer is not ported"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy snowflake-jdbc exposes HttpHeadersCustomizer / setHttpHeadersCustomizers for custom REST
+      headers. sf_core has no equivalent hook, so the universal driver omits the surface rather than
+      accepting customizers that would be ignored.
+  44:
+    name: "DataSource.getProperties() returns a copy, not the live map"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy getProperties() returns the live internal map; mutating it changes DataSource state, and
+      getConnection(user, password) persists credentials into that shared map. The universal driver
+      returns a defensive copy so per-call credentials are not stored on the DataSource.
+  45:
+    name: "DataSource.getConnection does not require a username up front"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Legacy getConnection(username, password) rejects a missing username for most authenticators.
+      The universal driver passes credentials through to sf_core and lets connect-time validation
+      decide (companion to the password relaxation in BD#1).
+  46:
+    name: "OCSP is not supported"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    status_rationale: |
+      Legacy snowflake-jdbc performs OCSP revocation checking and exposes setOcspFailOpen. The
+      universal driver does not support OCSP or expose that setter; revocation is CRL-based only
+      (disabled by default via crl_check_mode).
+  47:
+    name: "GCS PUT OVERWRITE=TRUE on matching content re-uploads instead of skipping"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Against a GCS stage, a PUT with OVERWRITE=TRUE whose local payload matched the remote object's
+      stored x-goog-meta-sfc-digest was skipped: the PUT result set STATUS column reported SKIPPED and
+      no upload occurred. This was a universal-driver-only quirk (GCS skipped content matches
+      unconditionally); legacy snowflake-jdbc re-uploads.
+    new_driver_behavior: |
+      GCS re-uploads a content-matching PUT with OVERWRITE=TRUE (STATUS = UPLOADED), matching legacy
+      snowflake-jdbc. The content-match skip is gated behind the opt-in skip_upload_on_content_match
+      flag in sf_core, which JDBC does not set, so the skip never fires by default.
+    description: |
+      GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
+      matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+
+  48:
+    name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified in snowflakedb/snowflake-jdbc: SFSessionProperty declares workloadIdentityProvider /
+      workloadIdentityEntraResource / workloadIdentityImpersonationPath optional, and SFSession.open()
+      copies all three into SFLoginInput unconditionally, regardless of authenticator — so
+      authenticator=snowflake with workloadIdentityProvider=AWS connects and the WIF props are never
+      read. (The lone WIF guard, checkAwsExternalIdEnabled, gates a different property,
+      workloadIdentityAwsExternalId, and no-ops unless authenticator=WORKLOAD_IDENTITY.) The universal
+      driver's sf_core::validate_settings rejects any of the three params under a non-WIF authenticator
+      (ConflictingParameters, Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's
+      long-standing rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers;
+      no JDBC caller relies on the params being silently ignored.
+  49:
+    name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    status_rationale: |
+      Verified in snowflakedb/snowflake-jdbc: OidcIdentityAttestationCreator.createAttestation() only
+      reads the token, never workloadIdentityImpersonationPath, so that param is silently discarded
+      today. Legacy snowflake-connector-python/nodejs/.NET all reject this combination client-side;
+      legacy JDBC never did. sf_core::validate_settings now rejects it uniformly (ConflictingParameters,
+      Error). Unlike entry 48, this is a genuine new rejection for JDBC, not a relocated one — allowed as
+      a bugfix since silently accepting a no-op param combination is itself a latent bug.
+
+  50:
+    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Azure/GCS `encryptiondata` JSON: legacy snowflake-jdbc hardcodes
+      `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on both clouds.
+    new_driver_behavior: |
+      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
+      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
+      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
+      parser, which validates several sibling fields but never reads `EncryptionLibrary`. GS's
+      own internal C++ encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather
+      than `"Java 5.3.0"` on its GCS path --
+      the same self-identify-honestly pattern UD follows. Kept deliberately: matching
+      "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
+      diagnostics during the mixed-fleet rollout period.
+
+  51:
+    name: "secondary_roles connection parameter is now accepted (no legacy JDBC equivalent)"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Legacy snowflake-jdbc's `SFSessionProperty` enum has no `secondary_roles` (or similarly named)
+      property. A user relying on secondary-role activation must either rely on the user's
+      `DEFAULT_SECONDARY_ROLES` setting or run `USE SECONDARY ROLES` after connecting.
+    new_driver_behavior: |
+      Because `secondary_roles` is registered as a shared `sf_core` connection parameter (added for
+      Python parity with snowflake-connector-python#2750 / SNOW-2853586), and JDBC forwards unrecognized
+      connection properties/URL parameters through unfiltered, a JDBC caller can now also set
+      `secondary_roles=ALL` or `secondary_roles=NONE` to control secondary-role activation at login,
+      sent as `SECONDARY_ROLES` in the login-request body. This is a net-new, opt-in capability with no
+      legacy JDBC counterpart — not a fix of a prior gap — so it is filed as `allowed`, not `fixed`.

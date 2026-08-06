@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net481'">
+    <DefineConstants>$(DefineConstants);OLD_XUNIT</DefineConstants>
+    <OldXunit>True</OldXunit>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net472;net481</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0;net9.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <OutputType Condition="'$(OldXunit)' != 'True'">Exe</OutputType>
+    <!-- Old Snowflake.Data NuGet has transitive vuln deps (log4net) we can't control -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Snowflake.Data.Tests.Common\Snowflake.Data.Tests.Common.csproj" />
+    <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyCustomContent" AfterTargets="AfterBuild">
+    <Copy SourceFiles="parameters.json" DestinationFolder="$(OutDir)" ContinueOnError="true"/>
+  </Target>
+
+</Project>
