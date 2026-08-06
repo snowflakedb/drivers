@@ -31,10 +31,10 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/snowflakedb/universal-driver"
-"Bug Reports" = "https://github.com/snowflakedb/universal-driver/issues"
-"Source" = "https://github.com/snowflakedb/universal-driver"
-"Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
+"Homepage" = "https://github.com/snowflakedb/drivers"
+"Bug Reports" = "https://github.com/snowflakedb/drivers/issues"
+"Source" = "https://github.com/snowflakedb/drivers"
+"Documentation" = "https://github.com/snowflakedb/drivers/blob/main/README.md"
 
 [project.optional-dependencies]
 pyarrow = [

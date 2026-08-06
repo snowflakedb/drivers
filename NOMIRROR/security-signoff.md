@@ -1,7 +1,7 @@
 # Security sign-off gate
 
 Merging to `main` (or a `release/*` branch) puts a change on the public
-mirror at `snowflakedb/universal-driver` on the next Copybara run. Merge is
+mirror at `snowflakedb/drivers` on the next Copybara run. Merge is
 therefore effectively publication, and a change that needs pre-disclosure
 review has to be held until someone has explicitly cleared it for the
 public.

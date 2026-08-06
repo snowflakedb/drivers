@@ -77,7 +77,7 @@ final class NativeLibraryLoader {
               + "${os.detected.classifier}), or the self-contained "
               + "'net.snowflake:snowflake-jdbc-native-all' jar. Advanced setups can instead point "
               + "CORE_PATH or the jdbc.library.path system property at a local native lib. See "
-              + "https://github.com/snowflakedb/universal-driver/tree/main/jdbc",
+              + "https://github.com/snowflakedb/drivers/tree/main/jdbc",
           e);
     }
     System.load(extracted.toAbsolutePath().toString());

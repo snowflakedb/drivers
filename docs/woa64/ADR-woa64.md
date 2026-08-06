@@ -412,13 +412,13 @@ gh run view <RUN_ID> --job <JOB_ID> --log-failed 2>&1 | tail -30
 gh run view <RUN_ID> --job <JOB_ID> --log 2>&1 | grep -iE "machine|dumpbin|architecture|dependents|===|AA64|IMAGE_FILE"
 
 # Check which commit a CI run used
-gh api repos/snowflakedb/universal-driver/actions/runs/<RUN_ID> --jq '.head_sha'
+gh api repos/snowflakedb/drivers/actions/runs/<RUN_ID> --jq '.head_sha'
 
 # List recent runs for the branch
 gh run list --branch SNOW-3045931-woa64-rust-core-fix-msvc --workflow "Rust Core CI" --limit 5
 
 # Check all runs for a specific commit
-gh api "repos/snowflakedb/universal-driver/actions/runs?head_sha=<COMMIT_SHA>&per_page=10" \
+gh api "repos/snowflakedb/drivers/actions/runs?head_sha=<COMMIT_SHA>&per_page=10" \
   --jq '.workflow_runs[] | "\(.id) \(.name) \(.status) \(.conclusion)"'
 
 # Get the OpenSSL env var state from a run

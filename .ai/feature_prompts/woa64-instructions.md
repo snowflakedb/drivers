@@ -235,7 +235,7 @@ gh run view <RUN_ID> --job <JOB_ID> --log-failed 2>&1 | tail -60
 gh run view <RUN_ID> --job <JOB_ID> --log 2>&1 | grep -iE "pattern"
 
 # Find the commit a CI run used
-gh api repos/snowflakedb/universal-driver/actions/runs/<RUN_ID> --jq '.head_sha'
+gh api repos/snowflakedb/drivers/actions/runs/<RUN_ID> --jq '.head_sha'
 ```
 
 ---

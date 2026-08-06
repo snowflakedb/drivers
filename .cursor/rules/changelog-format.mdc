@@ -23,14 +23,14 @@ Apply this rule whenever you write, edit, or review a `CHANGELOG.md` file in thi
 
 ## PR link requirement
 
-Every bullet entry **must** end with a PR link in the format `(snowflakedb/universal-driver#N)` where N is the pull request number. An entry without a PR link is incomplete and must not be merged.
+Every bullet entry **must** end with a PR link in the format `(snowflakedb/drivers#N)` where N is the pull request number. An entry without a PR link is incomplete and must not be merged.
 
 ```
 # ❌ Missing PR link
 - Fixed connection reset on idle timeout.
 
 # ✅ Correct
-- Fixed connection reset on idle timeout. (snowflakedb/universal-driver#42)
+- Fixed connection reset on idle timeout. (snowflakedb/drivers#42)
 ```
 
 For multi-line entries (parent bullet + indented sub-bullets), place the PR link on the parent bullet line.

@@ -49,7 +49,7 @@ rules:
     rule: |
       **OBJECTIVE**: Catch files added to public (mirrored) directories that contain
       information belonging below a `NOMIRROR/` directory and should not reach the public mirror
-      at snowflakedb/universal-driver.
+      at snowflakedb/drivers.
 
       **CONTEXT**: This repo is mirrored publicly via Copybara. The
       authoritative denylist of internal-only paths lives in

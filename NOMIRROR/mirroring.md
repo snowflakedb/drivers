@@ -1,7 +1,7 @@
 # Mirroring between snowflake-eng and snowflakedb
 
 This repo (`snowflake-eng/universal-driver`) is the internal source of
-truth. A Copybara-based mirror keeps `snowflakedb/universal-driver` in
+truth. A Copybara-based mirror keeps `snowflakedb/drivers` in
 sync with the public-safe subset of this tree, and lets external
 contributors land changes through a labeled-PR import flow.
 
