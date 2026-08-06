@@ -1,6 +1,6 @@
 # Mirroring between snowflake-eng and snowflakedb
 
-This repo (`snowflake-eng/universal-driver`) is the internal source of
+This repo (`snowflake-eng/drivers`) is the internal source of
 truth. A Copybara-based mirror keeps `snowflakedb/drivers` in
 sync with the public-safe subset of this tree, and lets external
 contributors land changes through a labeled-PR import flow.
@@ -57,7 +57,7 @@ what a mirror config typically wants. Two mechanisms compensate:
 
 The Copybara workflow itself also runs two `verify_match` checks at
 mirror time as a defense-in-depth backstop: any mirrored file that
-still references `snowflake-eng/universal-driver` or an internal
+still references `snowflake-eng/drivers` or an internal
 hostname (`*.snowflakecomputing.internal`, `*.corp.snowflake`) fails
 the sync.
 

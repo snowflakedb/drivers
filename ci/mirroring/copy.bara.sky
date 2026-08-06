@@ -1,6 +1,6 @@
 # Copybara config: two workflows.
 #
-# 1. `mirror`  — outbound: snowflake-eng/universal-driver -> snowflakedb/drivers
+# 1. `mirror`  — outbound: snowflake-eng/drivers -> snowflakedb/drivers
 #                (ITERATIVE, direct push, denylist filter + internal-marker guards)
 #                Runs daily via .github/workflows/mirror.yml.
 #
@@ -9,7 +9,7 @@
 #                before merge. Runs on demand via
 #                .github/workflows/mirror-inbound.yml.
 #
-SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
+SOURCE_REPO = "https://github.com/snowflake-eng/drivers"
 MIRROR_REPO = "https://github.com/snowflakedb/drivers"
 
 load("import_paths", "IMPORT_FILE_GLOBS", "IMPORT_AS_DRAFT")
@@ -130,7 +130,7 @@ core.workflow(
         core.transform(
             [
                 core.replace(
-                    before = "snowflake-eng/universal-driver",
+                    before = "snowflake-eng/drivers",
                     after = "snowflakedb/drivers",
                 ),
                 # Scrub the internal 1Password vault name from the local-dev
@@ -157,7 +157,7 @@ core.workflow(
         # The mirror workflow itself is excluded because it legitimately
         # names the source repository.
         core.verify_match(
-            regex = "snowflake-eng/universal-driver",
+            regex = "snowflake-eng/drivers",
             paths = glob(["**"], exclude = [".github/workflows/mirror*"]),
             verify_no_match = True,
         ),

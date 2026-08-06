@@ -190,7 +190,7 @@ reviewable place in the denylist.
 
 Neither of the mirror's automatic safety nets would have caught that action
 reference on its own. The outbound `verify_match` guard matches only the
-literal `snowflake-eng/universal-driver`, and
+literal `snowflake-eng/drivers`, and
 `.ai/review/universal-driver-mirror-privacy.yaml` lists `.github` and `ci`
 under `excluded_folders`, so the ArcticOwl reviewer never inspects workflow
 or Copybara files. Both exclusions above are therefore load-bearing rather
@@ -242,5 +242,5 @@ publishes a verdict that nothing enforces.
   shared net and neither can remove an entry from it. A path-based net is the
   other option, with the `sync-labels` caveat in "How the label gets applied".
 - **Close the mirror-guard gap** described above, by broadening the
-  outbound `verify_match` from `snowflake-eng/universal-driver` to any
+  outbound `verify_match` from `snowflake-eng/drivers` to any
   `snowflake-eng/` reference.

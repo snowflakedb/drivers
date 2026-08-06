@@ -22,7 +22,7 @@
 #   COPYBARA_RELEASE        Copybara release tag (e.g. v20260504). Used both
 #                           as the default build arg for the image and as
 #                           part of the local image tag.
-#   DRIVER_MIRROR_TOKEN     Push token for snowflake-eng/universal-driver
+#   DRIVER_MIRROR_TOKEN     Push token for snowflake-eng/drivers
 #                           (outbound: git fetch origin; inbound: inlined
 #                           into --git-destination-url).
 #   DRIVER_MIRROR_TOKEN_SNOWFLAKEDB
@@ -208,7 +208,7 @@ case "${SUBCOMMAND}" in
       -e "GITHUB_TOKEN=${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}" \
       "${COPYBARA_IMAGE}" \
       migrate ci/mirroring/copy.bara.sky import "${PR_NUMBER}" \
-        --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+        --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/drivers.git" \
         --nogit-destination-rebase \
         --force || rc=$?
     if [ "${rc}" -eq 4 ]; then

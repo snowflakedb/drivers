@@ -1,6 +1,6 @@
 name: Mirror to public repo
 
-# Mirrors snowflake-eng/universal-driver -> snowflakedb/drivers
+# Mirrors snowflake-eng/drivers -> snowflakedb/drivers
 # (will be flipped to snowflakedb/drivers once validated).
 #
 # Scope: main + every release/* branch.
