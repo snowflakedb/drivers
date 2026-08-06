@@ -264,7 +264,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLSetCursorName: same name on two diffe
 // release path) under CI load; the same test passes cleanly on other runs. Tags it `[flaky]`
 // so it's excluded from the gating run and moved to the separate flaky-test job, per existing
 // convention in this file's directory (see async_execution.cpp's cross-thread cancel test).
-// Failure: https://github.com/snowflake-eng/universal-driver/actions/runs/30533857404/job/90849833008?pr=881
+// Failure: https://github.com/snowflakedb/drivers/actions/runs/30533857404/job/90849833008?pr=881
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLSetCursorName: name reusable after freeing the owning statement",
                  "[odbc-api][cursorname][preparing][flaky]") {
   // A cursor name is held only for the lifetime of its statement; once that

@@ -57,7 +57,7 @@ pipeline {
                                 $class: 'GitSCM',
                                 branches: [[name: ref]],
                                 userRemoteConfigs: [[
-                                    url: 'https://github.com/snowflake-eng/universal-driver.git',
+                                    url: 'https://github.com/snowflakedb/drivers.git',
                                     credentialsId: 'jenkins-snowflake-github-app-3'  // DEV_SNOWFLAKE_3 GitHub App
                                 ]],
                                 extensions: [
