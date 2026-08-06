@@ -676,35 +676,6 @@ behavior_differences:
       `enable_crl_file_cache` → `crl_enable_disk_caching` (both default `True`).
       Callers who previously disabled caching via `enable_crl_cache=False` must
       set both toggles to `False` explicitly.
-  43:
-    name: "cursor._describe_internal is not implemented in this branch"
-    status: todo
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: medium
-    old_driver_behavior: |
-      `cursor._describe_internal()` returns `list[ResultMetadataV2]` where
-      `ResultMetadataV2` is a distinct class from `ResultMetadata` and carries two
-      additional attributes: `vector_dimension: int | None` (for VECTOR column types)
-      and `fields: list[ResultMetadataV2] | None` (for structured/object column types).
-      Snowpark and other callers read these attributes to handle VECTOR and structured
-      columns correctly.
-    new_driver_behavior: |
-      This branch does not define `cursor._describe_internal` at all (no stub, no
-      implementation); calling it raises `AttributeError`. `ResultMetadataV2` here is
-      still just an alias for `ResultMetadata` (a NamedTuple), which lacks
-      `vector_dimension` and `fields`.
-      Snowpark falls back to `cursor.description` (V1 path) for schema inference.
-    description: |
-      The real implementation lives entirely in SNOW-2912540-describe-internal (#516),
-      which defines a distinct `ResultMetadataV2` class with `vector_dimension` fully
-      populated from the protobuf column descriptor; `fields` remains unpopulated there
-      too (the UD proto's `ColumnMetadata` carries no nested field list for structured
-      types) and is tracked as this same BD-43 in that branch's own BehaviorDifferences.yaml.
-      This branch intentionally carries no stub for `_describe_internal` — see
-      SNOW-2912540-describe-internal for the actual fix.
-
   44:
     name: "ReauthenticationRequest is not raised in MasterTokenExpired scenarios"
     status: todo
