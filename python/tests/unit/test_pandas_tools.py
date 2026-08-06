@@ -25,7 +25,7 @@ from snowflake.connector._internal.write_pandas_operation import (
     quote_identifier,
 )
 from snowflake.connector.errors import ProgrammingError
-from snowflake.connector.pandas_tools import make_pd_writer, pd_writer, write_pandas
+from snowflake.connector.pandas_tools import make_pd_writer, pd_writer
 
 
 # ---------------------------------------------------------------------------
